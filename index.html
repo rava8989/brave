@@ -1,4 +1,4 @@
-f <!DOCTYPE html>
+ <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -991,7 +991,7 @@ if (recommendation.startsWith("M8 Butterfly")) {
       }
    // ===== OPEX+1 override =====
 if (postOpexDay) {
-  const isM8 = recommendation.startsWith("M8 Butterfly");
+  const isM8 = recommendation.startsWith("M8"); // catches "M8 Butterfly..." AND "M8BF post holiday..."
   const isStraddle =
     recommendation.startsWith("Straddle") ||
     recommendation.startsWith("NM Straddle");
@@ -1054,6 +1054,7 @@ bobfLine.innerHTML = bobfBlocked
 
 </body>
 </html>
+
 
 
 
