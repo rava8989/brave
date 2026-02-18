@@ -882,12 +882,12 @@ flowchart TD
         openDiffDisplay.textContent = isNaN(openDiff) ? '—' : openDiff.toFixed(2);
       }
 
-      let recommendation = "";
-      let bgColor = "#eee";
-      let addPostHolidayNote = false;
-     let crossedMain = false;
-      addPostOpexNote = false;
-addPostHolidayNote = false;
+    let recommendation = "";
+let bgColor = "#eee";
+let crossedMain = false;
+
+let addPostOpexNote = false;
+let addPostHolidayNote = false;
 
       if (cpiToday) {
         // CPI rule: if VIX down (yClose - todayOpen > 0) => long call, else no trade
@@ -1004,6 +1004,7 @@ if (postOpexDay) {
     bgColor = "#fff399";
     crossedMain = false;
     addPostOpexNote = false;
+addPostHolidayNote = false;
   }
 }
 
@@ -1059,6 +1060,7 @@ bobfLine.innerHTML = bobfBlocked
 
 </body>
 </html>
+
 
 
 
