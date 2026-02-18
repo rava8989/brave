@@ -886,7 +886,8 @@ flowchart TD
       let bgColor = "#eee";
       let addPostHolidayNote = false;
      let crossedMain = false;
-      let addPostOpexNote = false;
+      addPostOpexNote = false;
+addPostHolidayNote = false;
 
       if (cpiToday) {
         // CPI rule: if VIX down (yClose - todayOpen > 0) => long call, else no trade
@@ -1010,9 +1011,15 @@ if (postOpexDay) {
       const mainRec = document.getElementById("mainRec");
       const bobfLine = document.getElementById("bobfLine");
 
-      const mainText = addPostOpexNote
-        ? `${recommendation} (use afternoon times for post OPEX Mondays)`
-        : recommendation;
+     let mainText = recommendation;
+
+if (addPostOpexNote) {
+  mainText = `${mainText} (use afternoon times for post OPEX Mondays)`;
+}
+
+if (addPostHolidayNote) {
+  mainText = "M8BF post holiday → use PM times";
+}
 
       mainRec.innerHTML = crossedMain ? `<span class="crossed">${mainText}</span>` : mainText;
       recBlock.style.backgroundColor = bgColor;
@@ -1052,6 +1059,7 @@ bobfLine.innerHTML = bobfBlocked
 
 </body>
 </html>
+
 
 
 
