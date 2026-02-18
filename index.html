@@ -887,7 +887,7 @@ let bgColor = "#eee";
 let crossedMain = false;
 
 let addPostOpexNote = false;
-let addPostHolidayNote = false;
+
 
       if (cpiToday) {
         // CPI rule: if VIX down (yClose - todayOpen > 0) => long call, else no trade
@@ -915,15 +915,14 @@ let addPostHolidayNote = false;
           bgColor = "#b49aff";
         }
 
-      // ===== M8 handling =====
-// Fed still blocks M8BF, but post-holiday no longer blocks — it becomes a PM-times note.
+// ===== M8 handling =====
 if (recommendation.startsWith("M8 Butterfly")) {
   if (fedToday) {
     recommendation = "No M8BF (Fed day)";
     bgColor = "#eee";
     crossedMain = true;
   } else if (postHoliday) {
-    addPostHolidayNote = true;  // we’ll append the message in the UI text
+    recommendation = "M8BF post holiday → use PM times";
     bgColor = "#b49aff";
     crossedMain = false;
   }
@@ -1018,9 +1017,7 @@ if (addPostOpexNote) {
   mainText = `${mainText} (use afternoon times for post OPEX Mondays)`;
 }
 
-if (addPostHolidayNote) {
-  mainText = "M8BF post holiday → use PM times";
-}
+
 
       mainRec.innerHTML = crossedMain ? `<span class="crossed">${mainText}</span>` : mainText;
       recBlock.style.backgroundColor = bgColor;
@@ -1060,6 +1057,7 @@ bobfLine.innerHTML = bobfBlocked
 
 </body>
 </html>
+
 
 
 
