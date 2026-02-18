@@ -989,9 +989,7 @@ if (recommendation.startsWith("M8 Butterfly")) {
           }
         }
       }
-     // ===== OPEX+1 override =====
-// On the next trading day after OPEX, replace M8/Straddle with GXBF.
-// BOBF stays unchanged.
+   // ===== OPEX+1 override =====
 if (postOpexDay) {
   const isM8 = recommendation.startsWith("M8 Butterfly");
   const isStraddle =
@@ -1003,7 +1001,7 @@ if (postOpexDay) {
     bgColor = "#fff399";
     crossedMain = false;
     addPostOpexNote = false;
-
+  }
 }
 
       const recBlock = document.getElementById("recBlock");
@@ -1056,6 +1054,7 @@ bobfLine.innerHTML = bobfBlocked
 
 </body>
 </html>
+
 
 
 
