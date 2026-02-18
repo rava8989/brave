@@ -1,4 +1,4 @@
- <!DOCTYPE html>
+f <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -884,7 +884,8 @@ flowchart TD
 
       let recommendation = "";
       let bgColor = "#eee";
-      let crossedMain = false;
+      let addPostHolidayNote = false;
+     let crossedMain = false;
       let addPostOpexNote = false;
 
       if (cpiToday) {
@@ -913,16 +914,19 @@ flowchart TD
           bgColor = "#b49aff";
         }
 
-        // ===== M8 block reasons (show ALL) =====
-        const m8BlockReasons = [];
-        if (fedToday && recommendation === "M8 Butterfly") m8BlockReasons.push("Fed day");
-        if (postHoliday && recommendation === "M8 Butterfly") m8BlockReasons.push("Post-holiday");
-
-        if (m8BlockReasons.length > 0) {
-          recommendation = `No M8BF (${m8BlockReasons.join(", ")})`;
-          bgColor = "#eee";
-          crossedMain = true;
-        }
+      // ===== M8 handling =====
+// Fed still blocks M8BF, but post-holiday no longer blocks — it becomes a PM-times note.
+if (recommendation.startsWith("M8 Butterfly")) {
+  if (fedToday) {
+    recommendation = "No M8BF (Fed day)";
+    bgColor = "#eee";
+    crossedMain = true;
+  } else if (postHoliday) {
+    addPostHolidayNote = true;  // we’ll append the message in the UI text
+    bgColor = "#b49aff";
+    crossedMain = false;
+  }
+}
 
         // NM override: convert M8 or No M8BF to NM Straddle (NOT on Monday)
         if (nmToday && !isMonday && (recommendation === "M8 Butterfly" || recommendation.startsWith("No M8BF"))) {
@@ -1048,6 +1052,7 @@ bobfLine.innerHTML = bobfBlocked
 
 </body>
 </html>
+
 
 
 
