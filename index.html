@@ -700,6 +700,43 @@ flowchart TD
           && after.getMonth() === today.getMonth()
           && after.getDate() === today.getDate();
     }
+   // Parse "January 21, 2026" safely (local time)
+function parseLongUSDate(dateStr) {
+  const d = new Date(dateStr);
+  if (isNaN(d)) return null;
+  // normalize time so DST/time-of-day can't mess comparisons
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12, 0, 0, 0);
+}
+
+// Get the scheduled date in the same month/year as `refDate`
+function getScheduledDateInMonth(scheduleList, refDate) {
+  const y = refDate.getFullYear();
+  const m = refDate.getMonth();
+
+  for (const s of scheduleList) {
+    const d = parseLongUSDate(s);
+    if (!d) continue;
+    if (d.getFullYear() === y && d.getMonth() === m) return d;
+  }
+  return null;
+}
+
+// TRUE only when:
+// - This month has both VIX exp + OPEX
+// - VIX exp is BEFORE OPEX in that month
+// - TODAY is the first trading day AFTER VIX exp
+function isPostVixExpDayWithVixBeforeOpex(refDate = new Date()) {
+  const vixExp = getScheduledDateInMonth(vixExpirySchedule, refDate);
+  const opex   = getScheduledDateInMonth(opexSchedule, refDate);
+  if (!vixExp || !opex) return false;
+
+  if (vixExp >= opex) return false;
+
+  const postVix = nextTradingDay(vixExp);
+  return postVix.getFullYear() === refDate.getFullYear()
+      && postVix.getMonth() === refDate.getMonth()
+      && postVix.getDate() === refDate.getDate();
+}
     function isPostHoliday() { return marketHolidays.some(isTodayFirstTradingDayAfter); }
     function isPostOpexMonday() {
       const postAnyOpex = opexSchedule.some(isTodayFirstTradingDayAfter);
@@ -1064,6 +1101,7 @@ bobfLine.innerHTML = bobfBlocked
 
 </body>
 </html>
+
 
 
 
