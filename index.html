@@ -356,7 +356,7 @@ flowchart TD
         <li>Triggered when <strong>open-to-open VIX &gt; 1.4</strong>, or when overnight VIX does not meet straddle or GXBF thresholds.</li>
         <li><strong>Not traded</strong> on Fed days.</li>
 
-       
+       <li><strong>Not traded</strong> post VIX expiration if VIX exp comes before OPEX that month.</li>
        <li><strong>Not traded</strong> on the 6 major earnings release days: MSFT, META, GOOG, AMZN, AAPL, NVDA.</li>
        <li>On the first trading day of the month (NM), M8BF converts to <strong>NM Straddle</strong> (not on Mondays).</li>
         <li>Post-OPEX Monday note: when M8BF appears, afternoon timing is preferred.</li>
@@ -929,6 +929,15 @@ if (recommendation.startsWith("M8 Butterfly")) {
   }
 }
 
+       // ===== Post-VIX-exp rule (ONLY if VIX exp is before OPEX in this month) =====
+const postVixExpSpecial = isPostVixExpDayWithVixBeforeOpex(now);
+
+// Catch BOTH "M8 Butterfly" AND "M8BF post holiday → use PM times"
+if (postVixExpSpecial && recommendation.startsWith("M8")) {
+  recommendation = "No M8BF (Post-VIX exp — VIX exp before OPEX this month)";
+  bgColor = "#eee";
+  crossedMain = true;
+}
         // NM override: convert M8 or No M8BF to NM Straddle (NOT on Monday)
         if (nmToday && !isMonday && (recommendation === "M8 Butterfly" || recommendation.startsWith("No M8BF"))) {
           recommendation = "NM Straddle @ 9:32 AM";
@@ -1055,6 +1064,7 @@ bobfLine.innerHTML = bobfBlocked
 
 </body>
 </html>
+
 
 
 
