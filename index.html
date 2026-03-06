@@ -813,7 +813,7 @@ flowchart TD
       const sch = getM8bfScheduleByDow(dow);
       if (!sch) return "M8BF";
       const strikesLine = sch.strikes.join("   ");
-      return `M8BF — trade at ${sch.tradeTime}. Qualified Strikes: ${strikesLine}`;
+      return `M8BF @ ${sch.tradeTime}. Qualified Strikes: ${strikesLine}`;
     }
 
     /* ===== TRADING LABEL (AUTO UNDER TODAY'S DATE, NO CALCULATOR NEEDED) ===== */
@@ -1125,3 +1125,4 @@ flowchart TD
 
 </body>
 </html>
+
