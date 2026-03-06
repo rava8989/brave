@@ -1,4 +1,4 @@
- <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -355,10 +355,9 @@ flowchart TD
         <li>Used when overnight VIX is <strong>up</strong>.</li>
         <li>Triggered when <strong>open-to-open VIX &gt; 1.4</strong>, or when overnight VIX does not meet straddle or GXBF thresholds.</li>
         <li><strong>Not traded</strong> on Fed days.</li>
-
-       <li><strong>Not traded</strong> post VIX expiration if VIX exp comes before OPEX that month.</li>
-       <li><strong>Not traded</strong> on the 6 major earnings release days: MSFT, META, GOOG, AMZN, AAPL, NVDA.</li>
-       <li>On the first trading day of the month (NM), M8BF converts to <strong>NM Straddle</strong> (not on Mondays).</li>
+        <li><strong>Not traded</strong> post VIX expiration if VIX exp comes before OPEX that month.</li>
+        <li><strong>Not traded</strong> on the 6 major earnings release days: MSFT, META, GOOG, AMZN, AAPL, NVDA.</li>
+        <li>On the first trading day of the month (NM), M8BF converts to <strong>NM Straddle</strong> (not on Mondays).</li>
         <li>Post-OPEX Monday note: when M8BF appears, afternoon timing is preferred.</li>
         <li>Max risk: <strong>$1,400</strong>.</li>
         <li>Use center strike from M8 prediction. Adjust the wings until you reach a cost of approximately $14 for entry.</li>
@@ -390,7 +389,7 @@ flowchart TD
         <li>Takes priority over open-to-open VIX logic.</li>
         <li>Entry time: <strong>9:36 AM</strong>, centered on major positive gamma.</li>
         <li>Allowed on Fed days.</li>
-       <li>Automatic GXBF on OPEX+1.</li>
+        <li>Automatic GXBF on OPEX+1.</li>
         <li>Max risk: <strong>$1,400</strong>.</li>
       </ul>
       <div class="strategy-image">
@@ -400,29 +399,26 @@ flowchart TD
       <div class="divider">⸻</div>
 
       <h3>BOBF</h3>
-<ul>
-  <li>
-    <a href="https://optionomega.com/share/gd2bRi16syr3R1UaGVUE" target="_blank" rel="noopener noreferrer">
-      OptionOmega – BOBF base
-    </a>
-  </li>
-
-  <li><strong>Not traded</strong> on the 6 major earnings release days: MSFT, META, GOOG, AMZN, AAPL, NVDA.</li>
-  <li><strong>Not traded</strong> on monthly VIX expiration days.</li>
-   <li><strong>Not traded</strong> on OPEX.</li>
- <li><strong>Not traded</strong> on OPEX-1.</li>
- <li><strong>Not traded</strong> on EOM-2 and EOM-1.</li>
-  <li><strong>Not traded</strong> on the first trading Monday of the month (NM Monday).</li>
-  <li>Maximum VIX allowed: <strong>23</strong>.</li>
-
-  <li>Modified version traded on Fridays</li>
-
-  <li>
-    <a href="https://optionomega.com/share/cVLL2DfdpiGiLekplKPs" target="_blank" rel="noopener noreferrer">
-      OptionOmega – Friday version
-    </a>
-  </li>
-</ul>
+      <ul>
+        <li>
+          <a href="https://optionomega.com/share/gd2bRi16syr3R1UaGVUE" target="_blank" rel="noopener noreferrer">
+            OptionOmega – BOBF base
+          </a>
+        </li>
+        <li><strong>Not traded</strong> on the 6 major earnings release days: MSFT, META, GOOG, AMZN, AAPL, NVDA.</li>
+        <li><strong>Not traded</strong> on monthly VIX expiration days.</li>
+        <li><strong>Not traded</strong> on OPEX.</li>
+        <li><strong>Not traded</strong> on OPEX-1.</li>
+        <li><strong>Not traded</strong> on EOM-2 and EOM-1.</li>
+        <li><strong>Not traded</strong> on the first trading Monday of the month (NM Monday).</li>
+        <li>Maximum VIX allowed: <strong>23</strong>.</li>
+        <li>Modified version traded on Fridays</li>
+        <li>
+          <a href="https://optionomega.com/share/cVLL2DfdpiGiLekplKPs" target="_blank" rel="noopener noreferrer">
+            OptionOmega – Friday version
+          </a>
+        </li>
+      </ul>
       <div class="strategy-image">
         <img src="./BOBF.jpg" alt="BOBF strategy visual" loading="lazy" />
       </div>
@@ -700,43 +696,45 @@ flowchart TD
           && after.getMonth() === today.getMonth()
           && after.getDate() === today.getDate();
     }
-   // Parse "January 21, 2026" safely (local time)
-function parseLongUSDate(dateStr) {
-  const d = new Date(dateStr);
-  if (isNaN(d)) return null;
-  // normalize time so DST/time-of-day can't mess comparisons
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12, 0, 0, 0);
-}
 
-// Get the scheduled date in the same month/year as `refDate`
-function getScheduledDateInMonth(scheduleList, refDate) {
-  const y = refDate.getFullYear();
-  const m = refDate.getMonth();
+    // Parse "January 21, 2026" safely (local time)
+    function parseLongUSDate(dateStr) {
+      const d = new Date(dateStr);
+      if (isNaN(d)) return null;
+      // normalize time so DST/time-of-day can't mess comparisons
+      return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12, 0, 0, 0);
+    }
 
-  for (const s of scheduleList) {
-    const d = parseLongUSDate(s);
-    if (!d) continue;
-    if (d.getFullYear() === y && d.getMonth() === m) return d;
-  }
-  return null;
-}
+    // Get the scheduled date in the same month/year as `refDate`
+    function getScheduledDateInMonth(scheduleList, refDate) {
+      const y = refDate.getFullYear();
+      const m = refDate.getMonth();
 
-// TRUE only when:
-// - This month has both VIX exp + OPEX
-// - VIX exp is BEFORE OPEX in that month
-// - TODAY is the first trading day AFTER VIX exp
-function isPostVixExpDayWithVixBeforeOpex(refDate = new Date()) {
-  const vixExp = getScheduledDateInMonth(vixExpirySchedule, refDate);
-  const opex   = getScheduledDateInMonth(opexSchedule, refDate);
-  if (!vixExp || !opex) return false;
+      for (const s of scheduleList) {
+        const d = parseLongUSDate(s);
+        if (!d) continue;
+        if (d.getFullYear() === y && d.getMonth() === m) return d;
+      }
+      return null;
+    }
 
-  if (vixExp >= opex) return false;
+    // TRUE only when:
+    // - This month has both VIX exp + OPEX
+    // - VIX exp is BEFORE OPEX in that month
+    // - TODAY is the first trading day AFTER VIX exp
+    function isPostVixExpDayWithVixBeforeOpex(refDate = new Date()) {
+      const vixExp = getScheduledDateInMonth(vixExpirySchedule, refDate);
+      const opex   = getScheduledDateInMonth(opexSchedule, refDate);
+      if (!vixExp || !opex) return false;
 
-  const postVix = nextTradingDay(vixExp);
-  return postVix.getFullYear() === refDate.getFullYear()
-      && postVix.getMonth() === refDate.getMonth()
-      && postVix.getDate() === refDate.getDate();
-}
+      if (vixExp >= opex) return false;
+
+      const postVix = nextTradingDay(vixExp);
+      return postVix.getFullYear() === refDate.getFullYear()
+          && postVix.getMonth() === refDate.getMonth()
+          && postVix.getDate() === refDate.getDate();
+    }
+
     function isPostHoliday() { return marketHolidays.some(isTodayFirstTradingDayAfter); }
     function isPostOpexMonday() {
       const postAnyOpex = opexSchedule.some(isTodayFirstTradingDayAfter);
@@ -788,6 +786,34 @@ function isPostVixExpDayWithVixBeforeOpex(refDate = new Date()) {
       }
 
       return d.getFullYear() === year && d.getMonth() === month && d.getDate() === date.getDate();
+    }
+
+    /* ===== M8BF DISPLAY SCHEDULE (TRADE TIME + QUALIFIED STRIKES) ===== */
+
+    function getM8bfScheduleByDow(dow) {
+      // dow: 0=Sun ... 6=Sat
+      switch (dow) {
+        case 1: // Monday
+          return { tradeTime: "10:10", strikes: ["05","20","30","40","45","55","70","75","85","95"] };
+        case 2: // Tuesday
+          return { tradeTime: "12:20", strikes: ["00","05","25","30","35","45","70","75","85","90","95"] };
+        case 3: // Wednesday
+          return { tradeTime: "11:15", strikes: ["30","45","50","60","70","80","95"] };
+        case 4: // Thursday
+          return { tradeTime: "10:45", strikes: ["05","10","15","20","45","55","70","75","85","90"] };
+        case 5: // Friday
+          return { tradeTime: "13:05", strikes: ["05","20","30","35","40","45","55","65","70","75","85","95"] };
+        default:
+          return null;
+      }
+    }
+
+    function buildM8bfMessage(date = new Date()) {
+      const dow = date.getDay();
+      const sch = getM8bfScheduleByDow(dow);
+      if (!sch) return "M8BF";
+      const strikesLine = sch.strikes.join("   ");
+      return `M8BF — trade at ${sch.tradeTime}. Qualified Strikes: ${strikesLine}`;
     }
 
     /* ===== TRADING LABEL (AUTO UNDER TODAY'S DATE, NO CALCULATOR NEEDED) ===== */
@@ -920,12 +946,11 @@ function isPostVixExpDayWithVixBeforeOpex(refDate = new Date()) {
         openDiffDisplay.textContent = isNaN(openDiff) ? '—' : openDiff.toFixed(2);
       }
 
-    let recommendation = "";
-let bgColor = "#eee";
-let crossedMain = false;
+      let recommendation = "";
+      let bgColor = "#eee";
+      let crossedMain = false;
 
-let addPostOpexNote = false;
-
+      let addPostOpexNote = false;
 
       if (cpiToday) {
         // CPI rule: if VIX down (yClose - todayOpen > 0) => long call, else no trade
@@ -943,40 +968,40 @@ let addPostOpexNote = false;
           recommendation = "GXBF @ 9:36 AM";
           bgColor = "#fff399";
         } else if (openDiff > 1.4) {
-          recommendation = "M8 Butterfly";
+          recommendation = buildM8bfMessage(now);
           bgColor = "#b49aff";
         } else if (overnightDrop > 0.001 && overnightDrop < 0.65) {
           recommendation = "Straddle @ 9:32 AM";
           bgColor = "#61f7d6";
         } else {
-          recommendation = "M8 Butterfly";
+          recommendation = buildM8bfMessage(now);
           bgColor = "#b49aff";
         }
 
-// ===== M8 handling =====
-if (recommendation.startsWith("M8 Butterfly")) {
-  if (fedToday) {
-    recommendation = "No M8BF (Fed day)";
-    bgColor = "#eee";
-    crossedMain = true;
-  } else if (postHoliday) {
-    recommendation = "M8BF post holiday → use PM times";
-    bgColor = "#b49aff";
-    crossedMain = false;
-  }
-}
+        // ===== M8 handling =====
+        if (recommendation.startsWith("M8BF")) {
+          if (fedToday) {
+            recommendation = "No M8BF (Fed day)";
+            bgColor = "#eee";
+            crossedMain = true;
+          } else if (postHoliday) {
+            // Keep the schedule + add note
+            recommendation = `${buildM8bfMessage(now)} (post holiday → use PM times)`;
+            bgColor = "#b49aff";
+            crossedMain = false;
+          }
+        }
 
-       // ===== Post-VIX-exp rule (ONLY if VIX exp is before OPEX in this month) =====
-const postVixExpSpecial = isPostVixExpDayWithVixBeforeOpex(now);
+        // ===== Post-VIX-exp rule (ONLY if VIX exp is before OPEX in this month) =====
+        const postVixExpSpecial = isPostVixExpDayWithVixBeforeOpex(now);
+        if (postVixExpSpecial && recommendation.startsWith("M8BF")) {
+          recommendation = "No M8BF (Post-VIX exp — VIX exp before OPEX this month)";
+          bgColor = "#eee";
+          crossedMain = true;
+        }
 
-// Catch BOTH "M8 Butterfly" AND "M8BF post holiday → use PM times"
-if (postVixExpSpecial && recommendation.startsWith("M8")) {
-  recommendation = "No M8BF (Post-VIX exp — VIX exp before OPEX this month)";
-  bgColor = "#eee";
-  crossedMain = true;
-}
         // NM override: convert M8 or No M8BF to NM Straddle (NOT on Monday)
-        if (nmToday && !isMonday && (recommendation === "M8 Butterfly" || recommendation.startsWith("No M8BF"))) {
+        if (nmToday && !isMonday && (recommendation.startsWith("M8BF") || recommendation.startsWith("No M8BF"))) {
           recommendation = "NM Straddle @ 9:32 AM";
           bgColor = "#61f7d6";
           crossedMain = false;
@@ -991,7 +1016,7 @@ if (postVixExpSpecial && recommendation.startsWith("M8")) {
 
         // Wednesday rule (NM overrides)
         if (isWednesday && !fedToday && !eomTradingDay && !nmToday && recommendation.startsWith("Straddle")) {
-          recommendation = "M8 Butterfly";
+          recommendation = buildM8bfMessage(now);
           bgColor = "#b49aff";
         }
 
@@ -1005,8 +1030,8 @@ if (postVixExpSpecial && recommendation.startsWith("M8")) {
           crossedMain = true;
         }
 
-        // Post-OPEX Monday note (apply to any M8 Butterfly text)
-        if (postOpexMonday && recommendation.startsWith("M8 Butterfly")) {
+        // Post-OPEX Monday note (apply to any M8BF text)
+        if (postOpexMonday && recommendation.startsWith("M8BF")) {
           addPostOpexNote = true;
         }
 
@@ -1030,38 +1055,37 @@ if (postVixExpSpecial && recommendation.startsWith("M8")) {
           }
         } else if (winrateHigh) {
           if (recommendation === "Straddle @ 9:32 AM") {
-            recommendation = "M8 Butterfly (Win rate > 90% prior day)";
+            recommendation = `${buildM8bfMessage(now)} (Win rate > 90% prior day)`;
             bgColor = "#b49aff";
             crossedMain = false;
           }
         }
       }
-   // ===== OPEX+1 override =====
-if (postOpexDay) {
-  const isM8 = recommendation.startsWith("M8"); // catches "M8 Butterfly..." AND "M8BF post holiday..."
-  const isStraddle =
-    recommendation.startsWith("Straddle") ||
-    recommendation.startsWith("NM Straddle");
 
-  if (isM8 || isStraddle) {
-    recommendation = "GXBF @ 9:36 AM (OPEX+1)";
-    bgColor = "#fff399";
-    crossedMain = false;
-    addPostOpexNote = false;
-  }
-}
+      // ===== OPEX+1 override =====
+      if (postOpexDay) {
+        const isM8 = recommendation.startsWith("M8BF"); // catches schedule + notes
+        const isStraddle =
+          recommendation.startsWith("Straddle") ||
+          recommendation.startsWith("NM Straddle");
+
+        if (isM8 || isStraddle) {
+          recommendation = "GXBF @ 9:36 AM (OPEX+1)";
+          bgColor = "#fff399";
+          crossedMain = false;
+          addPostOpexNote = false;
+        }
+      }
 
       const recBlock = document.getElementById("recBlock");
       const mainRec = document.getElementById("mainRec");
       const bobfLine = document.getElementById("bobfLine");
 
-     let mainText = recommendation;
+      let mainText = recommendation;
 
-if (addPostOpexNote) {
-  mainText = `${mainText} (use afternoon times for post OPEX Mondays)`;
-}
-
-
+      if (addPostOpexNote) {
+        mainText = `${mainText} (use afternoon times for post OPEX Mondays)`;
+      }
 
       mainRec.innerHTML = crossedMain ? `<span class="crossed">${mainText}</span>` : mainText;
       recBlock.style.backgroundColor = bgColor;
@@ -1070,60 +1094,34 @@ if (addPostOpexNote) {
       const resultLbl = document.getElementById("resultDayLabel");
       if (resultLbl) resultLbl.textContent = tradingWeekdayOrdinalLabel(new Date());
 
-     // =======================
-// BOBF rules (ALL reasons)
-// =======================
-let bobfReasons = [];
+      // =======================
+      // BOBF rules (ALL reasons)
+      // =======================
+      let bobfReasons = [];
 
-if (nmMonday) bobfReasons.push("NM Monday");
-// Friday is NO LONGER a block
-if (vixExpiryToday) bobfReasons.push("VIX expiration");
-if (opexToday) bobfReasons.push("OPEX");
-if (opexMinus1) bobfReasons.push("OPEX-1");
-if (eomMinus2) bobfReasons.push("EOM-2");
-if (eomMinus1) bobfReasons.push("EOM-1");
-if (!isNaN(today) && today > 23) bobfReasons.push("high VIX");
+      if (nmMonday) bobfReasons.push("NM Monday");
+      // Friday is NO LONGER a block
+      if (vixExpiryToday) bobfReasons.push("VIX expiration");
+      if (opexToday) bobfReasons.push("OPEX");
+      if (opexMinus1) bobfReasons.push("OPEX-1");
+      if (eomMinus2) bobfReasons.push("EOM-2");
+      if (eomMinus1) bobfReasons.push("EOM-1");
+      if (!isNaN(today) && today > 23) bobfReasons.push("high VIX");
 
-const bobfBlocked = bobfReasons.length > 0;
+      const bobfBlocked = bobfReasons.length > 0;
 
-let bobfText;
-if (bobfBlocked) {
-  bobfText = `No BOBF (${bobfReasons.join(", ")})`;
-} else {
-  bobfText = isFriday ? "BOBF (Friday version)" : "BOBF in play";
-}
+      let bobfText;
+      if (bobfBlocked) {
+        bobfText = `No BOBF (${bobfReasons.join(", ")})`;
+      } else {
+        bobfText = isFriday ? "BOBF (Friday version)" : "BOBF in play";
+      }
 
-bobfLine.innerHTML = bobfBlocked
-  ? `<span class="crossed">${bobfText}</span>`
-  : bobfText;
+      bobfLine.innerHTML = bobfBlocked
+        ? `<span class="crossed">${bobfText}</span>`
+        : bobfText;
     }
   </script>
 
 </body>
 </html>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
