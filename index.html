@@ -1071,18 +1071,24 @@ flowchart TD
 
       // ===== OPEX+1 override =====
       if (postOpexDay) {
-        const isM8 = recommendation.startsWith("M8BF"); // catches schedule + notes
-        const isStraddle =
-          recommendation.startsWith("Straddle") ||
-          recommendation.startsWith("NM Straddle");
+  const isM8 = recommendation.startsWith("M8BF");
+  const isStraddle =
+    recommendation.startsWith("Straddle") ||
+    recommendation.startsWith("NM Straddle");
 
-        if (isM8 || isStraddle) {
-          recommendation = "GXBF @ 9:36 AM (OPEX+1)";
-          bgColor = "#fff399";
-          crossedMain = false;
-          addPostOpexNote = false;
-        }
-      }
+  if (isM8 || isStraddle) {
+    if (today >= 25) {
+      recommendation = "No GXBF (high VIX)";
+      bgColor = "#eee";
+      crossedMain = true;
+      addPostOpexNote = false;
+    } else {
+      recommendation = "GXBF @ 9:36 AM (OPEX+1)";
+      bgColor = "#fff399";
+      crossedMain = false;
+      addPostOpexNote = false;
+    }
+  }
 
       const recBlock = document.getElementById("recBlock");
       const mainRec = document.getElementById("mainRec");
@@ -1132,6 +1138,7 @@ flowchart TD
 
 </body>
 </html>
+
 
 
 
