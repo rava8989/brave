@@ -152,7 +152,32 @@
     .tag-holiday{background:var(--tag-holiday-bg);color:var(--tag-holiday);border-color:var(--tag-holiday);}
     .tag-eom{background:var(--tag-eom-bg);color:var(--tag-eom);border-color:var(--tag-eom);}
 
-    /* FOUR SIGNAL CARDS — single column */
+    /* SCHWAB INTEGRATION */
+    .schwab-bar{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;margin-bottom:12px;display:none;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;}
+    .schwab-status{display:flex;align-items:center;gap:8px;font-size:12px;}
+    .schwab-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;background:#64748b;}
+    .schwab-dot.connected{background:#22c55e;box-shadow:0 0 6px #22c55e;}
+    .schwab-dot.connecting{background:#f59e0b;animation:pulse-dot 1s infinite;}
+    .schwab-dot.error{background:#ef4444;}
+    @keyframes pulse-dot{0%,100%{opacity:1;}50%{opacity:.3;}}
+    .schwab-status-text{color:var(--text2);font-family:'JetBrains Mono',monospace;}
+    .schwab-actions{display:flex;gap:6px;align-items:center;}
+    .schwab-btn{font-size:11px;font-weight:600;padding:4px 10px;border-radius:6px;cursor:pointer;border:1px solid var(--border);background:var(--bg3);color:var(--text2);font-family:'Inter',sans-serif;transition:background .15s;}
+    .schwab-btn:hover{background:var(--bg);}
+    .schwab-btn.primary{background:var(--accent);color:#fff;border-color:var(--accent);}
+    .schwab-btn.primary:hover{opacity:.85;}
+    .auto-badge{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;padding:1px 5px;border-radius:4px;background:#22c55e22;color:#22c55e;border:1px solid #22c55e44;margin-left:4px;}
+    /* Schwab setup modal */
+    .schwab-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;display:flex;align-items:center;justify-content:center;}
+    .schwab-modal{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:24px;width:360px;max-width:90vw;box-shadow:var(--shadow-lg);}
+    .schwab-modal h3{font-family:'JetBrains Mono',monospace;font-size:15px;font-weight:700;color:var(--accent);margin-bottom:6px;}
+    .schwab-modal p{font-size:12px;color:var(--text2);margin-bottom:16px;line-height:1.5;}
+    .schwab-modal .fg{margin-bottom:10px;}
+    .schwab-modal label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);display:block;margin-bottom:3px;}
+    .schwab-modal input{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:'JetBrains Mono',monospace;font-size:13px;padding:8px 10px;outline:none;box-sizing:border-box;}
+    .schwab-modal input:focus{border-color:var(--accent);}
+    .schwab-modal-btns{display:flex;gap:8px;margin-top:16px;}
+    .schwab-modal-note{font-size:11px;color:var(--text3);margin-top:12px;line-height:1.4;}
     .signal-stack{display:flex;flex-direction:column;gap:8px;margin-bottom:6px;}
     .scard{background:var(--bg2);border:2px solid var(--border);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow);transition:border-color .2s,background .2s;}
     .scard-header{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;background:rgba(0,0,0,.12);border-bottom:1px solid rgba(255,255,255,.06);}
@@ -266,7 +291,7 @@
 <!-- SIDEBAR -->
 <aside class="sidebar">
   <div class="sidebar-header">
-    <div class="logo">Σ3 <span>Strategy</span></div>
+    <div class="logo" id="logoTap">Σ3 <span>Strategy</span></div>
     <div class="theme-toggle-wrap">
       <button class="theme-toggle" id="themeToggle" title="Toggle theme"></button>
       <div class="theme-label" id="themeLabel">Light</div>
@@ -311,6 +336,83 @@
     <div class="date-pill"><span id="todayDate">—</span> &nbsp;·&nbsp; <strong id="dayLabel">—</strong></div>
   </div>
 
+  <!-- SCHWAB INTEGRATION BAR -->
+  <div class="schwab-bar" id="schwabBar">
+    <div class="schwab-status">
+      <span class="schwab-dot" id="schwabDot"></span>
+      <span class="schwab-status-text" id="schwabStatusText">Schwab not connected</span>
+    </div>
+    <div class="schwab-actions">
+      <span id="schwabAutoLabel" style="display:none;font-size:11px;color:var(--text3);">Auto-calculated at <strong id="schwabAutoTime">—</strong></span>
+      <button class="schwab-btn primary" id="schwabConnectBtn" onclick="schwabSetup()">Connect Schwab</button>
+      <button class="schwab-btn" id="schwabDisconnectBtn" onclick="schwabDisconnect()" style="display:none;">Disconnect</button>
+      <button class="schwab-btn" id="schwabReauthBtn" onclick="schwabReauth()" style="display:none;">Re-authenticate</button>
+    </div>
+    <!-- Discord section -->
+    <div style="width:100%;height:1px;background:var(--border);margin:6px 0;"></div>
+    <div class="schwab-status">
+      <span class="schwab-dot" id="discordDot"></span>
+      <span class="schwab-status-text" id="discordStatusText">Discord bot not configured</span>
+    </div>
+    <div class="schwab-actions">
+      <button class="schwab-btn primary" id="discordSetupBtn" onclick="discordSetup()">Setup Discord Bot</button>
+      <button class="schwab-btn" id="discordTestBtn" onclick="discordTest()" style="display:none;">Test Post</button>
+      <button class="schwab-btn" id="discordDisconnectBtn" onclick="discordDisconnect()" style="display:none;">Disconnect</button>
+    </div>
+  </div>
+
+  <!-- SCHWAB SETUP MODAL -->
+  <div class="schwab-modal-overlay" id="schwabModal" style="display:none;">
+    <div class="schwab-modal">
+      <h3>Connect Schwab</h3>
+      <p>Enter your Schwab API credentials. These are stored locally in your browser only — never sent to any server.</p>
+      <div class="fg">
+        <label>App Key (Client ID)</label>
+        <input type="text" id="schwabAppKey" placeholder="Your Schwab App Key" autocomplete="off" />
+      </div>
+      <div class="fg">
+        <label>App Secret</label>
+        <input type="password" id="schwabAppSecret" placeholder="Your Schwab App Secret" autocomplete="off" />
+      </div>
+      <div class="fg">
+        <label>Account Number</label>
+        <input type="text" id="schwabAcctNum" placeholder="Your Schwab Account Number" autocomplete="off" />
+      </div>
+      <div class="schwab-modal-btns">
+        <button class="btn-p" style="flex:1;" onclick="schwabConnect()">Connect & Authenticate</button>
+        <button class="btn-s" onclick="document.getElementById('schwabModal').style.display='none'">Cancel</button>
+      </div>
+      <p class="schwab-modal-note">⚠️ After clicking Connect, a Schwab login page will open in a new tab. Log in there, then come back here. You only need to do this once every 7 days.</p>
+    </div>
+  </div>
+
+  <!-- DISCORD SETUP MODAL -->
+  <div class="schwab-modal-overlay" id="discordModal" style="display:none;">
+    <div class="schwab-modal">
+      <h3>Setup Discord Bot</h3>
+      <p>The bot will send you a private DM with the signal every morning. Stored locally only.</p>
+      <div class="fg">
+        <label>Bot Token</label>
+        <input type="password" id="discordToken" placeholder="Your Discord Bot Token" autocomplete="off" />
+      </div>
+      <div class="fg">
+        <label>Your Discord User ID</label>
+        <input type="text" id="discordChannelId" placeholder="e.g. 822976496653828107" autocomplete="off" />
+      </div>
+      <div class="schwab-modal-btns">
+        <button class="btn-p" style="flex:1;" onclick="discordSave()">Save</button>
+        <button class="btn-s" onclick="document.getElementById('discordModal').style.display='none'">Cancel</button>
+      </div>
+      <p class="schwab-modal-note">
+        To get your User ID:<br>
+        1. Discord Settings → Advanced → enable <strong>Developer Mode</strong><br>
+        2. Right-click your name in any server → <strong>Copy User ID</strong><br><br>
+        ⚠️ Make sure you send the bot a message first so it can DM you:<br>
+        Find the bot in your server → click it → Message → send "hi"
+      </p>
+    </div>
+  </div>
+
   <div class="calcRow">
     <div class="card winrateBox">
       <h3>Win Rate Override<br><small style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text3);">previous day</small></h3>
@@ -335,6 +437,8 @@
     <div class="mi"><span class="ml">Overnight Drop</span><span class="mv" id="overnightDropDisplay">—</span></div>
     <span class="msep">|</span>
     <div class="mi"><span class="ml">Open-to-Open</span><span class="mv" id="openDiffDisplay">—</span><span id="openDiffNote" class="tag tag-cpi" style="display:none;margin-left:5px;">ignored CPI</span></div>
+    <span class="msep" id="spxSep" style="display:none;">|</span>
+    <div class="mi" id="spxGapWrap" style="display:none;"><span class="ml">SPX Gap</span><span class="mv" id="spxGapDisplay">—</span></div>
     <span class="msep" id="tagSep" style="display:none;">|</span>
     <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;">
       <span id="cpiTag"        class="tag tag-cpi"      style="display:none;">📊 CPI</span>
@@ -343,7 +447,7 @@
       <span id="postOpexTag"   class="tag tag-postopex" style="display:none;">↗ Post-OPEX</span>
       <span id="eomTag"        class="tag tag-eom"      style="display:none;">📆 EOM</span>
     </div>
-    <!-- #7: color legend -->
+    <!-- color legend -->
     <div class="mv-legend">
       <span><span class="mv-legend-dot mv-legend-dn"></span>VIX down</span>
       <span><span class="mv-legend-dot mv-legend-up"></span>VIX up</span>
@@ -573,7 +677,8 @@ flowchart TD
   /* ====== CONSTANTS ====== */
   const T = {
     DROP_GXBF: 0.65, DROP_STRAD_MIN: 0,
-    O2O_M8BF: 1.4, VIX_MAX_GXBF: 25, VIX_MAX_BOBF: 23
+    O2O_M8BF: 1.4, VIX_MAX_GXBF: 25, VIX_MAX_BOBF: 23,
+    SPX_GAP_THRESHOLD: 0.9,  // abs SPX gap % that forces M8BF
   };
 
   /* Low win-rate strikes per DOW — shown crossed out in grid */
@@ -866,6 +971,31 @@ flowchart TD
 
   function initTheme(){ const s=localStorage.getItem('s3theme')||'dark'; document.documentElement.setAttribute('data-theme',s); updateThemeLbl(s); }
   function updateThemeLbl(t){ document.getElementById('themeLabel').textContent=t==='dark'?'Light':'Dark'; }
+  // Ctrl+Shift+S — secret shortcut to show/hide Schwab integration
+  document.addEventListener('keydown', e => {
+    if(e.ctrlKey && e.shiftKey && e.key === 'S'){
+      e.preventDefault();
+      const bar = document.getElementById('schwabBar');
+      bar.style.display = bar.style.display === 'flex' ? 'none' : 'flex';
+    }
+  });
+
+  // Tap Σ3 logo 5 times within 3 seconds to toggle Schwab bar on mobile
+  (()=>{
+    let tapCount = 0, tapTimer = null;
+    document.getElementById('logoTap').addEventListener('click', ()=>{
+      tapCount++;
+      clearTimeout(tapTimer);
+      if(tapCount >= 5){
+        tapCount = 0;
+        const bar = document.getElementById('schwabBar');
+        bar.style.display = bar.style.display === 'flex' ? 'none' : 'flex';
+      } else {
+        tapTimer = setTimeout(()=>{ tapCount = 0; }, 3000);
+      }
+    });
+  })();
+
   document.getElementById('themeToggle').addEventListener('click',()=>{
     const c=document.documentElement.getAttribute('data-theme'), n=c==='dark'?'light':'dark';
     document.documentElement.setAttribute('data-theme',n); localStorage.setItem('s3theme',n); updateThemeLbl(n);
@@ -987,6 +1117,30 @@ flowchart TD
     if(cpiDay){oEl.textContent='—';oNote.style.display='inline-flex';}
     else{oNote.style.display='none';oEl.textContent=isNaN(o2o)?'—':o2o.toFixed(2);oEl.className='mv'+(o2o>0?' dn':o2o<0?' up':'');}
 
+    // Show SPX gap in metrics bar if available
+    const spxGapWrap=document.getElementById('spxGapWrap');
+    const spxGapEl  =document.getElementById('spxGapDisplay');
+    const spxSepEl  =document.getElementById('spxSep');
+    if(spxGapPct !== null){
+      spxGapWrap.style.display='flex';
+      spxSepEl.style.display='inline';
+      const dir=spxGapPct>0?'▲':'▼';
+      spxGapEl.textContent=`${dir}${Math.abs(spxGapPct).toFixed(2)}%`;
+      spxGapEl.className='mv'+(spxGapForcesM8BF?' up':''); // red if forcing M8BF
+    } else {
+      spxGapWrap.style.display='none';
+      spxSepEl.style.display='none';
+    }
+
+    // ── SPX gap check (populated by Schwab when connected) ──
+    const spxData = SC ? SC.get('spx') : null; // { yClose, todayOpen }
+    let spxGapPct = null;
+    let spxGapForcesM8BF = false;
+    if(spxData && spxData.yClose && spxData.todayOpen){
+      spxGapPct = ((spxData.todayOpen - spxData.yClose) / spxData.yClose) * 100;
+      spxGapForcesM8BF = Math.abs(spxGapPct) >= T.SPX_GAP_THRESHOLD;
+    }
+
     let rec="", theme="neutral", crossed=false, pmNote=false;
     let blockT="", blockD="", entryT="", badge="";
     let strikeInfo=null;
@@ -994,6 +1148,11 @@ flowchart TD
     if(cpiDay){
       if(oNight>0){rec="Long ATM Call @ 9:32 AM (CPI) — Max $13";theme="strad";entryT="9:32 AM";badge="CPI CALL";}
       else{rec="No Trade (CPI — VIX up)";theme="block";crossed=true;blockT="hard";blockD="CPI day, VIX up";badge="BLOCKED";}
+    } else if(spxGapForcesM8BF){
+      // SPX gap ≥ 0.9% in either direction → M8BF regardless of VIX
+      const dir = spxGapPct > 0 ? '▲' : '▼';
+      rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";
+      blockD=`SPX gap ${dir}${Math.abs(spxGapPct).toFixed(2)}% ≥ ${T.SPX_GAP_THRESHOLD}% → M8BF forced`;
     } else {
       if(oNight>T.DROP_GXBF){
         if(vToday>=T.VIX_MAX_GXBF){rec="No GXBF (VIX too high)";theme="block";crossed=true;blockT="vix";blockD=`VIX ${vToday} ≥ ${T.VIX_MAX_GXBF}`;badge="BLOCKED";}
@@ -1069,6 +1228,7 @@ flowchart TD
       m8bfRec.innerHTML=crossed?`<span class="crossed">${rec}</span>`:rec;
       if(blockT==='hard') m8bfReason.innerHTML=`<span class="block-hard">⛔ ${blockD}</span>`;
       else if(blockT==='vix') m8bfReason.innerHTML=`<span class="block-vix">⚠️ ${blockD}</span>`;
+      else if(spxGapForcesM8BF) m8bfReason.innerHTML=`<span style="color:var(--col-gxbf);font-style:italic;">📐 ${blockD}</span>`;
       else m8bfReason.textContent='';
     } else if(theme==='block' && rec.includes('M8BF')){
       cardM8bf.className='scard active-block';
@@ -1257,6 +1417,590 @@ flowchart TD
       if(hasPast(li.getAttribute('data-date')||'',nowRef)) li.classList.add('crossed');
     });
   }
+  /* ====================================================
+     SCHWAB INTEGRATION
+     ====================================================
+     Flow:
+     1. User enters App Key, App Secret, Account Number once → saved to localStorage
+     2. OAuth redirect to Schwab login → user logs in → redirected back with code
+     3. Code exchanged for access + refresh tokens → saved to localStorage
+     4. On page load: use refresh token to get fresh access token silently
+     5. Fetch yesterday's VIX open + close → pre-fill fields
+     6. At 9:30 AM ET: open WebSocket stream → wait for first VIX print
+     7. Auto-fill Today's Open → trigger calculateStrategy()
+     8. Show re-auth reminder 1 day before 7-day token expiry
+  ==================================================== */
+
+  const SCHWAB = {
+    BASE:      'https://api.schwabapi.com',
+    AUTH_URL:  'https://api.schwabapi.com/v1/oauth/authorize',
+    TOKEN_URL: 'https://api.schwabapi.com/v1/oauth/token',
+    MARKET:    'https://api.schwabapi.com/marketdata/v1',
+    REDIRECT:  window.location.href.split('?')[0].split('#')[0], // current page URL
+  };
+
+  /* ── Storage helpers ── */
+  const SC = {
+    get:  k => { try { return JSON.parse(localStorage.getItem('sc_'+k)); } catch(e){ return null; } },
+    set:  (k,v) => localStorage.setItem('sc_'+k, JSON.stringify(v)),
+    del:  k => localStorage.removeItem('sc_'+k),
+    creds:()=> SC.get('creds'),         // { appKey, appSecret, acctNum }
+    tokens:()=> SC.get('tokens'),        // { access, refresh, expiry, refreshExpiry }
+  };
+
+  /* ── UI helpers ── */
+  function schwabSetStatus(state, text){
+    const dot  = document.getElementById('schwabDot');
+    const txt  = document.getElementById('schwabStatusText');
+    const conn = document.getElementById('schwabConnectBtn');
+    const disc = document.getElementById('schwabDisconnectBtn');
+    const reau = document.getElementById('schwabReauthBtn');
+    dot.className  = 'schwab-dot ' + (state==='connected'?'connected':state==='connecting'?'connecting':state==='error'?'error':'');
+    txt.textContent = text;
+    conn.style.display = (state==='connected'||state==='connecting') ? 'none' : 'inline-block';
+    disc.style.display = state==='connected' ? 'inline-block' : 'none';
+    reau.style.display = state==='reauth'    ? 'inline-block' : 'none';
+  }
+
+  function schwabSetup(){
+    // Pre-fill if creds already saved
+    const c = SC.creds();
+    if(c){
+      document.getElementById('schwabAppKey').value    = c.appKey    || '';
+      document.getElementById('schwabAcctNum').value   = c.acctNum   || '';
+      // don't pre-fill secret for security
+    }
+    document.getElementById('schwabModal').style.display = 'flex';
+  }
+
+  function schwabDisconnect(){
+    SC.del('creds'); SC.del('tokens'); SC.del('verifier');
+    schwabSetStatus('', 'Schwab not connected');
+    document.getElementById('schwabConnectBtn').style.display = 'inline-block';
+  }
+
+  function schwabReauth(){
+    const c = SC.creds();
+    if(!c){ schwabSetup(); return; }
+    schwabStartOAuth(c.appKey, c.appSecret, c.acctNum);
+  }
+
+  /* ── Step 1: Start OAuth ── */
+  function schwabConnect(){
+    const appKey    = document.getElementById('schwabAppKey').value.trim();
+    const appSecret = document.getElementById('schwabAppSecret').value.trim();
+    const acctNum   = document.getElementById('schwabAcctNum').value.trim();
+    if(!appKey||!appSecret||!acctNum){
+      alert('Please fill in all three fields.');
+      return;
+    }
+    SC.set('creds', { appKey, appSecret, acctNum });
+    document.getElementById('schwabModal').style.display = 'none';
+    schwabStartOAuth(appKey, appSecret, acctNum);
+  }
+
+  function schwabStartOAuth(appKey, appSecret, acctNum){
+    // Store state for callback verification
+    const state = Math.random().toString(36).slice(2);
+    SC.set('oauthState', state);
+    const params = new URLSearchParams({
+      client_id:     appKey,
+      redirect_uri:  SCHWAB.REDIRECT,
+      response_type: 'code',
+      scope:         'readonly',
+      state:         state,
+    });
+    schwabSetStatus('connecting', 'Waiting for Schwab login…');
+    // Open Schwab login in same tab — it will redirect back with ?code=
+    window.location.href = `${SCHWAB.AUTH_URL}?${params}`;
+  }
+
+  /* ── Step 2: Handle OAuth callback (runs on page load if ?code= present) ── */
+  async function schwabHandleCallback(){
+    const urlParams = new URLSearchParams(window.location.search);
+    const code  = urlParams.get('code');
+    const state = urlParams.get('state');
+    if(!code) return false;
+
+    // Clean URL
+    window.history.replaceState({}, document.title, window.location.pathname);
+
+    const savedState = SC.get('oauthState');
+    if(state !== savedState){
+      schwabSetStatus('error', 'OAuth state mismatch — try again');
+      return true;
+    }
+    SC.del('oauthState');
+
+    schwabSetStatus('connecting', 'Exchanging token…');
+    const c = SC.creds();
+    if(!c){ schwabSetStatus('error', 'Credentials missing — reconnect'); return true; }
+
+    try{
+      const body = new URLSearchParams({
+        grant_type:   'authorization_code',
+        code:          code,
+        redirect_uri:  SCHWAB.REDIRECT,
+      });
+      const resp = await fetch(SCHWAB.TOKEN_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type':  'application/x-www-form-urlencoded',
+          'Authorization': 'Basic ' + btoa(`${c.appKey}:${c.appSecret}`),
+        },
+        body,
+      });
+      const data = await resp.json();
+      if(!data.access_token) throw new Error(data.error_description || 'Token exchange failed');
+
+      SC.set('tokens', {
+        access:        data.access_token,
+        refresh:       data.refresh_token,
+        expiry:        Date.now() + (data.expires_in * 1000),
+        refreshExpiry: Date.now() + (7 * 24 * 60 * 60 * 1000), // 7 days
+      });
+      schwabSetStatus('connected', 'Schwab connected ✓');
+      await schwabFetchHistorical();
+      schwabScheduleStream();
+      schwabCheckReauthWarning();
+    } catch(e){
+      schwabSetStatus('error', 'Auth failed: ' + e.message);
+    }
+    return true;
+  }
+
+  /* ── Step 3: Refresh access token silently ── */
+  async function schwabRefreshToken(){
+    const c = SC.creds(), t = SC.tokens();
+    if(!c||!t?.refresh) return false;
+    try{
+      const body = new URLSearchParams({
+        grant_type:    'refresh_token',
+        refresh_token:  t.refresh,
+      });
+      const resp = await fetch(SCHWAB.TOKEN_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type':  'application/x-www-form-urlencoded',
+          'Authorization': 'Basic ' + btoa(`${c.appKey}:${c.appSecret}`),
+        },
+        body,
+      });
+      const data = await resp.json();
+      if(!data.access_token) throw new Error('Refresh failed');
+      SC.set('tokens', {
+        access:        data.access_token,
+        refresh:       data.refresh_token || t.refresh,
+        expiry:        Date.now() + (data.expires_in * 1000),
+        refreshExpiry: t.refreshExpiry,
+      });
+      return true;
+    } catch(e){
+      return false;
+    }
+  }
+
+  async function schwabGetToken(){
+    let t = SC.tokens();
+    if(!t) return null;
+    // Refresh access token if within 2 minutes of expiry
+    if(Date.now() > t.expiry - 120000){
+      const ok = await schwabRefreshToken();
+      if(!ok) return null;
+      t = SC.tokens();
+    }
+    return t?.access || null;
+  }
+
+  /* ── Step 4: Fetch historical VIX data → pre-fill fields ── */
+  async function schwabFetchHistorical(){
+    schwabSetStatus('connecting', 'Fetching VIX data…');
+    const token = await schwabGetToken();
+    if(!token){ schwabSetStatus('error', 'Token expired — re-authenticate'); return; }
+
+    try{
+      // Get last 5 days of 1-min bars for VIX
+      const end   = new Date();
+      const start = new Date(end); start.setDate(start.getDate() - 5);
+      const url = `${SCHWAB.MARKET}/pricehistory?symbol=%24VIX.X&periodType=day&period=5&frequencyType=minute&frequency=1&startDate=${start.getTime()}&endDate=${end.getTime()}&needExtendedHoursData=true`;
+      const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      const data = await resp.json();
+      if(!data.candles || !data.candles.length) throw new Error('No VIX data returned');
+
+      const candles = data.candles;
+      const now = new Date();
+      const todayStr = now.toDateString();
+
+      // Find yesterday's trading day candles
+      let yOpen = null, yClose = null;
+      // Find yesterday's date (last trading day)
+      let yDate = null;
+      for(let i = candles.length-1; i >= 0; i--){
+        const d = new Date(candles[i].datetime);
+        if(d.toDateString() !== todayStr){
+          yDate = d.toDateString();
+          break;
+        }
+      }
+      if(yDate){
+        const yCandles = candles.filter(c => new Date(c.datetime).toDateString() === yDate);
+        // Sort by time
+        yCandles.sort((a,b) => a.datetime - b.datetime);
+        // Yesterday open = first candle of the day (9:30 AM open)
+        const openCandle = yCandles.find(c => {
+          const d = new Date(c.datetime);
+          return d.getHours() === 9 && d.getMinutes() >= 30 && d.getMinutes() <= 35;
+        });
+        // Yesterday close = 4:15 PM candle
+        const closeCandle = yCandles.slice().reverse().find(c => {
+          const d = new Date(c.datetime);
+          return (d.getHours() === 16 && d.getMinutes() >= 10) || d.getHours() > 16;
+        }) || yCandles[yCandles.length - 1];
+
+        if(openCandle)  yOpen  = openCandle.open.toFixed(2);
+        if(closeCandle) yClose = closeCandle.close.toFixed(2);
+      }
+
+      // Fill fields
+      if(yOpen){
+        const el = document.getElementById('yesterdayOpen');
+        el.value = yOpen;
+        el.title = 'Auto-filled from Schwab';
+        el.style.borderColor = '#22c55e';
+      }
+      if(yClose){
+        const el = document.getElementById('yesterdayClose');
+        el.value = yClose;
+        el.title = 'Auto-filled from Schwab';
+        el.style.borderColor = '#22c55e';
+      }
+
+      // If today already has a 9:30+ print, fill that too
+      const todayCandles = candles.filter(c => new Date(c.datetime).toDateString() === todayStr);
+      const todayOpen = todayCandles.find(c => {
+        const d = new Date(c.datetime);
+        return d.getHours() === 9 && d.getMinutes() >= 30;
+      });
+      if(todayOpen){
+        const el = document.getElementById('todayOpen');
+        el.value = todayOpen.open.toFixed(2);
+        el.style.borderColor = '#22c55e';
+        el.title = 'Auto-filled from Schwab';
+        calculateStrategy();
+      }
+
+      schwabSetStatus('connected', `Schwab connected ✓  ${yOpen ? `· Yesterday: Open ${yOpen} / Close ${yClose}` : ''}`);
+
+      // ── Fetch SPX data for gap check ──
+      try{
+        const spxUrl = `${SCHWAB.MARKET}/pricehistory?symbol=%24SPX.X&periodType=day&period=5&frequencyType=minute&frequency=1&startDate=${start.getTime()}&endDate=${end.getTime()}&needExtendedHoursData=true`;
+        const spxResp = await fetch(spxUrl, { headers: { Authorization: `Bearer ${token}` } });
+        const spxData = await spxResp.json();
+        if(spxData.candles && spxData.candles.length){
+          const spxCandles = spxData.candles;
+          // Yesterday's 4:15 PM close
+          let spxYClose = null, spxTodayOpen = null;
+          if(yDate){
+            const spxYCandles = spxCandles.filter(c => new Date(c.datetime).toDateString() === yDate);
+            spxYCandles.sort((a,b) => a.datetime - b.datetime);
+            const spxCloseCandle = spxYCandles.slice().reverse().find(c => {
+              const d = new Date(c.datetime);
+              return (d.getHours() === 16 && d.getMinutes() >= 10) || d.getHours() > 16;
+            }) || spxYCandles[spxYCandles.length - 1];
+            if(spxCloseCandle) spxYClose = spxCloseCandle.close;
+          }
+          // Today's 9:30 open
+          const spxTodayCandles = spxCandles.filter(c => new Date(c.datetime).toDateString() === todayStr);
+          const spxOpenCandle = spxTodayCandles.find(c => {
+            const d = new Date(c.datetime);
+            return d.getHours() === 9 && d.getMinutes() >= 30;
+          });
+          if(spxOpenCandle) spxTodayOpen = spxOpenCandle.open;
+          // Store for gap check
+          if(spxYClose) SC.set('spx', { yClose: spxYClose, todayOpen: spxTodayOpen });
+        }
+      } catch(e){ /* SPX fetch failed silently — gap check just won't fire */ }
+
+    } catch(e){
+      schwabSetStatus('error', 'Data fetch failed: ' + e.message);
+    }
+  }
+
+  /* ── Step 5: Schedule live stream at 9:30 AM ET ── */
+  let _schwabStreamInterval = null;
+
+  function schwabScheduleStream(){
+    // Calculate ms until next 9:30 AM ET
+    const now = new Date();
+    const etOffset = -5; // EST (adjust to -4 for EDT — JS handles this automatically via toLocaleString)
+    const etNow = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const etTarget = new Date(etNow);
+    etTarget.setHours(9, 30, 0, 0);
+
+    let msUntil = etTarget - etNow;
+    if(msUntil < 0) msUntil += 24 * 60 * 60 * 1000; // already past — schedule for tomorrow
+
+    // If market is closed today (weekend/holiday), don't bother
+    if(!isTradingDay(new Date())) return;
+
+    schwabSetStatus('connected', `Schwab connected ✓ · Stream starts at 9:30 AM ET`);
+
+    setTimeout(()=>{
+      schwabSetStatus('connecting', 'Waiting for VIX open print…');
+      schwabStartPolling();
+    }, msUntil);
+  }
+
+  function schwabStartPolling(){
+    // Poll every 10 seconds between 9:30 and 9:40 AM ET for the first print
+    let attempts = 0;
+    const maxAttempts = 60; // 10 minutes max
+
+    _schwabStreamInterval = setInterval(async ()=>{
+      attempts++;
+      if(attempts > maxAttempts){
+        clearInterval(_schwabStreamInterval);
+        schwabSetStatus('connected', 'Schwab connected ✓ · Stream timed out — enter manually');
+        return;
+      }
+
+      const token = await schwabGetToken();
+      if(!token){ clearInterval(_schwabStreamInterval); return; }
+
+      try{
+        const url = `${SCHWAB.MARKET}/quotes?symbols=%24VIX.X&fields=quote`;
+        const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+        const data = await resp.json();
+        const quote = data?.['$VIX.X']?.quote;
+        if(!quote) return;
+
+        const openPrice = quote.openPrice || quote.lastPrice;
+        if(!openPrice) return;
+
+        // Check it's a fresh today print (after 9:30 AM)
+        const etNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+        if(etNow.getHours() < 9 || (etNow.getHours() === 9 && etNow.getMinutes() < 30)) return;
+
+        // Got it — fill and calculate
+        clearInterval(_schwabStreamInterval);
+        const el = document.getElementById('todayOpen');
+        el.value = openPrice.toFixed(2);
+        el.style.borderColor = '#22c55e';
+        el.title = 'Auto-filled from Schwab live';
+
+        // Also fetch SPX open for gap check
+        try{
+          const spxUrl = `${SCHWAB.MARKET}/quotes?symbols=%24SPX.X&fields=quote`;
+          const spxR = await fetch(spxUrl, { headers: { Authorization: `Bearer ${token}` } });
+          const spxD = await spxR.json();
+          const spxQ = spxD?.['$SPX.X']?.quote;
+          if(spxQ){
+            const existing = SC.get('spx') || {};
+            SC.set('spx', { yClose: existing.yClose, todayOpen: spxQ.openPrice || spxQ.lastPrice });
+          }
+        } catch(e){ /* silent */ }
+
+        const timeStr = etNow.toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+        document.getElementById('schwabAutoLabel').style.display = 'inline';
+        document.getElementById('schwabAutoTime').textContent    = timeStr + ' ET';
+        schwabSetStatus('connected', `Schwab connected ✓ · Auto-calculated at ${timeStr} ET`);
+
+        calculateStrategy();
+        // Auto-post to Discord if configured
+        setTimeout(discordAutoPost, 500); // small delay to let cards render first
+      } catch(e){ /* silent — try again next interval */ }
+    }, 10000); // every 10 seconds
+  }
+
+  /* ── Re-auth warning ── */
+  function schwabCheckReauthWarning(){
+    const t = SC.tokens();
+    if(!t) return;
+    const daysLeft = (t.refreshExpiry - Date.now()) / (1000 * 60 * 60 * 24);
+    if(daysLeft <= 1){
+      schwabSetStatus('reauth', `⚠️ Schwab token expires in ${daysLeft < 1 ? 'less than 24 hours' : '~1 day'} — re-authenticate`);
+      document.getElementById('schwabReauthBtn').style.display = 'inline-block';
+    }
+  }
+
+  /* ── Init on page load ── */
+  async function schwabInit(){
+    // Handle OAuth callback first
+    const wasCallback = await schwabHandleCallback();
+    if(wasCallback) return;
+
+    const c = SC.creds(), t = SC.tokens();
+    if(!c || !t){
+      schwabSetStatus('', 'Schwab not connected');
+      return;
+    }
+
+    // Check refresh token not expired
+    if(Date.now() > t.refreshExpiry){
+      schwabSetStatus('reauth', '⚠️ Schwab token expired — re-authenticate');
+      document.getElementById('schwabReauthBtn').style.display = 'inline-block';
+      document.getElementById('schwabConnectBtn').style.display = 'none';
+      return;
+    }
+
+    schwabSetStatus('connecting', 'Connecting to Schwab…');
+    const token = await schwabGetToken();
+    if(!token){
+      schwabSetStatus('reauth', '⚠️ Could not refresh token — re-authenticate');
+      document.getElementById('schwabReauthBtn').style.display = 'inline-block';
+      return;
+    }
+
+    schwabSetStatus('connected', 'Schwab connected ✓');
+    await schwabFetchHistorical();
+    schwabScheduleStream();
+    schwabCheckReauthWarning();
+  }
+
+  /* ====================================================
+     DISCORD BOT INTEGRATION
+     Bot posts signal to a channel via Discord REST API
+     Token + Channel ID stored in localStorage (hidden)
+  ==================================================== */
+
+  const DC = {
+    get:  k => { try{ return JSON.parse(localStorage.getItem('dc_'+k)); }catch(e){ return null; } },
+    set:  (k,v) => localStorage.setItem('dc_'+k, JSON.stringify(v)),
+    del:  k => localStorage.removeItem('dc_'+k),
+  };
+
+  function discordSetStatus(state, text){
+    const dot  = document.getElementById('discordDot');
+    const txt  = document.getElementById('discordStatusText');
+    const setup= document.getElementById('discordSetupBtn');
+    const test = document.getElementById('discordTestBtn');
+    const disc = document.getElementById('discordDisconnectBtn');
+    dot.className  = 'schwab-dot ' + (state==='connected'?'connected':state==='error'?'error':'');
+    txt.textContent = text;
+    setup.style.display = state==='connected' ? 'none'         : 'inline-block';
+    test.style.display  = state==='connected' ? 'inline-block' : 'none';
+    disc.style.display  = state==='connected' ? 'inline-block' : 'none';
+  }
+
+  function discordSetup(){
+    const saved = DC.get('config');
+    if(saved){
+      document.getElementById('discordChannelId').value = saved.channelId || '';
+      // don't pre-fill token
+    }
+    document.getElementById('discordModal').style.display = 'flex';
+  }
+
+  function discordSave(){
+    const token     = document.getElementById('discordToken').value.trim();
+    const channelId = document.getElementById('discordChannelId').value.trim();
+    if(!token || !channelId){ alert('Please fill in both fields.'); return; }
+    DC.set('config', { token, channelId });
+    document.getElementById('discordModal').style.display = 'none';
+    discordStatus();
+  }
+
+  function discordDisconnect(){
+    DC.del('config');
+    discordSetStatus('', 'Discord bot not configured');
+  }
+
+  function discordStatus(){
+    const c = DC.get('config');
+    if(!c) { discordSetStatus('', 'Discord bot not configured'); return; }
+    discordSetStatus('connected', 'Discord bot configured ✓');
+  }
+
+  /* Build the signal message (same format as Copy) */
+  function discordBuildMessage(){
+    const m8bf  = document.getElementById('m8bfRec').textContent;
+    const m8bfR = document.getElementById('m8bfReason').textContent;
+    const strad = document.getElementById('stradRec').textContent;
+    const gxbf  = document.getElementById('gxbfRec').textContent;
+    const bobf  = document.getElementById('bobfRec').textContent;
+    const grid  = document.getElementById('strikeGrid');
+    const strikes = grid ? Array.from(grid.children).map(p=>p.textContent).join('  ') : '';
+    const date  = document.getElementById('todayDate').textContent;
+    const day   = document.getElementById('dayLabel').textContent;
+
+    let inner = `📅 ${date} — ${day}\n`;
+    inner += `${'─'.repeat(32)}\n`;
+    // Add SPX gap if available
+    const spxStored = SC ? SC.get('spx') : null;
+    if(spxStored && spxStored.yClose && spxStored.todayOpen){
+      const gap = ((spxStored.todayOpen - spxStored.yClose) / spxStored.yClose * 100);
+      const dir = gap > 0 ? '▲' : '▼';
+      inner += `SPX Gap  | ${dir}${Math.abs(gap).toFixed(2)}%${Math.abs(gap) >= 0.9 ? ' ⚠️ M8BF forced' : ''}\n`;
+    }
+    inner += `M8BF     │ ${m8bf}\n`;
+    if(m8bfR) inner += `         │ ${m8bfR}\n`;
+    inner += `Straddle │ ${strad}\n`;
+    inner += `GXBF     │ ${gxbf}\n`;
+    inner += `BOBF     │ ${bobf}\n`;
+    if(strikes.trim()){
+      inner += `${'─'.repeat(32)}\n`;
+      inner += `Strikes  │ ${strikes.trim()}\n`;
+    }
+    return `\`\`\`\n${inner}\`\`\`\n*Not financial advice. For informational purposes only.*`;
+  }
+
+  /* Post as DM to user via bot token */
+  async function discordPost(message){
+    const c = DC.get('config');
+    if(!c) return false;
+    try{
+      // Step 1: Create a DM channel with the user
+      const dmResp = await fetch(`https://discord.com/api/v10/users/@me/channels`, {
+        method: 'POST',
+        headers: {
+          'Content-Type':  'application/json',
+          'Authorization': `Bot ${c.token}`,
+        },
+        body: JSON.stringify({ recipient_id: c.channelId }), // channelId field stores userId
+      });
+      if(!dmResp.ok){
+        const err = await dmResp.json();
+        throw new Error(err.message || `DM create failed: ${dmResp.status}`);
+      }
+      const dm = await dmResp.json();
+      const dmChannelId = dm.id;
+
+      // Step 2: Send message to the DM channel
+      const msgResp = await fetch(`https://discord.com/api/v10/channels/${dmChannelId}/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type':  'application/json',
+          'Authorization': `Bot ${c.token}`,
+        },
+        body: JSON.stringify({ content: message }),
+      });
+      if(!msgResp.ok){
+        const err = await msgResp.json();
+        throw new Error(err.message || `Send failed: ${msgResp.status}`);
+      }
+      return true;
+    } catch(e){
+      discordSetStatus('error', `Discord error: ${e.message}`);
+      return false;
+    }
+  }
+
+  /* Test post */
+  async function discordTest(){
+    discordSetStatus('connected', 'Posting test message…');
+    const msg = discordBuildMessage();
+    const ok  = await discordPost(msg);
+    if(ok) discordSetStatus('connected', 'Discord bot configured ✓ · Test posted!');
+  }
+
+  /* Auto-post after calculate — called by calculateStrategy when Schwab auto-fills */
+  async function discordAutoPost(){
+    const c = DC.get('config');
+    if(!c) return; // not configured — skip silently
+    const msg = discordBuildMessage();
+    await discordPost(msg);
+  }
+
   document.addEventListener('DOMContentLoaded',()=>{
     initTheme();
     renderSched(cpiSch,  'cpiSchedule');
@@ -1268,6 +2012,8 @@ flowchart TD
     refreshCross(); buildStatus(); buildNextEvents(); updateHeader();
     document.getElementById('yesterdayOpen').disabled=isCpi();
     loadInputs(); // #7: restore today's inputs if available
+    schwabInit(); // Schwab integration
+    discordStatus(); // Discord bot status
     document.getElementById('resultDayLabel').textContent=tradeWdLabel();
 
     const det=document.getElementById('scheduleDetails');
