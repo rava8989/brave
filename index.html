@@ -1,1146 +1,1102 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>VIX Strategy Helper</title>
+  <title>Σ3 — VIX Strategy Helper</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 
   <script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
-    mermaid.initialize({ startOnLoad: true });
+    window._mermaidInit = () => {
+      const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: dark ? 'dark' : 'default',
+      });
+      document.querySelectorAll('.mermaid').forEach(el => {
+        const code = el.getAttribute('data-src') || el.textContent;
+        el.removeAttribute('data-processed');
+        el.textContent = code;
+        el.setAttribute('data-src', code);
+      });
+      mermaid.run({ nodes: document.querySelectorAll('.mermaid') });
+    };
+    window._mermaidInit();
   </script>
 
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      background: #f9f9f9;
-      margin: 0;
-      padding: 0;
-      display: flex;
-      flex-direction: row;
+    :root {
+      --bg:#f1f5f9; --bg2:#ffffff; --bg3:#f8fafc;
+      --sidebar-bg:#ffffff; --border:#e2e8f0;
+      --text:#1e293b; --text2:#475569; --text3:#94a3b8;
+      --accent:#6366f1; --accent2:#818cf8;
+      --shadow:0 1px 3px rgba(0,0,0,.08),0 4px 16px rgba(0,0,0,.06);
+      --shadow-lg:0 8px 32px rgba(0,0,0,.12);
+      --radius:12px; --radius-sm:8px;
+      --col-m8bf:#7c3aed;   --col-m8bf-bg:#ede9fe;
+      --col-strad:#0891b2;  --col-strad-bg:#cffafe;
+      --col-gxbf:#b45309;   --col-gxbf-bg:#fef3c7;
+      --col-block:#dc2626;  --col-block-bg:#fee2e2;
+      --tag-cpi:#7c3aed;    --tag-cpi-bg:#ede9fe;
+      --tag-fed:#0369a1;    --tag-fed-bg:#e0f2fe;
+      --tag-opex:#c2410c;   --tag-opex-bg:#ffedd5;
+      --tag-postopex:#065f46; --tag-postopex-bg:#d1fae5;
+      --tag-holiday:#6b21a8; --tag-holiday-bg:#f3e8ff;
+      --tag-eom:#9f1239;    --tag-eom-bg:#ffe4e6;
     }
-    .sidebar {
-      width: 250px;
-      background: #fff;
-      padding: 15px;
-      border-right: 1px solid #ccc;
-      box-shadow: 2px 0 5px rgba(0,0,0,0.1);
-      height: 100vh;
-      box-sizing: border-box;
-      overflow-y: auto;
+    [data-theme="dark"] {
+      --bg:#0f172a; --bg2:#1e293b; --bg3:#162032;
+      --sidebar-bg:#161f30; --border:#2d3f55;
+      --text:#e2e8f0; --text2:#94a3b8; --text3:#475569;
+      --accent:#818cf8; --accent2:#6366f1;
+      --shadow:0 1px 3px rgba(0,0,0,.3),0 4px 16px rgba(0,0,0,.25);
+      --shadow-lg:0 8px 32px rgba(0,0,0,.4);
+      --col-m8bf:#a78bfa;   --col-m8bf-bg:#1e1340;
+      --col-strad:#22d3ee;  --col-strad-bg:#0c2233;
+      --col-gxbf:#fbbf24;   --col-gxbf-bg:#231a06;
+      --col-block:#f87171;  --col-block-bg:#2d0e0e;
+      --tag-cpi:#a78bfa;    --tag-cpi-bg:#1e1340;
+      --tag-fed:#38bdf8;    --tag-fed-bg:#082030;
+      --tag-opex:#fb923c;   --tag-opex-bg:#231206;
+      --tag-postopex:#34d399; --tag-postopex-bg:#052016;
+      --tag-holiday:#c084fc; --tag-holiday-bg:#1a0a28;
+      --tag-eom:#fb7185;    --tag-eom-bg:#2d0614;
     }
-    .sidebar h2 { font-size: 16px; margin-top: 0; }
-    .sidebar ul { padding-left: 18px; margin-top: 6px; margin-bottom: 18px; }
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+    body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);display:flex;min-height:100vh;transition:background .2s,color .2s;}
 
-    .sidebar details summary {
-      cursor: pointer;
-      padding: 8px 0;
-      font-size: 16px;
+    /* SIDEBAR */
+    .sidebar{width:260px;min-width:260px;background:var(--sidebar-bg);border-right:1px solid var(--border);height:100vh;position:sticky;top:0;overflow-y:auto;display:flex;flex-direction:column;transition:background .2s,border-color .2s;}
+    .sidebar-header{padding:16px 14px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
+    .logo{font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:var(--accent);}
+    .logo span{color:var(--text2);font-size:12px;font-family:'Inter',sans-serif;font-weight:400;margin-left:4px;}
+    .theme-toggle{background:var(--bg);border:1px solid var(--border);border-radius:20px;width:42px;height:22px;cursor:pointer;position:relative;transition:background .2s;flex-shrink:0;}
+    .theme-toggle::after{content:'';position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:var(--accent);transition:transform .2s;}
+    [data-theme="light"] .theme-toggle::after{transform:translateX(20px);}
+    .theme-toggle-wrap{text-align:center;}
+    .theme-label{font-size:10px;color:var(--text3);margin-top:1px;}
+
+    /* STATUS BAR */
+    .status-bar{padding:8px 12px;border-bottom:1px solid var(--border);background:var(--bg3);display:flex;flex-wrap:wrap;gap:4px;}
+    .status-bar-title{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);width:100%;margin-bottom:3px;}
+
+    /* SCHEDULE ITEMS */
+    .sidebar details{border-bottom:1px solid var(--border);}
+    .sidebar details summary{cursor:pointer;padding:10px 14px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);user-select:none;list-style:none;display:flex;align-items:center;gap:6px;}
+    .sidebar details summary::before{content:'▶';font-size:8px;transition:transform .15s;}
+    .sidebar details[open] summary::before{transform:rotate(90deg);}
+    .sidebar h2{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);padding:8px 14px 2px;}
+    .schedule-list{list-style:none;padding:0 8px 6px;}
+    .schedule-list li{display:flex;align-items:flex-start;justify-content:space-between;padding:4px 8px;border-radius:6px;font-size:11px;color:var(--text2);margin:2px 0;gap:6px;}
+    .schedule-list li:hover{background:var(--bg);}
+    .schedule-list li.crossed{opacity:.3;text-decoration:line-through;}
+    .schedule-list li.today-highlight{background:var(--accent);color:#fff;font-weight:600;}
+    .schedule-list li.today-highlight .cdown{background:rgba(255,255,255,.2);color:#fff;border-color:transparent;}
+    .cdown{font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;padding:1px 5px;border-radius:8px;background:var(--bg);color:var(--text3);border:1px solid var(--border);flex-shrink:0;}
+    .cdown.soon{background:var(--tag-eom-bg);color:var(--tag-eom);border-color:var(--tag-eom);}
+    .cdown.today-badge{background:var(--accent);color:#fff;border-color:var(--accent);}
+
+    /* MAIN */
+    .main{flex:1;padding:22px 26px;min-width:0;}
+    .top-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:8px;}
+    .top-header h1{font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700;}
+    .top-header h1 span{color:var(--accent);}
+    .date-pill{font-size:12px;color:var(--text2);background:var(--bg2);border:1px solid var(--border);border-radius:20px;padding:4px 12px;font-family:'JetBrains Mono',monospace;}
+    .date-pill strong{color:var(--accent);}
+
+    /* CALC ROW */
+    .calcRow{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px;}
+    .card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px;transition:background .2s,border-color .2s;}
+    .winrateBox{width:200px;}
+    .winrateBox h3{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);margin-bottom:10px;line-height:1.4;}
+    .winrateBox label{display:flex;align-items:center;gap:8px;margin:8px 0;font-size:13px;cursor:pointer;}
+    .winrateBox input[type="checkbox"]{width:15px;height:15px;accent-color:var(--accent);cursor:pointer;flex-shrink:0;}
+    .calculator{width:274px;}
+    .calculator h2{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:6px;}
+    .calculator h2 .sig{color:var(--accent);font-size:17px;}
+    .fg{margin-bottom:8px;}
+    .fg label{display:block;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);margin-bottom:3px;}
+    .fg input{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:'JetBrains Mono',monospace;font-size:14px;padding:7px 9px;outline:none;transition:border-color .15s,background .2s;}
+    .fg input:focus{border-color:var(--accent);}
+    .fg input:disabled{opacity:.35;cursor:not-allowed;}
+    .fg input::placeholder{color:var(--text3);}
+    .fe{font-size:10px;color:var(--col-block);min-height:13px;display:block;margin-top:2px;}
+    .btn-row{display:flex;gap:8px;margin-top:10px;}
+    .btn-p{flex:1;background:var(--accent);color:#fff;border:none;border-radius:var(--radius-sm);font-size:13px;font-weight:600;padding:8px 0;cursor:pointer;transition:opacity .15s,transform .1s;font-family:'Inter',sans-serif;}
+    .btn-p:hover{opacity:.85;transform:translateY(-1px);}
+    .btn-s{background:var(--bg3);color:var(--text2);border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-weight:500;padding:8px 12px;cursor:pointer;transition:background .15s;font-family:'Inter',sans-serif;}
+    .btn-s:hover{background:var(--bg);}
+
+    /* METRICS BAR */
+    .metrics-bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;padding:9px 13px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);font-size:12px;}
+    .mi{display:flex;align-items:center;gap:5px;}
+    .ml{color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;}
+    .mv{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:15px;color:var(--text);}
+    .mv.up{color:#ef4444;} .mv.dn{color:#22c55e;}
+    .msep{color:var(--border);}
+
+    /* TAGS */
+    .tag{display:inline-flex;align-items:center;padding:2px 7px;border-radius:20px;font-size:11px;font-weight:600;border:1px solid transparent;white-space:nowrap;}
+    .tag-cpi{background:var(--tag-cpi-bg);color:var(--tag-cpi);border-color:var(--tag-cpi);}
+    .tag-fed{background:var(--tag-fed-bg);color:var(--tag-fed);border-color:var(--tag-fed);}
+    .tag-opex{background:var(--tag-opex-bg);color:var(--tag-opex);border-color:var(--tag-opex);}
+    .tag-postopex{background:var(--tag-postopex-bg);color:var(--tag-postopex);border-color:var(--tag-postopex);}
+    .tag-holiday{background:var(--tag-holiday-bg);color:var(--tag-holiday);border-color:var(--tag-holiday);}
+    .tag-eom{background:var(--tag-eom-bg);color:var(--tag-eom);border-color:var(--tag-eom);}
+
+    /* SIGNAL CARD */
+    #recBlock{margin:0 0 6px;border-radius:var(--radius);border:2px solid var(--border);overflow:hidden;box-shadow:var(--shadow-lg);transition:border-color .2s,background .2s;}
+    .sig-header{display:flex;align-items:center;justify-content:space-between;padding:9px 14px;border-bottom:1px solid rgba(255,255,255,.07);background:rgba(0,0,0,.15);flex-wrap:wrap;gap:6px;}
+    .sig-badge{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:3px 10px;border-radius:20px;background:rgba(255,255,255,.14);color:inherit;}
+    .sig-time{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;opacity:.8;}
+    .copy-btn{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.18);border-radius:6px;color:inherit;font-size:11px;font-weight:600;padding:3px 10px;cursor:pointer;font-family:'Inter',sans-serif;transition:background .15s;}
+    .copy-btn:hover{background:rgba(255,255,255,.22);}
+    .sig-body{padding:13px 15px 12px;}
+    .sig-main{font-family:'JetBrains Mono',monospace;font-size:clamp(14px,1.9vw,21px);font-weight:700;line-height:1.3;margin-bottom:7px;}
+    .sig-bobf{font-size:clamp(12px,1.5vw,15px);font-family:'JetBrains Mono',monospace;opacity:.82;margin-bottom:5px;}
+    .sig-reason{font-size:12px;opacity:.75;font-style:italic;margin-top:5px;}
+    .crossed{text-decoration:line-through;opacity:.5;}
+    .block-hard{color:#fca5a5;} .block-vix{color:#fcd34d;}
+
+    /* STRIKE GRID */
+    .sg-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;opacity:.6;margin-top:9px;margin-bottom:4px;}
+    .sg{display:flex;flex-wrap:wrap;gap:4px;}
+    .sp{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;padding:3px 8px;border-radius:5px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.16);color:inherit;}
+    .sp.lwr{background:rgba(220,38,38,.2);border-color:rgba(220,38,38,.45);text-decoration:line-through;opacity:.55;}
+
+    /* Signal themes */
+    #recBlock.th-m8bf  {background:var(--col-m8bf-bg); border-color:var(--col-m8bf); color:var(--col-m8bf);}
+    #recBlock.th-strad {background:var(--col-strad-bg);border-color:var(--col-strad);color:var(--col-strad);}
+    #recBlock.th-gxbf  {background:var(--col-gxbf-bg); border-color:var(--col-gxbf); color:var(--col-gxbf);}
+    #recBlock.th-block {background:var(--col-block-bg);border-color:var(--col-block);color:var(--col-block);}
+    #recBlock.th-neutral{background:var(--bg2);border-color:var(--border);color:var(--text);}
+
+    #resultDayLabel{text-align:right;font-size:11px;color:var(--text3);margin-bottom:14px;font-family:'JetBrains Mono',monospace;}
+
+    /* FLOWCHART */
+    .flowchart{margin:18px 0;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:14px;overflow-x:auto;}
+    .fc-title{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);margin-bottom:10px;}
+
+    /* STRATEGY DOC */
+    .strategy-doc{background:var(--bg2);border:1px solid var(--border);padding:22px;margin:0 0 60px;border-radius:var(--radius);box-shadow:var(--shadow);text-align:left;line-height:1.6;color:var(--text);}
+    .strategy-doc h2{font-size:17px;margin:0 0 10px;font-family:'JetBrains Mono',monospace;color:var(--accent);}
+    .strategy-doc h3{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin:20px 0 7px;color:var(--text2);}
+    .strategy-doc ul{margin:5px 0 10px 18px;}
+    .strategy-doc li{margin:3px 0;font-size:13px;}
+    .strategy-doc a{color:var(--accent);}
+    .strategy-doc strong{color:var(--text);}
+    .muted-note{font-size:12px;color:var(--text3);margin-top:8px;}
+    hr.divider{margin:18px 0;border:none;border-top:1px solid var(--border);}
+    .strategy-image{margin:10px 0 5px;}
+    .strategy-image img{max-width:min(100%, 600px);height:auto;display:block;border-radius:var(--radius-sm);border:1px solid var(--border);cursor:pointer;}
+    .strategy-image img:hover{max-width:100%;}
+
+    /* Next events panel */
+    #nextEventsBar{border-bottom:1px solid var(--border);background:var(--bg3);}
+    .next-event-row{display:flex;align-items:center;justify-content:space-between;padding:3px 8px;border-radius:6px;font-size:11px;gap:6px;}
+    .next-event-row:hover{background:var(--bg);}
+    .ne-label{color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px;}
+    .ne-badge{font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;flex-shrink:0;}
+    .ne-badge.soon{background:var(--tag-eom-bg);color:var(--tag-eom);border:1px solid var(--tag-eom);}
+    .ne-badge.near{background:var(--tag-opex-bg);color:var(--tag-opex);border:1px solid var(--tag-opex);}
+    .ne-badge.far{background:var(--bg);color:var(--text3);border:1px solid var(--border);}
+
+    /* #8: Print styles */
+    @media print {
+      body{background:#fff;color:#000;display:block;}
+      .sidebar{display:none;}
+      .main{padding:10px;}
+      .calcRow,.metrics-bar,.flowchart,.strategy-doc,#resultDayLabel{display:none;}
+      #recBlock{border:2px solid #333;box-shadow:none;border-radius:8px;color:#000 !important;background:#f9f9f9 !important;}
+      #recBlock .sig-header{background:#eee !important;border-bottom:1px solid #ccc;}
+      #recBlock .sig-badge{background:#ddd;color:#000;}
+      #recBlock .copy-btn,#recBlock #printBtn{display:none;}
+      .top-header{margin-bottom:8px;}
+      .date-pill{border:1px solid #ccc;background:#f0f0f0;color:#333;}
+      .top-header h1{color:#000;}
+      .crossed{color:#999;}
+      .block-hard{color:#c00;}
+      .block-vix{color:#a60;}
+      .sp{background:#eee;border:1px solid #ccc;color:#000;}
+      .sp.lwr{background:#fdd;border-color:#c00;}
     }
-    .sidebar details { user-select: none; }
 
-    .main { flex: 1; text-align: center; padding: 20px; }
-
-    /* Calculator row with left checkboxes */
-    .calcRow {
-      display: flex;
-      gap: 12px;
-      align-items: stretch;
-      justify-content: center;
-      flex-wrap: wrap;
-      margin-bottom: 10px;
-    }
-
-    .winrateBox {
-      background: #fff;
-      border-radius: 8px;
-      box-shadow: 0 0 5px #ccc;
-      padding: 12px;
-      width: 220px;
-      text-align: left;
-      box-sizing: border-box;
-    }
-    .winrateBox h3 {
-      margin: 0 0 10px 0;
-      font-size: 14px;
-      color: #333;
-    }
-    .winrateBox label {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin: 8px 0;
-      font-size: 14px;
-      cursor: pointer;
-    }
-    .winrateBox input[type="checkbox"] {
-      width: 18px;
-      height: 18px;
-      cursor: pointer;
-    }
-
-    .calculator {
-      background: #fff;
-      padding: 15px;
-      border-radius: 8px;
-      box-shadow: 0 0 5px #ccc;
-      max-width: 300px;
-      width: 300px;
-      box-sizing: border-box;
-    }
-
-    label { display: block; margin-top: 10px; }
-    input { width: 100%; margin-top: 5px; margin-bottom: 10px; }
-    input:disabled { opacity: 0.6; cursor: not-allowed; }
-    button { width: 100%; padding: 8px; margin-top: 10px; }
-
-    /* Unified recommendation block */
-    #recBlock {
-      margin: 20px auto 6px auto;
-      padding: 15px;
-      max-width: 880px;
-      border-radius: 8px;
-      box-shadow: 0 0 5px #ccc;
-      color: #333;
-      text-align: left;
-      line-height: 1.35;
-      font-size: 28px;
-      background: #eee;
-    }
-    #recBlock .row { margin: 6px 0; }
-    #recBlock .mainline { font-weight: bold; }
-
-    /* small label under results */
-    #resultDayLabel {
-      max-width: 880px;
-      margin: 0 auto 10px auto;
-      text-align: right;
-      font-size: 12px;
-      color: #888;
-    }
-
-    .flowchart { margin: 20px auto; max-width: 100%; overflow-x: auto; }
-    .tag {
-      display: inline-block;
-      padding: 2px 6px;
-      border-radius: 6px;
-      font-size: 11px;
-      border: 1px solid #ccc;
-      color: #555;
-      margin-left: 6px;
-      background: #fafafa;
-    }
-
-    /* Bottom strategy section */
-    .strategy-doc {
-      background: #fff;
-      padding: 20px;
-      margin: 20px auto 60px auto;
-      max-width: 900px;
-      border-radius: 10px;
-      box-shadow: 0 0 5px #ccc;
-      text-align: left;
-      line-height: 1.5;
-    }
-    .strategy-doc h2 { font-size: 20px; margin: 0 0 10px 0; }
-    .strategy-doc h3 { font-size: 16px; margin: 18px 0 8px 0; color: #333; }
-    .strategy-doc ul { margin: 6px 0 12px 22px; }
-    .strategy-doc li { margin: 2px 0; }
-
-    .muted-note { font-size: 12px; color: #666; margin-top: 6px; }
-    .divider { margin: 16px 0; text-align: center; color: #999; letter-spacing: 2px; }
-
-    .crossed { text-decoration: line-through; color: #999; }
-
-    .strategy-image { margin: 12px 0 6px 0; }
-    .strategy-image img {
-      max-width: 100%;
-      height: auto;
-      display: block;
-      margin: 8px 0 0 0;
-      border-radius: 10px;
-      box-shadow: 0 0 5px #ccc;
-    }
-
-    /* ---------- Mobile improvements ---------- */
-    @media (max-width: 900px) {
-      body { flex-direction: column; }
-
-      .sidebar {
-        width: 100%;
-        height: auto;
-        border-right: none;
-        border-bottom: 1px solid #ccc;
-        box-shadow: none;
-        position: static;
-        overflow: visible;
-      }
-
-      .main { padding: 12px; }
-
-      .calculator {
-        max-width: 100%;
-        width: 100%;
-        margin: 0 auto 12px auto;
-      }
-
-      .winrateBox {
-        width: 100%;
-        max-width: 520px;
-      }
-
-      #recBlock {
-        max-width: 100%;
-        font-size: 20px;
-        padding: 12px;
-      }
-
-      #resultDayLabel {
-        max-width: 100%;
-        padding: 0 2px;
-      }
-
-      .strategy-doc {
-        max-width: 100%;
-        margin: 12px auto 40px auto;
-        padding: 14px;
-      }
-
-      input, button {
-        font-size: 16px; /* prevents iOS zoom */
-        padding: 10px;
-      }
-
-      .strategy-doc, #recBlock { word-break: break-word; }
+    @media(max-width:860px){
+      body{flex-direction:column;}
+      .sidebar{width:100%;min-width:0;height:auto;position:static;border-right:none;border-bottom:1px solid var(--border);}
+      .main{padding:12px;}
+      .calculator,.winrateBox{width:100%;max-width:100%;}
+      .calcRow{flex-direction:column;gap:10px;}
+      input,button{font-size:16px;padding:10px;}
+      .metrics-bar{gap:8px;padding:8px 10px;font-size:12px;}
+      .mv{font-size:13px;}
+      #recBlock{border-radius:10px;}
+      .sig-header{padding:8px 12px;gap:6px;}
+      .sig-body{padding:10px 12px 10px;}
+      .sig-main{font-size:clamp(13px,4vw,18px);}
+      .sig-bobf{font-size:clamp(11px,3.5vw,14px);}
+      .strategy-doc{padding:14px;}
+      .strategy-image img{max-width:100%;}
+      .top-header h1{font-size:15px;}
+      .date-pill{font-size:11px;padding:3px 10px;}
+      .sg{gap:5px;}
+      .sp{font-size:11px;padding:2px 7px;}
+      .flowchart{padding:10px;}
     }
   </style>
 </head>
-
 <body>
 
-  <div class="sidebar">
-    <!-- schedules collapse on mobile by JS -->
-    <details id="scheduleDetails">
-      <summary><strong>Schedules</strong></summary>
-
-      <h2>CPI Schedule</h2>
-      <ul id="cpiSchedule"></ul>
-
-      <h2>Fed Day Schedule</h2>
-      <ul id="fedSchedule"></ul>
-
-      <h2>OPEX Days</h2>
-      <ul id="opexSchedule"></ul>
-
-      <h2>Market Holidays</h2>
-      <ul id="holidaySchedule"></ul>
-
-      <h2>VIX Expiration</h2>
-      <ul id="vixExpirySchedule"></ul>
-    </details>
+<!-- SIDEBAR -->
+<aside class="sidebar">
+  <div class="sidebar-header">
+    <div class="logo">Σ3 <span>Strategy</span></div>
+    <div class="theme-toggle-wrap">
+      <button class="theme-toggle" id="themeToggle" title="Toggle theme"></button>
+      <div class="theme-label" id="themeLabel">Light</div>
+    </div>
   </div>
 
-  <div class="main">
+  <div class="status-bar" id="statusBar">
+    <div class="status-bar-title">Today's Flags</div>
+    <span style="font-size:11px;color:var(--text3);font-style:italic;" id="statusClear">Loading…</span>
+  </div>
 
-    <div class="calcRow">
-      <!-- Win rate checkboxes -->
-      <div class="winrateBox">
-        <h3>Win rate override (previous day)</h3>
+  <!-- #5: Next upcoming events panel -->
+  <div id="nextEventsBar">
+    <div class="status-bar-title" style="padding:8px 12px 4px;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);">Upcoming</div>
+    <div id="nextEventsList" style="padding:0 8px 8px;display:flex;flex-direction:column;gap:3px;"></div>
+  </div>
 
-        <label>
-          <input type="checkbox" id="winrate90" />
-          M8BF win rate &gt; 90%
-        </label>
+  <details id="scheduleDetails" open>
+    <summary>Schedules</summary>
+    <h2>CPI</h2>            <ul class="schedule-list" id="cpiSchedule"></ul>
+    <h2>Fed Days</h2>       <ul class="schedule-list" id="fedSchedule"></ul>
+    <h2>OPEX</h2>           <ul class="schedule-list" id="opexSchedule"></ul>
+    <h2>Market Holidays</h2><ul class="schedule-list" id="holidaySchedule"></ul>
+    <h2>VIX Expiration</h2> <ul class="schedule-list" id="vixExpirySchedule"></ul>
 
-        <label>
-          <input type="checkbox" id="winrate0" />
-          M8BF win rate = 0%
-        </label>
+    <h2 style="margin-top:8px;">Earnings Days</h2>
+    <div style="padding:0 14px 4px;font-size:10px;color:var(--text3);line-height:1.4;">
+      <span style="color:#22c55e;">✓</span> confirmed &nbsp;
+      <span style="color:#f59e0b;">~</span> estimated &nbsp;
+      <span style="color:#94a3b8;">AH</span> after hours &nbsp;
+      <span style="color:#fbbf24;">BO</span> before open
+    </div>
+    <ul class="schedule-list" id="earningsSchedule"></ul>
+  </details>
+</aside>
+
+<!-- MAIN -->
+<div class="main">
+
+  <div class="top-header">
+    <h1><span>Σ3</span> VIX Strategy Helper</h1>
+    <div class="date-pill"><span id="todayDate">—</span> &nbsp;·&nbsp; <strong id="dayLabel">—</strong></div>
+  </div>
+
+  <div class="calcRow">
+    <div class="card winrateBox">
+      <h3>Win Rate Override<br><small style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text3);">previous day</small></h3>
+      <label><input type="checkbox" id="winrate90" /> M8BF win rate &gt; 90%</label>
+      <label><input type="checkbox" id="winrate0"  /> M8BF win rate = 0%</label>
+    </div>
+
+    <div class="card calculator">
+      <h2><span class="sig">Σ</span> VIX Calculator</h2>
+      <div class="fg"><label>VIX Today's Open</label><input type="number" id="todayOpen" step="0.01" placeholder="e.g. 18.50" /><span class="fe" id="err-todayOpen"></span></div>
+      <div class="fg"><label>VIX Yesterday's Open</label><input type="number" id="yesterdayOpen" step="0.01" placeholder="e.g. 19.10" /><span class="fe" id="err-yesterdayOpen"></span></div>
+      <div class="fg"><label>VIX Yesterday's Close</label><input type="number" id="yesterdayClose" step="0.01" placeholder="e.g. 18.80" /><span class="fe" id="err-yesterdayClose"></span></div>
+      <div class="btn-row">
+        <button class="btn-p" onclick="calculateStrategy()">Calculate</button>
+        <button class="btn-s" onclick="resetCalculator()">Reset</button>
       </div>
+    </div>
+  </div>
 
-      <!-- Calculator -->
-      <div class="calculator">
-        <h1>VIX Calculator</h1>
+  <!-- METRICS -->
+  <div class="metrics-bar">
+    <div class="mi"><span class="ml">Overnight Drop</span><span class="mv" id="overnightDropDisplay">—</span></div>
+    <span class="msep">|</span>
+    <div class="mi"><span class="ml">Open-to-Open</span><span class="mv" id="openDiffDisplay">—</span><span id="openDiffNote" class="tag tag-cpi" style="display:none;margin-left:5px;">ignored CPI</span></div>
+    <span class="msep" id="tagSep" style="display:none;">|</span>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;">
+      <span id="cpiTag"        class="tag tag-cpi"      style="display:none;">📊 CPI</span>
+      <span id="fedTag"        class="tag tag-fed"      style="display:none;">🏦 Fed</span>
+      <span id="opexTag"       class="tag tag-opex"     style="display:none;">📅 OPEX</span>
+      <span id="postOpexTag"   class="tag tag-postopex" style="display:none;">↗ Post-OPEX</span>
+      <span id="postHolidayTag"class="tag tag-holiday"  style="display:none;">🏖 Post-Holiday</span>
+      <span id="eomTag"        class="tag tag-eom"      style="display:none;">📆 EOM</span>
+    </div>
+  </div>
 
-        <label>VIX Today’s Open:
-          <input type="number" id="todayOpen" step="0.01" />
-        </label>
-
-        <label>VIX Yesterday’s Open:
-          <input type="number" id="yesterdayOpen" step="0.01" />
-        </label>
-
-        <label>VIX Yesterday’s Close:
-          <input type="number" id="yesterdayClose" step="0.01" />
-        </label>
-
-        <button onclick="calculateStrategy()">Calculate</button>
+  <!-- SIGNAL CARD -->
+  <div id="recBlock" class="th-neutral">
+    <div class="sig-header">
+      <span class="sig-badge" id="signalBadge">—</span>
+      <span class="sig-time" id="signalTime"></span>
+      <button class="copy-btn" onclick="copySignal()" id="copyBtn">Copy</button>
+      <button class="copy-btn" onclick="printSignal()" id="printBtn">Print</button>
+    </div>
+    <div class="sig-body">
+      <div class="sig-main" id="mainRec">Enter VIX values and press Calculate</div>
+      <div class="sig-bobf" id="bobfLine"></div>
+      <div class="sig-reason" id="blockReasonLine"></div>
+      <div id="strikeGridWrap" style="display:none;">
+        <div class="sg-label">Qualified Strikes</div>
+        <div class="sg" id="strikeGrid"></div>
       </div>
     </div>
+  </div>
 
-    <div style="margin-top: 10px; font-size: 14px; text-align: center;">
-      <p>
-        <strong>Overnight VIX Drop:</strong>
-        <span id="overnightDropDisplay">—</span>
-        <span id="cpiTag" class="tag" style="display:none;">CPI day</span>
-        <span id="fedTag" class="tag" style="display:none;">Fed day</span>
-        <span id="opexTag" class="tag" style="display:none;">OPEX</span>
-        <span id="postOpexTag" class="tag" style="display:none;">Post-OPEX</span>
-        <span id="postHolidayTag" class="tag" style="display:none;">Post-Holiday</span>
-        <span id="eomTag" class="tag" style="display:none;">EOM</span>
-      </p>
-      <p>
-        <strong>Yesterday’s VIX Open − Today’s VIX Open:</strong>
-        <span id="openDiffDisplay">—</span>
-        <span id="openDiffNote" class="tag" style="display:none;">ignored on CPI day</span>
-      </p>
+  <div id="resultDayLabel">—</div>
+
+  <!-- FLOWCHART -->
+  <div class="flowchart">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+      <div class="fc-title" style="margin-bottom:0;">Decision Flowchart</div>
+      <div id="flowPath" style="font-size:11px;font-family:'JetBrains Mono',monospace;color:var(--text3);font-style:italic;">calculate to highlight path</div>
     </div>
-
-    <div style="text-align: right;">
-      <div id="todayDate" style="font-size: 14px; color: #666; margin-bottom: 2px;"></div>
-      <div id="dayLabel" style="font-size: 12px; color: #888; margin-bottom: 5px;"></div>
-    </div>
-
-    <div id="recBlock">
-      <div class="row mainline" id="mainRec">—</div>
-      <div class="row" id="bobfLine">—</div>
-    </div>
-
-    <!-- day label under calculator results -->
-    <div id="resultDayLabel">—</div>
-
-    <!-- FLOWCHART (UNCHANGED) -->
-    <div class="flowchart">
-      <div class="mermaid">
+    <div class="mermaid">
 flowchart TD
-  A["SPX overnight gap < 0.9%?"]
+  A["SPX overnight gap &lt; 0.9%?"]
   A -->|No| M1["M8 Butterfly"]
-  A -->|Yes| D["Overnight VIX drop > 0.65?"]
+  A -->|Yes| D["Overnight VIX drop &gt; 0.65?"]
   D -->|Yes| Y["GXBF @ 9:36 AM"]
-  D -->|No| C["Open-to-open VIX > 1.4?"]
+  D -->|No| C["Open-to-open VIX &gt; 1.4?"]
   C -->|Yes| M2["M8 Butterfly"]
   C -->|No| F["Overnight VIX drop 0.01–0.65?"]
   F -->|Yes| S["Straddle @ 9:32 AM"]
   F -->|No| M3["M8 Butterfly"]
-
   class M1,M2,M3 butterfly
   class Y atm
   class S straddle
-
-  classDef butterfly fill:#b49aff,stroke:#333,stroke-width:1px
-  classDef straddle fill:#61f7d6,stroke:#333,stroke-width:1px
-  classDef atm fill:#fff399,stroke:#333,stroke-width:1px
-      </div>
+  classDef butterfly fill:#7c3aed,color:#fff,stroke:#5b21b6
+  classDef straddle fill:#0891b2,color:#fff,stroke:#0e7490
+  classDef atm fill:#b45309,color:#fff,stroke:#92400e
     </div>
-
-    <!-- OVERVIEW -->
-    <section class="strategy-doc" id="strategy-doc">
-      <h2>Sigma 3 — SPX 0DTE Strategy Overview</h2>
-
-      <p>
-        Sigma 3 consists of four SPX 0DTE strategies:
-        <strong>M8 Butterfly (M8BF)</strong>,
-        <strong>Straddle</strong>,
-        <strong>GXBF (GEX Butterfly)</strong>,
-        and <strong>BOBF</strong>.
-        Each strategy has its own entry rules, risk limits, and calendar filters.
-        The VIX calculator determines which strategies are valid on any given day
-        based on overnight VIX behavior and market conditions.
-      </p>
-
-      <div class="divider">⸻</div>
-
-      <h3>M8 Butterfly (M8BF)</h3>
-      <ul>
-        <li>Used when overnight VIX is <strong>up</strong>.</li>
-        <li>Triggered when <strong>open-to-open VIX &gt; 1.4</strong>, or when overnight VIX does not meet straddle or GXBF thresholds.</li>
-        <li><strong>Not traded</strong> on Fed days.</li>
-        <li><strong>Not traded</strong> post VIX expiration if VIX exp comes before OPEX that month.</li>
-        <li><strong>Not traded</strong> on the 6 major earnings release days: MSFT, META, GOOG, AMZN, AAPL, NVDA.</li>
-        <li>On the first trading day of the month (NM), M8BF converts to <strong>NM Straddle</strong> (not on Mondays).</li>
-        <li>Post-OPEX Monday note: when M8BF appears, afternoon timing is preferred.</li>
-        <li>Max risk: <strong>$1,400</strong>.</li>
-        <li>Use center strike from M8 prediction. Adjust the wings until you reach a cost of approximately $14 for entry.</li>
-      </ul>
-      <div class="strategy-image">
-        <img src="./M8BF.jpg" alt="M8BF" loading="lazy" />
-      </div>
-
-      <div class="divider">⸻</div>
-
-      <h3>Straddle</h3>
-      <ul>
-        <li>Used when overnight VIX is <strong>moderately down</strong> (<strong>0.01 – 0.65</strong>).</li>
-        <li>Entry time: <strong>9:32 AM</strong>.</li>
-        <li><strong>Not traded</strong> on OPEX days.</li>
-        <li>On Wednesdays (non-Fed, non-CPI), straddles convert to M8BF unless overridden.</li>
-        <li><strong>End-of-Month (EOM):</strong> automatic <strong>EOM Straddle</strong>.</li>
-        <li>EOM Straddle max risk: <strong>$3,500</strong>.</li>
-      </ul>
-      <div class="strategy-image">
-        <img src="./Straddle.jpg" alt="Straddle payoff diagram" loading="lazy" />
-      </div>
-
-      <div class="divider">⸻</div>
-
-      <h3>GXBF (GEX Butterfly)</h3>
-      <ul>
-        <li>Used when overnight VIX is <strong>strongly down</strong> (<strong>&gt; 0.65</strong>).</li>
-        <li>Takes priority over open-to-open VIX logic.</li>
-        <li>Entry time: <strong>9:36 AM</strong>, centered on major positive gamma.</li>
-        <li>Allowed on Fed days.</li>
-        <li>Automatic GXBF on OPEX+1.</li>
-        <li>Maximum VIX allowed: <strong>25</strong>.</li>
-        <li>Max risk: <strong>$1,400</strong>.</li>
-      </ul>
-      <div class="strategy-image">
-        <img src="./gex.jpg" alt="GXBF strategy visual" loading="lazy" />
-      </div>
-
-      <div class="divider">⸻</div>
-
-      <h3>BOBF</h3>
-      <ul>
-        <li>
-          <a href="https://optionomega.com/share/gd2bRi16syr3R1UaGVUE" target="_blank" rel="noopener noreferrer">
-            OptionOmega – BOBF base
-          </a>
-        </li>
-        <li><strong>Not traded</strong> on the 6 major earnings release days: MSFT, META, GOOG, AMZN, AAPL, NVDA.</li>
-        <li><strong>Not traded</strong> on monthly VIX expiration days.</li>
-        <li><strong>Not traded</strong> on OPEX.</li>
-        <li><strong>Not traded</strong> on OPEX-1.</li>
-        <li><strong>Not traded</strong> on EOM-2 and EOM-1.</li>
-        <li><strong>Not traded</strong> on the first trading Monday of the month (NM Monday).</li>
-        <li>Maximum VIX allowed: <strong>23</strong>.</li>
-        <li>Modified version traded on Fridays</li>
-        <li>
-          <a href="https://optionomega.com/share/cVLL2DfdpiGiLekplKPs" target="_blank" rel="noopener noreferrer">
-            OptionOmega – Friday version
-          </a>
-        </li>
-      </ul>
-      <div class="strategy-image">
-        <img src="./BOBF.jpg" alt="BOBF strategy visual" loading="lazy" />
-      </div>
-
-      <div class="divider">⸻</div>
-
-      <h3>CPI Rule</h3>
-      <ul>
-        <li>Uses only <strong>Yesterday’s VIX Close − Today’s VIX Open</strong>.</li>
-        <li>If VIX is <strong>down</strong>: trade <strong>Long ATM Call @ 9:32 AM</strong>.</li>
-        <li>Max entry premium: <strong>$13</strong>.</li>
-        <li>If VIX is up: <strong>No trade</strong>.</li>
-      </ul>
-
-      <div class="divider">⸻</div>
-
-      <h3>NM & EOM Straddles</h3>
-      <ul>
-        <li><strong>NM Straddle</strong> is used on the <strong>first trading day of the month</strong> except when it falls on Mondays.</li>
-        <li><strong>EOM Straddle</strong> is used on the <strong>last trading day of the month</strong>.</li>
-        <li>Both setups use the standard <strong>9:32 AM Straddle</strong>.</li>
-        <li>These are calendar-driven trades with historically strong behavior.</li>
-        <li><strong>NM Straddle max risk: $3,200.</strong></li>
-        <li><strong>EOM Straddle max risk: $3,500.</strong></li>
-      </ul>
-
-      <div class="divider">⸻</div>
-
-      <h3>Win Rate Rules</h3>
-      <ul>
-        <li>If <strong>M8BF win rate was &gt; 90%</strong> the previous day, the next day’s <strong>Straddle signal</strong> is replaced with <strong>M8BF</strong>.</li>
-        <li>If <strong>M8BF win rate was 0%</strong> the previous day, the next day is an <strong>automatic Straddle</strong> (BOBF can still be in play if not blocked by its filters).</li>
-      </ul>
-
-      <div class="divider">⸻</div>
-
-      <h3>P/L</h3>
-      <ul>
-        <li>P/L from September 1st 2024 to February 1st 2026</li>
-      </ul>
-      <div class="strategy-image">
-        <img src="./pl.jpg" alt="P/L" loading="lazy" />
-      </div>
-
-      <div class="divider">⸻</div>
-
-      <ul>
-        <li>Winrate for the last 2 digits of the center strike M8BF prediction. AM vs PM. Avoid low win rate strikes.</li>
-      </ul>
-      <div class="strategy-image">
-        <img src="./last.jpg" alt="Last 2 digits win rate" loading="lazy" />
-      </div>
-
-      <div class="divider">⸻</div>
-
-      <!-- Raw stats -->
-      <h3>Raw stats</h3>
-      <div class="strategy-image">
-        <img src="./11.jpg" alt="Raw stats 1" loading="lazy" />
-      </div>
-      <div class="strategy-image">
-        <img src="./22.jpg" alt="Raw stats 2" loading="lazy" />
-      </div>
-
-      <div class="divider">⸻</div>
-
-      <ul>
-        <li>**********************************</li>
-      </ul>
-      <div class="strategy-image">
-        <img src="./move.jpg" alt="Optional M8BF modification" loading="lazy" />
-      </div>
-
-      <div class="divider">⸻</div>
-
-      <p>All trades are held to expiration.</p>
-
-      <p class="muted-note">
-        <strong>Disclaimer:</strong> This content is for informational and educational purposes only and does not constitute financial or investment advice. Trading options involves significant risk.
-      </p>
-    </section>
-
   </div>
 
-  <script>
-    /* ===== SCHEDULES ===== */
-
-    const cpiSchedule = [
-      "January 13, 2026",
-      "February 13, 2026",
-      "March 11, 2026",
-      "April 10, 2026",
-      "May 12, 2026",
-      "June 10, 2026",
-      "July 14, 2026",
-      "August 12, 2026",
-      "September 11, 2026",
-      "October 14, 2026",
-      "November 10, 2026",
-      "December 10, 2026"
-    ];
-
-    const fedSchedule = [
-      "January 28, 2026",
-      "March 18, 2026",
-      "April 29, 2026",
-      "June 17, 2026",
-      "July 29, 2026",
-      "September 16, 2026",
-      "October 28, 2026",
-      "December 9, 2026"
-    ];
-
-    const opexSchedule = [
-      "January 16, 2026",
-      "February 20, 2026",
-      "March 20, 2026",
-      "April 17, 2026",
-      "May 15, 2026",
-      "June 18, 2026",
-      "July 17, 2026",
-      "August 21, 2026",
-      "September 18, 2026",
-      "October 16, 2026",
-      "November 20, 2026",
-      "December 18, 2026"
-    ];
-
-    const marketHolidays = [
-      "January 1, 2026",
-      "January 19, 2026",
-      "February 16, 2026",
-      "April 3, 2026",
-      "May 25, 2026",
-      "June 19, 2026",
-      "July 3, 2026",
-      "September 7, 2026",
-      "November 26, 2026",
-      "December 25, 2026"
-    ];
-
-    const vixExpirySchedule = [
-      "January 21, 2026",
-      "February 18, 2026",
-      "March 18, 2026",
-      "April 15, 2026",
-      "May 20, 2026",
-      "June 17, 2026",
-      "July 15, 2026",
-      "August 19, 2026",
-      "September 16, 2026",
-      "October 21, 2026",
-      "November 18, 2026",
-      "December 16, 2026"
-    ];
-
-    /* ===== RENDER SCHEDULES ===== */
-
-    function renderSchedule(list, ulId) {
-      const ul = document.getElementById(ulId);
-      list.forEach(date => {
-        const li = document.createElement('li');
-        li.textContent = date;
-        li.setAttribute('data-date', date);
-        ul.appendChild(li);
-      });
-    }
-
-    renderSchedule(cpiSchedule, 'cpiSchedule');
-    renderSchedule(fedSchedule, 'fedSchedule');
-    renderSchedule(opexSchedule, 'opexSchedule');
-    renderSchedule(marketHolidays, 'holidaySchedule');
-    renderSchedule(vixExpirySchedule, 'vixExpirySchedule');
-
-    /* ===== MOBILE: COLLAPSE SCHEDULES BY DEFAULT ===== */
-    document.addEventListener("DOMContentLoaded", () => {
-      const details = document.getElementById("scheduleDetails");
-      if (!details) return;
-
-      const mq = window.matchMedia("(max-width: 900px)");
-
-      const apply = () => {
-        if (mq.matches) details.removeAttribute("open");     // collapsed on mobile
-        else details.setAttribute("open", "");               // open on desktop
-      };
-
-      apply();
-
-      if (mq.addEventListener) mq.addEventListener("change", apply);
-      else mq.addListener(apply); // older Safari
-    });
-
-    /* ===== WIN RATE CHECKBOX MUTUAL EXCLUSION ===== */
-
-    const winrate90 = document.getElementById('winrate90');
-    const winrate0  = document.getElementById('winrate0');
-
-    function enforceMutualExclusion(changed) {
-      if (changed === '90' && winrate90.checked) winrate0.checked = false;
-      if (changed === '0'  && winrate0.checked)  winrate90.checked = false;
-    }
-
-    winrate90.addEventListener('change', () => enforceMutualExclusion('90'));
-    winrate0.addEventListener('change', () => enforceMutualExclusion('0'));
-
-    /* ===== CROSS OFF PAST DATES ===== */
-
-    function hasPassed(dateStr) {
-      const d = new Date(dateStr);
-      if (isNaN(d)) return false;
-      const endOfDay = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
-      return new Date() > endOfDay;
-    }
-
-    function crossOffPastDates(ulId) {
-      const ul = document.getElementById(ulId);
-      if (!ul) return;
-      Array.from(ul.children).forEach(li => {
-        const dateText = li.getAttribute('data-date') || li.textContent.trim();
-        if (hasPassed(dateText)) li.classList.add('crossed');
-      });
-    }
-
-    function refreshCrossedDates() {
-      crossOffPastDates('cpiSchedule');
-      crossOffPastDates('fedSchedule');
-      crossOffPastDates('opexSchedule');
-      crossOffPastDates('holidaySchedule');
-      crossOffPastDates('vixExpirySchedule');
-    }
-
-    document.addEventListener('DOMContentLoaded', () => {
-      refreshCrossedDates();
-      const now = new Date();
-      const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 2);
-      setTimeout(() => {
-        refreshCrossedDates();
-        setInterval(refreshCrossedDates, 24 * 60 * 60 * 1000);
-      }, midnight - now);
-    });
-
-    /* ===== DATE HELPERS ===== */
-
-    function todayLongUS() {
-      return new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-    }
-    function isCpiDay()      { return cpiSchedule.includes(todayLongUS()); }
-    function isFedDay()      { return fedSchedule.includes(todayLongUS()); }
-    function isOpexDay()     { return opexSchedule.includes(todayLongUS()); }
-    function isVixExpiryDay(){ return vixExpirySchedule.includes(todayLongUS()); }
-
-    function isWeekend(d) { const day = d.getDay(); return day === 0 || day === 6; }
-    function isHoliday(d) {
-      const asLong = d.toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' });
-      return marketHolidays.includes(asLong);
-    }
-    function isTradingDay(d) { return !isWeekend(d) && !isHoliday(d); }
-
-    function nextTradingDay(d) {
-      const nd = new Date(d);
-      do { nd.setDate(nd.getDate() + 1); } while (isWeekend(nd) || isHoliday(nd));
-      return nd;
-    }
-    function prevTradingDay(d) {
-      const pd = new Date(d);
-      do { pd.setDate(pd.getDate() - 1); } while (isWeekend(pd) || isHoliday(pd));
-      return pd;
-    }
-    function isTodayFirstTradingDayAfter(dateStr) {
-      const d = new Date(dateStr);
-      if (isNaN(d)) return false;
-      const after = nextTradingDay(d);
-      const today = new Date();
-      return after.getFullYear() === today.getFullYear()
-          && after.getMonth() === today.getMonth()
-          && after.getDate() === today.getDate();
-    }
-
-    // Parse "January 21, 2026" safely (local time)
-    function parseLongUSDate(dateStr) {
-      const d = new Date(dateStr);
-      if (isNaN(d)) return null;
-      // normalize time so DST/time-of-day can't mess comparisons
-      return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12, 0, 0, 0);
-    }
-
-    // Get the scheduled date in the same month/year as `refDate`
-    function getScheduledDateInMonth(scheduleList, refDate) {
-      const y = refDate.getFullYear();
-      const m = refDate.getMonth();
-
-      for (const s of scheduleList) {
-        const d = parseLongUSDate(s);
-        if (!d) continue;
-        if (d.getFullYear() === y && d.getMonth() === m) return d;
-      }
-      return null;
-    }
-
-    // TRUE only when:
-    // - This month has both VIX exp + OPEX
-    // - VIX exp is BEFORE OPEX in that month
-    // - TODAY is the first trading day AFTER VIX exp
-    function isPostVixExpDayWithVixBeforeOpex(refDate = new Date()) {
-      const vixExp = getScheduledDateInMonth(vixExpirySchedule, refDate);
-      const opex   = getScheduledDateInMonth(opexSchedule, refDate);
-      if (!vixExp || !opex) return false;
-
-      if (vixExp >= opex) return false;
-
-      const postVix = nextTradingDay(vixExp);
-      return postVix.getFullYear() === refDate.getFullYear()
-          && postVix.getMonth() === refDate.getMonth()
-          && postVix.getDate() === refDate.getDate();
-    }
-
-    function isPostHoliday() { return marketHolidays.some(isTodayFirstTradingDayAfter); }
-    function isPostOpexMonday() {
-      const postAnyOpex = opexSchedule.some(isTodayFirstTradingDayAfter);
-      return postAnyOpex && new Date().getDay() === 1;
-    }
-
-    // EOM detection (last TRADING day of month)
-    function isLastTradingDayOfMonth(date = new Date()) {
-      const next = nextTradingDay(date);
-      return next.getMonth() !== date.getMonth();
-    }
-    function isEomMinusN(n, date = new Date()) {
-      const firstNextMonth = new Date(date.getFullYear(), date.getMonth() + 1, 1);
-      const eom = prevTradingDay(firstNextMonth);
-      let target = new Date(eom);
-      for (let i = 0; i < n; i++) target = prevTradingDay(target);
-      return target.getFullYear() === date.getFullYear()
-          && target.getMonth() === date.getMonth()
-          && target.getDate() === date.getDate();
-    }
-    function isTodayTradingDayBefore(dateStr) {
-      const d = new Date(dateStr);
-      if (isNaN(d)) return false;
-      const before = prevTradingDay(d);
-      const today = new Date();
-      return before.getFullYear() === today.getFullYear()
-          && before.getMonth() === today.getMonth()
-          && before.getDate() === today.getDate();
-    }
-
-    // NM detection (first trading day of month)
-    function isFirstTradingDayOfMonth(date = new Date()) {
-      const prev = prevTradingDay(date);
-      return prev.getMonth() !== date.getMonth();
-    }
-
-    // first trading Monday of the month (NM Monday)
-    function isFirstTradingMondayOfMonth(date = new Date()) {
-      const year = date.getFullYear();
-      const month = date.getMonth();
-
-      // start at the 1st and move to first trading day
-      let d = new Date(year, month, 1);
-      while (isWeekend(d) || isHoliday(d)) d.setDate(d.getDate() + 1);
-
-      // move forward until we hit a Monday trading day
-      while (d.getDay() !== 1) {
-        d = nextTradingDay(d);
-      }
-
-      return d.getFullYear() === year && d.getMonth() === month && d.getDate() === date.getDate();
-    }
-
-    /* ===== M8BF DISPLAY SCHEDULE (TRADE TIME + QUALIFIED STRIKES) ===== */
-
-    function getM8bfScheduleByDow(dow) {
-      // dow: 0=Sun ... 6=Sat
-      switch (dow) {
-        case 1: // Monday
-          return { tradeTime: "10:10", strikes: ["05","20","30","40","45","55","70","75","85","95"] };
-        case 2: // Tuesday
-          return { tradeTime: "12:20", strikes: ["00","05","25","30","35","45","70","75","85","90","95"] };
-        case 3: // Wednesday
-          return { tradeTime: "11:30", strikes: ["30","45","50","60","70","80","95"] };
-        case 4: // Thursday
-          return { tradeTime: "10:45", strikes: ["05","10","15","20","45","55","70","75","85","90"] };
-        case 5: // Friday
-          return { tradeTime: "13:05", strikes: ["05","20","30","35","40","45","55","65","70","75","85","95"] };
-        default:
-          return null;
-      }
-    }
-
-    function buildM8bfMessage(date = new Date()) {
-      const dow = date.getDay();
-      const sch = getM8bfScheduleByDow(dow);
-      if (!sch) return "M8BF";
-      const strikesLine = sch.strikes.join("   ");
-      return `M8BF @ ${sch.tradeTime}. Qualified Strikes: ${strikesLine}`;
-    }
-
-    /* ===== TRADING LABEL (AUTO UNDER TODAY'S DATE, NO CALCULATOR NEEDED) ===== */
-
-    function ordinal(n) {
-      const s = ["th","st","nd","rd"];
-      const v = n % 100;
-      return n + (s[(v - 20) % 10] || s[v] || s[0]);
-    }
-
-    function weekdayName(dow) {
-      return ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][dow] || "";
-    }
-
-    // Example output: "1st Monday", "2nd Tuesday", etc. (counts trading weekdays only)
-    function tradingWeekdayOrdinalLabel(date = new Date()) {
-      const target = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-      const dow = target.getDay();
-      const monthStart = new Date(target.getFullYear(), target.getMonth(), 1);
-
-      let count = 0;
-      for (let d = new Date(monthStart); d <= target; d.setDate(d.getDate() + 1)) {
-        if (!isTradingDay(d)) continue;
-        if (d.getDay() === dow) count++;
-      }
-
-      // if today isn't a trading day, still show which weekday it is
-      if (!isTradingDay(target)) {
-        return `${weekdayName(dow)} (market closed)`;
-      }
-
-      return `${ordinal(count)} ${weekdayName(dow)}`;
-    }
-
-    function updateDateHeader() {
-      document.getElementById('todayDate').textContent =
-        "Today’s Date: " + new Date().toLocaleDateString();
-      document.getElementById('dayLabel').textContent =
-        tradingWeekdayOrdinalLabel(new Date());
-    }
-
-    /* ===== UI INIT ===== */
-
-    function updateCpiUI() {
-      const cpi = isCpiDay();
-      document.getElementById('yesterdayOpen').disabled = cpi;
-    }
-
-    document.addEventListener('DOMContentLoaded', () => {
-      updateCpiUI();
-      updateDateHeader();
-
-      // initialize the label under results (so it shows even before Calculate)
-      const resultLbl = document.getElementById("resultDayLabel");
-      if (resultLbl) resultLbl.textContent = tradingWeekdayOrdinalLabel(new Date());
-
-      // refresh date label after midnight
-      const now = new Date();
-      const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 2);
-      setTimeout(() => {
-        updateDateHeader();
-        const resultLbl2 = document.getElementById("resultDayLabel");
-        if (resultLbl2) resultLbl2.textContent = tradingWeekdayOrdinalLabel(new Date());
-        setInterval(() => {
-          updateDateHeader();
-          const resultLbl3 = document.getElementById("resultDayLabel");
-          if (resultLbl3) resultLbl3.textContent = tradingWeekdayOrdinalLabel(new Date());
-        }, 24 * 60 * 60 * 1000);
-      }, midnight - now);
-    });
-
-    /* ===== MAIN CALCULATOR ===== */
-
-    function calculateStrategy() {
-      const today = parseFloat(document.getElementById('todayOpen').value);
-      const yOpen = parseFloat(document.getElementById('yesterdayOpen').value);
-      const yClose = parseFloat(document.getElementById('yesterdayClose').value);
-
-      if (isNaN(today) || isNaN(yClose) || (!isCpiDay() && isNaN(yOpen))) {
-        alert("Please enter valid numbers.");
-        return;
-      }
-
-      const winrateHigh = winrate90.checked; // M8BF win rate >90%
-      const winrateZero = winrate0.checked;  // M8BF win rate =0%
-
-      const now = new Date();
-      const dayOfWeek = now.getDay();
-      const isMonday = dayOfWeek === 1;
-      const isFriday = dayOfWeek === 5;
-      const isWednesday = dayOfWeek === 3;
-
-      const nmToday = isFirstTradingDayOfMonth(now);
-      const nmMonday = isFirstTradingMondayOfMonth(now);
-
-      const cpiToday = isCpiDay();
-      const fedToday = isFedDay();
-      const opexToday = isOpexDay();
-      const postHoliday = isPostHoliday();
-      const postOpexMonday = isPostOpexMonday();
-      const postOpexDay = opexSchedule.some(isTodayFirstTradingDayAfter);
-      const eomTradingDay = isLastTradingDayOfMonth(now);
-      const eomMinus1 = isEomMinusN(1, now);
-      const eomMinus2 = isEomMinusN(2, now);
-      const vixExpiryToday = isVixExpiryDay();
-
-      const opexMinus1 = opexSchedule.some(isTodayTradingDayBefore);
-
-      // context tags
-      document.getElementById('cpiTag').style.display = cpiToday ? 'inline-block' : 'none';
-      document.getElementById('fedTag').style.display = fedToday ? 'inline-block' : 'none';
-      document.getElementById('opexTag').style.display = opexToday ? 'inline-block' : 'none';
-      document.getElementById('postOpexTag').style.display = postOpexDay ? 'inline-block' : 'none';
-      document.getElementById('postHolidayTag').style.display = postHoliday ? 'inline-block' : 'none';
-      document.getElementById('eomTag').style.display = eomTradingDay ? 'inline-block' : 'none';
-
-      const openDiff = (isNaN(yOpen) ? NaN : yOpen - today);
-      const overnightDrop = yClose - today; // yClose - todayOpen
-
-      document.getElementById('overnightDropDisplay').textContent =
-        isNaN(overnightDrop) ? '—' : overnightDrop.toFixed(2);
-
-      const openDiffDisplay = document.getElementById('openDiffDisplay');
-      const openDiffNote = document.getElementById('openDiffNote');
-      if (cpiToday) {
-        openDiffDisplay.textContent = '—';
-        openDiffNote.style.display = 'inline-block';
-      } else {
-        openDiffNote.style.display = 'none';
-        openDiffDisplay.textContent = isNaN(openDiff) ? '—' : openDiff.toFixed(2);
-      }
-
-      let recommendation = "";
-      let bgColor = "#eee";
-      let crossedMain = false;
-
-      let addPostOpexNote = false;
-
-      if (cpiToday) {
-        // CPI rule: if VIX down (yClose - todayOpen > 0) => long call, else no trade
-        if (overnightDrop > 0) {
-          recommendation = "Long ATM Call @ 9:32 AM (CPI day) — Max entry premium $13";
-          bgColor = "#61f7d6";
-        } else {
-          recommendation = "No M8BF (CPI day — VIX up)";
-          bgColor = "#eee";
-          crossedMain = true;
-        }
-      } else {
-        // Base logic
-        if (overnightDrop > 0.65) {
-  if (today >= 25) {
-    recommendation = "No GXBF (high VIX)";
-    bgColor = "#eee";
-    crossedMain = true;
-  } else {
-    recommendation = "GXBF @ 9:36 AM";
-    bgColor = "#fff399";
+  <!-- STRATEGY DOC -->
+  <section class="strategy-doc">
+    <h2>Sigma 3 — SPX 0DTE Strategy Overview</h2>
+    <p>Sigma 3 consists of four SPX 0DTE strategies: <strong>M8 Butterfly (M8BF)</strong>, <strong>Straddle</strong>, <strong>GXBF (GEX Butterfly)</strong>, and <strong>BOBF</strong>.</p>
+
+    <hr class="divider">
+    <h3>M8 Butterfly (M8BF)</h3>
+    <ul>
+      <li><strong>Mon / Tue / Wed:</strong> requires M8BF signal — overnight VIX up, or open-to-open VIX &gt; 1.4. Skip entirely if no signal that day.</li>
+      <li><strong>Thu / Fri:</strong> trade every week — M8BF signal not required. On non-signal days it is optional but supported by data.</li>
+      <li>Enter the <strong>first qualifying strike</strong> that appears in the time window. One trade per day only. Skip the day entirely if no qualifying strike appears in the window.</li>
+      <li><strong>Not traded</strong> on Fed days.</li>
+      <li><strong>Not traded</strong> on MSFT and META earnings days.</li>
+      <li><strong>Not traded</strong> on EOM-1 (day before last trading day of month).</li>
+      <li><strong>Not traded</strong> post VIX expiration when VIX exp falls before OPEX in the same month.</li>
+      <li>GOOGL, AMZN, AAPL, NVDA earnings days — M8BF <strong>is allowed</strong>.</li>
+      <li>NM day (first trading day of month) and <strong>not a Monday</strong> → converts to NM Straddle @ 9:32 AM.</li>
+      <li>NM day falls on <strong>Monday</strong> → M8BF proceeds normally (no NM Straddle).</li>
+      <li>Post-OPEX Monday → M8BF proceeds but <strong>afternoon timing preferred</strong>.</li>
+      <li>Wednesday Straddle signal → converts to M8BF (unless Fed, CPI, EOM, or NM day).</li>
+      <li>Win rate &gt; 90% prior day → next day's Straddle signal converts to M8BF.</li>
+      <li>No stop-loss — hold to expiration. Max risk: <strong>$1,400</strong>. Entry cost ≈ $14.</li>
+    </ul>
+    <div class="strategy-image"><img src="./M8BF.jpg" alt="M8BF" loading="lazy" /></div>
+
+    <hr class="divider">
+    <h3>Straddle</h3>
+    <ul>
+      <li>Used when overnight VIX drop is <strong>between 0.01 and 0.65</strong>.</li>
+      <li>Entry: <strong>9:32 AM</strong>.</li>
+      <li><strong>Not traded</strong> on OPEX days.</li>
+      <li><strong>Not traded</strong> on Wednesdays — converts to M8BF (unless Fed, CPI, EOM, or NM day).</li>
+      <li>Win rate = 0% prior day → next day is automatic Straddle regardless of VIX signal.</li>
+      <li>Win rate = 0% prior day on a <strong>Fed day</strong> → Straddle still blocked (Fed day takes priority).</li>
+      <li>EOM (last trading day of month) → automatic <strong>EOM Straddle</strong> @ 9:32 AM. Max risk: <strong>$3,500</strong>.</li>
+      <li>NM (first trading day of month, non-Monday) → <strong>NM Straddle</strong> @ 9:32 AM. Max risk: <strong>$3,200</strong>.</li>
+    </ul>
+    <div class="strategy-image"><img src="./Straddle.jpg" alt="Straddle" loading="lazy" /></div>
+
+    <hr class="divider">
+    <h3>GXBF (GEX Butterfly)</h3>
+    <ul>
+      <li>Used when overnight VIX drop is <strong>&gt; 0.65</strong>. Takes priority over open-to-open logic.</li>
+      <li>Entry: <strong>9:36 AM</strong>, centered on major positive gamma.</li>
+      <li>Allowed on Fed days.</li>
+      <li>Automatic GXBF on OPEX+1 — overrides M8BF and Straddle signals that day.</li>
+      <li>Maximum VIX allowed: <strong>25</strong>. Blocked if VIX ≥ 25.</li>
+      <li>CPI day takes full priority — OPEX+1 GXBF does not fire on CPI days.</li>
+      <li>Max risk: <strong>$1,400</strong>.</li>
+    </ul>
+    <div class="strategy-image"><img src="./gex.jpg" alt="GXBF" loading="lazy" /></div>
+
+    <hr class="divider">
+    <h3>BOBF</h3>
+    <ul>
+      <li><a href="https://optionomega.com/share/gd2bRi16syr3R1UaGVUE" target="_blank" rel="noopener">OptionOmega – BOBF base</a></li>
+      <li><strong>Not traded</strong> on all 6 earnings days: MSFT, META, GOOGL, AMZN, AAPL, NVDA.</li>
+      <li><strong>Not traded</strong> on monthly VIX expiration days.</li>
+      <li><strong>Not traded</strong> on OPEX.</li>
+      <li><strong>Not traded</strong> on OPEX-1 (day before OPEX).</li>
+      <li><strong>Not traded</strong> on EOM-2 and EOM-1.</li>
+      <li><strong>Not traded</strong> on the first trading Monday of the month (NM Monday).</li>
+      <li>Maximum VIX allowed: <strong>23</strong>. Blocked if VIX &gt; 23.</li>
+      <li>Modified version traded on Fridays.</li>
+      <li><a href="https://optionomega.com/share/cVLL2DfdpiGiLekplKPs" target="_blank" rel="noopener">OptionOmega – Friday version</a></li>
+    </ul>
+    <div class="strategy-image"><img src="./BOBF.jpg" alt="BOBF" loading="lazy" /></div>
+
+    <hr class="divider">
+    <h3>CPI Rule</h3>
+    <ul>
+      <li>CPI day uses <strong>only Yesterday's Close − Today's Open</strong> (open-to-open is ignored).</li>
+      <li>VIX down → <strong>Long ATM Call @ 9:32 AM</strong>. Max entry premium: <strong>$13</strong>.</li>
+      <li>VIX up on CPI day → <strong>No trade</strong>.</li>
+      <li>CPI day overrides all other signals including OPEX+1 GXBF.</li>
+    </ul>
+
+    <hr class="divider">
+    <h3>NM & EOM Straddles</h3>
+    <ul>
+      <li><strong>NM Straddle</strong> — first trading day of month, except Mondays. Max risk: <strong>$3,200</strong>.</li>
+      <li><strong>EOM Straddle</strong> — last trading day of month. Max risk: <strong>$3,500</strong>.</li>
+      <li>Both use standard 9:32 AM Straddle entry.</li>
+    </ul>
+
+    <hr class="divider">
+    <h3>Win Rate Rules</h3>
+    <ul>
+      <li>M8BF win rate <strong>&gt; 90%</strong> prior day → next day's Straddle signal converts to M8BF.</li>
+      <li>M8BF win rate <strong>= 0%</strong> prior day → next day is automatic Straddle (BOBF can still be in play if not blocked).</li>
+      <li>Win rate = 0% on a Fed day → Straddle blocked, Fed day takes priority.</li>
+    </ul>
+
+    <hr class="divider">
+    <h3>Post-VIX Expiration Rule</h3>
+    <ul>
+      <li>If VIX expiration falls <strong>before OPEX</strong> in the same month → M8BF blocked on the first trading day after VIX expiration.</li>
+      <li>If VIX expiration falls on or after OPEX → this rule does not apply.</li>
+    </ul>
+
+    <hr class="divider">
+    <h3>P/L — Sep 2024 to Feb 2026</h3>
+    <div class="strategy-image"><img src="./pl.jpg" alt="P/L" loading="lazy" /></div>
+
+    <hr class="divider">
+    <p>Last 2 digits win rate — AM vs PM. Avoid low win rate strikes.</p>
+    <div class="strategy-image"><img src="./last.jpg" alt="Last 2 digits" loading="lazy" /></div>
+
+    <hr class="divider">
+    <h3>Raw Stats</h3>
+    <div class="strategy-image"><img src="./11.jpg" alt="Stats 1" loading="lazy" /></div>
+    <div class="strategy-image"><img src="./22.jpg" alt="Stats 2" loading="lazy" /></div>
+
+    <hr class="divider">
+    <div class="strategy-image"><img src="./move.jpg" alt="M8BF modification" loading="lazy" /></div>
+    <div class="strategy-image"><img src="./stat.jpg" alt="Stats" loading="lazy" /></div>
+
+    <hr class="divider">
+    <p>All trades held to expiration.</p>
+    <p class="muted-note"><strong>Disclaimer:</strong> For informational and educational purposes only. Not financial advice. Trading options involves significant risk.</p>
+  </section>
+
+</div><!-- /main -->
+
+<script>
+  /* ====== CONSTANTS ====== */
+  const T = {
+    DROP_GXBF: 0.65, DROP_STRAD_MIN: 0,
+    O2O_M8BF: 1.4, VIX_MAX_GXBF: 25, VIX_MAX_BOBF: 23
+  };
+
+  /* Low win-rate strikes per DOW — shown crossed out in grid */
+  const LOW_WR = { 1:[], 2:[], 3:[], 4:[], 5:[] };
+
+  /* ====== EARNINGS SCHEDULE ====== */
+  // Format: { date, company, ticker, timing }
+  // timing: "AH" = After Hours, "BO" = Before Open
+  // Q1 2026 cycle (confirmed where noted, otherwise best estimate from multiple sources)
+  // Q2 2026 cycle dates are estimates based on historical patterns — update when confirmed
+  const earningsSchedule = [
+    // ── Q1 2026 (Jan/Feb reports) ──
+    { date:"January 28, 2026",  company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:true },
+    { date:"January 28, 2026",  company:"Meta",      ticker:"META", timing:"AH", confirmed:true },
+    { date:"January 29, 2026",  company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:true },
+    { date:"February 4, 2026",  company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:true },
+    { date:"February 5, 2026",  company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:true },
+    { date:"February 26, 2026", company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:true },
+    // ── Q2 2026 (Apr/May reports) ──
+    { date:"April 23, 2026",    company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:false },
+    { date:"April 28, 2026",    company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:false },
+    { date:"April 29, 2026",    company:"Meta",      ticker:"META", timing:"AH", confirmed:true  },
+    { date:"April 30, 2026",    company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:false },
+    { date:"April 30, 2026",    company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:false },
+    { date:"May 20, 2026",      company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:true  },
+    // ── Q3 2026 (Jul/Aug reports — estimates) ──
+    { date:"July 23, 2026",     company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:false },
+    { date:"July 28, 2026",     company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:false },
+    { date:"July 29, 2026",     company:"Meta",      ticker:"META", timing:"AH", confirmed:false },
+    { date:"July 30, 2026",     company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:false },
+    { date:"July 30, 2026",     company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:false },
+    { date:"August 19, 2026",   company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:false },
+    // ── Q4 2026 (Oct/Nov reports — estimates) ──
+    { date:"October 22, 2026",  company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:false },
+    { date:"October 27, 2026",  company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:false },
+    { date:"October 28, 2026",  company:"Meta",      ticker:"META", timing:"AH", confirmed:false },
+    { date:"October 29, 2026",  company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:false },
+    { date:"October 29, 2026",  company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:false },
+    { date:"November 18, 2026", company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:false },
+  ];
+
+  /* Helper: is today an earnings day for any of the 6 companies? */
+  function isEarningsDay() { return earningsSchedule.some(e => e.date === todayLong()); }
+
+  /* ====== SCHEDULES ====== */
+  const cpiSch   = ["January 13, 2026","February 13, 2026","March 11, 2026","April 10, 2026","May 12, 2026","June 10, 2026","July 14, 2026","August 12, 2026","September 11, 2026","October 14, 2026","November 10, 2026","December 10, 2026"];
+  const fedSch   = ["January 28, 2026","March 18, 2026","April 29, 2026","June 17, 2026","July 29, 2026","September 16, 2026","October 28, 2026","December 9, 2026"];
+  const opexSch  = ["January 16, 2026","February 20, 2026","March 20, 2026","April 17, 2026","May 15, 2026","June 18, 2026","July 17, 2026","August 21, 2026","September 18, 2026","October 16, 2026","November 20, 2026","December 18, 2026"];
+  const holidays = ["January 1, 2026","January 19, 2026","February 16, 2026","April 3, 2026","May 25, 2026","June 19, 2026","July 3, 2026","September 7, 2026","November 26, 2026","December 25, 2026"];
+  const vixSch   = ["January 21, 2026","February 18, 2026","March 18, 2026","April 15, 2026","May 20, 2026","June 17, 2026","July 15, 2026","August 19, 2026","September 16, 2026","October 21, 2026","November 18, 2026","December 16, 2026"];
+
+  /* ====== DATE HELPERS ====== */
+  let _todayStr = null;
+  function todayLong() { if(!_todayStr) _todayStr=new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}); return _todayStr; }
+  function resetCache() { _todayStr=null; }
+
+  const isCpi  = () => cpiSch.includes(todayLong());
+  const isFed  = () => fedSch.includes(todayLong());
+  const isOpex = () => opexSch.includes(todayLong());
+  const isVixExp=() => vixSch.includes(todayLong());
+
+  const isWkend= d => { const w=d.getDay(); return w===0||w===6; };
+  const isHol  = d => holidays.includes(d.toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}));
+  const isTrade= d => !isWkend(d)&&!isHol(d);
+
+  function nextTrade(d){ const n=new Date(d); do{n.setDate(n.getDate()+1);}while(isWkend(n)||isHol(n)); return n; }
+  function prevTrade(d){ const p=new Date(d); do{p.setDate(p.getDate()-1);}while(isWkend(p)||isHol(p)); return p; }
+
+  function isTodayAfter(ds){
+    const d=new Date(ds); if(isNaN(d)) return false;
+    const a=nextTrade(d), t=new Date();
+    return a.getFullYear()===t.getFullYear()&&a.getMonth()===t.getMonth()&&a.getDate()===t.getDate();
   }
-        } else if (openDiff > 1.4) {
-          recommendation = buildM8bfMessage(now);
-          bgColor = "#b49aff";
-        } else if (overnightDrop > 0.001 && overnightDrop < 0.65) {
-          recommendation = "Straddle @ 9:32 AM";
-          bgColor = "#61f7d6";
-        } else {
-          recommendation = buildM8bfMessage(now);
-          bgColor = "#b49aff";
-        }
+  function isTodayBefore(ds){
+    const d=new Date(ds); if(isNaN(d)) return false;
+    const b=prevTrade(d), t=new Date();
+    return b.getFullYear()===t.getFullYear()&&b.getMonth()===t.getMonth()&&b.getDate()===t.getDate();
+  }
+  function parseLong(s){ const d=new Date(s); return isNaN(d)?null:new Date(d.getFullYear(),d.getMonth(),d.getDate(),12); }
+  function schedInMonth(list,ref){ const y=ref.getFullYear(),m=ref.getMonth(); for(const s of list){const d=parseLong(s);if(d&&d.getFullYear()===y&&d.getMonth()===m)return d;} return null; }
 
-        // ===== M8 handling =====
-        if (recommendation.startsWith("M8BF")) {
-          if (fedToday) {
-            recommendation = "No M8BF (Fed day)";
-            bgColor = "#eee";
-            crossedMain = true;
-          } else if (postHoliday) {
-            // Keep the schedule + add note
-            recommendation = `${buildM8bfMessage(now)} (post holiday → use PM times)`;
-            bgColor = "#b49aff";
-            crossedMain = false;
-          }
-        }
+  function isPostVixBeforeOpex(ref=new Date()){
+    const vx=schedInMonth(vixSch,ref), op=schedInMonth(opexSch,ref);
+    if(!vx||!op||vx>=op) return false;
+    const pv=nextTrade(vx);
+    return pv.getFullYear()===ref.getFullYear()&&pv.getMonth()===ref.getMonth()&&pv.getDate()===ref.getDate();
+  }
+  const isPostHol     = () => holidays.some(isTodayAfter);
+  const isPostOpexMon = () => opexSch.some(isTodayAfter) && new Date().getDay()===1;
+  const isLastTradeMo = (d=new Date()) => nextTrade(d).getMonth()!==d.getMonth();
+  function isEomN(n,d=new Date()){ const f=new Date(d.getFullYear(),d.getMonth()+1,1); let t=prevTrade(f); for(let i=0;i<n;i++)t=prevTrade(t); return t.getFullYear()===d.getFullYear()&&t.getMonth()===d.getMonth()&&t.getDate()===d.getDate(); }
+  const isFirstTradeMo=(d=new Date())=>prevTrade(d).getMonth()!==d.getMonth();
+  function isFirstTradeMon(d=new Date()){
+    const y=d.getFullYear(),m=d.getMonth();
+    let x=new Date(y,m,1); while(isWkend(x)||isHol(x))x.setDate(x.getDate()+1);
+    while(x.getDay()!==1)x=nextTrade(x);
+    return x.getFullYear()===y&&x.getMonth()===m&&x.getDate()===d.getDate();
+  }
 
-        // ===== Post-VIX-exp rule (ONLY if VIX exp is before OPEX in this month) =====
-        const postVixExpSpecial = isPostVixExpDayWithVixBeforeOpex(now);
-        if (postVixExpSpecial && recommendation.startsWith("M8BF")) {
-          recommendation = "No M8BF (Post-VIX exp — VIX exp before OPEX this month)";
-          bgColor = "#eee";
-          crossedMain = true;
-        }
+  /* Trading days countdown */
+  function tradeDaysUntil(ds){
+    const target=parseLong(ds); if(!target) return null;
+    const tn=new Date(); const t0=new Date(tn.getFullYear(),tn.getMonth(),tn.getDate(),12);
+    if(target<t0) return null;
+    if(target.getTime()===t0.getTime()) return 0;
+    let c=0,d=new Date(t0);
+    while(d<target){d.setDate(d.getDate()+1);if(isTrade(d))c++;}
+    return c;
+  }
 
-        // NM override: convert M8 or No M8BF to NM Straddle (NOT on Monday)
-        if (nmToday && !isMonday && (recommendation.startsWith("M8BF") || recommendation.startsWith("No M8BF"))) {
-          recommendation = "NM Straddle @ 9:32 AM";
-          bgColor = "#61f7d6";
-          crossedMain = false;
-        }
+  /* ====== M8BF SCHEDULE ====== */
+  // Updated from Strike Model — M8BF Edition image
+  // Window = start of entry window; everyWeek = can trade even on non-M8BF days
+  function m8Sched(dow){
+    switch(dow){
+      case 1:return{t:"10:00",window:"10:00–10:29",s:["05","45","70","95"],           everyWeek:false};
+      case 2:return{t:"12:00",window:"12:00–12:29",s:["00","05","35","45","70","75","85","90"], everyWeek:false};
+      case 3:return{t:"11:30",window:"11:30–11:59",s:["30","45","50","70","80","95"],  everyWeek:false};
+      case 4:return{t:"11:30",window:"11:30–11:59",s:["05","15","55","75","85"],       everyWeek:true};
+      case 5:return{t:"13:00",window:"13:00–13:29",s:["45","55","65","70","75","85","95"], everyWeek:true};
+      default:return null;
+    }
+  }
+  function m8Msg(d=new Date()){ const sc=m8Sched(d.getDay()); return sc?`M8BF — Window ${sc.window}`:"M8BF"; }
 
-        // EOM override
-        if (eomTradingDay) {
-          recommendation = "Straddle @ 9:32 AM (EOM Straddle)";
-          bgColor = "#61f7d6";
-          crossedMain = false;
-        }
+  /* ====== DISPLAY HELPERS ====== */
+  function ordinal(n){const s=["th","st","nd","rd"],v=n%100;return n+(s[(v-20)%10]||s[v]||s[0]);}
+  function wdName(d){return["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][d]||"";}
+  function tradeWdLabel(d=new Date()){
+    const t=new Date(d.getFullYear(),d.getMonth(),d.getDate());
+    const dow=t.getDay(), ms=new Date(t.getFullYear(),t.getMonth(),1);
+    let c=0;
+    for(let x=new Date(ms);x<=t;x.setDate(x.getDate()+1)){if(!isTrade(x))continue;if(x.getDay()===dow)c++;}
+    if(!isTrade(t)) return `${wdName(dow)} (market closed)`;
+    return `${ordinal(c)} ${wdName(dow)}`;
+  }
+  function updateHeader(){ document.getElementById('todayDate').textContent=new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}); document.getElementById('dayLabel').textContent=tradeWdLabel(); }
 
-        // Wednesday rule (NM overrides)
-        if (isWednesday && !fedToday && !eomTradingDay && !nmToday && recommendation.startsWith("Straddle")) {
-          recommendation = buildM8bfMessage(now);
-          bgColor = "#b49aff";
-        }
+  /* ====== PAST DATES ====== */
+  function hasPast(ds,now){ const d=new Date(ds); return !isNaN(d)&&now>new Date(d.getFullYear(),d.getMonth(),d.getDate(),23,59,59,999); }
+  function crossOff(id){ const ul=document.getElementById(id);if(!ul)return;const n=new Date();Array.from(ul.children).forEach(li=>{if(hasPast(li.getAttribute('data-date')||'',n))li.classList.add('crossed');}); }
+  function refreshCross(){ ['cpiSchedule','fedSchedule','opexSchedule','holidaySchedule','vixExpirySchedule'].forEach(crossOff); }
 
-        // OPEX: no straddles (show ALL reasons if you add more later)
-        const straddleBlockReasons = [];
-        if (opexToday && recommendation.startsWith("Straddle")) straddleBlockReasons.push("OPEX day");
-
-        if (straddleBlockReasons.length > 0) {
-          recommendation = `No Straddle (${straddleBlockReasons.join(", ")})`;
-          bgColor = "#eee";
-          crossedMain = true;
-        }
-
-        // Post-OPEX Monday note (apply to any M8BF text)
-        if (postOpexMonday && recommendation.startsWith("M8BF")) {
-          addPostOpexNote = true;
-        }
-
-        /* ===== Win rate overrides =====
-           - If 0% checked: automatic Straddle (still respects OPEX no-straddle)
-           - If >90% checked: replace ONLY the base “Straddle @ 9:32 AM” with M8BF
-        */
-        if (winrateZero) {
-          if (recommendation.startsWith("No Straddle")) {
-            // keep blocked
-          } else if (recommendation.startsWith("Straddle")) {
-            recommendation = recommendation.includes("(EOM Straddle)")
-              ? "Straddle @ 9:32 AM (EOM Straddle)"
-              : "Straddle @ 9:32 AM (Win rate 0% prior day)";
-            bgColor = "#61f7d6";
-            crossedMain = false;
-          } else {
-            recommendation = "Straddle @ 9:32 AM (Win rate 0% prior day)";
-            bgColor = "#61f7d6";
-            crossedMain = false;
-          }
-        } else if (winrateHigh) {
-          if (recommendation === "Straddle @ 9:32 AM") {
-            recommendation = `${buildM8bfMessage(now)} (Win rate > 90% prior day)`;
-            bgColor = "#b49aff";
-            crossedMain = false;
-          }
-        }
+  /* ====== RENDER SCHEDULES ====== */
+  function renderSched(list, id){
+    const ul=document.getElementById(id), ts=todayLong();
+    list.forEach(date=>{
+      const li=document.createElement('li');
+      const sp=document.createElement('span'); sp.textContent=date; li.appendChild(sp);
+      li.setAttribute('data-date',date);
+      const days=tradeDaysUntil(date);
+      if(days!==null){
+        const b=document.createElement('span');
+        const isT=(date===ts);
+        b.className='cdown'+(isT?' today-badge':days<=3?' soon':'');
+        b.textContent=isT?'TODAY':`${days}d`;
+        li.appendChild(b);
       }
+      if(date===ts) li.classList.add('today-highlight');
+      ul.appendChild(li);
+    });
+  }
 
-      // ===== OPEX+1 override =====
-      if (postOpexDay) {
-  const isM8 = recommendation.startsWith("M8BF");
-  const isStraddle =
-    recommendation.startsWith("Straddle") ||
-    recommendation.startsWith("NM Straddle");
+  /* ====== STATUS BAR ====== */
+  function buildStatus(){
+    const bar=document.getElementById('statusBar'), cl=document.getElementById('statusClear');
+    const flags=[];
+    if(isCpi())   flags.push({txt:'📊 CPI',    cls:'tag tag-cpi'});
+    if(isFed())   flags.push({txt:'🏦 Fed',    cls:'tag tag-fed'});
+    if(isOpex())  flags.push({txt:'📅 OPEX',   cls:'tag tag-opex'});
+    if(opexSch.some(isTodayAfter)) flags.push({txt:'↗ Post-OPEX',cls:'tag tag-postopex'});
+    if(isPostHol()) flags.push({txt:'🏖 Post-Holiday',cls:'tag tag-holiday'});
+    if(isLastTradeMo()) flags.push({txt:'📆 EOM',cls:'tag tag-eom'});
+    if(isVixExp()) flags.push({txt:'VIX Exp',  cls:'tag tag-cpi'});
+    if(isFirstTradeMo()) flags.push({txt:'NM', cls:'tag tag-postopex'});
+    if(isEarningsDay()){
+      const todayEntries = earningsSchedule.filter(e=>e.date===todayLong());
+      const blocked = todayEntries.filter(e=>e.ticker==='MSFT'||e.ticker==='META').map(e=>e.ticker);
+      const allowed = todayEntries.filter(e=>e.ticker!=='MSFT'&&e.ticker!=='META').map(e=>e.ticker);
+      if(blocked.length) flags.push({txt:`🚫 Earnings: ${blocked.join(' · ')}`, cls:'tag tag-opex'});
+      if(allowed.length) flags.push({txt:`📋 Earnings: ${allowed.join(' · ')} (M8BF ok)`, cls:'tag tag-postopex'});
+    }
+    Array.from(bar.children).forEach(c=>{if(!c.classList.contains('status-bar-title'))c.remove();});
+    if(!flags.length){ cl.style.display='inline'; cl.textContent='No special flags today'; bar.appendChild(cl); }
+    else { cl.style.display='none'; flags.forEach(f=>{const t=document.createElement('span');t.className=f.cls;t.textContent=f.txt;bar.appendChild(t);}); }
+  }
 
-  if (isM8 || isStraddle) {
-    if (today >= 25) {
-      recommendation = "No GXBF (high VIX)";
-      bgColor = "#eee";
-      crossedMain = true;
-      addPostOpexNote = false;
+  /* ====== THEME ====== */
+  /* ====== #5: NEXT UPCOMING EVENTS ====== */
+  function buildNextEvents(){
+    const container=document.getElementById('nextEventsList');
+    if(!container) return;
+    container.innerHTML='';
+    const now=new Date();
+    const todayNorm=new Date(now.getFullYear(),now.getMonth(),now.getDate(),12);
+
+    // Build a combined list of all upcoming events
+    const allEvents=[];
+    const addEvents=(list,label,color)=>{
+      list.forEach(date=>{
+        const d=parseLong(date);
+        if(!d||d<todayNorm) return;
+        const days=tradeDaysUntil(date);
+        if(days===null) return;
+        allEvents.push({date,label,color,days});
+      });
+    };
+    addEvents(cpiSch,   'CPI',       'tag-cpi');
+    addEvents(fedSch,   'Fed',       'tag-fed');
+    addEvents(opexSch,  'OPEX',      'tag-opex');
+    addEvents(vixSch,   'VIX Exp',   'tag-cpi');
+    // earnings
+    const seen=new Set();
+    earningsSchedule.forEach(e=>{
+      const key=e.date;
+      if(seen.has(key)) return;
+      const d=parseLong(e.date);
+      if(!d||d<todayNorm) return;
+      const days=tradeDaysUntil(e.date);
+      if(days===null) return;
+      const tickers=earningsSchedule.filter(x=>x.date===e.date).map(x=>x.ticker).join(' ');
+      allEvents.push({date:e.date,label:`Earnings: ${tickers}`,color:'tag-opex',days});
+      seen.add(key);
+    });
+
+    // Sort by days ascending, take next 5 unique upcoming
+    allEvents.sort((a,b)=>a.days-b.days);
+    const shown=allEvents.slice(0,5);
+
+    if(!shown.length){
+      container.innerHTML='<div style="padding:2px 8px;font-size:11px;color:var(--text3);font-style:italic;">No upcoming events</div>';
+      return;
+    }
+
+    shown.forEach(ev=>{
+      const row=document.createElement('div');
+      row.className='next-event-row';
+      const badgeCls=ev.days===0?'today-badge':ev.days<=2?'soon':ev.days<=5?'near':'far';
+      const dayTxt=ev.days===0?'TODAY':`${ev.days}d`;
+      row.innerHTML=`<span class="ne-label">${ev.label}</span><span class="ne-badge ${badgeCls}">${dayTxt}</span>`;
+      container.appendChild(row);
+    });
+  }
+
+  /* ====== #6: FLOWCHART PATH HIGHLIGHT ====== */
+  function updateFlowPath(oNight, o2o, result){
+    const el=document.getElementById('flowPath');
+    if(!el) return;
+    let path='';
+    if(oNight>0.65)       path='VIX drop > 0.65 → GXBF';
+    else if(o2o>1.4)      path='Open-to-open > 1.4 → M8BF';
+    else if(oNight>0&&oNight<=0.65) path='VIX drop 0.01–0.65 → Straddle';
+    else                  path='VIX up / flat → M8BF';
+    el.textContent=`📍 ${path}`;
+    el.style.color='var(--accent)';
+    el.style.fontStyle='normal';
+    el.style.fontWeight='600';
+  }
+
+  /* ====== #7: PERSIST INPUTS VIA localStorage ====== */
+  function saveInputs(){
+    const vals={
+      todayOpen:    document.getElementById('todayOpen').value,
+      yesterdayOpen:document.getElementById('yesterdayOpen').value,
+      yesterdayClose:document.getElementById('yesterdayClose').value,
+      winrate90:    document.getElementById('winrate90').checked,
+      winrate0:     document.getElementById('winrate0').checked,
+      savedDate:    new Date().toDateString()
+    };
+    localStorage.setItem('s3inputs', JSON.stringify(vals));
+  }
+  function loadInputs(){
+    try{
+      const raw=localStorage.getItem('s3inputs');
+      if(!raw) return;
+      const v=JSON.parse(raw);
+      // Only restore if saved today — stale inputs from yesterday are useless
+      if(v.savedDate !== new Date().toDateString()) return;
+      if(v.todayOpen)     document.getElementById('todayOpen').value=v.todayOpen;
+      if(v.yesterdayOpen) document.getElementById('yesterdayOpen').value=v.yesterdayOpen;
+      if(v.yesterdayClose)document.getElementById('yesterdayClose').value=v.yesterdayClose;
+      if(v.winrate90)     document.getElementById('winrate90').checked=true;
+      if(v.winrate0)      document.getElementById('winrate0').checked=true;
+    } catch(e){}
+  }
+
+  /* ====== #8: PRINT SIGNAL ====== */
+  function printSignal(){
+    window.print();
+  }
+
+  function initTheme(){ const s=localStorage.getItem('s3theme')||'dark'; document.documentElement.setAttribute('data-theme',s); updateThemeLbl(s); }
+  function updateThemeLbl(t){ document.getElementById('themeLabel').textContent=t==='dark'?'Light':'Dark'; }
+  document.getElementById('themeToggle').addEventListener('click',()=>{
+    const c=document.documentElement.getAttribute('data-theme'), n=c==='dark'?'light':'dark';
+    document.documentElement.setAttribute('data-theme',n); localStorage.setItem('s3theme',n); updateThemeLbl(n);
+    setTimeout(window._mermaidInit,50);
+  });
+
+  /* ====== MUTUAL EXCLUSION ====== */
+  const wr90=document.getElementById('winrate90'), wr0=document.getElementById('winrate0');
+  wr90.addEventListener('change',()=>{if(wr90.checked)wr0.checked=false;});
+  wr0.addEventListener('change', ()=>{if(wr0.checked)wr90.checked=false;});
+
+  /* ====== RESET ====== */
+  function resetCalculator(){
+    ['todayOpen','yesterdayOpen','yesterdayClose'].forEach(id=>{document.getElementById(id).value='';document.getElementById('err-'+id).textContent='';});
+    wr90.checked=wr0.checked=false;
+    document.getElementById('overnightDropDisplay').textContent='—';
+    document.getElementById('openDiffDisplay').textContent='—';
+    document.getElementById('mainRec').textContent='Enter VIX values and press Calculate';
+    document.getElementById('bobfLine').textContent='';
+    document.getElementById('blockReasonLine').textContent='';
+    document.getElementById('signalBadge').textContent='—';
+    document.getElementById('signalTime').textContent='';
+    document.getElementById('strikeGridWrap').style.display='none';
+    document.getElementById('recBlock').className='th-neutral';
+    ['cpiTag','fedTag','opexTag','postOpexTag','postHolidayTag','eomTag','openDiffNote','tagSep'].forEach(id=>document.getElementById(id).style.display='none');
+  }
+
+  /* ====== COPY ====== */
+  function copySignal(){
+    const main=document.getElementById('mainRec').textContent;
+    const bobf=document.getElementById('bobfLine').textContent;
+    const reason=document.getElementById('blockReasonLine').textContent;
+    const grid=document.getElementById('strikeGrid');
+    const strikes=grid?Array.from(grid.children).map(p=>p.textContent).join(' '):'' ;
+    let txt=main;
+    if(bobf)   txt+='\n'+bobf;
+    if(reason) txt+='\n'+reason;
+    if(strikes.trim()) txt+='\nStrikes: '+strikes.trim();
+    navigator.clipboard.writeText(txt).then(()=>{
+      const b=document.getElementById('copyBtn'); b.textContent='Copied!';
+      setTimeout(()=>b.textContent='Copy',1800);
+    });
+  }
+
+  /* ====== MAIN CALCULATOR ====== */
+  function calculateStrategy(){
+    ['todayOpen','yesterdayOpen','yesterdayClose'].forEach(id=>document.getElementById('err-'+id).textContent='');
+    const vToday=parseFloat(document.getElementById('todayOpen').value);
+    const vYOpen=parseFloat(document.getElementById('yesterdayOpen').value);
+    const vYClose=parseFloat(document.getElementById('yesterdayClose').value);
+    const cpiDay=isCpi();
+
+    let err=false;
+    if(isNaN(vToday))        {document.getElementById('err-todayOpen').textContent='Required';err=true;}
+    if(isNaN(vYClose))       {document.getElementById('err-yesterdayClose').textContent='Required';err=true;}
+    if(!cpiDay&&isNaN(vYOpen)){document.getElementById('err-yesterdayOpen').textContent='Required (non-CPI day)';err=true;}
+    if(err) return;
+
+    const now=new Date(), dow=now.getDay();
+    const isMon=dow===1, isFri=dow===5, isWed=dow===3;
+    const nmDay=isFirstTradeMo(now), nmMon=isFirstTradeMon(now);
+    const fedDay=isFed(), opexDay=isOpex();
+    const postHol=isPostHol(), postOpMon=isPostOpexMon();
+    const postOpDay=opexSch.some(isTodayAfter);
+    const eomDay=isLastTradeMo(now), eom1=isEomN(1,now), eom2=isEomN(2,now);
+    const vixExpDay=isVixExp(), opex1=opexSch.some(isTodayBefore);
+    const earningsDay=isEarningsDay();
+    // MSFT or META earnings → block M8BF; other earnings → M8BF allowed
+    const msftMetaEarnings = earningsSchedule.some(e => e.date===todayLong() && (e.ticker==='MSFT'||e.ticker==='META'));
+    const otherEarningsOnly = earningsDay && !msftMetaEarnings;
+
+    // tags
+    const tmap={cpiTag:cpiDay,fedTag:fedDay,opexTag:opexDay,postOpexTag:postOpDay,postHolidayTag:postHol,eomTag:eomDay};
+    let anyTag=false;
+    Object.entries(tmap).forEach(([id,v])=>{document.getElementById(id).style.display=v?'inline-flex':'none';if(v)anyTag=true;});
+    document.getElementById('tagSep').style.display=anyTag?'inline':'none';
+
+    const o2o=isNaN(vYOpen)?NaN:vYOpen-vToday;
+    const oNight=vYClose-vToday;
+
+    const dEl=document.getElementById('overnightDropDisplay');
+    dEl.textContent=oNight.toFixed(2);
+    dEl.className='mv'+(oNight>0?' dn':oNight<0?' up':'');
+    const oEl=document.getElementById('openDiffDisplay'), oNote=document.getElementById('openDiffNote');
+    if(cpiDay){oEl.textContent='—';oNote.style.display='inline-flex';}
+    else{oNote.style.display='none';oEl.textContent=isNaN(o2o)?'—':o2o.toFixed(2);oEl.className='mv'+(o2o>0?' dn':o2o<0?' up':'');}
+
+    let rec="", theme="neutral", crossed=false, pmNote=false;
+    let blockT="", blockD="", entryT="", badge="";
+    let strikeInfo=null;
+
+    if(cpiDay){
+      if(oNight>0){rec="Long ATM Call @ 9:32 AM (CPI) — Max $13";theme="strad";entryT="9:32 AM";badge="CPI CALL";}
+      else{rec="No Trade (CPI — VIX up)";theme="block";crossed=true;blockT="hard";blockD="CPI day, VIX up";badge="BLOCKED";}
     } else {
-      recommendation = "GXBF @ 9:36 AM (OPEX+1)";
-      bgColor = "#fff399";
-      crossedMain = false;
-      addPostOpexNote = false;
-    }
-  }
-      }
-      const recBlock = document.getElementById("recBlock");
-      const mainRec = document.getElementById("mainRec");
-      const bobfLine = document.getElementById("bobfLine");
-
-      let mainText = recommendation;
-
-      if (addPostOpexNote) {
-        mainText = `${mainText} (use afternoon times for post OPEX Mondays)`;
-      }
-
-      mainRec.innerHTML = crossedMain ? `<span class="crossed">${mainText}</span>` : mainText;
-      recBlock.style.backgroundColor = bgColor;
-
-      // show the same "1st Monday" label under the calculator results
-      const resultLbl = document.getElementById("resultDayLabel");
-      if (resultLbl) resultLbl.textContent = tradingWeekdayOrdinalLabel(new Date());
-
-      // =======================
-      // BOBF rules (ALL reasons)
-      // =======================
-      let bobfReasons = [];
-
-      if (nmMonday) bobfReasons.push("NM Monday");
-      // Friday is NO LONGER a block
-      if (vixExpiryToday) bobfReasons.push("VIX expiration");
-      if (opexToday) bobfReasons.push("OPEX");
-      if (opexMinus1) bobfReasons.push("OPEX-1");
-      if (eomMinus2) bobfReasons.push("EOM-2");
-      if (eomMinus1) bobfReasons.push("EOM-1");
-      if (!isNaN(today) && today > 23) bobfReasons.push("high VIX");
-
-      const bobfBlocked = bobfReasons.length > 0;
-
-      let bobfText;
-      if (bobfBlocked) {
-        bobfText = `No BOBF (${bobfReasons.join(", ")})`;
+      if(oNight>T.DROP_GXBF){
+        if(vToday>=T.VIX_MAX_GXBF){rec="No GXBF (VIX too high)";theme="block";crossed=true;blockT="vix";blockD=`VIX ${vToday} ≥ ${T.VIX_MAX_GXBF}`;badge="BLOCKED";}
+        else{rec=`GXBF @ 9:36 AM`;theme="gxbf";entryT="9:36 AM";badge="GXBF";}
+      } else if(o2o>T.O2O_M8BF){
+        rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";
+      } else if(oNight>T.DROP_STRAD_MIN&&oNight<T.DROP_GXBF){
+        rec="Straddle @ 9:32 AM";theme="strad";entryT="9:32 AM";badge="STRADDLE";
       } else {
-        bobfText = isFriday ? "BOBF (Friday version)" : "BOBF in play";
+        rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";
       }
 
-      bobfLine.innerHTML = bobfBlocked
-        ? `<span class="crossed">${bobfText}</span>`
-        : bobfText;
-    }
-  </script>
+      if(rec.startsWith("M8BF")){
+        if(fedDay){rec="No M8BF (Fed day)";theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on Fed days";badge="BLOCKED";strikeInfo=null;}
+        else if(msftMetaEarnings){
+          const tickers=earningsSchedule.filter(e=>e.date===todayLong()&&(e.ticker==='MSFT'||e.ticker==='META')).map(e=>e.ticker).join(', ');
+          rec=`No M8BF (Earnings: ${tickers})`;theme="block";crossed=true;blockT="hard";blockD=`M8BF not traded on MSFT/META earnings days`;badge="BLOCKED";strikeInfo=null;
+        }
+        else if(eom1){rec="No M8BF (EOM-1)";theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on EOM-1 (no edge)";badge="BLOCKED";strikeInfo=null;}
+        else if(postHol){rec=m8Msg(now)+" (post-holiday → PM times)";}
+      }
+      if(isPostVixBeforeOpex(now)&&rec.startsWith("M8BF")){rec="No M8BF (Post-VIX exp)";theme="block";crossed=true;blockT="hard";blockD="VIX exp before OPEX this month";badge="BLOCKED";strikeInfo=null;}
 
+      if(nmDay&&!isMon&&(rec.startsWith("M8BF")||rec.startsWith("No M8BF"))){rec="NM Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="NM STRADDLE";strikeInfo=null;}
+      if(eomDay){rec="Straddle @ 9:32 AM (EOM)";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="EOM STRADDLE";strikeInfo=null;}
+      if(isWed&&!fedDay&&!eomDay&&!nmDay&&rec.startsWith("Straddle")){rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";}
+      if(opexDay&&rec.startsWith("Straddle")){rec="No Straddle (OPEX)";theme="block";crossed=true;blockT="hard";blockD="Straddle not on OPEX";badge="BLOCKED";}
+      if(postOpMon&&rec.startsWith("M8BF")) pmNote=true;
+
+      if(wr0.checked){
+        if(!rec.startsWith("No Straddle")){
+          if(fedDay){rec="No Straddle (0% WR + Fed day)";theme="block";crossed=true;blockT="hard";blockD="0% forces Straddle but Fed blocks it";badge="BLOCKED";strikeInfo=null;}
+          else{rec=rec.includes("(EOM)")?"Straddle @ 9:32 AM (EOM)":"Straddle @ 9:32 AM (WR 0%)";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="STRADDLE";strikeInfo=null;}
+        }
+      } else if(wr90.checked){
+        if(rec==="Straddle @ 9:32 AM"){const sc=m8Sched(dow);rec=m8Msg(now)+" (WR >90%)";theme="m8bf";badge="M8BF";strikeInfo=sc;entryT=sc?.window||"";}
+      }
+
+      if(postOpDay){
+        const isM8=rec.startsWith("M8BF"), isStr=rec.startsWith("Straddle")||rec.startsWith("NM Straddle");
+        if(isM8||isStr){
+          if(vToday>=T.VIX_MAX_GXBF){rec="No GXBF (VIX too high)";theme="block";crossed=true;pmNote=false;blockT="vix";blockD=`OPEX+1 GXBF blocked, VIX ${vToday}`;badge="BLOCKED";strikeInfo=null;}
+          else{rec="GXBF @ 9:36 AM (OPEX+1)";theme="gxbf";crossed=false;pmNote=false;blockT="";entryT="9:36 AM";badge="GXBF";strikeInfo=null;}
+        }
+      }
+    }
+
+    if(pmNote) rec+=" (afternoon times preferred)";
+
+    const rb=document.getElementById('recBlock');
+    rb.className=`th-${theme}`;
+    document.getElementById('signalBadge').textContent=badge;
+
+    // For M8BF windows, show as window range; for fixed times show as clock
+    const timePrefix = entryT.includes('–') ? '🕐 ' : '⏰ ';
+    document.getElementById('signalTime').textContent=entryT?`${timePrefix}${entryT}`:'';
+
+    document.getElementById('mainRec').innerHTML=crossed?`<span class="crossed">${rec}</span>`:rec;
+    if(blockT==='hard') document.getElementById('blockReasonLine').innerHTML=`<span class="block-hard">⛔ Hard rule: ${blockD}</span>`;
+    else if(blockT==='vix') document.getElementById('blockReasonLine').innerHTML=`<span class="block-vix">⚠️ VIX level: ${blockD}</span>`;
+    else document.getElementById('blockReasonLine').textContent='';
+
+    // Thu/Fri always trade M8BF regardless of VIX signal — show secondary note
+    const dowSched = m8Sched(dow);
+    if(!crossed && dowSched && dowSched.everyWeek && !strikeInfo){
+      const secondaryEl = document.getElementById('blockReasonLine');
+      const existing = secondaryEl.innerHTML;
+      const note = `M8BF window ${dowSched.window} is also optional today`;
+      secondaryEl.innerHTML = (existing ? existing + '<br>' : '') +
+        `<span style="color:var(--col-m8bf);font-style:normal;">📌 ${note}</span>`;
+      // show strike grid for this too
+      strikeInfo = dowSched;
+    }
+
+    // Strike grid
+    const gw=document.getElementById('strikeGridWrap'), g=document.getElementById('strikeGrid');
+    g.innerHTML='';
+    if(strikeInfo&&strikeInfo.s&&!crossed){
+      gw.style.display='block';
+      // update label to show window
+      const lbl=gw.querySelector('.sg-label');
+      if(lbl){
+        const evBadge=strikeInfo.everyWeek
+          ? '<span style="background:#052016;color:#34d399;border:1px solid #34d399;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;margin-left:6px;">Every week</span>'
+          : '<span style="background:#082030;color:#38bdf8;border:1px solid #38bdf8;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;margin-left:6px;">M8BF days only</span>';
+        lbl.innerHTML=`Window ${strikeInfo.window} ${evBadge}`;
+      }
+      const lwr=LOW_WR[dow]||[];
+      strikeInfo.s.forEach(s=>{
+        const p=document.createElement('span');
+        p.className='sp'+(lwr.includes(s)?' lwr':'');
+        p.textContent=s; p.title=lwr.includes(s)?'Low historical win rate':'';
+        g.appendChild(p);
+      });
+      // entry rule
+      const rule=document.createElement('div');
+      rule.style.cssText='width:100%;font-size:10px;opacity:.6;margin-top:6px;font-style:italic;';
+      rule.textContent='Enter first qualifying strike in window · 1 trade/day · skip if none appears';
+      g.appendChild(rule);
+    } else { gw.style.display='none'; }
+
+    document.getElementById('resultDayLabel').textContent=tradeWdLabel();
+
+    // BOBF
+    const br=[];
+    if(nmMon)      br.push("NM Monday");
+    if(vixExpDay)  br.push("VIX expiration");
+    if(opexDay)    br.push("OPEX");
+    if(opex1)      br.push("OPEX-1");
+    if(eom2)       br.push("EOM-2");
+    if(eom1)       br.push("EOM-1");
+    if(earningsDay){ const tickers=earningsSchedule.filter(e=>e.date===todayLong()).map(e=>e.ticker).join(','); br.push(`earnings (${tickers})`); }
+    if(!isNaN(vToday)&&vToday>T.VIX_MAX_BOBF) br.push("high VIX");
+    const bbl=document.getElementById('bobfLine');
+    if(br.length){
+      const vb=br.includes("high VIX"),ob=br.some(r=>r!=="high VIX");
+      const cls=vb&&!ob?'block-vix':'block-hard', icon=vb&&!ob?'⚠️':'⛔';
+      bbl.innerHTML=`<span class="crossed">No BOBF (${br.join(", ")})</span> <span class="${cls}">${icon}</span>`;
+    } else {
+      bbl.textContent=isFri?"BOBF (Friday version)":"BOBF in play";
+    }
+
+    // #6: highlight flowchart path
+    updateFlowPath(oNight, o2o, rec);
+
+    // #7: persist inputs
+    saveInputs();
+  }
+
+  /* ====== RENDER EARNINGS SCHEDULE ====== */
+  function renderEarnings(){
+    const ul=document.getElementById('earningsSchedule');
+    if(!ul) return;
+    const ts=todayLong(), now=new Date();
+    // group by date
+    const grouped={};
+    earningsSchedule.forEach(e=>{
+      if(!grouped[e.date]) grouped[e.date]=[];
+      grouped[e.date].push(e);
+    });
+    Object.entries(grouped).forEach(([date, entries])=>{
+      const li=document.createElement('li');
+      li.setAttribute('data-date', date);
+      const days=tradeDaysUntil(date);
+      const isToday=(date===ts);
+      // left: date + companies
+      const left=document.createElement('span');
+      left.style.cssText='display:flex;flex-direction:column;gap:1px;';
+      const dateSpan=document.createElement('span');
+      dateSpan.style.cssText='font-size:10px;opacity:.7;';
+      dateSpan.textContent=date;
+      left.appendChild(dateSpan);
+      entries.forEach(e=>{
+        const row=document.createElement('span');
+        row.style.cssText='display:flex;align-items:center;gap:4px;font-weight:600;';
+        const confirmed = e.confirmed
+          ? '<span style="color:#22c55e;font-size:9px;" title="Confirmed">✓</span>'
+          : '<span style="color:#f59e0b;font-size:9px;" title="Estimated">~</span>';
+        const timingColor = e.timing==='AH' ? '#94a3b8' : '#fbbf24';
+        row.innerHTML=`${e.ticker} <span style="font-size:10px;color:${timingColor};">${e.timing}</span>${confirmed}`;
+        left.appendChild(row);
+      });
+      li.appendChild(left);
+      if(days!==null){
+        const b=document.createElement('span');
+        b.className='cdown'+(isToday?' today-badge':days<=3?' soon':'');
+        b.textContent=isToday?'TODAY':`${days}d`;
+        li.appendChild(b);
+      }
+      if(isToday) li.classList.add('today-highlight');
+      ul.appendChild(li);
+    });
+    // cross off past
+    const nowRef=new Date();
+    Array.from(ul.children).forEach(li=>{
+      if(hasPast(li.getAttribute('data-date')||'',nowRef)) li.classList.add('crossed');
+    });
+  }
+  document.addEventListener('DOMContentLoaded',()=>{
+    initTheme();
+    renderSched(cpiSch,  'cpiSchedule');
+    renderSched(fedSch,  'fedSchedule');
+    renderSched(opexSch, 'opexSchedule');
+    renderSched(holidays,'holidaySchedule');
+    renderSched(vixSch,  'vixExpirySchedule');
+    renderEarnings();
+    refreshCross(); buildStatus(); buildNextEvents(); updateHeader();
+    document.getElementById('yesterdayOpen').disabled=isCpi();
+    loadInputs(); // #7: restore today's inputs if available
+    document.getElementById('resultDayLabel').textContent=tradeWdLabel();
+
+    const det=document.getElementById('scheduleDetails');
+    if(det){ const mq=window.matchMedia("(max-width:860px)"), ap=()=>{if(mq.matches)det.removeAttribute("open");else det.setAttribute("open","");}; ap(); if(mq.addEventListener)mq.addEventListener("change",ap);else mq.addListener(ap); }
+
+    const now=new Date(), mid=new Date(now.getFullYear(),now.getMonth(),now.getDate()+1,0,0,2);
+    setTimeout(()=>{
+      resetCache(); refreshCross(); buildStatus(); buildNextEvents(); updateHeader();
+      document.getElementById('resultDayLabel').textContent=tradeWdLabel();
+      setInterval(()=>{ resetCache(); refreshCross(); buildStatus(); updateHeader(); document.getElementById('resultDayLabel').textContent=tradeWdLabel(); },86400000);
+    }, mid-now);
+  });
+</script>
 </body>
 </html>
-
-
-
-
-
-
