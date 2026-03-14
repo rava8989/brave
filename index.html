@@ -1923,61 +1923,63 @@ flowchart TD
     const date  = document.getElementById('todayDate').textContent;
     const day   = document.getElementById('dayLabel').textContent;
 
-    // Determine active/inactive for each signal
-    // Active = card has a real signal (not "Calculate to see signal" and not "No X")
-    const isActive = text => text && !text.startsWith('No ') && !text.startsWith('Calculate');
-    const m8bfActive  = isActive(m8bf);
-    const stradActive = isActive(strad);
-    const gxbfActive  = isActive(gxbf);
-    const bobfActive  = isActive(bobf);
+    // ANSI color codes — no +/- symbols, just color
+    // \x1b[32m = green, \x1b[31m = red, \x1b[0m = reset, \x1b[2m = grey/dim
+    const GRN  = '\x1b[32m'; // green  — active signal
+    const RED  = '\x1b[31m'; // red    — blocked/inactive
+    const DIM  = '\x1b[2m';  // dim    — info lines
+    const RST  = '\x1b[0m';  // reset
 
-    // + = green (active), - = red (inactive), space = grey (info)
-    const G = '+ '; // green
-    const R = '- '; // red
-    const N = '  '; // grey
+    // Active = has a real signal (not "Calculate to see signal", not "No X signal")
+    const notCalc = text => text && !text.startsWith('Calculate');
+    const isActive = text => notCalc(text) && !text.startsWith('No ');
+    const isBlocked= text => notCalc(text) && text.startsWith('No ');
+
+    const sigColor = text => isActive(text) ? GRN : isBlocked(text) ? RED : DIM;
 
     // Strip "M8BF — " prefix so it doesn't repeat the label
     const m8bfText = m8bf.replace(/^M8BF\s*[—-]\s*/,'').replace(/^M8BF$/,'—');
 
-    let inner = `  📅 ${date} — ${day}\n`;
-    inner += `  ${'─'.repeat(34)}\n`;
+    let inner = `${DIM}📅 ${date} — ${day}${RST}\n`;
+    inner += `${DIM}${'─'.repeat(34)}${RST}\n`;
 
-    // Signals — green if active, red if not
-    inner += `${m8bfActive?G:R}M8BF     │ ${m8bfText}\n`;
+    // Signals
+    const mc = sigColor(m8bf);
+    inner += `${mc}M8BF     │ ${m8bfText}${RST}\n`;
     if(strikes.trim())
-      inner += `${m8bfActive?G:N}         │ ${strikes.trim()}\n`;
+      inner += `${mc}         │ ${strikes.trim()}${RST}\n`;
     if(m8bfR)
-      inner += `${m8bfActive?G:R}         │ ${m8bfR}\n`;
-    inner += `${stradActive?G:R}Straddle │ ${strad}\n`;
-    inner += `${gxbfActive?G:R}GXBF     │ ${gxbf}\n`;
-    inner += `${bobfActive?G:R}BOBF     │ ${bobf}\n`;
+      inner += `${mc}         │ ${m8bfR}${RST}\n`;
+    inner += `${sigColor(strad)}Straddle │ ${strad}${RST}\n`;
+    inner += `${sigColor(gxbf)}GXBF     │ ${gxbf}${RST}\n`;
+    inner += `${sigColor(bobf)}BOBF     │ ${bobf}${RST}\n`;
 
-    // VIX values — grey
+    // VIX values — dim
     const vYestClose    = document.getElementById('yesterdayClose').value;
     const vYestOpen     = document.getElementById('yesterdayOpen').value;
     const vTodayOpen    = document.getElementById('todayOpen').value;
     const overnightDrop = document.getElementById('overnightDropDisplay').textContent;
     const openToOpen    = document.getElementById('openDiffDisplay').textContent;
     if(vYestClose || vYestOpen || vTodayOpen){
-      inner += `  ${'─'.repeat(34)}\n`;
-      inner += `${N}VIX Prev Close  │ ${vYestClose   || '—'}\n`;
-      inner += `${N}VIX Prev Open   │ ${vYestOpen    || '—'}\n`;
-      inner += `${N}VIX Today Open  │ ${vTodayOpen   || '—'}\n`;
-      inner += `${N}Overnight Drop  │ ${overnightDrop}\n`;
-      inner += `${N}Open-to-Open    │ ${openToOpen}\n`;
+      inner += `${DIM}${'─'.repeat(34)}${RST}\n`;
+      inner += `${DIM}VIX Prev Close  │ ${vYestClose   || '—'}${RST}\n`;
+      inner += `${DIM}VIX Prev Open   │ ${vYestOpen    || '—'}${RST}\n`;
+      inner += `${DIM}VIX Today Open  │ ${vTodayOpen   || '—'}${RST}\n`;
+      inner += `${DIM}Overnight Drop  │ ${overnightDrop}${RST}\n`;
+      inner += `${DIM}Open-to-Open    │ ${openToOpen}${RST}\n`;
     }
 
-    // SPX gap — red if forcing M8BF, grey otherwise
+    // SPX gap — red if forcing M8BF, dim otherwise
     const spxStored = SC ? SC.get('spx') : null;
     if(spxStored && spxStored.yClose && spxStored.todayOpen){
       const gap = ((spxStored.todayOpen - spxStored.yClose) / spxStored.yClose * 100);
       const dir = gap > 0 ? '▲' : '▼';
       const forced = Math.abs(gap) >= 0.9;
-      inner += `  ${'─'.repeat(34)}\n`;
-      inner += `${forced?R:N}SPX Gap         │ ${dir}${Math.abs(gap).toFixed(2)}%${forced ? ' ⚠️ M8BF forced' : ''}\n`;
+      inner += `${DIM}${'─'.repeat(34)}${RST}\n`;
+      inner += `${forced?RED:DIM}SPX Gap         │ ${dir}${Math.abs(gap).toFixed(2)}%${forced ? ' ⚠️ M8BF forced' : ''}${RST}\n`;
     }
 
-    return `\`\`\`diff\n${inner}\`\`\`\n*Not financial advice. For informational purposes only.*`;
+    return `\`\`\`ansi\n${inner}\`\`\`\n*Not financial advice. For informational purposes only.*`;
   }
 
   /* Post as DM via Cloudflare Worker proxy (avoids CORS) */
