@@ -936,7 +936,7 @@ flowchart TD
     }
 
     // Wrap in Discord code block — renders in monospace, stands out from regular text
-    const txt = `\`\`\`\n${inner}\`\`\``;
+    const txt = `\`\`\`\n${inner}\`\`\`\n*Not financial advice. For informational purposes only.*`;
 
     navigator.clipboard.writeText(txt).then(()=>{
       const btns = document.querySelectorAll('.btn-s');
