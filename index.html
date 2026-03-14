@@ -1056,15 +1056,14 @@ flowchart TD
 
     let inner = `📅 ${date} — ${day}\n`;
     inner += `${'─'.repeat(32)}\n`;
-    inner += `M8BF     │ ${m8bf}\n`;
+    // Strip "M8BF — " prefix so it doesn't repeat the label
+    const m8bfText = m8bf.replace(/^M8BF\s*[—-]\s*/,'').replace(/^M8BF$/,'—');
+    inner += `M8BF     │ ${m8bfText}\n`;
+    if(strikes.trim()) inner += `         │ ${strikes.trim()}\n`;
     if(m8bfR) inner += `         │ ${m8bfR}\n`;
     inner += `Straddle │ ${strad}\n`;
     inner += `GXBF     │ ${gxbf}\n`;
     inner += `BOBF     │ ${bobf}\n`;
-    if(strikes.trim()){
-      inner += `${'─'.repeat(32)}\n`;
-      inner += `Strikes  │ ${strikes.trim()}\n`;
-    }
 
     // Wrap in Discord code block — renders in monospace, stands out from regular text
     const txt = `\`\`\`\n${inner}\`\`\`\n*Not financial advice. For informational purposes only.*`;
@@ -1924,25 +1923,61 @@ flowchart TD
     const date  = document.getElementById('todayDate').textContent;
     const day   = document.getElementById('dayLabel').textContent;
 
-    let inner = `📅 ${date} — ${day}\n`;
-    inner += `${'─'.repeat(32)}\n`;
-    // Add SPX gap if available
+    // Determine active/inactive for each signal
+    // Active = card has a real signal (not "Calculate to see signal" and not "No X")
+    const isActive = text => text && !text.startsWith('No ') && !text.startsWith('Calculate');
+    const m8bfActive  = isActive(m8bf);
+    const stradActive = isActive(strad);
+    const gxbfActive  = isActive(gxbf);
+    const bobfActive  = isActive(bobf);
+
+    // + = green (active), - = red (inactive), space = grey (info)
+    const G = '+ '; // green
+    const R = '- '; // red
+    const N = '  '; // grey
+
+    // Strip "M8BF — " prefix so it doesn't repeat the label
+    const m8bfText = m8bf.replace(/^M8BF\s*[—-]\s*/,'').replace(/^M8BF$/,'—');
+
+    let inner = `  📅 ${date} — ${day}\n`;
+    inner += `  ${'─'.repeat(34)}\n`;
+
+    // Signals — green if active, red if not
+    inner += `${m8bfActive?G:R}M8BF     │ ${m8bfText}\n`;
+    if(strikes.trim())
+      inner += `${m8bfActive?G:N}         │ ${strikes.trim()}\n`;
+    if(m8bfR)
+      inner += `${m8bfActive?G:R}         │ ${m8bfR}\n`;
+    inner += `${stradActive?G:R}Straddle │ ${strad}\n`;
+    inner += `${gxbfActive?G:R}GXBF     │ ${gxbf}\n`;
+    inner += `${bobfActive?G:R}BOBF     │ ${bobf}\n`;
+
+    // VIX values — grey
+    const vYestClose    = document.getElementById('yesterdayClose').value;
+    const vYestOpen     = document.getElementById('yesterdayOpen').value;
+    const vTodayOpen    = document.getElementById('todayOpen').value;
+    const overnightDrop = document.getElementById('overnightDropDisplay').textContent;
+    const openToOpen    = document.getElementById('openDiffDisplay').textContent;
+    if(vYestClose || vYestOpen || vTodayOpen){
+      inner += `  ${'─'.repeat(34)}\n`;
+      inner += `${N}VIX Prev Close  │ ${vYestClose   || '—'}\n`;
+      inner += `${N}VIX Prev Open   │ ${vYestOpen    || '—'}\n`;
+      inner += `${N}VIX Today Open  │ ${vTodayOpen   || '—'}\n`;
+      inner += `${N}Overnight Drop  │ ${overnightDrop}\n`;
+      inner += `${N}Open-to-Open    │ ${openToOpen}\n`;
+    }
+
+    // SPX gap — red if forcing M8BF, grey otherwise
     const spxStored = SC ? SC.get('spx') : null;
     if(spxStored && spxStored.yClose && spxStored.todayOpen){
       const gap = ((spxStored.todayOpen - spxStored.yClose) / spxStored.yClose * 100);
       const dir = gap > 0 ? '▲' : '▼';
-      inner += `SPX Gap  | ${dir}${Math.abs(gap).toFixed(2)}%${Math.abs(gap) >= 0.9 ? ' ⚠️ M8BF forced' : ''}\n`;
+      const forced = Math.abs(gap) >= 0.9;
+      inner += `  ${'─'.repeat(34)}\n`;
+      inner += `${forced?R:N}SPX Gap         │ ${dir}${Math.abs(gap).toFixed(2)}%${forced ? ' ⚠️ M8BF forced' : ''}\n`;
     }
-    inner += `M8BF     │ ${m8bf}\n`;
-    if(m8bfR) inner += `         │ ${m8bfR}\n`;
-    inner += `Straddle │ ${strad}\n`;
-    inner += `GXBF     │ ${gxbf}\n`;
-    inner += `BOBF     │ ${bobf}\n`;
-    if(strikes.trim()){
-      inner += `${'─'.repeat(32)}\n`;
-      inner += `Strikes  │ ${strikes.trim()}\n`;
-    }
-    return `\`\`\`\n${inner}\`\`\`\n*Not financial advice. For informational purposes only.*`;
+
+    return `\`\`\`diff\n${inner}\`\`\`\n*Not financial advice. For informational purposes only.*`;
   }
 
   /* Post as DM via Cloudflare Worker proxy (avoids CORS) */
