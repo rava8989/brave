@@ -390,10 +390,10 @@
   <div class="schwab-modal-overlay" id="discordModal" style="display:none;">
     <div class="schwab-modal">
       <h3>Setup Discord Bot</h3>
-      <p>The bot will send you a private DM with the signal every morning. Stored locally only.</p>
+      <p>Enter your Cloudflare Worker proxy URL and your Discord User ID. The bot token lives securely on the proxy — never in the browser.</p>
       <div class="fg">
-        <label>Bot Token</label>
-        <input type="password" id="discordToken" placeholder="Your Discord Bot Token" autocomplete="off" />
+        <label>Proxy URL (Cloudflare Worker)</label>
+        <input type="text" id="discordToken" placeholder="https://your-worker.your-name.workers.dev" autocomplete="off" />
       </div>
       <div class="fg">
         <label>Your Discord User ID</label>
@@ -404,11 +404,12 @@
         <button class="btn-s" onclick="document.getElementById('discordModal').style.display='none'">Cancel</button>
       </div>
       <p class="schwab-modal-note">
-        To get your User ID:<br>
-        1. Discord Settings → Advanced → enable <strong>Developer Mode</strong><br>
-        2. Right-click your name in any server → <strong>Copy User ID</strong><br><br>
-        ⚠️ Make sure you send the bot a message first so it can DM you:<br>
-        Find the bot in your server → click it → Message → send "hi"
+        Setup steps:<br>
+        1. Go to <strong>dash.cloudflare.com</strong> → Workers &amp; Pages → Create<br>
+        2. Paste the worker code → Deploy<br>
+        3. Go to Settings → Variables → add <strong>DISCORD_TOKEN</strong> (your bot token)<br>
+        4. Add <strong>ALLOWED_ORIGIN</strong> (your GitHub Pages URL)<br>
+        5. Copy the worker URL and paste it above
       </p>
     </div>
   </div>
@@ -1892,10 +1893,10 @@ flowchart TD
   }
 
   function discordSave(){
-    const token     = document.getElementById('discordToken').value.trim();
+    const proxyUrl  = document.getElementById('discordToken').value.trim();
     const channelId = document.getElementById('discordChannelId').value.trim();
-    if(!token || !channelId){ alert('Please fill in both fields.'); return; }
-    DC.set('config', { token, channelId });
+    if(!proxyUrl || !channelId){ alert('Please fill in both fields.'); return; }
+    DC.set('config', { proxyUrl, channelId });
     document.getElementById('discordModal').style.display = 'none';
     discordStatus();
   }
@@ -1944,40 +1945,24 @@ flowchart TD
     return `\`\`\`\n${inner}\`\`\`\n*Not financial advice. For informational purposes only.*`;
   }
 
-  /* Post as DM to user via bot token */
+  /* Post as DM via Cloudflare Worker proxy (avoids CORS) */
   async function discordPost(message){
     const c = DC.get('config');
     if(!c) return false;
     try{
-      // Step 1: Create a DM channel with the user
-      const dmResp = await fetch(`https://discord.com/api/v10/users/@me/channels`, {
-        method: 'POST',
-        headers: {
-          'Content-Type':  'application/json',
-          'Authorization': `Bot ${c.token}`,
-        },
-        body: JSON.stringify({ recipient_id: c.channelId }), // channelId field stores userId
-      });
-      if(!dmResp.ok){
-        const err = await dmResp.json();
-        throw new Error(err.message || `DM create failed: ${dmResp.status}`);
-      }
-      const dm = await dmResp.json();
-      const dmChannelId = dm.id;
+      const proxyUrl = c.proxyUrl; // set during setup
+      if(!proxyUrl) throw new Error('Proxy URL not configured');
 
-      // Step 2: Send message to the DM channel
-      const msgResp = await fetch(`https://discord.com/api/v10/channels/${dmChannelId}/messages`, {
+      const resp = await fetch(proxyUrl, {
         method: 'POST',
-        headers: {
-          'Content-Type':  'application/json',
-          'Authorization': `Bot ${c.token}`,
-        },
-        body: JSON.stringify({ content: message }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId:  c.channelId,
+          message: message,
+        }),
       });
-      if(!msgResp.ok){
-        const err = await msgResp.json();
-        throw new Error(err.message || `Send failed: ${msgResp.status}`);
-      }
+      const data = await resp.json();
+      if(!data.ok) throw new Error(data.error || 'Unknown error');
       return true;
     } catch(e){
       discordSetStatus('error', `Discord error: ${e.message}`);
