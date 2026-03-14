@@ -919,13 +919,25 @@ flowchart TD
     const gxbf = document.getElementById('gxbfRec').textContent;
     const bobf = document.getElementById('bobfRec').textContent;
     const grid = document.getElementById('strikeGrid');
-    const strikes = grid ? Array.from(grid.children).map(p=>p.textContent).join(' ') : '';
-    let txt = `M8BF: ${m8bf}`;
-    if(m8bfR) txt += ` (${m8bfR})`;
-    txt += `\nStraddle: ${strad}`;
-    txt += `\nGXBF: ${gxbf}`;
-    txt += `\nBOBF: ${bobf}`;
-    if(strikes.trim()) txt += `\nStrikes: ${strikes.trim()}`;
+    const strikes = grid ? Array.from(grid.children).map(p=>p.textContent).join('  ') : '';
+    const date = document.getElementById('todayDate').textContent;
+    const day  = document.getElementById('dayLabel').textContent;
+
+    let inner = `📅 ${date} — ${day}\n`;
+    inner += `${'─'.repeat(32)}\n`;
+    inner += `M8BF     │ ${m8bf}\n`;
+    if(m8bfR) inner += `         │ ${m8bfR}\n`;
+    inner += `Straddle │ ${strad}\n`;
+    inner += `GXBF     │ ${gxbf}\n`;
+    inner += `BOBF     │ ${bobf}\n`;
+    if(strikes.trim()){
+      inner += `${'─'.repeat(32)}\n`;
+      inner += `Strikes  │ ${strikes.trim()}\n`;
+    }
+
+    // Wrap in Discord code block — renders in monospace, stands out from regular text
+    const txt = `\`\`\`\n${inner}\`\`\``;
+
     navigator.clipboard.writeText(txt).then(()=>{
       const btns = document.querySelectorAll('.btn-s');
       btns.forEach(b=>{ if(b.textContent==='Copy All'){b.textContent='Copied!'; setTimeout(()=>b.textContent='Copy All',1800);} });
