@@ -38,7 +38,7 @@
       --radius:12px; --radius-sm:8px;
       --col-m8bf:#7c3aed;   --col-m8bf-bg:#ede9fe;
       --col-strad:#0891b2;  --col-strad-bg:#cffafe;
-      --col-gxbf:#b45309;   --col-gxbf-bg:#fef3c7;
+      --col-gxbf:#0891b2;   --col-gxbf-bg:#cffafe;
       --col-block:#dc2626;  --col-block-bg:#fee2e2;
       --tag-cpi:#7c3aed;    --tag-cpi-bg:#ede9fe;
       --tag-fed:#0369a1;    --tag-fed-bg:#e0f2fe;
@@ -56,7 +56,7 @@
       --shadow-lg:0 8px 32px rgba(0,0,0,.4);
       --col-m8bf:#a78bfa;   --col-m8bf-bg:#1e1340;
       --col-strad:#22d3ee;  --col-strad-bg:#0c2233;
-      --col-gxbf:#fbbf24;   --col-gxbf-bg:#231a06;
+      --col-gxbf:#22d3ee;   --col-gxbf-bg:#0c2233;
       --col-block:#f87171;  --col-block-bg:#2d0e0e;
       --tag-cpi:#a78bfa;    --tag-cpi-bg:#1e1340;
       --tag-fed:#38bdf8;    --tag-fed-bg:#082030;
@@ -132,6 +132,11 @@
 
     /* METRICS BAR */
     .metrics-bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;padding:9px 13px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);font-size:12px;}
+    /* #7: color legend */
+    .mv-legend{display:flex;gap:8px;align-items:center;margin-left:auto;font-size:10px;color:var(--text3);}
+    .mv-legend-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:3px;}
+    .mv-legend-dn{background:#22c55e;}
+    .mv-legend-up{background:#ef4444;}
     .mi{display:flex;align-items:center;gap:5px;}
     .ml{color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;}
     .mv{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:15px;color:var(--text);}
@@ -147,17 +152,25 @@
     .tag-holiday{background:var(--tag-holiday-bg);color:var(--tag-holiday);border-color:var(--tag-holiday);}
     .tag-eom{background:var(--tag-eom-bg);color:var(--tag-eom);border-color:var(--tag-eom);}
 
-    /* SIGNAL CARD */
-    #recBlock{margin:0 0 6px;border-radius:var(--radius);border:2px solid var(--border);overflow:hidden;box-shadow:var(--shadow-lg);transition:border-color .2s,background .2s;}
-    .sig-header{display:flex;align-items:center;justify-content:space-between;padding:9px 14px;border-bottom:1px solid rgba(255,255,255,.07);background:rgba(0,0,0,.15);flex-wrap:wrap;gap:6px;}
-    .sig-badge{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:3px 10px;border-radius:20px;background:rgba(255,255,255,.14);color:inherit;}
-    .sig-time{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;opacity:.8;}
-    .copy-btn{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.18);border-radius:6px;color:inherit;font-size:11px;font-weight:600;padding:3px 10px;cursor:pointer;font-family:'Inter',sans-serif;transition:background .15s;}
-    .copy-btn:hover{background:rgba(255,255,255,.22);}
-    .sig-body{padding:13px 15px 12px;}
-    .sig-main{font-family:'JetBrains Mono',monospace;font-size:clamp(14px,1.9vw,21px);font-weight:700;line-height:1.3;margin-bottom:7px;}
-    .sig-bobf{font-size:clamp(12px,1.5vw,15px);font-family:'JetBrains Mono',monospace;opacity:.82;margin-bottom:5px;}
-    .sig-reason{font-size:12px;opacity:.75;font-style:italic;margin-top:5px;}
+    /* FOUR SIGNAL CARDS — single column */
+    .signal-stack{display:flex;flex-direction:column;gap:8px;margin-bottom:6px;}
+    .scard{background:var(--bg2);border:2px solid var(--border);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow);transition:border-color .2s,background .2s;}
+    .scard-header{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;background:rgba(0,0,0,.12);border-bottom:1px solid rgba(255,255,255,.06);}
+    /* #5: today's trade pill */
+    .today-trade-pill{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;padding:2px 8px;border-radius:20px;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);animation:pulse-pill 2s infinite;}
+    @keyframes pulse-pill{0%,100%{opacity:1;}50%{opacity:.6;}}
+    .scard-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;opacity:.7;}
+    .scard-badge{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;padding:2px 10px;border-radius:20px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15);}
+    .scard-body{padding:12px 14px;}
+    .scard-main{font-family:'JetBrains Mono',monospace;font-size:clamp(13px,1.6vw,18px);font-weight:700;line-height:1.35;margin-bottom:4px;}
+    .scard-reason{font-size:11px;opacity:.7;font-style:italic;line-height:1.4;margin-top:4px;}
+    /* card themes */
+    .scard.active-m8bf {border-color:var(--col-m8bf); background:var(--col-m8bf-bg); color:var(--col-m8bf);}
+    .scard.active-strad{border-color:var(--col-strad); background:var(--col-strad-bg);color:var(--col-strad);}
+    .scard.active-gxbf {border-color:var(--col-gxbf); background:var(--col-gxbf-bg); color:var(--col-gxbf);}
+    .scard.active-block{border-color:var(--col-block); background:var(--col-block-bg);color:var(--col-block);}
+    .scard.active-ok   {border-color:#22c55e;background:var(--bg2);color:#22c55e;}
+    .scard.dimmed      {opacity:.4;}
     .crossed{text-decoration:line-through;opacity:.5;}
     .block-hard{color:#fca5a5;} .block-vix{color:#fcd34d;}
 
@@ -168,11 +181,7 @@
     .sp.lwr{background:rgba(220,38,38,.2);border-color:rgba(220,38,38,.45);text-decoration:line-through;opacity:.55;}
 
     /* Signal themes */
-    #recBlock.th-m8bf  {background:var(--col-m8bf-bg); border-color:var(--col-m8bf); color:var(--col-m8bf);}
-    #recBlock.th-strad {background:var(--col-strad-bg);border-color:var(--col-strad);color:var(--col-strad);}
-    #recBlock.th-gxbf  {background:var(--col-gxbf-bg); border-color:var(--col-gxbf); color:var(--col-gxbf);}
-    #recBlock.th-block {background:var(--col-block-bg);border-color:var(--col-block);color:var(--col-block);}
-    #recBlock.th-neutral{background:var(--bg2);border-color:var(--border);color:var(--text);}
+    /* old single-card themes removed — now using .scard.active-* classes */
 
     #resultDayLabel{text-align:right;font-size:11px;color:var(--text3);margin-bottom:14px;font-family:'JetBrains Mono',monospace;}
 
@@ -207,21 +216,27 @@
     /* #8: Print styles */
     @media print {
       body{background:#fff;color:#000;display:block;}
-      .sidebar{display:none;}
+      .sidebar,.calcRow,.metrics-bar,.flowchart,.strategy-doc,#resultDayLabel{display:none;}
       .main{padding:10px;}
-      .calcRow,.metrics-bar,.flowchart,.strategy-doc,#resultDayLabel{display:none;}
-      #recBlock{border:2px solid #333;box-shadow:none;border-radius:8px;color:#000 !important;background:#f9f9f9 !important;}
-      #recBlock .sig-header{background:#eee !important;border-bottom:1px solid #ccc;}
-      #recBlock .sig-badge{background:#ddd;color:#000;}
-      #recBlock .copy-btn,#recBlock #printBtn{display:none;}
+      .signal-stack{flex-direction:column;}
+      .scard{border:2px solid #ccc !important;background:#f9f9f9 !important;color:#000 !important;box-shadow:none;}
+      .scard.active-m8bf{border-color:#7c3aed !important;background:#f5f0ff !important;}
+      .scard.active-gxbf{border-color:#0891b2 !important;background:#f0faff !important;}
+      .scard.active-strad{border-color:#0891b2 !important;background:#f0fafa !important;}
+      .scard.active-block{border-color:#dc2626 !important;background:#fff5f5 !important;}
+      .scard.active-ok{border-color:#16a34a !important;background:#f0fdf4 !important;}
+      .scard.dimmed{opacity:.5;}
+      .scard-header{background:#eee !important;}
+      .scard-main,.scard-reason,.scard-label,.scard-badge{color:#000 !important;}
+      .crossed{color:#999;}
+      .block-hard{color:#c00 !important;}
+      .block-vix{color:#a60 !important;}
+      .sp{background:#eee;border:1px solid #ccc;color:#000;}
+      .sp.lwr{background:#fdd;border-color:#c00;}
       .top-header{margin-bottom:8px;}
       .date-pill{border:1px solid #ccc;background:#f0f0f0;color:#333;}
       .top-header h1{color:#000;}
-      .crossed{color:#999;}
-      .block-hard{color:#c00;}
-      .block-vix{color:#a60;}
-      .sp{background:#eee;border:1px solid #ccc;color:#000;}
-      .sp.lwr{background:#fdd;border-color:#c00;}
+      button{display:none;}
     }
 
     @media(max-width:860px){
@@ -234,10 +249,8 @@
       .metrics-bar{gap:8px;padding:8px 10px;font-size:12px;}
       .mv{font-size:13px;}
       #recBlock{border-radius:10px;}
+      .signal-stack{flex-direction:column;}
       .sig-header{padding:8px 12px;gap:6px;}
-      .sig-body{padding:10px 12px 10px;}
-      .sig-main{font-size:clamp(13px,4vw,18px);}
-      .sig-bobf{font-size:clamp(11px,3.5vw,14px);}
       .strategy-doc{padding:14px;}
       .strategy-image img{max-width:100%;}
       .top-header h1{font-size:15px;}
@@ -328,28 +341,80 @@
       <span id="fedTag"        class="tag tag-fed"      style="display:none;">🏦 Fed</span>
       <span id="opexTag"       class="tag tag-opex"     style="display:none;">📅 OPEX</span>
       <span id="postOpexTag"   class="tag tag-postopex" style="display:none;">↗ Post-OPEX</span>
-      <span id="postHolidayTag"class="tag tag-holiday"  style="display:none;">🏖 Post-Holiday</span>
       <span id="eomTag"        class="tag tag-eom"      style="display:none;">📆 EOM</span>
+    </div>
+    <!-- #7: color legend -->
+    <div class="mv-legend">
+      <span><span class="mv-legend-dot mv-legend-dn"></span>VIX down</span>
+      <span><span class="mv-legend-dot mv-legend-up"></span>VIX up</span>
     </div>
   </div>
 
-  <!-- SIGNAL CARD -->
-  <div id="recBlock" class="th-neutral">
-    <div class="sig-header">
-      <span class="sig-badge" id="signalBadge">—</span>
-      <span class="sig-time" id="signalTime"></span>
-      <button class="copy-btn" onclick="copySignal()" id="copyBtn">Copy</button>
-      <button class="copy-btn" onclick="printSignal()" id="printBtn">Print</button>
-    </div>
-    <div class="sig-body">
-      <div class="sig-main" id="mainRec">Enter VIX values and press Calculate</div>
-      <div class="sig-bobf" id="bobfLine"></div>
-      <div class="sig-reason" id="blockReasonLine"></div>
-      <div id="strikeGridWrap" style="display:none;">
-        <div class="sg-label">Qualified Strikes</div>
-        <div class="sg" id="strikeGrid"></div>
+  <!-- 4 SIGNAL CARDS — single column -->
+  <div class="signal-stack">
+
+    <!-- CARD 1: M8BF -->
+    <div class="scard" id="cardM8bf">
+      <div class="scard-header">
+        <span class="scard-label">M8BF</span>
+        <span class="today-trade-pill" id="pillM8bf" style="display:none;">▶ TODAY'S TRADE</span>
+        <span class="scard-badge" id="m8bfBadge">—</span>
+      </div>
+      <div class="scard-body">
+        <div class="scard-main" id="m8bfRec">Calculate to see signal</div>
+        <div class="scard-reason" id="m8bfReason"></div>
+        <div id="strikeGridWrap" style="display:none;">
+          <div class="sg-label" id="sgLabel">Qualified Strikes</div>
+          <div class="sg" id="strikeGrid"></div>
+        </div>
       </div>
     </div>
+
+    <!-- CARD 2: Straddle -->
+    <div class="scard" id="cardStrad">
+      <div class="scard-header">
+        <span class="scard-label">Straddle</span>
+        <span class="today-trade-pill" id="pillStrad" style="display:none;">▶ TODAY'S TRADE</span>
+        <span class="scard-badge" id="stradBadge">—</span>
+      </div>
+      <div class="scard-body">
+        <div class="scard-main" id="stradRec">Calculate to see signal</div>
+        <div class="scard-reason" id="stradReason"></div>
+      </div>
+    </div>
+
+    <!-- CARD 3: GXBF -->
+    <div class="scard" id="cardGxbf">
+      <div class="scard-header">
+        <span class="scard-label">GXBF</span>
+        <span class="today-trade-pill" id="pillGxbf" style="display:none;">▶ TODAY'S TRADE</span>
+        <span class="scard-badge" id="gxbfBadge">—</span>
+      </div>
+      <div class="scard-body">
+        <div class="scard-main" id="gxbfRec">Calculate to see signal</div>
+        <div class="scard-reason" id="gxbfReason"></div>
+      </div>
+    </div>
+
+    <!-- CARD 4: BOBF -->
+    <div class="scard" id="cardBobf">
+      <div class="scard-header">
+        <span class="scard-label">BOBF</span>
+        <span class="today-trade-pill" id="pillBobf" style="display:none;">▶ TODAY'S TRADE</span>
+        <span class="scard-badge" id="bobfBadge">—</span>
+      </div>
+      <div class="scard-body">
+        <div class="scard-main" id="bobfRec">Calculate to see signal</div>
+        <div class="scard-reason" id="bobfReason"></div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- copy/print row -->
+  <div style="display:flex;gap:8px;justify-content:flex-end;margin-bottom:6px;">
+    <button class="btn-s" onclick="copySignal()">Copy All</button>
+    <button class="btn-s" onclick="printSignal()">Print</button>
   </div>
 
   <div id="resultDayLabel">—</div>
@@ -680,7 +745,6 @@ flowchart TD
     if(isFed())   flags.push({txt:'🏦 Fed',    cls:'tag tag-fed'});
     if(isOpex())  flags.push({txt:'📅 OPEX',   cls:'tag tag-opex'});
     if(opexSch.some(isTodayAfter)) flags.push({txt:'↗ Post-OPEX',cls:'tag tag-postopex'});
-    if(isPostHol()) flags.push({txt:'🏖 Post-Holiday',cls:'tag tag-holiday'});
     if(isLastTradeMo()) flags.push({txt:'📆 EOM',cls:'tag tag-eom'});
     if(isVixExp()) flags.push({txt:'VIX Exp',  cls:'tag tag-cpi'});
     if(isFirstTradeMo()) flags.push({txt:'NM', cls:'tag tag-postopex'});
@@ -814,35 +878,57 @@ flowchart TD
   wr0.addEventListener('change', ()=>{if(wr0.checked)wr90.checked=false;});
 
   /* ====== RESET ====== */
+  /* #5: Set/clear the TODAY'S TRADE pill */
+  function setTodayTrade(activeId){
+    ['pillM8bf','pillStrad','pillGxbf','pillBobf'].forEach(id=>{
+      document.getElementById(id).style.display = (id===activeId) ? 'inline-block' : 'none';
+    });
+  }
+
   function resetCalculator(){
     ['todayOpen','yesterdayOpen','yesterdayClose'].forEach(id=>{document.getElementById(id).value='';document.getElementById('err-'+id).textContent='';});
     wr90.checked=wr0.checked=false;
     document.getElementById('overnightDropDisplay').textContent='—';
     document.getElementById('openDiffDisplay').textContent='—';
-    document.getElementById('mainRec').textContent='Enter VIX values and press Calculate';
-    document.getElementById('bobfLine').textContent='';
-    document.getElementById('blockReasonLine').textContent='';
-    document.getElementById('signalBadge').textContent='—';
-    document.getElementById('signalTime').textContent='';
+    // reset 3 cards
+    document.getElementById('m8bfRec').textContent='Calculate to see signal';
+    document.getElementById('m8bfReason').textContent='';
+    document.getElementById('m8bfBadge').textContent='—';
+    document.getElementById('stradRec').textContent='Calculate to see signal';
+    document.getElementById('stradReason').textContent='';
+    document.getElementById('stradBadge').textContent='—';
+    document.getElementById('gxbfRec').textContent='Calculate to see signal';
+    document.getElementById('gxbfReason').textContent='';
+    document.getElementById('gxbfBadge').textContent='—';
+    document.getElementById('bobfRec').textContent='Calculate to see signal';
+    document.getElementById('bobfBadge').textContent='—';
     document.getElementById('strikeGridWrap').style.display='none';
-    document.getElementById('recBlock').className='th-neutral';
-    ['cpiTag','fedTag','opexTag','postOpexTag','postHolidayTag','eomTag','openDiffNote','tagSep'].forEach(id=>document.getElementById(id).style.display='none');
+    document.getElementById('cardM8bf').className='scard';
+    document.getElementById('cardStrad').className='scard';
+    document.getElementById('cardGxbf').className='scard';
+    document.getElementById('cardBobf').className='scard';
+    setTodayTrade(null);
+    ['cpiTag','fedTag','opexTag','postOpexTag','eomTag','openDiffNote','tagSep'].forEach(id=>document.getElementById(id).style.display='none');
   }
 
   /* ====== COPY ====== */
   function copySignal(){
-    const main=document.getElementById('mainRec').textContent;
-    const bobf=document.getElementById('bobfLine').textContent;
-    const reason=document.getElementById('blockReasonLine').textContent;
-    const grid=document.getElementById('strikeGrid');
-    const strikes=grid?Array.from(grid.children).map(p=>p.textContent).join(' '):'' ;
-    let txt=main;
-    if(bobf)   txt+='\n'+bobf;
-    if(reason) txt+='\n'+reason;
-    if(strikes.trim()) txt+='\nStrikes: '+strikes.trim();
+    const m8bf = document.getElementById('m8bfRec').textContent;
+    const m8bfR= document.getElementById('m8bfReason').textContent;
+    const strad= document.getElementById('stradRec').textContent;
+    const gxbf = document.getElementById('gxbfRec').textContent;
+    const bobf = document.getElementById('bobfRec').textContent;
+    const grid = document.getElementById('strikeGrid');
+    const strikes = grid ? Array.from(grid.children).map(p=>p.textContent).join(' ') : '';
+    let txt = `M8BF: ${m8bf}`;
+    if(m8bfR) txt += ` (${m8bfR})`;
+    txt += `\nStraddle: ${strad}`;
+    txt += `\nGXBF: ${gxbf}`;
+    txt += `\nBOBF: ${bobf}`;
+    if(strikes.trim()) txt += `\nStrikes: ${strikes.trim()}`;
     navigator.clipboard.writeText(txt).then(()=>{
-      const b=document.getElementById('copyBtn'); b.textContent='Copied!';
-      setTimeout(()=>b.textContent='Copy',1800);
+      const btns = document.querySelectorAll('.btn-s');
+      btns.forEach(b=>{ if(b.textContent==='Copy All'){b.textContent='Copied!'; setTimeout(()=>b.textContent='Copy All',1800);} });
     });
   }
 
@@ -864,7 +950,7 @@ flowchart TD
     const isMon=dow===1, isFri=dow===5, isWed=dow===3;
     const nmDay=isFirstTradeMo(now), nmMon=isFirstTradeMon(now);
     const fedDay=isFed(), opexDay=isOpex();
-    const postHol=isPostHol(), postOpMon=isPostOpexMon();
+    const postOpMon=isPostOpexMon();
     const postOpDay=opexSch.some(isTodayAfter);
     const eomDay=isLastTradeMo(now), eom1=isEomN(1,now), eom2=isEomN(2,now);
     const vixExpDay=isVixExp(), opex1=opexSch.some(isTodayBefore);
@@ -874,7 +960,7 @@ flowchart TD
     const otherEarningsOnly = earningsDay && !msftMetaEarnings;
 
     // tags
-    const tmap={cpiTag:cpiDay,fedTag:fedDay,opexTag:opexDay,postOpexTag:postOpDay,postHolidayTag:postHol,eomTag:eomDay};
+    const tmap={cpiTag:cpiDay,fedTag:fedDay,opexTag:opexDay,postOpexTag:postOpDay,eomTag:eomDay};
     let anyTag=false;
     Object.entries(tmap).forEach(([id,v])=>{document.getElementById(id).style.display=v?'inline-flex':'none';if(v)anyTag=true;});
     document.getElementById('tagSep').style.display=anyTag?'inline':'none';
@@ -915,7 +1001,7 @@ flowchart TD
           rec=`No M8BF (Earnings: ${tickers})`;theme="block";crossed=true;blockT="hard";blockD=`M8BF not traded on MSFT/META earnings days`;badge="BLOCKED";strikeInfo=null;
         }
         else if(eom1){rec="No M8BF (EOM-1)";theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on EOM-1 (no edge)";badge="BLOCKED";strikeInfo=null;}
-        else if(postHol){rec=m8Msg(now)+" (post-holiday → PM times)";}
+        
       }
       if(isPostVixBeforeOpex(now)&&rec.startsWith("M8BF")){rec="No M8BF (Post-VIX exp)";theme="block";crossed=true;blockT="hard";blockD="VIX exp before OPEX this month";badge="BLOCKED";strikeInfo=null;}
 
@@ -945,38 +1031,106 @@ flowchart TD
 
     if(pmNote) rec+=" (afternoon times preferred)";
 
-    const rb=document.getElementById('recBlock');
-    rb.className=`th-${theme}`;
-    document.getElementById('signalBadge').textContent=badge;
+    /* ====== RENDER 4 CARDS ====== */
 
-    // For M8BF windows, show as window range; for fixed times show as clock
-    const timePrefix = entryT.includes('–') ? '🕐 ' : '⏰ ';
-    document.getElementById('signalTime').textContent=entryT?`${timePrefix}${entryT}`:'';
+    const cardM8bf  = document.getElementById('cardM8bf');
+    const m8bfRec   = document.getElementById('m8bfRec');
+    const m8bfBadge = document.getElementById('m8bfBadge');
+    const m8bfReason= document.getElementById('m8bfReason');
+    const cardStrad  = document.getElementById('cardStrad');
+    const stradRec   = document.getElementById('stradRec');
+    const stradBadge = document.getElementById('stradBadge');
+    const stradReason= document.getElementById('stradReason');
+    const cardGxbf  = document.getElementById('cardGxbf');
+    const gxbfRec   = document.getElementById('gxbfRec');
+    const gxbfBadge = document.getElementById('gxbfBadge');
+    const gxbfReason= document.getElementById('gxbfReason');
 
-    document.getElementById('mainRec').innerHTML=crossed?`<span class="crossed">${rec}</span>`:rec;
-    if(blockT==='hard') document.getElementById('blockReasonLine').innerHTML=`<span class="block-hard">⛔ Hard rule: ${blockD}</span>`;
-    else if(blockT==='vix') document.getElementById('blockReasonLine').innerHTML=`<span class="block-vix">⚠️ VIX level: ${blockD}</span>`;
-    else document.getElementById('blockReasonLine').textContent='';
-
-    // Thu/Fri always trade M8BF regardless of VIX signal — show secondary note
+    // ── CARD 1: M8BF ──
+    // Active when theme is m8bf OR on Thu/Fri (every week)
     const dowSched = m8Sched(dow);
-    if(!crossed && dowSched && dowSched.everyWeek && !strikeInfo){
-      const secondaryEl = document.getElementById('blockReasonLine');
-      const existing = secondaryEl.innerHTML;
-      const note = `M8BF window ${dowSched.window} is also optional today`;
-      secondaryEl.innerHTML = (existing ? existing + '<br>' : '') +
-        `<span style="color:var(--col-m8bf);font-style:normal;">📌 ${note}</span>`;
-      // show strike grid for this too
+    const thurfri = dowSched && dowSched.everyWeek;
+
+    if(theme==='m8bf'){
+      cardM8bf.className='scard active-m8bf';
+      m8bfBadge.textContent=entryT?`🕐 ${entryT}`:'TRADE';
+      m8bfRec.innerHTML=crossed?`<span class="crossed">${rec}</span>`:rec;
+      if(blockT==='hard') m8bfReason.innerHTML=`<span class="block-hard">⛔ ${blockD}</span>`;
+      else if(blockT==='vix') m8bfReason.innerHTML=`<span class="block-vix">⚠️ ${blockD}</span>`;
+      else m8bfReason.textContent='';
+    } else if(theme==='block' && rec.includes('M8BF')){
+      cardM8bf.className='scard active-block';
+      m8bfBadge.textContent='BLOCKED';
+      m8bfRec.innerHTML=`<span class="crossed">${rec}</span>`;
+      if(blockT==='hard') m8bfReason.innerHTML=`<span class="block-hard">⛔ ${blockD}</span>`;
+      else if(blockT==='vix') m8bfReason.innerHTML=`<span class="block-vix">⚠️ ${blockD}</span>`;
+      else m8bfReason.textContent='';
+    } else if(thurfri){
+      // Thu/Fri — M8BF is optional even on non-M8BF days
+      cardM8bf.className='scard';
+      m8bfBadge.textContent=`🕐 ${dowSched.window}`;
+      m8bfRec.textContent=`M8BF — Window ${dowSched.window}`;
+      m8bfReason.innerHTML=`<span style="opacity:.65;font-style:italic;">Optional today (Thu/Fri)</span>`;
       strikeInfo = dowSched;
+    } else {
+      cardM8bf.className='scard dimmed';
+      m8bfBadge.textContent='—';
+      m8bfRec.textContent='No M8BF signal today';
+      m8bfReason.textContent='';
     }
 
-    // Strike grid
+    // ── CARD 2: Straddle / CPI / NM / EOM ──
+    if(theme==='strad'){
+      cardStrad.className='scard active-strad';
+      const isCpiSignal = badge==='CPI CALL';
+      const isNM  = badge==='NM STRADDLE';
+      const isEOM = badge==='EOM STRADDLE';
+      if(isCpiSignal) stradBadge.textContent='📊 CPI — 9:32 AM';
+      else if(isNM)   stradBadge.textContent='📅 NM — 9:32 AM';
+      else if(isEOM)  stradBadge.textContent='📆 EOM — 9:32 AM';
+      else             stradBadge.textContent=entryT?`⏰ ${entryT}`:'TRADE';
+      stradRec.innerHTML=crossed?`<span class="crossed">${rec}</span>`:rec;
+      if(isCpiSignal)      stradReason.textContent='Long ATM Call · Max $13 premium';
+      else if(isNM)        stradReason.textContent='First trading day of month · Max risk $3,200';
+      else if(isEOM)       stradReason.textContent='Last trading day of month · Max risk $3,500';
+      else                 stradReason.textContent='';
+    } else if(theme==='block' && (rec.includes('Straddle') || rec.includes('CPI') || rec.includes('Trade'))){
+      cardStrad.className='scard active-block';
+      stradBadge.textContent='BLOCKED';
+      stradRec.innerHTML=`<span class="crossed">${rec}</span>`;
+      if(blockT==='hard') stradReason.innerHTML=`<span class="block-hard">⛔ ${blockD}</span>`;
+      else stradReason.textContent='';
+    } else {
+      cardStrad.className='scard dimmed';
+      stradBadge.textContent='—';
+      stradRec.textContent='No Straddle signal today';
+      stradReason.textContent='';
+    }
+
+    // ── CARD 3: GXBF ──
+    if(theme==='gxbf'){
+      cardGxbf.className='scard active-gxbf';
+      gxbfBadge.textContent=`⏰ ${entryT}`;
+      gxbfRec.textContent=rec;
+      gxbfReason.textContent='';
+    } else if(!isNaN(vToday) && vToday >= T.VIX_MAX_GXBF){
+      cardGxbf.className='scard active-block';
+      gxbfBadge.textContent='BLOCKED';
+      gxbfRec.innerHTML=`<span class="crossed">No GXBF (VIX too high)</span>`;
+      gxbfReason.innerHTML=`<span class="block-vix">⚠️ VIX ${vToday} ≥ ${T.VIX_MAX_GXBF}</span>`;
+    } else {
+      cardGxbf.className='scard dimmed';
+      gxbfBadge.textContent='—';
+      gxbfRec.textContent='No GXBF signal today';
+      gxbfReason.textContent='';
+    }
+
+    // ── STRIKE GRID (inside M8BF card) ──
     const gw=document.getElementById('strikeGridWrap'), g=document.getElementById('strikeGrid');
     g.innerHTML='';
-    if(strikeInfo&&strikeInfo.s&&!crossed){
+    if(strikeInfo && strikeInfo.s){
       gw.style.display='block';
-      // update label to show window
-      const lbl=gw.querySelector('.sg-label');
+      const lbl=document.getElementById('sgLabel');
       if(lbl){
         const evBadge=strikeInfo.everyWeek
           ? '<span style="background:#052016;color:#34d399;border:1px solid #34d399;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;margin-left:6px;">Every week</span>'
@@ -987,36 +1141,53 @@ flowchart TD
       strikeInfo.s.forEach(s=>{
         const p=document.createElement('span');
         p.className='sp'+(lwr.includes(s)?' lwr':'');
-        p.textContent=s; p.title=lwr.includes(s)?'Low historical win rate':'';
+        p.textContent=s;
         g.appendChild(p);
       });
-      // entry rule
       const rule=document.createElement('div');
       rule.style.cssText='width:100%;font-size:10px;opacity:.6;margin-top:6px;font-style:italic;';
       rule.textContent='Enter first qualifying strike in window · 1 trade/day · skip if none appears';
       g.appendChild(rule);
     } else { gw.style.display='none'; }
 
-    document.getElementById('resultDayLabel').textContent=tradeWdLabel();
-
-    // BOBF
+    // ── CARD 4: BOBF ──
+    const cardBobf =document.getElementById('cardBobf');
+    const bobfRec  =document.getElementById('bobfRec');
+    const bobfBadge=document.getElementById('bobfBadge');
+    const bobfReason=document.getElementById('bobfReason');
     const br=[];
-    if(nmMon)      br.push("NM Monday");
-    if(vixExpDay)  br.push("VIX expiration");
-    if(opexDay)    br.push("OPEX");
-    if(opex1)      br.push("OPEX-1");
-    if(eom2)       br.push("EOM-2");
-    if(eom1)       br.push("EOM-1");
+    if(nmMon)       br.push("NM Monday");
+    if(vixExpDay)   br.push("VIX expiration");
+    if(opexDay)     br.push("OPEX");
+    if(opex1)       br.push("OPEX-1");
+    if(eom2)        br.push("EOM-2");
+    if(eom1)        br.push("EOM-1");
     if(earningsDay){ const tickers=earningsSchedule.filter(e=>e.date===todayLong()).map(e=>e.ticker).join(','); br.push(`earnings (${tickers})`); }
     if(!isNaN(vToday)&&vToday>T.VIX_MAX_BOBF) br.push("high VIX");
-    const bbl=document.getElementById('bobfLine');
     if(br.length){
-      const vb=br.includes("high VIX"),ob=br.some(r=>r!=="high VIX");
+      cardBobf.className='scard active-block';
+      bobfBadge.textContent='BLOCKED';
+      const vb=br.includes("high VIX"), ob=br.some(r=>r!=="high VIX");
       const cls=vb&&!ob?'block-vix':'block-hard', icon=vb&&!ob?'⚠️':'⛔';
-      bbl.innerHTML=`<span class="crossed">No BOBF (${br.join(", ")})</span> <span class="${cls}">${icon}</span>`;
+      bobfRec.innerHTML=`<span class="crossed">No BOBF (${br.join(", ")})</span>`;
+      bobfReason.innerHTML=`<span class="${cls}">${icon} ${vb&&!ob?'VIX level':'Hard rule'}</span>`;
     } else {
-      bbl.textContent=isFri?"BOBF (Friday version)":"BOBF in play";
+      cardBobf.className='scard active-ok';
+      bobfBadge.textContent=isFri?'FRIDAY VERSION':'IN PLAY';
+      bobfRec.textContent=isFri?'BOBF (Friday version)':'BOBF in play';
+      bobfReason.textContent='';
     }
+
+    document.getElementById('resultDayLabel').textContent=tradeWdLabel();
+
+    // #5: mark the primary trade card
+    if(theme==='m8bf')          setTodayTrade('pillM8bf');
+    else if(theme==='strad')    setTodayTrade('pillStrad');
+    else if(theme==='gxbf')     setTodayTrade('pillGxbf');
+    else if(theme==='block' && rec.includes('M8BF'))   setTodayTrade('pillM8bf');
+    else if(theme==='block' && rec.includes('Straddle'))setTodayTrade('pillStrad');
+    else if(theme==='block' && rec.includes('GXBF'))   setTodayTrade('pillGxbf');
+    else                        setTodayTrade(null);
 
     // #6: highlight flowchart path
     updateFlowPath(oNight, o2o, rec);
