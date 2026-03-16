@@ -423,9 +423,9 @@
 
     <div class="card calculator">
       <h2><span class="sig">Σ</span> VIX Calculator</h2>
-      <div class="fg"><label>VIX Today's Open</label><input type="number" id="todayOpen" step="0.01" placeholder="e.g. 18.50" /><span class="fe" id="err-todayOpen"></span></div>
-      <div class="fg"><label>VIX Yesterday's Open</label><input type="number" id="yesterdayOpen" step="0.01" placeholder="e.g. 19.10" /><span class="fe" id="err-yesterdayOpen"></span></div>
-      <div class="fg"><label>VIX Yesterday's Close</label><input type="number" id="yesterdayClose" step="0.01" placeholder="e.g. 18.80" /><span class="fe" id="err-yesterdayClose"></span></div>
+      <div class="fg"><label>VIX Today's Open</label><input type="number" id="todayOpen" step="0.01" placeholder="e.g. 18.50" oninput="onManualInput(this,'todayOpen')" /><span class="fe" id="err-todayOpen"></span></div>
+      <div class="fg"><label>VIX Yesterday's Open</label><input type="number" id="yesterdayOpen" step="0.01" placeholder="e.g. 19.10" oninput="onManualInput(this,'yesterdayOpen')" /><span class="fe" id="err-yesterdayOpen"></span></div>
+      <div class="fg"><label>VIX Yesterday's Close</label><input type="number" id="yesterdayClose" step="0.01" placeholder="e.g. 18.80" oninput="onManualInput(this,'yesterdayClose')" /><span class="fe" id="err-yesterdayClose"></span></div>
       <div class="btn-row">
         <button class="btn-p" onclick="calculateStrategy()">Calculate</button>
         <button class="btn-s" onclick="resetCalculator()">Reset</button>
@@ -939,14 +939,50 @@ flowchart TD
   }
 
   /* ====== #7: PERSIST INPUTS VIA localStorage ====== */
+  // Track which fields were auto-filled by Schwab vs manually typed
+  // Auto values = saved to localStorage and restored on reload
+  // Manual overrides = session only, never saved, cleared on refresh
+  const _autoValues = { todayOpen: null, yesterdayOpen: null, yesterdayClose: null };
+
+  function onManualInput(el, fieldId){
+    // If user types something different from auto value — show orange "override" border
+    if(_autoValues[fieldId] !== null && el.value !== String(_autoValues[fieldId])){
+      el.style.borderColor = '#f97316'; // orange = manual override
+      el.title = 'Manual override (session only — resets on refresh)';
+    } else if(_autoValues[fieldId] !== null){
+      el.style.borderColor = '#22c55e'; // back to green if matches auto
+      el.title = 'Auto-filled from Schwab';
+    } else {
+      el.style.borderColor = ''; // no auto value — plain
+      el.title = '';
+    }
+  }
+
+  function markAutoFilled(fieldId, value){
+    _autoValues[fieldId] = value;
+    const el = document.getElementById(fieldId);
+    if(el){
+      el.value = value;
+      el.style.borderColor = '#22c55e';
+      el.title = 'Auto-filled from Schwab';
+    }
+  }
+
+  function isManualOverride(fieldId){
+    const el = document.getElementById(fieldId);
+    if(!el || !el.value) return false;
+    return el.value !== String(_autoValues[fieldId]);
+  }
+
   function saveInputs(){
+    // Only save auto-filled values — never save manual overrides
     const vals={
-      todayOpen:    document.getElementById('todayOpen').value,
-      yesterdayOpen:document.getElementById('yesterdayOpen').value,
-      yesterdayClose:document.getElementById('yesterdayClose').value,
-      winrate90:    document.getElementById('winrate90').checked,
-      winrate0:     document.getElementById('winrate0').checked,
-      savedDate:    new Date().toDateString()
+      todayOpen:     _autoValues.todayOpen     || '',
+      yesterdayOpen: _autoValues.yesterdayOpen || '',
+      yesterdayClose:_autoValues.yesterdayClose|| '',
+      winrate90:     document.getElementById('winrate90').checked,
+      winrate0:      document.getElementById('winrate0').checked,
+      savedDate:     new Date().toDateString()
     };
     localStorage.setItem('s3inputs', JSON.stringify(vals));
   }
@@ -957,9 +993,9 @@ flowchart TD
       const v=JSON.parse(raw);
       // Only restore if saved today — stale inputs from yesterday are useless
       if(v.savedDate !== new Date().toDateString()) return;
-      if(v.todayOpen)     document.getElementById('todayOpen').value=v.todayOpen;
-      if(v.yesterdayOpen) document.getElementById('yesterdayOpen').value=v.yesterdayOpen;
-      if(v.yesterdayClose)document.getElementById('yesterdayClose').value=v.yesterdayClose;
+      if(v.todayOpen){     markAutoFilled('todayOpen',     v.todayOpen);     }
+      if(v.yesterdayOpen){ markAutoFilled('yesterdayOpen', v.yesterdayOpen); }
+      if(v.yesterdayClose){markAutoFilled('yesterdayClose',v.yesterdayClose);}
       if(v.winrate90)     document.getElementById('winrate90').checked=true;
       if(v.winrate0)      document.getElementById('winrate0').checked=true;
     } catch(e){}
@@ -1661,19 +1697,9 @@ flowchart TD
         if(closeCandle) yClose = closeCandle.close.toFixed(2);
       }
 
-      // Fill fields
-      if(yOpen){
-        const el = document.getElementById('yesterdayOpen');
-        el.value = yOpen;
-        el.title = 'Auto-filled from Schwab';
-        el.style.borderColor = '#22c55e';
-      }
-      if(yClose){
-        const el = document.getElementById('yesterdayClose');
-        el.value = yClose;
-        el.title = 'Auto-filled from Schwab';
-        el.style.borderColor = '#22c55e';
-      }
+      // Fill fields using markAutoFilled so values are tracked as auto
+      if(yOpen) markAutoFilled('yesterdayOpen', yOpen);
+      if(yClose) markAutoFilled('yesterdayClose', yClose);
 
       // If today already has a 9:30+ print, fill that too
       const todayCandles = candles.filter(c => new Date(c.datetime).toDateString() === todayStr);
@@ -1682,10 +1708,7 @@ flowchart TD
         return d.getHours() === 9 && d.getMinutes() >= 30;
       });
       if(todayOpen){
-        const el = document.getElementById('todayOpen');
-        el.value = todayOpen.open.toFixed(2);
-        el.style.borderColor = '#22c55e';
-        el.title = 'Auto-filled from Schwab';
+        markAutoFilled('todayOpen', todayOpen.open.toFixed(2));
         calculateStrategy();
       }
 
@@ -1783,10 +1806,7 @@ flowchart TD
 
         // Got it — fill and calculate
         clearInterval(_schwabStreamInterval);
-        const el = document.getElementById('todayOpen');
-        el.value = openPrice.toFixed(2);
-        el.style.borderColor = '#22c55e';
-        el.title = 'Auto-filled from Schwab live';
+        markAutoFilled('todayOpen', openPrice.toFixed(2));
 
         // Also fetch SPX open for gap check
         try{
