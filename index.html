@@ -1153,6 +1153,15 @@ flowchart TD
     if(cpiDay){oEl.textContent='—';oNote.style.display='inline-flex';}
     else{oNote.style.display='none';oEl.textContent=isNaN(o2o)?'—':o2o.toFixed(2);oEl.className='mv'+(o2o>0?' dn':o2o<0?' up':'');}
 
+    // ── SPX gap check (populated by Schwab when connected) ──
+    const spxData = SC ? SC.get('spx') : null; // { yClose, todayOpen }
+    let spxGapPct = null;
+    let spxGapForcesM8BF = false;
+    if(spxData && spxData.yClose && spxData.todayOpen){
+      spxGapPct = ((spxData.todayOpen - spxData.yClose) / spxData.yClose) * 100;
+      spxGapForcesM8BF = Math.abs(spxGapPct) >= T.SPX_GAP_THRESHOLD;
+    }
+
     // Show SPX gap in metrics bar if available
     const spxGapWrap=document.getElementById('spxGapWrap');
     const spxGapEl  =document.getElementById('spxGapDisplay');
@@ -1162,19 +1171,10 @@ flowchart TD
       spxSepEl.style.display='inline';
       const dir=spxGapPct>0?'▲':'▼';
       spxGapEl.textContent=`${dir}${Math.abs(spxGapPct).toFixed(2)}%`;
-      spxGapEl.className='mv'+(spxGapForcesM8BF?' up':''); // red if forcing M8BF
+      spxGapEl.className='mv'+(spxGapForcesM8BF?' up':'');
     } else {
       spxGapWrap.style.display='none';
       spxSepEl.style.display='none';
-    }
-
-    // ── SPX gap check (populated by Schwab when connected) ──
-    const spxData = SC ? SC.get('spx') : null; // { yClose, todayOpen }
-    let spxGapPct = null;
-    let spxGapForcesM8BF = false;
-    if(spxData && spxData.yClose && spxData.todayOpen){
-      spxGapPct = ((spxData.todayOpen - spxData.yClose) / spxData.yClose) * 100;
-      spxGapForcesM8BF = Math.abs(spxGapPct) >= T.SPX_GAP_THRESHOLD;
     }
 
     let rec="", theme="neutral", crossed=false, pmNote=false;
