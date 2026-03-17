@@ -1284,7 +1284,7 @@ flowchart TD
     } else {
       cardM8bf.className='scard dimmed';
       m8bfBadge.textContent='—';
-      m8bfRec.textContent=`No M8BF (${oNight>0?'overnight VIX up':'open-to-open ≤ '+T.O2O_M8BF})`;
+      m8bfRec.textContent=blockT==='0%rule'?'No M8BF (0% rule)':'No M8BF (overnight VIX down)';
       m8bfReason.textContent='';
     }
 
