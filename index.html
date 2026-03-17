@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en" data-theme="dark">
 <head>
@@ -365,14 +366,14 @@
   <div class="schwab-modal-overlay" id="schwabModal" style="display:none;">
     <div class="schwab-modal">
       <h3>Connect Schwab</h3>
-      <p>Enter your Schwab API credentials. These are stored locally in your browser only — never sent to any server.</p>
+      <p>Enter your App Key and Proxy Worker URL. Your App Secret stays on the Cloudflare Worker — it never touches this browser.</p>
       <div class="fg">
         <label>App Key (Client ID)</label>
         <input type="text" id="schwabAppKey" placeholder="Your Schwab App Key" autocomplete="off" />
       </div>
       <div class="fg">
-        <label>App Secret</label>
-        <input type="password" id="schwabAppSecret" placeholder="Your Schwab App Secret" autocomplete="off" />
+        <label>Proxy Worker URL</label>
+        <input type="text" id="schwabProxyUrl" placeholder="https://your-worker.your-subdomain.workers.dev" autocomplete="off" />
       </div>
       <div class="fg">
         <label>Account Number</label>
@@ -382,7 +383,7 @@
         <button class="btn-p" style="flex:1;" onclick="schwabConnect()">Connect & Authenticate</button>
         <button class="btn-s" onclick="document.getElementById('schwabModal').style.display='none'">Cancel</button>
       </div>
-      <p class="schwab-modal-note">⚠️ After clicking Connect, a Schwab login page will open in a new tab. Log in there, then come back here. You only need to do this once every 7 days.</p>
+      <p class="schwab-modal-note">⚠️ After clicking Connect, a Schwab login page will open. Log in there, then come back here. You only need to do this once every 7 days.<br><br>Setup: Deploy <code>schwab-proxy.js</code> as a Cloudflare Worker with <code>SCHWAB_APP_SECRET</code> and <code>ALLOWED_ORIGIN</code> env vars.</p>
     </div>
   </div>
 
@@ -1284,7 +1285,7 @@ flowchart TD
     } else {
       cardM8bf.className='scard dimmed';
       m8bfBadge.textContent='—';
-      m8bfRec.textContent=blockT==='0%rule'?'No M8BF (0% rule)':'No M8BF (overnight VIX down)';
+      m8bfRec.textContent=`No M8BF (${oNight>0?'overnight VIX up':'open-to-open ≤ '+T.O2O_M8BF})`;
       m8bfReason.textContent='';
     }
 
@@ -1459,9 +1460,9 @@ flowchart TD
      SCHWAB INTEGRATION
      ====================================================
      Flow:
-     1. User enters App Key, App Secret, Account Number once → saved to localStorage
+     1. User enters App Key, Proxy Worker URL, Account Number once → saved to localStorage
      2. OAuth redirect to Schwab login → user logs in → redirected back with code
-     3. Code exchanged for access + refresh tokens → saved to localStorage
+     3. Code sent to Cloudflare Worker proxy → Worker injects App Secret → tokens returned
      4. On page load: use refresh token to get fresh access token silently
      5. Fetch yesterday's VIX open + close → pre-fill fields
      6. At 9:30 AM ET: open WebSocket stream → wait for first VIX print
@@ -1470,11 +1471,9 @@ flowchart TD
   ==================================================== */
 
   const SCHWAB = {
-    BASE:      'https://api.schwabapi.com',
     AUTH_URL:  'https://api.schwabapi.com/v1/oauth/authorize',
-    TOKEN_URL: 'https://api.schwabapi.com/v1/oauth/token',
-    MARKET:    'https://api.schwabapi.com/marketdata/v1',
-    REDIRECT:  window.location.href.split('?')[0].split('#')[0], // current page URL
+    REDIRECT:  window.location.href.split('?')[0].split('#')[0],
+    proxy:     () => (localStorage.getItem('sc_proxyUrl') || '').replace(/\/+$/, ''),
   };
 
   /* ── Storage helpers ── */
@@ -1482,7 +1481,7 @@ flowchart TD
     get:  k => { try { return JSON.parse(localStorage.getItem('sc_'+k)); } catch(e){ return null; } },
     set:  (k,v) => localStorage.setItem('sc_'+k, JSON.stringify(v)),
     del:  k => localStorage.removeItem('sc_'+k),
-    creds:()=> SC.get('creds'),         // { appKey, appSecret, acctNum }
+    creds:()=> SC.get('creds'),         // { appKey, acctNum }
     tokens:()=> SC.get('tokens'),        // { access, refresh, expiry, refreshExpiry }
   };
 
@@ -1506,13 +1505,14 @@ flowchart TD
     if(c){
       document.getElementById('schwabAppKey').value    = c.appKey    || '';
       document.getElementById('schwabAcctNum').value   = c.acctNum   || '';
-      // don't pre-fill secret for security
     }
+    document.getElementById('schwabProxyUrl').value = localStorage.getItem('sc_proxyUrl') || '';
     document.getElementById('schwabModal').style.display = 'flex';
   }
 
   function schwabDisconnect(){
     SC.del('creds'); SC.del('tokens'); SC.del('verifier');
+    localStorage.removeItem('sc_proxyUrl');
     schwabSetStatus('', 'Schwab not connected');
     document.getElementById('schwabConnectBtn').style.display = 'inline-block';
   }
@@ -1520,25 +1520,25 @@ flowchart TD
   function schwabReauth(){
     const c = SC.creds();
     if(!c){ schwabSetup(); return; }
-    schwabStartOAuth(c.appKey, c.appSecret, c.acctNum);
+    schwabStartOAuth(c.appKey);
   }
 
   /* ── Step 1: Start OAuth ── */
   function schwabConnect(){
     const appKey    = document.getElementById('schwabAppKey').value.trim();
-    const appSecret = document.getElementById('schwabAppSecret').value.trim();
+    const proxyUrl  = document.getElementById('schwabProxyUrl').value.trim().replace(/\/+$/, '');
     const acctNum   = document.getElementById('schwabAcctNum').value.trim();
-    if(!appKey||!appSecret||!acctNum){
+    if(!appKey||!proxyUrl||!acctNum){
       alert('Please fill in all three fields.');
       return;
     }
-    SC.set('creds', { appKey, appSecret, acctNum });
+    SC.set('creds', { appKey, acctNum });
+    localStorage.setItem('sc_proxyUrl', proxyUrl);
     document.getElementById('schwabModal').style.display = 'none';
-    schwabStartOAuth(appKey, appSecret, acctNum);
+    schwabStartOAuth(appKey);
   }
 
-  function schwabStartOAuth(appKey, appSecret, acctNum){
-    // Store state for callback verification
+  function schwabStartOAuth(appKey){
     const state = Math.random().toString(36).slice(2);
     SC.set('oauthState', state);
     const params = new URLSearchParams({
@@ -1549,7 +1549,6 @@ flowchart TD
       state:         state,
     });
     schwabSetStatus('connecting', 'Waiting for Schwab login…');
-    // Open Schwab login in same tab — it will redirect back with ?code=
     window.location.href = `${SCHWAB.AUTH_URL}?${params}`;
   }
 
@@ -1572,21 +1571,19 @@ flowchart TD
 
     schwabSetStatus('connecting', 'Exchanging token…');
     const c = SC.creds();
-    if(!c){ schwabSetStatus('error', 'Credentials missing — reconnect'); return true; }
+    const proxy = SCHWAB.proxy();
+    if(!c || !proxy){ schwabSetStatus('error', 'Credentials or proxy URL missing — reconnect'); return true; }
 
     try{
-      const body = new URLSearchParams({
-        grant_type:   'authorization_code',
-        code:          code,
-        redirect_uri:  SCHWAB.REDIRECT,
-      });
-      const resp = await fetch(SCHWAB.TOKEN_URL, {
+      const resp = await fetch(`${proxy}/token`, {
         method: 'POST',
-        headers: {
-          'Content-Type':  'application/x-www-form-urlencoded',
-          'Authorization': 'Basic ' + btoa(`${c.appKey}:${c.appSecret}`),
-        },
-        body,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          app_key:      c.appKey,
+          grant_type:   'authorization_code',
+          code:         code,
+          redirect_uri: SCHWAB.REDIRECT,
+        }),
       });
       const data = await resp.json();
       if(!data.access_token) throw new Error(data.error_description || 'Token exchange failed');
@@ -1610,19 +1607,17 @@ flowchart TD
   /* ── Step 3: Refresh access token silently ── */
   async function schwabRefreshToken(){
     const c = SC.creds(), t = SC.tokens();
-    if(!c||!t?.refresh) return false;
+    const proxy = SCHWAB.proxy();
+    if(!c||!t?.refresh||!proxy) return false;
     try{
-      const body = new URLSearchParams({
-        grant_type:    'refresh_token',
-        refresh_token:  t.refresh,
-      });
-      const resp = await fetch(SCHWAB.TOKEN_URL, {
+      const resp = await fetch(`${proxy}/token`, {
         method: 'POST',
-        headers: {
-          'Content-Type':  'application/x-www-form-urlencoded',
-          'Authorization': 'Basic ' + btoa(`${c.appKey}:${c.appSecret}`),
-        },
-        body,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          app_key:       c.appKey,
+          grant_type:    'refresh_token',
+          refresh_token: t.refresh,
+        }),
       });
       const data = await resp.json();
       if(!data.access_token) throw new Error('Refresh failed');
@@ -1660,7 +1655,7 @@ flowchart TD
       // Get last 5 days of 1-min bars for VIX
       const end   = new Date();
       const start = new Date(end); start.setDate(start.getDate() - 5);
-      const url = `${SCHWAB.MARKET}/pricehistory?symbol=%24VIX.X&periodType=day&period=5&frequencyType=minute&frequency=1&startDate=${start.getTime()}&endDate=${end.getTime()}&needExtendedHoursData=true`;
+      const url = `${SCHWAB.proxy()}/market/pricehistory?symbol=%24VIX.X&periodType=day&period=5&frequencyType=minute&frequency=1&startDate=${start.getTime()}&endDate=${end.getTime()}&needExtendedHoursData=true`;
       const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       const data = await resp.json();
       if(!data.candles || !data.candles.length) throw new Error('No VIX data returned');
@@ -1718,7 +1713,7 @@ flowchart TD
 
       // ── Fetch SPX data for gap check ──
       try{
-        const spxUrl = `${SCHWAB.MARKET}/pricehistory?symbol=%24SPX.X&periodType=day&period=5&frequencyType=minute&frequency=1&startDate=${start.getTime()}&endDate=${end.getTime()}&needExtendedHoursData=true`;
+        const spxUrl = `${SCHWAB.proxy()}/market/pricehistory?symbol=%24SPX.X&periodType=day&period=5&frequencyType=minute&frequency=1&startDate=${start.getTime()}&endDate=${end.getTime()}&needExtendedHoursData=true`;
         const spxResp = await fetch(spxUrl, { headers: { Authorization: `Bearer ${token}` } });
         const spxData = await spxResp.json();
         if(spxData.candles && spxData.candles.length){
@@ -1793,7 +1788,7 @@ flowchart TD
       if(!token){ clearInterval(_schwabStreamInterval); return; }
 
       try{
-        const url = `${SCHWAB.MARKET}/quotes?symbols=%24VIX.X&fields=quote`;
+        const url = `${SCHWAB.proxy()}/market/quotes?symbols=%24VIX.X&fields=quote`;
         const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
         const data = await resp.json();
         const quote = data?.['$VIX.X']?.quote;
@@ -1812,7 +1807,7 @@ flowchart TD
 
         // Also fetch SPX open for gap check
         try{
-          const spxUrl = `${SCHWAB.MARKET}/quotes?symbols=%24SPX.X&fields=quote`;
+          const spxUrl = `${SCHWAB.proxy()}/market/quotes?symbols=%24SPX.X&fields=quote`;
           const spxR = await fetch(spxUrl, { headers: { Authorization: `Bearer ${token}` } });
           const spxD = await spxR.json();
           const spxQ = spxD?.['$SPX.X']?.quote;
