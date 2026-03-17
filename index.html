@@ -1183,7 +1183,7 @@ flowchart TD
 
     if(cpiDay){
       if(oNight>0){rec="Long ATM Call @ 9:32 AM (CPI) — Max $13";theme="strad";entryT="9:32 AM";badge="CPI CALL";}
-      else{rec="No Trade (CPI — VIX up)";theme="block";crossed=true;blockT="hard";blockD="CPI day, VIX up";badge="BLOCKED";}
+      else{rec="No Trade (CPI, VIX up)";theme="block";crossed=true;blockT="hard";blockD="CPI day, VIX up";badge="BLOCKED";}
     } else if(spxGapForcesM8BF){
       // SPX gap ≥ 0.9% in either direction → M8BF regardless of VIX
       const dir = spxGapPct > 0 ? '▲' : '▼';
@@ -1191,7 +1191,7 @@ flowchart TD
       blockD=`SPX gap ${dir}${Math.abs(spxGapPct).toFixed(2)}% ≥ ${T.SPX_GAP_THRESHOLD}% → M8BF forced`;
     } else {
       if(oNight>T.DROP_GXBF){
-        if(vToday>=T.VIX_MAX_GXBF){rec="No GXBF (VIX too high)";theme="block";crossed=true;blockT="vix";blockD=`VIX ${vToday} ≥ ${T.VIX_MAX_GXBF}`;badge="BLOCKED";}
+        if(vToday>=T.VIX_MAX_GXBF){rec=`No GXBF (VIX ${vToday} ≥ ${T.VIX_MAX_GXBF})`;theme="block";crossed=true;blockT="vix";blockD=`VIX ${vToday} ≥ ${T.VIX_MAX_GXBF}`;badge="BLOCKED";}
         else{rec=`GXBF @ 9:36 AM`;theme="gxbf";entryT="9:36 AM";badge="GXBF";}
       } else if(o2o>T.O2O_M8BF){
         rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";
@@ -1205,32 +1205,32 @@ flowchart TD
         if(fedDay){rec="No M8BF (Fed day)";theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on Fed days";badge="BLOCKED";strikeInfo=null;}
         else if(msftMetaEarnings){
           const tickers=earningsSchedule.filter(e=>e.date===todayLong()&&(e.ticker==='MSFT'||e.ticker==='META')).map(e=>e.ticker).join(', ');
-          rec=`No M8BF (Earnings: ${tickers})`;theme="block";crossed=true;blockT="hard";blockD=`M8BF not traded on MSFT/META earnings days`;badge="BLOCKED";strikeInfo=null;
+          rec=`No M8BF (${tickers} earnings)`;theme="block";crossed=true;blockT="hard";blockD=`M8BF not traded on MSFT/META earnings days`;badge="BLOCKED";strikeInfo=null;
         }
         else if(eom1){rec="No M8BF (EOM-1)";theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on EOM-1 (no edge)";badge="BLOCKED";strikeInfo=null;}
         
       }
-      if(isPostVixBeforeOpex(now)&&rec.startsWith("M8BF")){rec="No M8BF (Post-VIX exp)";theme="block";crossed=true;blockT="hard";blockD="VIX exp before OPEX this month";badge="BLOCKED";strikeInfo=null;}
+      if(isPostVixBeforeOpex(now)&&rec.startsWith("M8BF")){rec="No M8BF (post-VIX exp)";theme="block";crossed=true;blockT="hard";blockD="VIX exp before OPEX this month";badge="BLOCKED";strikeInfo=null;}
 
       if(nmDay&&!isMon&&(rec.startsWith("M8BF")||rec.startsWith("No M8BF"))){rec="NM Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="NM STRADDLE";strikeInfo=null;}
       if(eomDay){rec="Straddle @ 9:32 AM (EOM)";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="EOM STRADDLE";strikeInfo=null;}
       if(isWed&&!fedDay&&!eomDay&&!nmDay&&rec.startsWith("Straddle")){rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";}
-      if(opexDay&&rec.startsWith("Straddle")){rec="No Straddle (OPEX)";theme="block";crossed=true;blockT="hard";blockD="Straddle not on OPEX";badge="BLOCKED";}
+      if(opexDay&&rec.startsWith("Straddle")){rec="No Straddle (OPEX day)";theme="block";crossed=true;blockT="hard";blockD="Straddle not on OPEX";badge="BLOCKED";}
       if(postOpMon&&rec.startsWith("M8BF")) pmNote=true;
 
       if(wr0.checked){
         if(!rec.startsWith("No Straddle")){
-          if(fedDay){rec="No Straddle (0% WR + Fed day)";theme="block";crossed=true;blockT="hard";blockD="0% forces Straddle but Fed blocks it";badge="BLOCKED";strikeInfo=null;}
-          else{rec=rec.includes("(EOM)")?"Straddle @ 9:32 AM (EOM)":"Straddle @ 9:32 AM (WR 0%)";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="STRADDLE";strikeInfo=null;}
+          if(fedDay){rec="No Straddle (0% WR + Fed)";theme="block";crossed=true;blockT="hard";blockD="0% forces Straddle but Fed blocks it";badge="BLOCKED";strikeInfo=null;}
+          else{rec=rec.includes("(EOM)")?"Straddle @ 9:32 AM (EOM)":"Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="0%rule";entryT="9:32 AM";badge="STRADDLE";strikeInfo=null;}
         }
       } else if(wr90.checked){
-        if(rec==="Straddle @ 9:32 AM"){const sc=m8Sched(dow);rec=m8Msg(now)+" (WR >90%)";theme="m8bf";badge="M8BF";strikeInfo=sc;entryT=sc?.window||"";}
+        if(rec==="Straddle @ 9:32 AM"){const sc=m8Sched(dow);rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=sc;entryT=sc?.window||"";blockT="90%rule";}
       }
 
       if(postOpDay){
         const isM8=rec.startsWith("M8BF"), isStr=rec.startsWith("Straddle")||rec.startsWith("NM Straddle");
         if(isM8||isStr){
-          if(vToday>=T.VIX_MAX_GXBF){rec="No GXBF (VIX too high)";theme="block";crossed=true;pmNote=false;blockT="vix";blockD=`OPEX+1 GXBF blocked, VIX ${vToday}`;badge="BLOCKED";strikeInfo=null;}
+          if(vToday>=T.VIX_MAX_GXBF){rec=`No GXBF (VIX ${vToday} ≥ ${T.VIX_MAX_GXBF})`;theme="block";crossed=true;pmNote=false;blockT="vix";blockD=`OPEX+1 GXBF blocked, VIX ${vToday}`;badge="BLOCKED";strikeInfo=null;}
           else{rec="GXBF @ 9:36 AM (OPEX+1)";theme="gxbf";crossed=false;pmNote=false;blockT="";entryT="9:36 AM";badge="GXBF";strikeInfo=null;}
         }
       }
@@ -1265,6 +1265,7 @@ flowchart TD
       if(blockT==='hard') m8bfReason.innerHTML=`<span class="block-hard">⛔ ${blockD}</span>`;
       else if(blockT==='vix') m8bfReason.innerHTML=`<span class="block-vix">⚠️ ${blockD}</span>`;
       else if(spxGapForcesM8BF) m8bfReason.innerHTML=`<span style="color:var(--col-gxbf);font-style:italic;">📐 ${blockD}</span>`;
+      else if(blockT==='90%rule') m8bfReason.innerHTML=`<span style="color:var(--accent);font-style:italic;">📈 90% rule — Straddle → M8BF</span>`;
       else m8bfReason.textContent='';
     } else if(theme==='block' && rec.includes('M8BF')){
       cardM8bf.className='scard active-block';
@@ -1283,7 +1284,7 @@ flowchart TD
     } else {
       cardM8bf.className='scard dimmed';
       m8bfBadge.textContent='—';
-      m8bfRec.textContent='No M8BF signal today';
+      m8bfRec.textContent=`No M8BF (${oNight>0?'overnight VIX up':'open-to-open ≤ '+T.O2O_M8BF})`;
       m8bfReason.textContent='';
     }
 
@@ -1301,6 +1302,7 @@ flowchart TD
       if(isCpiSignal)      stradReason.textContent='Long ATM Call · Max $13 premium';
       else if(isNM)        stradReason.textContent='First trading day of month · Max risk $3,200';
       else if(isEOM)       stradReason.textContent='Last trading day of month · Max risk $3,500';
+      else if(blockT==='0%rule') stradReason.innerHTML=`<span style="color:var(--accent);font-style:italic;">📉 0% rule — M8BF → Straddle</span>`;
       else                 stradReason.textContent='';
     } else if(theme==='block' && (rec.includes('Straddle') || rec.includes('CPI') || rec.includes('Trade'))){
       cardStrad.className='scard active-block';
@@ -1311,7 +1313,7 @@ flowchart TD
     } else {
       cardStrad.className='scard dimmed';
       stradBadge.textContent='—';
-      stradRec.textContent='No Straddle signal today';
+      stradRec.textContent=`No Straddle (${oNight<=0?'overnight VIX down':'overnight VIX drop > '+T.DROP_GXBF})`;
       stradReason.textContent='';
     }
 
@@ -1324,12 +1326,12 @@ flowchart TD
     } else if(!isNaN(vToday) && vToday >= T.VIX_MAX_GXBF){
       cardGxbf.className='scard active-block';
       gxbfBadge.textContent='BLOCKED';
-      gxbfRec.innerHTML=`<span class="crossed">No GXBF (VIX too high)</span>`;
+      gxbfRec.innerHTML=`<span class="crossed">No GXBF (VIX ${vToday} ≥ ${T.VIX_MAX_GXBF})</span>`;
       gxbfReason.innerHTML=`<span class="block-vix">⚠️ VIX ${vToday} ≥ ${T.VIX_MAX_GXBF}</span>`;
     } else {
       cardGxbf.className='scard dimmed';
       gxbfBadge.textContent='—';
-      gxbfRec.textContent='No GXBF signal today';
+      gxbfRec.textContent=`No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;
       gxbfReason.textContent='';
     }
 
