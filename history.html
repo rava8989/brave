@@ -143,6 +143,21 @@
     .alloc-stats{display:flex;gap:16px;flex-wrap:wrap;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text2);}
     .alloc-stats span{font-weight:700;color:var(--text);}
 
+    /* Risk analysis */
+    .risk-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:12px;}
+    .risk-section{padding:14px 16px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg3);}
+    .risk-section-title{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);margin-bottom:10px;}
+    .risk-row{display:flex;justify-content:space-between;padding:4px 0;font-size:12px;font-family:'JetBrains Mono',monospace;border-bottom:1px solid var(--border);}
+    .risk-row:last-child{border-bottom:none;}
+    .risk-label{color:var(--text2);}
+    .risk-value{font-weight:700;color:var(--text);}
+    .risk-value.green{color:#22c55e;}
+    .risk-value.red{color:#ef4444;}
+    .risk-value.amber{color:#f59e0b;}
+    .risk-bar{height:6px;border-radius:3px;background:var(--border);margin-top:4px;overflow:hidden;}
+    .risk-bar-fill{height:100%;border-radius:3px;}
+    @media(max-width:768px){.risk-grid{grid-template-columns:1fr;}}
+
     @media(max-width:768px){
       .header{padding:10px 14px;gap:10px;}
       .table-wrap{padding:8px;}
@@ -284,6 +299,13 @@
     <div style="position:relative;height:280px;margin-top:12px;">
       <canvas id="allocChart"></canvas>
     </div>
+  </div>
+
+  <div class="chart-card" id="riskCard" style="display:none">
+    <div class="chart-card-header">
+      <span class="chart-card-title">Risk Analysis</span>
+    </div>
+    <div id="riskContainer"></div>
   </div>
 
   </div><!-- end dashboardWrap -->
@@ -938,6 +960,7 @@ function renderAll() {
   renderHeatmap();
   renderCorrelation();
   renderAllocation();
+  renderRisk();
   // Show Monte Carlo card (but don't auto-run simulation)
   document.getElementById('monteCarloCard').style.display = rows.length ? '' : 'none';
 }
@@ -1590,6 +1613,152 @@ function optimizeAlloc() {
     if (valEl) valEl.textContent = bestW[k] + '%';
   }
   updateAllocChart();
+}
+
+// ══════════════════════════════════════════════════════════════
+// RISK ANALYSIS
+// ══════════════════════════════════════════════════════════════
+
+function renderRisk() {
+  const card = document.getElementById('riskCard');
+  const container = document.getElementById('riskContainer');
+  const sorted = rows.slice().sort((a,b) => a.date.localeCompare(b.date));
+  if (!sorted.length) { card.style.display='none'; return; }
+  card.style.display = '';
+
+  // Collect all P/Ls
+  const pls = [];
+  for (const row of sorted) {
+    const pl = getRowPL(row);
+    if (pl !== null) pls.push(pl);
+  }
+  if (!pls.length) { container.innerHTML = ''; return; }
+
+  const wins = pls.filter(v => v > 0);
+  const losses = pls.filter(v => v < 0);
+  const winRate = wins.length / pls.length;
+  const avgWin = wins.length ? wins.reduce((a,b) => a+b, 0) / wins.length : 0;
+  const avgLoss = losses.length ? Math.abs(losses.reduce((a,b) => a+b, 0) / losses.length) : 0;
+
+  // === KELLY CRITERION ===
+  // Kelly % = W - (1-W)/R where W=win rate, R=avg win/avg loss ratio
+  const R = avgLoss > 0 ? avgWin / avgLoss : 0;
+  const kelly = R > 0 ? (winRate - (1 - winRate) / R) * 100 : 0;
+  const halfKelly = kelly / 2;
+  const kellyColor = kelly > 20 ? 'green' : kelly > 0 ? 'amber' : 'red';
+
+  // === CONSECUTIVE LOSS PROBABILITY ===
+  // P(N consecutive losses) = (1-winRate)^N
+  const lossRate = 1 - winRate;
+  const streaks = [3, 5, 7, 10, 15];
+  const streakProbs = streaks.map(n => ({
+    n,
+    prob: Math.pow(lossRate, n) * 100,
+    dollarRisk: Math.round(avgLoss * n),
+  }));
+
+  // === DRAWDOWN ANALYSIS ===
+  let cum = 0, peak = 0, maxDD = 0;
+  let ddStart = null, ddStartDate = '', maxDDStart = '', maxDDEnd = '';
+  let currentDDDays = 0, maxDDDays = 0;
+  const drawdowns = []; // collect all drawdowns
+  let inDD = false, thisDDStart = '';
+
+  for (let i = 0; i < sorted.length; i++) {
+    const row = sorted[i];
+    const pl = getRowPL(row);
+    if (pl === null) continue;
+    cum += pl;
+    if (cum > peak) {
+      if (inDD) {
+        drawdowns.push({ days: currentDDDays, depth: peak - cum + pl, start: thisDDStart, end: row.date });
+        inDD = false;
+      }
+      peak = cum;
+      currentDDDays = 0;
+    } else {
+      if (!inDD) { inDD = true; thisDDStart = row.date; }
+      currentDDDays++;
+      const dd = peak - cum;
+      if (dd > maxDD) {
+        maxDD = dd;
+        maxDDStart = thisDDStart;
+        maxDDEnd = row.date;
+        maxDDDays = currentDDDays;
+      }
+    }
+  }
+  if (inDD) drawdowns.push({ days: currentDDDays, depth: peak - cum, start: thisDDStart, end: sorted[sorted.length-1].date });
+
+  const avgDDDays = drawdowns.length ? Math.round(drawdowns.reduce((s,d) => s + d.days, 0) / drawdowns.length) : 0;
+  const top3DD = drawdowns.sort((a,b) => b.depth - a.depth).slice(0, 3);
+
+  // === RISK OF RUIN (simplified) ===
+  // Approximate: if you can withstand X consecutive losses before account is gone
+  // With 50% risk per trade at Kelly, ruin is unlikely. Show max loss streak impact.
+  const maxConsecLosses = Math.max(...(function(){ let ml=0,cl=0; for(const p of pls){if(p<0){cl++;if(cl>ml)ml=cl;}else cl=0;} return [ml]; })());
+
+  // === RENDER ===
+  let html = '<div class="risk-grid">';
+
+  // Kelly section
+  html += `<div class="risk-section">
+    <div class="risk-section-title">Kelly Criterion</div>
+    <div class="risk-row"><span class="risk-label">Full Kelly</span><span class="risk-value ${kellyColor}">${kelly.toFixed(1)}%</span></div>
+    <div class="risk-row"><span class="risk-label">Half Kelly (recommended)</span><span class="risk-value ${kellyColor}">${halfKelly.toFixed(1)}%</span></div>
+    <div class="risk-row"><span class="risk-label">Win Rate</span><span class="risk-value">${(winRate*100).toFixed(1)}%</span></div>
+    <div class="risk-row"><span class="risk-label">Win/Loss Ratio</span><span class="risk-value">${R.toFixed(2)}</span></div>
+    <div style="margin-top:8px;font-size:10px;color:var(--text3);line-height:1.4;">
+      Half Kelly = risk ${halfKelly.toFixed(1)}% of account per trade for optimal growth with reduced variance.
+    </div>
+  </div>`;
+
+  // Consecutive loss probability
+  html += `<div class="risk-section">
+    <div class="risk-section-title">Consecutive Loss Probability</div>
+    <div class="risk-row" style="font-size:10px;font-weight:700;color:var(--text3);border-bottom:2px solid var(--border);">
+      <span>Streak</span><span style="min-width:60px;text-align:right">Probability</span><span style="min-width:80px;text-align:right">$ at Risk</span>
+    </div>`;
+  for (const s of streakProbs) {
+    const barPct = Math.min(s.prob, 100);
+    const color = s.prob > 10 ? '#ef4444' : s.prob > 1 ? '#f59e0b' : '#22c55e';
+    html += `<div>
+      <div class="risk-row"><span class="risk-label">${s.n} losses</span><span class="risk-value" style="min-width:60px;text-align:right">${s.prob < 0.01 ? '<0.01' : s.prob.toFixed(2)}%</span><span class="risk-value red" style="min-width:80px;text-align:right">$${s.dollarRisk.toLocaleString()}</span></div>
+      <div class="risk-bar"><div class="risk-bar-fill" style="width:${barPct}%;background:${color}"></div></div>
+    </div>`;
+  }
+  html += `<div class="risk-row" style="margin-top:6px;"><span class="risk-label">Actual worst streak</span><span class="risk-value red">${maxConsecLosses} losses</span></div>`;
+  html += `</div>`;
+
+  // Drawdown analysis
+  html += `<div class="risk-section">
+    <div class="risk-section-title">Drawdown Analysis</div>
+    <div class="risk-row"><span class="risk-label">Max Drawdown</span><span class="risk-value red">$${Math.round(maxDD).toLocaleString()}</span></div>
+    <div class="risk-row"><span class="risk-label">Max DD Period</span><span class="risk-value">${maxDDStart} → ${maxDDEnd}</span></div>
+    <div class="risk-row"><span class="risk-label">Max DD Duration</span><span class="risk-value">${maxDDDays} trading days</span></div>
+    <div class="risk-row"><span class="risk-label">Avg DD Duration</span><span class="risk-value">${avgDDDays} trading days</span></div>
+    <div class="risk-row"><span class="risk-label">Total Drawdown Events</span><span class="risk-value">${drawdowns.length}</span></div>
+  </div>`;
+
+  // Top 3 worst drawdowns
+  html += `<div class="risk-section">
+    <div class="risk-section-title">Worst Drawdowns</div>`;
+  if (top3DD.length) {
+    for (let i = 0; i < top3DD.length; i++) {
+      const d = top3DD[i];
+      html += `<div style="margin-bottom:8px;">
+        <div class="risk-row"><span class="risk-label">#${i+1}</span><span class="risk-value red">$${Math.round(d.depth).toLocaleString()}</span></div>
+        <div class="risk-row"><span class="risk-label">Period</span><span class="risk-value">${d.start} → ${d.end}</span></div>
+        <div class="risk-row"><span class="risk-label">Duration</span><span class="risk-value">${d.days} days</span></div>
+      </div>`;
+    }
+  } else {
+    html += '<div style="color:var(--text3);font-size:12px;">No drawdowns</div>';
+  }
+  html += `</div>`;
+
+  html += '</div>';
+  container.innerHTML = html;
 }
 
 // ══════════════════════════════════════════════════════════════
