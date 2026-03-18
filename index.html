@@ -379,6 +379,10 @@
         <label>Account Number</label>
         <input type="text" id="schwabAcctNum" placeholder="Your Schwab Account Number" autocomplete="off" />
       </div>
+      <div class="fg">
+        <label>Sync Secret (for auto-cron)</label>
+        <input type="text" id="schwabSyncSecret" placeholder="Paste SYNC_SECRET from Worker env" autocomplete="off" />
+      </div>
       <div class="schwab-modal-btns">
         <button class="btn-p" style="flex:1;" onclick="schwabConnect()">Connect & Authenticate</button>
         <button class="btn-s" onclick="document.getElementById('schwabModal').style.display='none'">Cancel</button>
@@ -1507,6 +1511,7 @@ flowchart TD
       document.getElementById('schwabAcctNum').value   = c.acctNum   || '';
     }
     document.getElementById('schwabProxyUrl').value = localStorage.getItem('sc_proxyUrl') || '';
+    document.getElementById('schwabSyncSecret').value = localStorage.getItem('sc_syncSecret') || '';
     document.getElementById('schwabModal').style.display = 'flex';
   }
 
@@ -1528,12 +1533,14 @@ flowchart TD
     const appKey    = document.getElementById('schwabAppKey').value.trim();
     const proxyUrl  = document.getElementById('schwabProxyUrl').value.trim().replace(/\/+$/, '');
     const acctNum   = document.getElementById('schwabAcctNum').value.trim();
+    const syncSecret= document.getElementById('schwabSyncSecret').value.trim();
     if(!appKey||!proxyUrl||!acctNum){
       alert('Please fill in all three fields.');
       return;
     }
     SC.set('creds', { appKey, acctNum });
     localStorage.setItem('sc_proxyUrl', proxyUrl);
+    if(syncSecret) localStorage.setItem('sc_syncSecret', syncSecret);
     document.getElementById('schwabModal').style.display = 'none';
     schwabStartOAuth(appKey);
   }
@@ -1594,6 +1601,7 @@ flowchart TD
         expiry:        Date.now() + (data.expires_in * 1000),
         refreshExpiry: Date.now() + (7 * 24 * 60 * 60 * 1000), // 7 days
       });
+      syncToWorker(); // push tokens to Worker KV for cron
       schwabSetStatus('connected', 'Schwab connected ✓');
       await schwabFetchHistorical();
       schwabScheduleStream();
@@ -1627,10 +1635,30 @@ flowchart TD
         expiry:        Date.now() + (data.expires_in * 1000),
         refreshExpiry: t.refreshExpiry,
       });
+      syncToWorker(); // push refreshed tokens to Worker KV
       return true;
     } catch(e){
       return false;
     }
+  }
+
+  /* ── Sync tokens/creds/discord to Worker KV for cron ── */
+  async function syncToWorker(){
+    const proxy = SCHWAB.proxy();
+    const secret = localStorage.getItem('sc_syncSecret');
+    if(!proxy||!secret) return; // not configured — skip silently
+    const payload = {};
+    const t = SC.tokens(); if(t) payload.schwab_tokens = t;
+    const c = SC.creds();  if(c) payload.schwab_creds = { appKey: c.appKey };
+    const dc = DC.get('config'); if(dc) payload.discord_config = dc;
+    if(!Object.keys(payload).length) return;
+    try{
+      await fetch(`${proxy}/sync`, {
+        method:'POST',
+        headers:{'Content-Type':'application/json','X-Sync-Secret':secret},
+        body:JSON.stringify(payload),
+      });
+    }catch(e){/* silent */}
   }
 
   async function schwabGetToken(){
@@ -1922,6 +1950,7 @@ flowchart TD
     const channelId = document.getElementById('discordChannelId').value.trim();
     if(!proxyUrl || !channelId){ alert('Please fill in both fields.'); return; }
     DC.set('config', { proxyUrl, channelId });
+    syncToWorker(); // push discord config to Worker KV
     document.getElementById('discordModal').style.display = 'none';
     discordStatus();
   }
