@@ -1724,6 +1724,15 @@ flowchart TD
         if(closeCandle) yClose = closeCandle.close.toFixed(2);
       }
 
+      // Override yClose with quote's closePrice (official previous close)
+      try{
+        const qUrl = `${SCHWAB.proxy()}/market/quotes?symbols=%24VIX&fields=quote`;
+        const qResp = await fetch(qUrl, { headers: { Authorization: `Bearer ${token}` } });
+        const qData = await qResp.json();
+        const qClose = qData?.['$VIX']?.quote?.closePrice;
+        if(qClose) yClose = qClose.toFixed(2);
+      }catch(e){/* fall back to candle close */}
+
       // Fill fields using markAutoFilled so values are tracked as auto
       if(yOpen) markAutoFilled('yesterdayOpen', yOpen);
       if(yClose) markAutoFilled('yesterdayClose', yClose);
