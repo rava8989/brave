@@ -1746,6 +1746,12 @@ flowchart TD
     }
   }
 
+  function isTradingDay(date){
+    const d = new Date(date.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const day = d.getDay();
+    return day !== 0 && day !== 6; // not Sunday or Saturday
+  }
+
   /* ── Step 5: Schedule live stream at 9:30 AM ET ── */
   let _schwabStreamInterval = null;
 
