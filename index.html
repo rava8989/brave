@@ -981,8 +981,8 @@ flowchart TD
       todayOpen:     _autoValues.todayOpen     || '',
       yesterdayOpen: _autoValues.yesterdayOpen || '',
       yesterdayClose:_autoValues.yesterdayClose|| '',
-      winrate90:     document.getElementById('winrate90').checked,
-      winrate0:      document.getElementById('winrate0').checked,
+      winrate90:     false,
+      winrate0:      false,
       savedDate:     new Date().toDateString()
     };
     localStorage.setItem('s3inputs', JSON.stringify(vals));
