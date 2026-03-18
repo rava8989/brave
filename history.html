@@ -836,7 +836,7 @@ function parseCSVLine(line) {
 
 async function loadCSVStraddle() {
   try {
-    const resp = await fetch('static/data/gxbf.csv');
+    const resp = await fetch('/static/data/gxbf.csv');
     if (!resp.ok) return {};
     const text = await resp.text();
     const lines = text.split('\n');
@@ -858,8 +858,9 @@ async function loadCSVStraddle() {
       if (isNaN(num)) continue;
       lookup[dateKey] = neg ? -num : num;
     }
+    console.log('CSV straddle loaded:', Object.values(lookup).filter(v=>v!==null).length, 'trades');
     return lookup;
-  } catch (e) { return {}; }
+  } catch (e) { console.warn('CSV straddle load failed:', e); return {}; }
 }
 
 async function init() {
