@@ -328,6 +328,7 @@ async function init() {
         o2o: parseFloat((prev.vixOpen - cur.vixOpen).toFixed(2)),
         spxGapPct: spxGapPct !== null ? parseFloat(spxGapPct.toFixed(2)) : null,
         m8bfWR: cur.m8bfWR != null ? cur.m8bfWR : null,
+        m8bfPL: cur.m8bfPL != null ? cur.m8bfPL : null,
         prevWR: prevWR != null ? prevWR : null,
         signal,
       });
@@ -374,7 +375,7 @@ const cols = [
   { key:'strad',       label:'Straddle',   type:'check'  },
   { key:'gxbf',        label:'GXBF',       type:'check'  },
   { key:'bobf',        label:'BOBF',       type:'check'  },
-  { key:'pnl',         label:'P/L',        type:'placeholder' },
+  { key:'m8bfPL',      label:'M8BF P/L',    type:'number' },
 ];
 
 function getValue(row, col) {
@@ -386,7 +387,7 @@ function getValue(row, col) {
     case 'strad': return row.signal?.theme === 'strad' ? 1 : 0;
     case 'gxbf': return row.signal?.theme === 'gxbf' ? 1 : 0;
     case 'bobf': return row.signal?.bobfBadge !== 'BLOCKED' ? 1 : 0;
-    case 'pnl': return 0;
+    case 'm8bfPL': return row.m8bfPL != null ? row.m8bfPL : -Infinity;
     default: return row[col.key];
   }
 }
@@ -441,7 +442,7 @@ function renderTable() {
     h += `<td class="${s.theme==='strad'?'check':'cross'}">${s.theme==='strad'?'✓':'✗'}</td>`;
     h += `<td class="${s.theme==='gxbf'?'check':'cross'}">${s.theme==='gxbf'?'✓':'✗'}</td>`;
     h += `<td class="${s.bobfBadge!=='BLOCKED'?'check':'cross'}">${s.bobfBadge!=='BLOCKED'?'✓':'✗'}</td>`;
-    h += '<td style="color:var(--text3)">—</td>';
+    h += `<td class="${row.m8bfPL!=null?valClass(row.m8bfPL):'val-zero'}" style="font-weight:600">${row.m8bfPL!=null?'$'+row.m8bfPL.toLocaleString():'—'}</td>`;
     h += '</tr>';
   }
 
