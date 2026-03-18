@@ -7,6 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
   <style>
     :root {
       --bg:#f1f5f9; --bg2:#ffffff; --bg3:#f8fafc;
@@ -69,6 +70,8 @@
     .footer{text-align:center;padding:20px;font-size:11px;color:var(--text3);}
 
     .chart-card{margin:16px 24px 0;padding:16px 20px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);}
+    .chart-card-header{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap;}
+    .chart-card-title{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:var(--text2);}
 
     tfoot td{padding:8px 10px;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;border-top:2px solid var(--border);white-space:nowrap;background:var(--bg2);}
 
@@ -82,9 +85,26 @@
     .strat-pill[data-strat="gxbf"]{background:rgba(45,212,191,.15);color:#2dd4bf;border-color:#2dd4bf;}
     .strat-pill[data-strat="bobf"]{background:rgba(251,146,60,.15);color:#fb923c;border-color:#fb923c;}
     .strat-pill.inactive{border-color:transparent;}
+    .strat-pill.solo{box-shadow:0 0 0 3px var(--accent),0 0 12px rgba(99,102,241,.4);}
+
+    /* Filter bar */
+    .filter-bar{display:flex;gap:16px;padding:12px 24px 0;flex-wrap:wrap;align-items:flex-start;}
+    .filter-group{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+    .filter-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);font-family:'Inter',sans-serif;}
+    .filter-pill{font-size:11px;font-weight:600;padding:4px 10px;border-radius:14px;cursor:pointer;border:1px solid var(--border);background:var(--bg3);color:var(--text2);font-family:'Inter',sans-serif;transition:all .15s;user-select:none;}
+    .filter-pill:hover{border-color:var(--accent);}
+    .filter-pill.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+    .filter-input{font-size:11px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-family:'Inter',sans-serif;}
+    .excluded-tag{display:inline-flex;align-items:center;gap:4px;font-size:10px;padding:3px 8px;border-radius:10px;background:rgba(239,68,68,.15);color:#ef4444;font-family:'JetBrains Mono',monospace;}
+    .excluded-tag .tag-x{cursor:pointer;font-weight:700;font-size:12px;}
+    .compare-pickers{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+    .compare-pickers label{font-size:10px;font-weight:600;color:var(--text2);}
+
+    /* Rolling metrics pills */
+    .rolling-pills{display:flex;gap:4px;padding:12px 24px 0;}
 
     /* Stats cards */
-    .stats-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;padding:16px 24px 0;}
+    .stats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;padding:16px 24px 0;}
     .stat-card{padding:14px 16px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg2);display:flex;flex-direction:column;gap:4px;}
     .stat-card .stat-label{font-family:'Inter',sans-serif;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);}
     .stat-card .stat-value{font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700;color:var(--text);}
@@ -95,12 +115,61 @@
     [data-theme="light"] .stat-card.card-green{background:rgba(34,197,94,.08);border-color:rgba(34,197,94,.2);}
     [data-theme="light"] .stat-card.card-red{background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.2);}
 
-    @media(max-width:1024px){.stats-grid{grid-template-columns:repeat(3,1fr);}}
+    /* Compare stats split */
+    .stats-compare{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:16px 24px 0;}
+    .stats-compare-col{display:flex;flex-direction:column;gap:8px;}
+    .stats-compare-col .compare-label{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:var(--accent);padding-bottom:4px;border-bottom:2px solid var(--accent);}
+    .stats-compare-col .stats-grid{padding:0;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));}
+
+    /* Heatmap */
+    .heatmap-section{margin:16px 24px 0;padding:16px 20px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow-x:auto;}
+    .heatmap-title{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:var(--text2);margin-bottom:12px;}
+    .heatmap-container{display:flex;gap:16px;flex-wrap:wrap;}
+    .heatmap-month{display:flex;flex-direction:column;gap:2px;min-width:160px;}
+    .heatmap-month-label{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--text2);margin-bottom:4px;}
+    .heatmap-weekdays{display:grid;grid-template-columns:repeat(7,20px);gap:2px;margin-bottom:2px;}
+    .heatmap-weekday{font-size:8px;font-weight:600;color:var(--text3);text-align:center;font-family:'Inter',sans-serif;}
+    .heatmap-grid{display:grid;grid-template-columns:repeat(7,20px);gap:2px;}
+    .heatmap-day{width:20px;height:20px;border-radius:3px;cursor:default;position:relative;}
+    .heatmap-day:hover .heatmap-tip{display:block;}
+    .heatmap-tip{display:none;position:absolute;bottom:calc(100% + 4px);left:50%;transform:translateX(-50%);background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-family:'JetBrains Mono',monospace;font-size:10px;white-space:nowrap;z-index:20;box-shadow:var(--shadow);color:var(--text);}
+
+    /* Monte Carlo */
+    .mc-controls{display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap;}
+    .mc-input{width:80px;font-size:11px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-family:'JetBrains Mono',monospace;}
+
+    /* Correlation matrix */
+    .corr-grid{display:grid;gap:2px;margin-top:10px;}
+    .corr-cell{padding:8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;border-radius:4px;}
+    .corr-header{font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2);padding:6px;text-align:center;}
+
+    /* Allocation sliders */
+    .alloc-controls{display:flex;flex-direction:column;gap:10px;margin-bottom:12px;}
+    .alloc-row{display:flex;align-items:center;gap:10px;}
+    .alloc-label{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;min-width:80px;}
+    .alloc-slider{flex:1;max-width:300px;accent-color:var(--accent);}
+    .alloc-value{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;min-width:40px;color:var(--accent);}
+    .alloc-stats{display:flex;gap:16px;flex-wrap:wrap;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text2);}
+    .alloc-stats span{font-weight:700;color:var(--text);}
+
     @media(max-width:768px){
       .header{padding:10px 14px;gap:10px;}
       .table-wrap{padding:8px;}
-      .stats-grid{grid-template-columns:repeat(2,1fr);padding:8px;}
+      .stats-grid{padding:8px;}
       .strat-toggles{padding:8px 8px 0;}
+      .filter-bar{padding:8px 8px 0;gap:8px;}
+      .heatmap-section{margin:8px;}
+      .chart-card{margin:8px;}
+    }
+
+    /* Print */
+    @media print{
+      body{background:#fff;color:#000;}
+      .header,.filter-bar,.strat-toggles,.rolling-pills,.theme-toggle,.mc-controls,.alloc-controls,.compare-pickers,.schwab-btn,.filter-pill,.excluded-tag{display:none !important;}
+      .chart-card,.heatmap-section,.stats-grid,.stat-card{box-shadow:none;border:1px solid #ddd;break-inside:avoid;background:#fff;}
+      .stat-card .stat-label{color:#666;}
+      .stat-card .stat-value{color:#000;}
+      .table-wrap{padding:0;}
     }
   </style>
 </head>
@@ -115,22 +184,126 @@
       <button class="schwab-btn" data-months="6" onclick="filterMonths(6)">6M</button>
       <button class="schwab-btn primary" data-months="0" onclick="filterMonths(0)">ALL</button>
     </div>
+    <button class="schwab-btn" onclick="exportPNG()" title="Export as PNG">⬇ PNG</button>
     <button class="theme-toggle" id="themeToggle" title="Toggle theme"></button>
   </div>
 
   <div class="strat-toggles" id="stratToggles">
-    <div class="strat-pill active" data-strat="m8bf" onclick="toggleStrat('m8bf')">M8BF</div>
-    <div class="strat-pill active" data-strat="strad" onclick="toggleStrat('strad')">Straddle</div>
-    <div class="strat-pill active" data-strat="gxbf" onclick="toggleStrat('gxbf')">GXBF</div>
-    <div class="strat-pill active" data-strat="bobf" onclick="toggleStrat('bobf')">BOBF</div>
+    <div class="strat-pill active" data-strat="m8bf" onclick="toggleStrat('m8bf')" ondblclick="soloStrat('m8bf')">M8BF</div>
+    <div class="strat-pill active" data-strat="strad" onclick="toggleStrat('strad')" ondblclick="soloStrat('strad')">Straddle</div>
+    <div class="strat-pill active" data-strat="gxbf" onclick="toggleStrat('gxbf')" ondblclick="soloStrat('gxbf')">GXBF</div>
+    <div class="strat-pill active" data-strat="bobf" onclick="toggleStrat('bobf')" ondblclick="soloStrat('bobf')">BOBF</div>
   </div>
 
-  <div class="stats-grid" id="statsGrid"></div>
+  <div class="filter-bar" id="filterBar">
+    <div class="filter-group">
+      <span class="filter-label">Day</span>
+      <div class="filter-pill active" data-day="1" onclick="toggleDay(1)">Mon</div>
+      <div class="filter-pill active" data-day="2" onclick="toggleDay(2)">Tue</div>
+      <div class="filter-pill active" data-day="3" onclick="toggleDay(3)">Wed</div>
+      <div class="filter-pill active" data-day="4" onclick="toggleDay(4)">Thu</div>
+      <div class="filter-pill active" data-day="5" onclick="toggleDay(5)">Fri</div>
+    </div>
+    <div class="filter-group">
+      <span class="filter-label">VIX</span>
+      <div class="filter-pill active" data-vix="all" onclick="setVixRegime('all')">All</div>
+      <div class="filter-pill" data-vix="low" onclick="setVixRegime('low')">Low &lt;15</div>
+      <div class="filter-pill" data-vix="med" onclick="setVixRegime('med')">Med 15-25</div>
+      <div class="filter-pill" data-vix="high" onclick="setVixRegime('high')">High &gt;25</div>
+    </div>
+    <div class="filter-group">
+      <span class="filter-label">Exclude</span>
+      <input type="date" class="filter-input" id="exclStart">
+      <span style="color:var(--text3)">—</span>
+      <input type="date" class="filter-input" id="exclEnd">
+      <button class="schwab-btn" onclick="addExclusion()">Exclude</button>
+      <div id="excludedTags" style="display:flex;gap:4px;flex-wrap:wrap;"></div>
+    </div>
+    <div class="filter-group">
+      <button class="schwab-btn" id="compareBtn" onclick="toggleCompare()">Compare</button>
+      <div class="compare-pickers" id="comparePickers" style="display:none;">
+        <label>A:</label>
+        <input type="date" class="filter-input" id="periodAStart">
+        <input type="date" class="filter-input" id="periodAEnd">
+        <label>B:</label>
+        <input type="date" class="filter-input" id="periodBStart">
+        <input type="date" class="filter-input" id="periodBEnd">
+        <button class="schwab-btn" onclick="runCompare()">Go</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="rolling-pills" id="rollingPills">
+    <button class="schwab-btn primary" data-rolling="0" onclick="setRolling(0)">All Time</button>
+    <button class="schwab-btn" data-rolling="30" onclick="setRolling(30)">30D</button>
+    <button class="schwab-btn" data-rolling="60" onclick="setRolling(60)">60D</button>
+    <button class="schwab-btn" data-rolling="90" onclick="setRolling(90)">90D</button>
+  </div>
+
+  <div id="statsContainer">
+    <div class="stats-grid" id="statsGrid"></div>
+  </div>
+
+  <div class="heatmap-section" id="heatmapSection" style="display:none">
+    <div class="heatmap-title">Monthly P/L Heatmap</div>
+    <div class="heatmap-container" id="heatmapContainer"></div>
+  </div>
 
   <div class="chart-card" id="chartCard" style="display:none">
-    <div style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:var(--text2);margin-bottom:10px;">Equity Curve</div>
-    <div style="position:relative;height:320px;">
+    <div class="chart-card-header">
+      <span class="chart-card-title">Equity Curve</span>
+      <div style="flex:1"></div>
+      <label style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:4px;cursor:pointer;">
+        <input type="checkbox" id="benchmarkToggle" onchange="renderChart()"> SPY Benchmark
+      </label>
+      <button class="schwab-btn" id="logScaleBtn" onclick="toggleLogScale()">Log Scale</button>
+    </div>
+    <div style="position:relative;height:360px;">
       <canvas id="cumChart"></canvas>
+    </div>
+  </div>
+
+  <div class="chart-card" id="barChartCard" style="display:none">
+    <div class="chart-card-header">
+      <span class="chart-card-title">P/L Distribution</span>
+      <div style="flex:1"></div>
+      <button class="schwab-btn primary" data-bar="monthly" onclick="setBarMode('monthly')">Monthly</button>
+      <button class="schwab-btn" data-bar="weekly" onclick="setBarMode('weekly')">Weekly</button>
+    </div>
+    <div style="position:relative;height:280px;">
+      <canvas id="barChartCanvas"></canvas>
+    </div>
+  </div>
+
+  <div class="chart-card" id="monteCarloCard" style="display:none"
+    <div class="chart-card-header">
+      <span class="chart-card-title">Monte Carlo Simulation</span>
+    </div>
+    <div class="mc-controls">
+      <span class="filter-label">Iterations</span>
+      <input type="number" class="mc-input" id="mcIter" value="1000" min="100" max="10000">
+      <button class="schwab-btn primary" onclick="runMonteCarlo()">Run Simulation</button>
+    </div>
+    <div style="position:relative;height:320px;">
+      <canvas id="mcChart"></canvas>
+    </div>
+  </div>
+
+  <div class="chart-card" id="corrCard" style="display:none">
+    <div class="chart-card-header">
+      <span class="chart-card-title">Correlation Matrix</span>
+    </div>
+    <div id="corrContainer"></div>
+  </div>
+
+  <div class="chart-card" id="allocCard" style="display:none">
+    <div class="chart-card-header">
+      <span class="chart-card-title">Allocation Optimizer</span>
+    </div>
+    <div class="alloc-controls" id="allocControls"></div>
+    <div class="alloc-stats" id="allocStats"></div>
+    <div style="position:relative;height:280px;margin-top:12px;">
+      <canvas id="allocChart"></canvas>
     </div>
   </div>
 
@@ -251,15 +424,14 @@ function calculateSignal({vixToday,vixYOpen,vixYClose,spxGapPct,etDate}){
     }
 
     if(rec.startsWith("M8BF")){
-      if(fedDay){rec="No M8BF (Fed day)";theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on Fed days";badge="BLOCKED";strikeInfo=null;}
-      else if(msftMetaEarnings){const tickers=earningsSchedule.filter(e=>e.date===todayLong(etDate)&&(e.ticker==='MSFT'||e.ticker==='META')).map(e=>e.ticker).join(', ');rec=`No M8BF (${tickers} earnings)`;theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on MSFT/META earnings days";badge="BLOCKED";strikeInfo=null;}
+      if(msftMetaEarnings){const tickers=earningsSchedule.filter(e=>e.date===todayLong(etDate)&&(e.ticker==='MSFT'||e.ticker==='META')).map(e=>e.ticker).join(', ');rec=`No M8BF (${tickers} earnings)`;theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on MSFT/META earnings days";badge="BLOCKED";strikeInfo=null;}
       else if(eom1){rec="No M8BF (EOM-1)";theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on EOM-1 (no edge)";badge="BLOCKED";strikeInfo=null;}
     }
     if(isPostVixBeforeOpex(etDate)&&rec.startsWith("M8BF")){rec="No M8BF (post-VIX exp)";theme="block";crossed=true;blockT="hard";blockD="VIX exp before OPEX this month";badge="BLOCKED";strikeInfo=null;}
 
     if(nmDay&&!isMon&&(rec.startsWith("M8BF")||rec.startsWith("No M8BF"))){rec="NM Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="NM STRADDLE";strikeInfo=null;}
     if(eomDay){rec="Straddle @ 9:32 AM (EOM)";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="EOM STRADDLE";strikeInfo=null;}
-    if(isWed&&!fedDay&&!eomDay&&!nmDay&&rec.startsWith("Straddle")){rec=m8Msg(etDate);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";}
+    if(isWed&&!eomDay&&!nmDay&&rec.startsWith("Straddle")){rec=m8Msg(etDate);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";}
     if(opexDay&&rec.startsWith("Straddle")){rec="No Straddle (OPEX day)";theme="block";crossed=true;blockT="hard";blockD="Straddle not on OPEX";badge="BLOCKED";}
     if(postOpMon&&rec.startsWith("M8BF"))pmNote=true;
 
@@ -298,7 +470,32 @@ function calculateSignal({vixToday,vixYOpen,vixYClose,spxGapPct,etDate}){
 }
 
 // ══════════════════════════════════════════════════════════════
-// UI
+// STATE
+// ══════════════════════════════════════════════════════════════
+
+let allRows = [];
+let rows = [];
+let sortCol = null;
+let sortAsc = true;
+let currentMonths = 0;
+const activeStrats = { m8bf:true, strad:true, gxbf:true, bobf:true };
+let soloKey = null;
+let activeDays = {1:true,2:true,3:true,4:true,5:true};
+let vixRegime = 'all';
+let excludedRanges = [];
+let rollingWindow = 0;
+let compareMode = false;
+let logScale = false;
+let barChartMode = 'monthly';
+let cumChart = null;
+let barChart = null;
+let mcChart = null;
+let allocChart = null;
+let sortedRows = []; // module-level for tooltip reference
+const allocWeights = { m8bf:25, strad:25, gxbf:25, bobf:25 };
+
+// ══════════════════════════════════════════════════════════════
+// THEME
 // ══════════════════════════════════════════════════════════════
 
 (function(){
@@ -310,20 +507,174 @@ document.getElementById('themeToggle').addEventListener('click', () => {
   const n = c === 'dark' ? 'light' : 'dark';
   document.documentElement.setAttribute('data-theme', n);
   localStorage.setItem('s3theme', n);
-  if (cumChart) renderChart();
+  renderAll();
 });
 
-let allRows = [];   // computed once
-let rows = [];      // filtered view
-let sortCol = null;
-let sortAsc = true;
-const activeStrats = { m8bf:true, strad:true, gxbf:true, bobf:true };
+// ══════════════════════════════════════════════════════════════
+// STRATEGY TOGGLES
+// ══════════════════════════════════════════════════════════════
 
 function toggleStrat(key) {
+  if (soloKey) return; // ignore single clicks in solo mode
   activeStrats[key] = !activeStrats[key];
-  document.querySelector(`.strat-pill[data-strat="${key}"]`).classList.toggle('active', activeStrats[key]);
-  document.querySelector(`.strat-pill[data-strat="${key}"]`).classList.toggle('inactive', !activeStrats[key]);
+  updatePillStates();
+  renderAll();
+}
+
+function soloStrat(key) {
+  if (soloKey === key) {
+    // Restore all
+    soloKey = null;
+    for (const k in activeStrats) activeStrats[k] = true;
+  } else {
+    soloKey = key;
+    for (const k in activeStrats) activeStrats[k] = (k === key);
+  }
+  updatePillStates();
+  renderAll();
+}
+
+function updatePillStates() {
+  for (const k of ['m8bf','strad','gxbf','bobf']) {
+    const el = document.querySelector(`.strat-pill[data-strat="${k}"]`);
+    el.classList.toggle('active', activeStrats[k]);
+    el.classList.toggle('inactive', !activeStrats[k]);
+    el.classList.toggle('solo', soloKey === k);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// FILTERS
+// ══════════════════════════════════════════════════════════════
+
+function toggleDay(d) {
+  activeDays[d] = !activeDays[d];
+  document.querySelector(`.filter-pill[data-day="${d}"]`).classList.toggle('active', activeDays[d]);
+  applyFilters();
+}
+
+function setVixRegime(regime) {
+  vixRegime = regime;
+  document.querySelectorAll('.filter-pill[data-vix]').forEach(el => {
+    el.classList.toggle('active', el.dataset.vix === regime);
+  });
+  applyFilters();
+}
+
+function addExclusion() {
+  const s = document.getElementById('exclStart').value;
+  const e = document.getElementById('exclEnd').value;
+  if (!s || !e || s > e) return;
+  excludedRanges.push({start:s, end:e});
+  document.getElementById('exclStart').value = '';
+  document.getElementById('exclEnd').value = '';
+  renderExcludedTags();
+  applyFilters();
+}
+
+function removeExclusion(idx) {
+  excludedRanges.splice(idx, 1);
+  renderExcludedTags();
+  applyFilters();
+}
+
+function renderExcludedTags() {
+  const c = document.getElementById('excludedTags');
+  c.innerHTML = excludedRanges.map((r,i) =>
+    `<div class="excluded-tag">${r.start} → ${r.end} <span class="tag-x" onclick="removeExclusion(${i})">✕</span></div>`
+  ).join('');
+}
+
+function setRolling(days) {
+  rollingWindow = days;
+  document.querySelectorAll('.rolling-pills .schwab-btn').forEach(b => {
+    b.classList.toggle('primary', parseInt(b.dataset.rolling) === days);
+  });
+  applyFilters();
+}
+
+function toggleCompare() {
+  compareMode = !compareMode;
+  document.getElementById('compareBtn').classList.toggle('primary', compareMode);
+  document.getElementById('comparePickers').style.display = compareMode ? 'flex' : 'none';
+  if (!compareMode) applyFilters();
+}
+
+function runCompare() {
+  applyFilters();
+}
+
+function filterMonths(months) {
+  currentMonths = months;
+  document.querySelectorAll('.range-btns .schwab-btn').forEach(b => {
+    b.classList.toggle('primary', parseInt(b.dataset.months) === months);
+  });
+  applyFilters();
+}
+
+function applyFilters() {
+  // Step 1: time range
+  let filtered;
+  if (currentMonths === 0) {
+    filtered = allRows.slice();
+  } else {
+    const cutoff = new Date();
+    cutoff.setMonth(cutoff.getMonth() - currentMonths);
+    const cutoffStr = cutoff.toISOString().slice(0, 10);
+    filtered = allRows.filter(r => r.date >= cutoffStr);
+  }
+
+  // Step 2: day-of-week
+  filtered = filtered.filter(r => {
+    const parts = r.date.split('-');
+    const d = new Date(+parts[0], +parts[1]-1, +parts[2]);
+    return activeDays[d.getDay()] !== false;
+  });
+
+  // Step 3: VIX regime
+  if (vixRegime !== 'all') {
+    filtered = filtered.filter(r => {
+      const v = r.vixOpen;
+      if (v == null) return false;
+      if (vixRegime === 'low') return v < 15;
+      if (vixRegime === 'med') return v >= 15 && v <= 25;
+      if (vixRegime === 'high') return v > 25;
+      return true;
+    });
+  }
+
+  // Step 4: excluded ranges
+  for (const ex of excludedRanges) {
+    filtered = filtered.filter(r => r.date < ex.start || r.date > ex.end);
+  }
+
+  // Step 5: rolling window (apply to the already-filtered set)
+  if (rollingWindow > 0) {
+    const sorted = filtered.slice().sort((a,b) => b.date.localeCompare(a.date));
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - rollingWindow);
+    const cutStr = cutoffDate.toISOString().slice(0,10);
+    filtered = filtered.filter(r => r.date >= cutStr);
+  }
+
+  rows = filtered;
+  sortCol = null;
   renderTable();
+}
+
+// ══════════════════════════════════════════════════════════════
+// STATS
+// ══════════════════════════════════════════════════════════════
+
+function getRowPL(row) {
+  // Returns the active P/L for this row based on activeStrats, or null
+  const s = row.signal || {};
+  let pl = 0, hasTrade = false;
+  if (activeStrats.m8bf && s.theme === 'm8bf' && row.m8bfPL != null) { pl += row.m8bfPL; hasTrade = true; }
+  if (activeStrats.strad && row.stradPL != null) { pl += row.stradPL; hasTrade = true; }
+  if (activeStrats.gxbf && row.gxbfPL != null) { pl += row.gxbfPL; hasTrade = true; }
+  if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) { pl += row.bobfPL; hasTrade = true; }
+  return hasTrade ? pl : null;
 }
 
 function computeStats(visibleRows) {
@@ -331,8 +682,8 @@ function computeStats(visibleRows) {
   for (const row of visibleRows) {
     const s = row.signal || {};
     if (activeStrats.m8bf && s.theme === 'm8bf' && row.m8bfPL != null) pls.push(row.m8bfPL);
-    if (activeStrats.strad && s.theme === 'strad' && row.stradPL != null) pls.push(row.stradPL);
-    if (activeStrats.gxbf && s.theme === 'gxbf' && row.gxbfPL != null) pls.push(row.gxbfPL);
+    if (activeStrats.strad && row.stradPL != null) pls.push(row.stradPL);
+    if (activeStrats.gxbf && row.gxbfPL != null) pls.push(row.gxbfPL);
     if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) pls.push(row.bobfPL);
   }
   if (!pls.length) return null;
@@ -351,61 +702,175 @@ function computeStats(visibleRows) {
   const sumLosses = Math.abs(losses.reduce((a,b) => a+b, 0));
   const profitFactor = sumLosses > 0 ? sumWins / sumLosses : sumWins > 0 ? Infinity : 0;
 
-  // Sharpe: mean/stddev of daily PL
+  // Sharpe
   const mean = totalPL / totalTrades;
   const variance = pls.reduce((s,v) => s + (v - mean) ** 2, 0) / totalTrades;
   const sharpe = variance > 0 ? mean / Math.sqrt(variance) : 0;
 
-  // Max drawdown (peak-to-trough on cumulative)
-  // Sort rows by date ascending for cumulative
+  // Sortino: mean / downside stddev
+  const downsideReturns = pls.filter(v => v < 0);
+  const downsideVar = downsideReturns.length > 0
+    ? downsideReturns.reduce((s,v) => s + v*v, 0) / downsideReturns.length
+    : 0;
+  const sortino = downsideVar > 0 ? mean / Math.sqrt(downsideVar) : 0;
+
+  // Expectancy
+  const expectancy = (winPct/100 * avgWinner) + ((1-winPct/100) * avgLoser);
+
+  // Max drawdown + Calmar
   const sorted = visibleRows.slice().sort((a,b) => a.date.localeCompare(b.date));
   let cum = 0, peak = 0, maxDD = 0;
   for (const row of sorted) {
     const s = row.signal || {};
     if (activeStrats.m8bf && s.theme === 'm8bf' && row.m8bfPL != null) cum += row.m8bfPL;
-    if (activeStrats.strad && s.theme === 'strad' && row.stradPL != null) cum += row.stradPL;
-    if (activeStrats.gxbf && s.theme === 'gxbf' && row.gxbfPL != null) cum += row.gxbfPL;
+    if (activeStrats.strad && row.stradPL != null) cum += row.stradPL;
+    if (activeStrats.gxbf && row.gxbfPL != null) cum += row.gxbfPL;
     if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) cum += row.bobfPL;
     if (cum > peak) peak = cum;
     const dd = peak - cum;
     if (dd > maxDD) maxDD = dd;
   }
 
-  return { totalPL, maxDD, winPct, sharpe, profitFactor, totalTrades, avgPerTrade, avgWinner, avgLoser, maxWinner, maxLoser, winners: wins.length };
+  // Calmar: annualized return / maxDD
+  const tradingDays = sorted.length || 1;
+  const annualizedReturn = (totalPL / tradingDays) * 252;
+  const calmar = maxDD > 0 ? annualizedReturn / maxDD : 0;
+
+  // Streaks
+  let curWinStreak=0, curLossStreak=0, maxWinStreak=0, maxLossStreak=0;
+  let activeWinStreak=0, activeLossStreak=0;
+  for (const row of sorted) {
+    const pl = getRowPL(row);
+    if (pl === null) continue;
+    if (pl > 0) {
+      curWinStreak++; curLossStreak=0;
+      if (curWinStreak > maxWinStreak) maxWinStreak = curWinStreak;
+    } else if (pl < 0) {
+      curLossStreak++; curWinStreak=0;
+      if (curLossStreak > maxLossStreak) maxLossStreak = curLossStreak;
+    } else {
+      curWinStreak=0; curLossStreak=0;
+    }
+  }
+  activeWinStreak = curWinStreak;
+  activeLossStreak = curLossStreak;
+
+  return {
+    totalPL, maxDD, winPct, sharpe, sortino, profitFactor, totalTrades,
+    avgPerTrade, avgWinner, avgLoser, maxWinner, maxLoser, winners: wins.length,
+    expectancy, calmar, maxWinStreak, maxLossStreak, activeWinStreak, activeLossStreak
+  };
 }
 
 function renderStats() {
-  const grid = document.getElementById('statsGrid');
-  const stats = computeStats(rows);
-  if (!stats) { grid.innerHTML = ''; return; }
+  const container = document.getElementById('statsContainer');
 
+  if (compareMode) {
+    const pA = document.getElementById('periodAStart').value;
+    const pAE = document.getElementById('periodAEnd').value;
+    const pB = document.getElementById('periodBStart').value;
+    const pBE = document.getElementById('periodBEnd').value;
+    if (pA && pAE && pB && pBE) {
+      const rowsA = rows.filter(r => r.date >= pA && r.date <= pAE);
+      const rowsB = rows.filter(r => r.date >= pB && r.date <= pBE);
+      const statsA = computeStats(rowsA);
+      const statsB = computeStats(rowsB);
+      container.innerHTML = `<div class="stats-compare">
+        <div class="stats-compare-col"><div class="compare-label">Period A: ${pA} → ${pAE}</div><div class="stats-grid" id="statsGridA"></div></div>
+        <div class="stats-compare-col"><div class="compare-label">Period B: ${pB} → ${pBE}</div><div class="stats-grid" id="statsGridB"></div></div>
+      </div>`;
+      fillStatsGrid(document.getElementById('statsGridA'), statsA);
+      fillStatsGrid(document.getElementById('statsGridB'), statsB);
+      return;
+    }
+  }
+
+  container.innerHTML = '<div class="stats-grid" id="statsGrid"></div>';
+  const stats = computeStats(rows);
+  fillStatsGrid(document.getElementById('statsGrid'), stats);
+}
+
+function fillStatsGrid(grid, stats) {
+  if (!stats) { grid.innerHTML = ''; return; }
   const fmt = v => '$' + Math.round(v).toLocaleString();
   const cards = [
-    { label:'P/L',          value: fmt(stats.totalPL),                  cls: stats.totalPL >= 0 ? 'card-green' : 'card-red' },
-    { label:'Max Drawdown',  value: fmt(stats.maxDD),                   cls: 'card-red' },
-    { label:'Win %',         value: stats.winPct.toFixed(1) + '%',      cls: 'card-green' },
-    { label:'Sharpe',        value: stats.sharpe.toFixed(2),            cls: '' },
-    { label:'Profit Factor', value: stats.profitFactor === Infinity ? '∞' : stats.profitFactor.toFixed(2), cls: '' },
-    { label:'Trades',        value: stats.totalTrades.toLocaleString(), cls: '' },
-    { label:'Avg / Trade',   value: fmt(stats.avgPerTrade),             cls: '' },
-    { label:'Avg Winner',    value: fmt(stats.avgWinner),               cls: 'card-green' },
-    { label:'Avg Loser',     value: fmt(stats.avgLoser),                cls: 'card-red' },
-    { label:'Max Winner',    value: fmt(stats.maxWinner),               cls: 'card-green' },
-    { label:'Max Loser',     value: fmt(stats.maxLoser),                cls: 'card-red' },
-    { label:'Winners',       value: stats.winners.toLocaleString(),     cls: '' },
+    { label:'P/L',            value: fmt(stats.totalPL),                  cls: stats.totalPL >= 0 ? 'card-green' : 'card-red' },
+    { label:'Max Drawdown',   value: fmt(stats.maxDD),                    cls: 'card-red' },
+    { label:'Win %',          value: stats.winPct.toFixed(1) + '%',       cls: 'card-green' },
+    { label:'Sharpe',         value: stats.sharpe.toFixed(2),             cls: '' },
+    { label:'Sortino',        value: stats.sortino.toFixed(2),            cls: '' },
+    { label:'Profit Factor',  value: stats.profitFactor === Infinity ? '∞' : stats.profitFactor.toFixed(2), cls: '' },
+    { label:'Trades',         value: stats.totalTrades.toLocaleString(),  cls: '' },
+    { label:'Avg / Trade',    value: fmt(stats.avgPerTrade),              cls: '' },
+    { label:'Expectancy',     value: fmt(stats.expectancy),               cls: stats.expectancy >= 0 ? 'card-green' : 'card-red' },
+    { label:'Calmar',         value: stats.calmar.toFixed(2),             cls: '' },
+    { label:'Avg Winner',     value: fmt(stats.avgWinner),                cls: 'card-green' },
+    { label:'Avg Loser',      value: fmt(stats.avgLoser),                 cls: 'card-red' },
+    { label:'Max Winner',     value: fmt(stats.maxWinner),                cls: 'card-green' },
+    { label:'Max Loser',      value: fmt(stats.maxLoser),                 cls: 'card-red' },
+    { label:'Winners',        value: stats.winners.toLocaleString(),      cls: '' },
+    { label:'Win Streak',     value: `${stats.activeWinStreak} / ${stats.maxWinStreak}`, cls: 'card-green' },
+    { label:'Loss Streak',    value: `${stats.activeLossStreak} / ${stats.maxLossStreak}`, cls: 'card-red' },
   ];
   grid.innerHTML = cards.map(c =>
     `<div class="stat-card ${c.cls}"><div class="stat-label">${c.label}</div><div class="stat-value">${c.value}</div></div>`
   ).join('');
 }
 
+// ══════════════════════════════════════════════════════════════
+// INIT
+// ══════════════════════════════════════════════════════════════
+
+function parseCSVLine(line) {
+  const cols = [];
+  let cur = '', inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') { inQ = !inQ; continue; }
+    if (c === ',' && !inQ) { cols.push(cur); cur = ''; continue; }
+    cur += c;
+  }
+  cols.push(cur);
+  return cols;
+}
+
+async function loadCSVStraddle() {
+  try {
+    const resp = await fetch('data/gxbf.csv');
+    if (!resp.ok) return {};
+    const text = await resp.text();
+    const lines = text.split('\n');
+    const lookup = {};
+    for (let i = 1; i < lines.length; i++) {
+      const cols = parseCSVLine(lines[i]);
+      const dateRaw = (cols[0] || '').trim();
+      const stradRaw = (cols[13] || '').trim();
+      if (!dateRaw) continue;
+      const parts = dateRaw.split('/');
+      if (parts.length !== 3) continue;
+      const dateKey = parts[2] + '-' + parts[0].padStart(2, '0') + '-' + parts[1].padStart(2, '0');
+      if (stradRaw.includes('*')) { lookup[dateKey] = null; continue; }
+      let val = stradRaw.replace(/[\$\t,]/g, '').trim();
+      if (!val || val === '0') continue;
+      const neg = val.includes('(');
+      val = val.replace(/[()]/g, '');
+      const num = parseFloat(val);
+      if (isNaN(num)) continue;
+      lookup[dateKey] = neg ? -num : num;
+    }
+    return lookup;
+  } catch (e) { return {}; }
+}
+
 async function init() {
   try {
-    const resp = await fetch('history_data.json');
+    const [resp, csvStrad] = await Promise.all([
+      fetch('history_data.json'),
+      loadCSVStraddle(),
+    ]);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const raw = await resp.json();
 
-    // Compute signals for each day (need previous day's data)
     for (let i = 1; i < raw.length; i++) {
       const cur = raw[i], prev = raw[i - 1];
       const parts = cur.date.split('-');
@@ -424,18 +889,15 @@ async function init() {
         etDate,
       });
 
-      // Apply win rate override rules using previous day's M8BF win rate
       const prevWR = prev.m8bfWR;
       if (prevWR != null) {
         const dow = etDate.getDay();
         if (prevWR === 0 && signal.rec.startsWith("M8BF")) {
-          // 0% rule: M8BF → Straddle
           if (!signal.eomDay) {
             signal.rec = "Straddle @ 9:32 AM"; signal.theme = "strad"; signal.crossed = false;
             signal.blockT = "0%rule"; signal.entryT = "9:32 AM"; signal.badge = "STRADDLE"; signal.strikeInfo = null;
           }
         } else if (prevWR >= 90 && signal.rec === "Straddle @ 9:32 AM") {
-          // 90% rule: Straddle → M8BF
           const sc = m8Sched(dow);
           signal.rec = m8Msg(etDate); signal.theme = "m8bf"; signal.badge = "M8BF";
           signal.strikeInfo = sc; signal.entryT = sc?.window || ""; signal.blockT = "90%rule";
@@ -451,9 +913,11 @@ async function init() {
         overnightDrop: parseFloat((prev.vixClose - cur.vixOpen).toFixed(2)),
         o2o: parseFloat((prev.vixOpen - cur.vixOpen).toFixed(2)),
         spxGapPct: spxGapPct !== null ? parseFloat(spxGapPct.toFixed(2)) : null,
+        spxOpen: cur.spxOpen != null ? cur.spxOpen : null,
+        spxClose: cur.spxClose != null ? cur.spxClose : null,
         m8bfWR: cur.m8bfWR != null ? cur.m8bfWR : null,
         m8bfPL: cur.m8bfPL != null ? cur.m8bfPL : null,
-        stradPL: cur.stradPL != null ? cur.stradPL : null,
+        stradPL: cur.date in csvStrad ? csvStrad[cur.date] : null,
         gxbfPL: cur.gxbfPL != null ? cur.gxbfPL : null,
         bobfPL: cur.bobfPL != null ? cur.bobfPL : null,
         prevWR: prevWR != null ? prevWR : null,
@@ -461,32 +925,18 @@ async function init() {
       });
     }
 
-    allRows.reverse(); // most recent first
-    filterMonths(0);   // show all by default
+    allRows.reverse();
+    filterMonths(0);
   } catch (e) {
     document.getElementById('content').innerHTML =
       `<div class="error-box"><p>Failed to load history_data.json: ${e.message}</p><p>Run <code>python3 generate_history.py</code> to generate it.</p></div>`;
   }
 }
 
-function filterMonths(months) {
-  document.querySelectorAll('.range-btns .schwab-btn').forEach(b => {
-    b.classList.toggle('primary', parseInt(b.dataset.months) === months);
-  });
+// ══════════════════════════════════════════════════════════════
+// TABLE
+// ══════════════════════════════════════════════════════════════
 
-  if (months === 0) {
-    rows = allRows.slice();
-  } else {
-    const cutoff = new Date();
-    cutoff.setMonth(cutoff.getMonth() - months);
-    const cutoffStr = cutoff.toISOString().slice(0, 10);
-    rows = allRows.filter(r => r.date >= cutoffStr);
-  }
-  sortCol = null;
-  renderTable();
-}
-
-// ── Column defs ──
 const cols = [
   { key:'date',        label:'Date',       type:'string' },
   { key:'dayLabel',    label:'Day',        type:'string' },
@@ -508,8 +958,8 @@ function getValue(row, col) {
     case 'dayLabel': return row.dayLabel || '';
     case 'm8bfWR': return row.m8bfWR != null ? row.m8bfWR : -1;
     case 'm8bfPL': return row.signal?.theme === 'm8bf' ? (row.m8bfPL != null ? row.m8bfPL : 0.1) : -Infinity;
-    case 'stradPL': return row.signal?.theme === 'strad' ? (row.stradPL != null ? row.stradPL : 0.1) : -Infinity;
-    case 'gxbfPL': return row.signal?.theme === 'gxbf' ? (row.gxbfPL != null ? row.gxbfPL : 0.1) : -Infinity;
+    case 'stradPL': return row.stradPL != null ? row.stradPL : -Infinity;
+    case 'gxbfPL': return row.gxbfPL != null ? row.gxbfPL : -Infinity;
     case 'bobfPL': return row.signal?.bobfBadge !== 'BLOCKED' ? (row.bobfPL != null ? row.bobfPL : 0.1) : -Infinity;
     default: return row[col.key];
   }
@@ -534,8 +984,6 @@ function valClass(v) { return v == null || v === 0 ? 'val-zero' : v > 0 ? 'val-p
 function fmtNum(v) { return v == null ? '—' : v.toFixed(2); }
 
 function stratCell(signalActive, pl) {
-  // signalActive: did this strategy's signal fire?
-  // pl: trade P/L from data (null = no trade data)
   if (!signalActive) return '<td class="cross" style="text-align:center">✗</td>';
   if (pl == null) return '<td style="color:var(--text3);font-style:italic;text-align:center;font-size:11px">No fill</td>';
   const cls = pl > 0 ? 'val-pos' : pl < 0 ? 'val-neg' : 'val-zero';
@@ -551,7 +999,6 @@ function renderTable() {
   });
   h += '</tr></thead><tbody>';
 
-  // Totals accumulators
   let totM8=0, totStrad=0, totGxbf=0, totBobf=0;
 
   for (const row of rows) {
@@ -567,74 +1014,241 @@ function renderTable() {
     h += `<td class="${valClass(row.spxGapPct)}">${row.spxGapPct!=null?row.spxGapPct.toFixed(2)+'%':'—'}</td>`;
     h += `<td style="font-weight:700;${row.m8bfWR!=null?(row.m8bfWR>=90?'color:#22c55e':row.m8bfWR===0?'color:#ef4444':'color:var(--text)'):'color:var(--text3)'}">${row.m8bfWR!=null?row.m8bfWR+'%':'—'}</td>`;
     h += stratCell(s.theme === 'm8bf', row.m8bfPL);
-    h += stratCell(s.theme === 'strad', row.stradPL);
-    h += stratCell(s.theme === 'gxbf', row.gxbfPL);
+    h += stratCell(row.stradPL != null, row.stradPL);
+    h += stratCell(row.gxbfPL != null, row.gxbfPL);
     h += stratCell(s.bobfBadge !== 'BLOCKED', row.bobfPL);
     h += '</tr>';
 
     if (activeStrats.m8bf && s.theme === 'm8bf' && row.m8bfPL != null) totM8 += row.m8bfPL;
-    if (activeStrats.strad && s.theme === 'strad' && row.stradPL != null) totStrad += row.stradPL;
-    if (activeStrats.gxbf && s.theme === 'gxbf' && row.gxbfPL != null) totGxbf += row.gxbfPL;
+    if (activeStrats.strad && row.stradPL != null) totStrad += row.stradPL;
+    if (activeStrats.gxbf && row.gxbfPL != null) totGxbf += row.gxbfPL;
     if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) totBobf += row.bobfPL;
   }
 
-  // Totals row
   const fc = (v, active) => active ? `<td class="${valClass(v)}" style="font-weight:700">$${Math.round(v).toLocaleString()}</td>` : '<td style="color:var(--text3);text-align:center">—</td>';
   h += '</tbody><tfoot><tr>';
   h += '<td colspan="9" style="text-align:right;font-family:Inter,sans-serif;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text2)">TOTAL</td>';
   h += fc(totM8, activeStrats.m8bf) + fc(totStrad, activeStrats.strad) + fc(totGxbf, activeStrats.gxbf) + fc(totBobf, activeStrats.bobf);
   h += '</tr></tfoot></table></div>';
   document.getElementById('content').innerHTML = h;
+  renderAll();
+}
+
+function renderAll() {
   renderStats();
+  renderChart();
+  renderBarChart();
+  renderHeatmap();
+  renderCorrelation();
+  renderAllocation();
+  // Show Monte Carlo card (but don't auto-run simulation)
+  document.getElementById('monteCarloCard').style.display = rows.length ? '' : 'none';
+}
+
+// ══════════════════════════════════════════════════════════════
+// EQUITY CHART
+// ══════════════════════════════════════════════════════════════
+
+function toggleLogScale() {
+  logScale = !logScale;
+  document.getElementById('logScaleBtn').classList.toggle('primary', logScale);
   renderChart();
 }
 
-let cumChart = null;
+function buildCumCurve(rowSet) {
+  const sorted = rowSet.slice().sort((a,b) => a.date.localeCompare(b.date));
+  const cumArr = [];
+  let cum = 0;
+  for (const row of sorted) {
+    const pl = getRowPL(row);
+    if (pl !== null) cum += pl;
+    cumArr.push(cum);
+  }
+  return cumArr;
+}
+
 function renderChart() {
   const card = document.getElementById('chartCard');
-  // Sort rows ascending by date for cumulative calc
-  const sorted = rows.slice().sort((a,b) => a.date.localeCompare(b.date));
-  if (!sorted.length) { card.style.display='none'; return; }
+  sortedRows = rows.slice().sort((a,b) => a.date.localeCompare(b.date));
+  if (!sortedRows.length) { card.style.display='none'; return; }
   card.style.display = '';
 
-  const dates=[], cumM8=[], cumStrad=[], cumGxbf=[], cumBobf=[], cumAll=[];
-  let rm=0, rs=0, rg=0, rb=0;
-  for (const row of sorted) {
+  // Compare mode: overlay two periods
+  if (compareMode) {
+    const pA = document.getElementById('periodAStart').value;
+    const pAE = document.getElementById('periodAEnd').value;
+    const pB = document.getElementById('periodBStart').value;
+    const pBE = document.getElementById('periodBEnd').value;
+    if (pA && pAE && pB && pBE) {
+      const rowsA = rows.filter(r => r.date >= pA && r.date <= pAE).sort((a,b) => a.date.localeCompare(b.date));
+      const rowsB = rows.filter(r => r.date >= pB && r.date <= pBE).sort((a,b) => a.date.localeCompare(b.date));
+      const cumA = buildCumCurve(rowsA);
+      const cumB = buildCumCurve(rowsB);
+      const maxLen = Math.max(cumA.length, cumB.length);
+      const labels = Array.from({length:maxLen}, (_,i) => `Day ${i+1}`);
+
+      const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+      const tickColor = isDark ? '#94a3b8' : '#475569';
+      const gridColor = isDark ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.08)';
+
+      const cfg = {
+        type:'line',
+        data:{
+          labels,
+          datasets:[
+            { label:`Period A (${pA} → ${pAE})`, data:cumA, borderColor:'#818cf8', backgroundColor:'rgba(129,140,248,.1)', tension:.3, borderWidth:2, pointRadius:0 },
+            { label:`Period B (${pB} → ${pBE})`, data:cumB, borderColor:'#fb923c', backgroundColor:'rgba(251,146,60,.1)', tension:.3, borderWidth:2, pointRadius:0 },
+          ]
+        },
+        options:{
+          responsive:true, maintainAspectRatio:false,
+          animation:{ duration:1000 },
+          plugins:{ legend:{ position:'top', labels:{ color:tickColor, font:{size:11} } } },
+          scales:{
+            x:{ ticks:{ color:tickColor, maxTicksLimit:12, font:{size:10} }, grid:{ color:gridColor } },
+            y:{ ticks:{ color:tickColor, font:{size:10}, callback: v => '$'+v.toLocaleString() }, grid:{ color:gridColor } },
+          },
+        },
+      };
+      if (cumChart) { cumChart.destroy(); cumChart = null; }
+      cumChart = new Chart(document.getElementById('cumChart'), cfg);
+      return;
+    }
+  }
+
+  const dates=[], cumM8=[], cumStrad=[], cumGxbf=[], cumBobf=[], cumAll=[], ddAll=[];
+  let rm=0, rs=0, rg=0, rb=0, peak=0;
+
+  // Win/loss scatter data
+  const winX=[], winY=[], lossX=[], lossY=[], athX=[], athY=[];
+  let prevPeak = -Infinity;
+
+  for (let i = 0; i < sortedRows.length; i++) {
+    const row = sortedRows[i];
     const s = row.signal || {};
-    if (activeStrats.m8bf && s.theme === 'm8bf' && row.m8bfPL != null) rm += row.m8bfPL;
-    if (activeStrats.strad && s.theme === 'strad' && row.stradPL != null) rs += row.stradPL;
-    if (activeStrats.gxbf && s.theme === 'gxbf' && row.gxbfPL != null) rg += row.gxbfPL;
-    if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) rb += row.bobfPL;
+    let dayPL = 0;
+    if (activeStrats.m8bf && s.theme === 'm8bf' && row.m8bfPL != null) { rm += row.m8bfPL; dayPL += row.m8bfPL; }
+    if (activeStrats.strad && row.stradPL != null) { rs += row.stradPL; dayPL += row.stradPL; }
+    if (activeStrats.gxbf && row.gxbfPL != null) { rg += row.gxbfPL; dayPL += row.gxbfPL; }
+    if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) { rb += row.bobfPL; dayPL += row.bobfPL; }
+
+    const total = rm+rs+rg+rb;
     dates.push(row.date);
     cumM8.push(rm); cumStrad.push(rs); cumGxbf.push(rg); cumBobf.push(rb);
-    cumAll.push(rm+rs+rg+rb);
+    cumAll.push(total);
+
+    if (total > peak) peak = total;
+    ddAll.push(total - peak);
+
+    // Win/loss markers
+    const pl = getRowPL(row);
+    if (pl !== null) {
+      if (pl > 0) { winX.push(row.date); winY.push(total); }
+      else if (pl < 0) { lossX.push(row.date); lossY.push(total); }
+    }
+
+    // ATH markers
+    if (total > prevPeak && total > 0) {
+      athX.push(row.date);
+      athY.push(total);
+      prevPeak = total;
+    }
+  }
+
+  // SPY benchmark
+  const showBenchmark = document.getElementById('benchmarkToggle').checked;
+  let spyData = null;
+  if (showBenchmark) {
+    const spxRows = sortedRows.filter(r => r.spxClose != null);
+    if (spxRows.length > 1) {
+      const basePrice = spxRows[0].spxClose;
+      // Scale: normalize SPY return to match equity curve's final value for visual comparison
+      const finalPL = cumAll[cumAll.length - 1] || 1;
+      const spyFinalReturn = (spxRows[spxRows.length-1].spxClose / basePrice - 1);
+      const scale = spyFinalReturn !== 0 ? finalPL / spyFinalReturn : 1;
+      spyData = [];
+      for (const row of sortedRows) {
+        if (row.spxClose != null) {
+          spyData.push((row.spxClose / basePrice - 1) * scale);
+        } else {
+          spyData.push(null);
+        }
+      }
+    }
   }
 
   const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
   const gridColor = isDark ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.08)';
   const tickColor = isDark ? '#94a3b8' : '#475569';
 
+  // Check if any cumAll values are negative (for log scale)
+  const hasNegative = cumAll.some(v => v < 0);
+  const useLog = logScale && !hasNegative;
+
   const datasets = [
-    { label:'M8BF',     data:cumM8,    borderColor:'#a78bfa', backgroundColor:'rgba(167,139,250,.1)', tension:.3, borderWidth:2, pointRadius:0, pointHitRadius:6, hidden:!activeStrats.m8bf },
-    { label:'Straddle', data:cumStrad, borderColor:'#22d3ee', backgroundColor:'rgba(34,211,238,.1)',  tension:.3, borderWidth:2, pointRadius:0, pointHitRadius:6, hidden:!activeStrats.strad },
-    { label:'GXBF',     data:cumGxbf,  borderColor:'#2dd4bf', backgroundColor:'rgba(45,212,191,.1)',  tension:.3, borderWidth:2, pointRadius:0, pointHitRadius:6, hidden:!activeStrats.gxbf },
-    { label:'BOBF',     data:cumBobf,  borderColor:'#fb923c', backgroundColor:'rgba(251,146,60,.1)',  tension:.3, borderWidth:2, pointRadius:0, pointHitRadius:6, hidden:!activeStrats.bobf },
-    { label:'Combined', data:cumAll,   borderColor: isDark?'#e2e8f0':'#1e293b', backgroundColor: isDark?'rgba(226,232,240,.08)':'rgba(30,41,59,.08)', tension:.3, borderWidth:2.5, pointRadius:0, pointHitRadius:6, borderDash:[6,3] },
+    { label:'M8BF',     data:cumM8,    borderColor:'#a78bfa', backgroundColor:'rgba(167,139,250,.1)', tension:.3, borderWidth:2, pointRadius:0, pointHitRadius:6, hidden:!activeStrats.m8bf, yAxisID:'y' },
+    { label:'Straddle', data:cumStrad, borderColor:'#22d3ee', backgroundColor:'rgba(34,211,238,.1)',  tension:.3, borderWidth:2, pointRadius:0, pointHitRadius:6, hidden:!activeStrats.strad, yAxisID:'y' },
+    { label:'GXBF',     data:cumGxbf,  borderColor:'#2dd4bf', backgroundColor:'rgba(45,212,191,.1)',  tension:.3, borderWidth:2, pointRadius:0, pointHitRadius:6, hidden:!activeStrats.gxbf, yAxisID:'y' },
+    { label:'BOBF',     data:cumBobf,  borderColor:'#fb923c', backgroundColor:'rgba(251,146,60,.1)',  tension:.3, borderWidth:2, pointRadius:0, pointHitRadius:6, hidden:!activeStrats.bobf, yAxisID:'y' },
+    { label:'Combined', data:cumAll,   borderColor: isDark?'#e2e8f0':'#1e293b', backgroundColor: isDark?'rgba(226,232,240,.08)':'rgba(30,41,59,.08)', tension:.3, borderWidth:2.5, pointRadius:0, pointHitRadius:6, borderDash:[6,3], yAxisID:'y' },
+    // Drawdown overlay
+    { label:'Drawdown', data:ddAll, borderColor:'rgba(239,68,68,.6)', backgroundColor:'rgba(239,68,68,.15)', fill:'origin', tension:.3, borderWidth:1, pointRadius:0, pointHitRadius:4, yAxisID:'y2' },
+    // Win markers
+    { label:'Wins', data:winX.map((x,i) => ({x, y:winY[i]})), type:'scatter', backgroundColor:'#22c55e', borderColor:'#22c55e', pointRadius:3, pointHitRadius:6, yAxisID:'y', showLine:false },
+    // Loss markers
+    { label:'Losses', data:lossX.map((x,i) => ({x, y:lossY[i]})), type:'scatter', backgroundColor:'#ef4444', borderColor:'#ef4444', pointRadius:3, pointHitRadius:6, yAxisID:'y', showLine:false },
+    // ATH markers
+    { label:'ATH', data:athX.map((x,i) => ({x, y:athY[i]})), type:'scatter', backgroundColor:'#fbbf24', borderColor:'#fbbf24', pointRadius:5, pointStyle:'star', pointHitRadius:6, yAxisID:'y', showLine:false },
   ];
+
+  if (spyData) {
+    datasets.splice(5, 0, {
+      label:'SPY Benchmark', data:spyData, borderColor:'#9ca3af', backgroundColor:'transparent',
+      tension:.3, borderWidth:1.5, pointRadius:0, pointHitRadius:6, borderDash:[4,4], yAxisID:'y'
+    });
+  }
 
   const cfg = {
     type:'line',
     data:{ labels:dates, datasets },
     options:{
       responsive:true, maintainAspectRatio:false,
+      animation:{ duration:1500, easing:'easeOutQuart' },
       interaction:{ mode:'index', intersect:false },
       plugins:{
-        legend:{ position:'top', labels:{ color:tickColor, usePointStyle:true, pointStyle:'line', font:{size:11} } },
-        tooltip:{ callbacks:{ label: ctx => `${ctx.dataset.label}: $${Math.round(ctx.parsed.y).toLocaleString()}` } },
+        legend:{ position:'top', labels:{ color:tickColor, usePointStyle:true, pointStyle:'line', font:{size:11}, filter: item => !['Wins','Losses','ATH'].includes(item.text) } },
+        tooltip:{
+          callbacks:{
+            label: ctx => `${ctx.dataset.label}: $${Math.round(ctx.parsed.y).toLocaleString()}`,
+            afterBody: (items) => {
+              if (!items.length) return '';
+              const idx = items[0].dataIndex;
+              if (idx >= sortedRows.length) return '';
+              const row = sortedRows[idx];
+              const s = row.signal || {};
+              const lines = [];
+              if (s.badge) lines.push(`Signal: ${s.badge}`);
+              if (s.entryT) lines.push(`Entry: ${s.entryT}`);
+              const pl = getRowPL(row);
+              if (pl !== null) lines.push(`Day P/L: $${pl.toLocaleString()}`);
+              return lines.join('\n');
+            }
+          }
+        },
       },
       scales:{
         x:{ ticks:{ color:tickColor, maxTicksLimit:12, font:{size:10} }, grid:{ color:gridColor } },
-        y:{ ticks:{ color:tickColor, font:{size:10}, callback: v => '$'+v.toLocaleString() }, grid:{ color:gridColor } },
+        y:{
+          type: useLog ? 'logarithmic' : 'linear',
+          position:'left',
+          ticks:{ color:tickColor, font:{size:10}, callback: v => '$'+v.toLocaleString() },
+          grid:{ color:gridColor }
+        },
+        y2:{
+          position:'right',
+          ticks:{ color:'rgba(239,68,68,.5)', font:{size:10}, callback: v => '$'+v.toLocaleString() },
+          grid:{ drawOnChartArea:false },
+        },
       },
     },
   };
@@ -643,6 +1257,524 @@ function renderChart() {
   const canvas = document.getElementById('cumChart');
   cumChart = new Chart(canvas, cfg);
 }
+
+// ══════════════════════════════════════════════════════════════
+// BAR CHART (Monthly/Weekly P/L)
+// ══════════════════════════════════════════════════════════════
+
+function setBarMode(mode) {
+  barChartMode = mode;
+  document.querySelectorAll('[data-bar]').forEach(b => b.classList.toggle('primary', b.dataset.bar === mode));
+  renderBarChart();
+}
+
+function renderBarChart() {
+  const card = document.getElementById('barChartCard');
+  const sorted = rows.slice().sort((a,b) => a.date.localeCompare(b.date));
+  if (!sorted.length) { card.style.display='none'; return; }
+  card.style.display = '';
+
+  // Group by period
+  const groups = {};
+  for (const row of sorted) {
+    const pl = getRowPL(row);
+    if (pl === null) continue;
+    let key;
+    if (barChartMode === 'monthly') {
+      key = row.date.slice(0, 7); // YYYY-MM
+    } else {
+      // ISO week
+      const d = new Date(row.date + 'T12:00:00');
+      const dayNum = (d.getDay() + 6) % 7;
+      const jan4 = new Date(d.getFullYear(), 0, 4);
+      const startOfYear = new Date(jan4.getTime() - ((jan4.getDay() + 6) % 7) * 86400000);
+      const weekNum = Math.ceil(((d - startOfYear) / 86400000 + 1) / 7);
+      key = `${d.getFullYear()}-W${String(weekNum).padStart(2,'0')}`;
+    }
+    groups[key] = (groups[key] || 0) + pl;
+  }
+
+  const labels = Object.keys(groups).sort();
+  const values = labels.map(k => groups[k]);
+  const colors = values.map(v => v >= 0 ? 'rgba(34,197,94,.7)' : 'rgba(239,68,68,.7)');
+  const borderColors = values.map(v => v >= 0 ? '#22c55e' : '#ef4444');
+
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  const tickColor = isDark ? '#94a3b8' : '#475569';
+  const gridColor = isDark ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.08)';
+
+  const cfg = {
+    type:'bar',
+    data:{
+      labels,
+      datasets:[{ label:'P/L', data:values, backgroundColor:colors, borderColor:borderColors, borderWidth:1 }]
+    },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      animation:{ duration:800 },
+      plugins:{
+        legend:{ display:false },
+        tooltip:{ callbacks:{ label: ctx => `P/L: $${Math.round(ctx.parsed.y).toLocaleString()}` } },
+      },
+      scales:{
+        x:{ ticks:{ color:tickColor, font:{size:10}, maxRotation:45 }, grid:{ color:gridColor } },
+        y:{ ticks:{ color:tickColor, font:{size:10}, callback: v => '$'+v.toLocaleString() }, grid:{ color:gridColor } },
+      },
+    },
+  };
+
+  if (barChart) { barChart.destroy(); barChart = null; }
+  barChart = new Chart(document.getElementById('barChartCanvas'), cfg);
+}
+
+// ══════════════════════════════════════════════════════════════
+// HEATMAP
+// ══════════════════════════════════════════════════════════════
+
+function renderHeatmap() {
+  const section = document.getElementById('heatmapSection');
+  const container = document.getElementById('heatmapContainer');
+  const sorted = rows.slice().sort((a,b) => a.date.localeCompare(b.date));
+  if (!sorted.length) { section.style.display='none'; return; }
+  section.style.display = '';
+
+  // Build daily P/L map
+  const dayPL = {};
+  for (const row of sorted) {
+    const pl = getRowPL(row);
+    if (pl !== null) dayPL[row.date] = pl;
+  }
+
+  // Find min/max for color scale
+  const vals = Object.values(dayPL);
+  if (!vals.length) { container.innerHTML = ''; return; }
+  const maxAbs = Math.max(Math.abs(Math.min(...vals)), Math.abs(Math.max(...vals))) || 1;
+
+  // Group by month
+  const months = {};
+  for (const date of Object.keys(dayPL).sort()) {
+    const key = date.slice(0, 7);
+    if (!months[key]) months[key] = {};
+    months[key][date] = dayPL[date];
+  }
+
+  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const dayNames = ['Mo','Tu','We','Th','Fr','Sa','Su'];
+
+  let html = '';
+  for (const [monthKey, days] of Object.entries(months)) {
+    const [year, mon] = monthKey.split('-').map(Number);
+    const firstDay = new Date(year, mon - 1, 1);
+    const daysInMonth = new Date(year, mon, 0).getDate();
+    // Monday=0 based offset
+    const startDow = (firstDay.getDay() + 6) % 7;
+
+    html += `<div class="heatmap-month">`;
+    html += `<div class="heatmap-month-label">${monthNames[mon-1]} ${year}</div>`;
+    html += `<div class="heatmap-weekdays">${dayNames.map(d => `<div class="heatmap-weekday">${d}</div>`).join('')}</div>`;
+    html += `<div class="heatmap-grid">`;
+
+    // Empty cells before first day
+    for (let i = 0; i < startDow; i++) {
+      html += `<div class="heatmap-day" style="background:transparent"></div>`;
+    }
+
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dateStr = `${year}-${String(mon).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      const pl = days[dateStr];
+      let bg;
+      if (pl === undefined) {
+        bg = 'var(--bg3)';
+      } else {
+        const intensity = Math.min(Math.abs(pl) / maxAbs, 1);
+        if (pl > 0) {
+          const h = 142, s = 70, l = 50 - intensity * 20;
+          bg = `hsl(${h},${s}%,${l}%)`;
+        } else if (pl < 0) {
+          const h = 0, s = 70, l = 50 - intensity * 20;
+          bg = `hsl(${h},${s}%,${l}%)`;
+        } else {
+          bg = 'var(--bg3)';
+        }
+      }
+      const tip = pl !== undefined ? `<div class="heatmap-tip">${dateStr}: $${Math.round(pl).toLocaleString()}</div>` : '';
+      html += `<div class="heatmap-day" style="background:${bg}">${tip}</div>`;
+    }
+
+    html += `</div></div>`;
+  }
+
+  container.innerHTML = html;
+}
+
+// ══════════════════════════════════════════════════════════════
+// MONTE CARLO
+// ══════════════════════════════════════════════════════════════
+
+function runMonteCarlo() {
+  const card = document.getElementById('monteCarloCard');
+  card.style.display = '';
+
+  const sorted = rows.slice().sort((a,b) => a.date.localeCompare(b.date));
+  const pls = [];
+  for (const row of sorted) {
+    const pl = getRowPL(row);
+    if (pl !== null) pls.push(pl);
+  }
+  if (pls.length < 2) return;
+
+  const iterations = Math.min(Math.max(parseInt(document.getElementById('mcIter').value) || 1000, 100), 10000);
+  const n = pls.length;
+
+  // Run simulations
+  const allCurves = [];
+  for (let iter = 0; iter < iterations; iter++) {
+    // Fisher-Yates shuffle
+    const shuffled = pls.slice();
+    for (let i = n - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    const curve = [0];
+    let cum = 0;
+    for (const pl of shuffled) {
+      cum += pl;
+      curve.push(cum);
+    }
+    allCurves.push(curve);
+  }
+
+  // Compute percentiles at each step
+  const steps = n + 1;
+  const percentiles = [5, 25, 50, 75, 95];
+  const bands = percentiles.map(() => []);
+
+  for (let step = 0; step < steps; step++) {
+    const vals = allCurves.map(c => c[step]).sort((a,b) => a-b);
+    for (let p = 0; p < percentiles.length; p++) {
+      const idx = Math.floor(percentiles[p] / 100 * vals.length);
+      bands[p].push(vals[Math.min(idx, vals.length - 1)]);
+    }
+  }
+
+  // Actual equity curve
+  const actual = [0];
+  let cum = 0;
+  for (const pl of pls) { cum += pl; actual.push(cum); }
+
+  const labels = Array.from({length:steps}, (_,i) => i);
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  const tickColor = isDark ? '#94a3b8' : '#475569';
+  const gridColor = isDark ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.08)';
+
+  const cfg = {
+    type:'line',
+    data:{
+      labels,
+      datasets:[
+        { label:'95th', data:bands[4], borderColor:'rgba(34,197,94,.3)', backgroundColor:'rgba(34,197,94,.08)', fill:'+1', borderWidth:0, pointRadius:0 },
+        { label:'75th', data:bands[3], borderColor:'rgba(34,197,94,.4)', backgroundColor:'rgba(34,197,94,.12)', fill:'+1', borderWidth:0, pointRadius:0 },
+        { label:'Median', data:bands[2], borderColor:'rgba(148,163,184,.6)', backgroundColor:'transparent', borderWidth:1.5, borderDash:[4,4], pointRadius:0 },
+        { label:'25th', data:bands[1], borderColor:'rgba(239,68,68,.4)', backgroundColor:'rgba(239,68,68,.12)', fill:'+1', borderWidth:0, pointRadius:0 },
+        { label:'5th', data:bands[0], borderColor:'rgba(239,68,68,.3)', backgroundColor:'rgba(239,68,68,.08)', fill:'origin', borderWidth:0, pointRadius:0 },
+        { label:'Actual', data:actual, borderColor:isDark?'#e2e8f0':'#1e293b', backgroundColor:'transparent', borderWidth:2.5, pointRadius:0 },
+      ]
+    },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      animation:{ duration:800 },
+      plugins:{
+        legend:{ position:'top', labels:{ color:tickColor, font:{size:11} } },
+        tooltip:{ callbacks:{ label: ctx => `${ctx.dataset.label}: $${Math.round(ctx.parsed.y).toLocaleString()}` } },
+      },
+      scales:{
+        x:{ title:{display:true, text:'Trade #', color:tickColor}, ticks:{ color:tickColor, maxTicksLimit:10, font:{size:10} }, grid:{ color:gridColor } },
+        y:{ ticks:{ color:tickColor, font:{size:10}, callback: v => '$'+v.toLocaleString() }, grid:{ color:gridColor } },
+      },
+    },
+  };
+
+  if (mcChart) { mcChart.destroy(); mcChart = null; }
+  mcChart = new Chart(document.getElementById('mcChart'), cfg);
+}
+
+// ══════════════════════════════════════════════════════════════
+// CORRELATION MATRIX
+// ══════════════════════════════════════════════════════════════
+
+function renderCorrelation() {
+  const card = document.getElementById('corrCard');
+  const container = document.getElementById('corrContainer');
+  const sorted = rows.slice().sort((a,b) => a.date.localeCompare(b.date));
+  if (!sorted.length) { card.style.display='none'; return; }
+  card.style.display = '';
+
+  const strats = ['m8bf','strad','gxbf','bobf'];
+  const stratLabels = {m8bf:'M8BF', strad:'Straddle', gxbf:'GXBF', bobf:'BOBF'};
+
+  // Build daily P/L by strategy
+  const dailyPL = {};
+  for (const k of strats) dailyPL[k] = {};
+  for (const row of sorted) {
+    const s = row.signal || {};
+    if (s.theme === 'm8bf' && row.m8bfPL != null) dailyPL.m8bf[row.date] = row.m8bfPL;
+    if (row.stradPL != null) dailyPL.strad[row.date] = row.stradPL;
+    if (row.gxbfPL != null) dailyPL.gxbf[row.date] = row.gxbfPL;
+    if (s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) dailyPL.bobf[row.date] = row.bobfPL;
+  }
+
+  function pearson(a, b) {
+    const keys = Object.keys(dailyPL[a]).filter(d => d in dailyPL[b]);
+    if (keys.length < 3) return null;
+    const va = keys.map(k => dailyPL[a][k]);
+    const vb = keys.map(k => dailyPL[b][k]);
+    const n = va.length;
+    const ma = va.reduce((s,v) => s+v, 0) / n;
+    const mb = vb.reduce((s,v) => s+v, 0) / n;
+    let num = 0, da = 0, db = 0;
+    for (let i = 0; i < n; i++) {
+      const x = va[i] - ma, y = vb[i] - mb;
+      num += x * y;
+      da += x * x;
+      db += y * y;
+    }
+    const denom = Math.sqrt(da * db);
+    return denom > 0 ? num / denom : 0;
+  }
+
+  const size = strats.length + 1;
+  let html = `<div class="corr-grid" style="grid-template-columns:repeat(${size},1fr);">`;
+  // Header row
+  html += `<div class="corr-header"></div>`;
+  for (const s of strats) html += `<div class="corr-header">${stratLabels[s]}</div>`;
+  // Data rows
+  for (const a of strats) {
+    html += `<div class="corr-header">${stratLabels[a]}</div>`;
+    for (const b of strats) {
+      if (a === b) {
+        html += `<div class="corr-cell" style="background:rgba(99,102,241,.3);color:var(--text)">1.00</div>`;
+      } else {
+        const r = pearson(a, b);
+        if (r === null) {
+          html += `<div class="corr-cell" style="background:var(--bg3);color:var(--text3)">—</div>`;
+        } else {
+          // Color: red(-1) → neutral(0) → green(+1)
+          const h = r > 0 ? 142 : 0;
+          const intensity = Math.abs(r);
+          const bg = `hsla(${h},70%,50%,${intensity * 0.4})`;
+          html += `<div class="corr-cell" style="background:${bg};color:var(--text)">${r.toFixed(2)}</div>`;
+        }
+      }
+    }
+  }
+  html += `</div>`;
+  container.innerHTML = html;
+}
+
+// ══════════════════════════════════════════════════════════════
+// ALLOCATION OPTIMIZER
+// ══════════════════════════════════════════════════════════════
+
+function renderAllocation() {
+  const card = document.getElementById('allocCard');
+  const sorted = rows.slice().sort((a,b) => a.date.localeCompare(b.date));
+  if (!sorted.length) { card.style.display='none'; return; }
+  card.style.display = '';
+
+  const controls = document.getElementById('allocControls');
+  const strats = [
+    {key:'m8bf', label:'M8BF', color:'#a78bfa'},
+    {key:'strad', label:'Straddle', color:'#22d3ee'},
+    {key:'gxbf', label:'GXBF', color:'#2dd4bf'},
+    {key:'bobf', label:'BOBF', color:'#fb923c'},
+  ];
+
+  controls.innerHTML = strats.map(s =>
+    `<div class="alloc-row">
+      <span class="alloc-label" style="color:${s.color}">${s.label}</span>
+      <input type="range" class="alloc-slider" min="0" max="100" step="5" value="${allocWeights[s.key]}" oninput="updateAlloc('${s.key}',this.value)">
+      <span class="alloc-value" id="alloc-val-${s.key}">${allocWeights[s.key]}%</span>
+    </div>`
+  ).join('') + `<button class="schwab-btn primary" onclick="optimizeAlloc()" style="align-self:flex-start;margin-top:4px">Optimize (Best Sharpe)</button>`;
+
+  updateAllocChart();
+}
+
+function updateAlloc(key, val) {
+  allocWeights[key] = parseInt(val);
+  document.getElementById(`alloc-val-${key}`).textContent = val + '%';
+  updateAllocChart();
+}
+
+function updateAllocChart() {
+  const sorted = rows.slice().sort((a,b) => a.date.localeCompare(b.date));
+
+  // Build daily P/L per strategy
+  const stratPLs = {m8bf:[], strad:[], gxbf:[], bobf:[]};
+  const dates = [];
+  for (const row of sorted) {
+    const s = row.signal || {};
+    const m = (s.theme === 'm8bf' && row.m8bfPL != null) ? row.m8bfPL : 0;
+    const st = row.stradPL != null ? row.stradPL : 0;
+    const g = row.gxbfPL != null ? row.gxbfPL : 0;
+    const b = (s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) ? row.bobfPL : 0;
+    if (m || st || g || b) {
+      stratPLs.m8bf.push(m); stratPLs.strad.push(st); stratPLs.gxbf.push(g); stratPLs.bobf.push(b);
+      dates.push(row.date);
+    }
+  }
+
+  const totalWeight = (allocWeights.m8bf + allocWeights.strad + allocWeights.gxbf + allocWeights.bobf) || 1;
+  const w = {
+    m8bf: allocWeights.m8bf / totalWeight,
+    strad: allocWeights.strad / totalWeight,
+    gxbf: allocWeights.gxbf / totalWeight,
+    bobf: allocWeights.bobf / totalWeight,
+  };
+
+  const weightedPLs = [];
+  const cumData = [];
+  let cum = 0;
+  for (let i = 0; i < dates.length; i++) {
+    const wpl = w.m8bf * stratPLs.m8bf[i] + w.strad * stratPLs.strad[i] + w.gxbf * stratPLs.gxbf[i] + w.bobf * stratPLs.bobf[i];
+    weightedPLs.push(wpl);
+    cum += wpl;
+    cumData.push(cum);
+  }
+
+  // Compute weighted stats
+  const n = weightedPLs.length;
+  const totalPL = weightedPLs.reduce((a,b) => a+b, 0);
+  const mean = n > 0 ? totalPL / n : 0;
+  const variance = n > 0 ? weightedPLs.reduce((s,v) => s + (v - mean) ** 2, 0) / n : 0;
+  const sharpe = variance > 0 ? mean / Math.sqrt(variance) : 0;
+
+  let peak = 0, maxDD = 0;
+  cum = 0;
+  for (const pl of weightedPLs) {
+    cum += pl;
+    if (cum > peak) peak = cum;
+    const dd = peak - cum;
+    if (dd > maxDD) maxDD = dd;
+  }
+
+  const statsEl = document.getElementById('allocStats');
+  statsEl.innerHTML = `P/L: <span>$${Math.round(totalPL).toLocaleString()}</span> | Sharpe: <span>${sharpe.toFixed(2)}</span> | MaxDD: <span>$${Math.round(maxDD).toLocaleString()}</span> | Weights: <span>${allocWeights.m8bf}/${allocWeights.strad}/${allocWeights.gxbf}/${allocWeights.bobf}</span>`;
+
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  const tickColor = isDark ? '#94a3b8' : '#475569';
+  const gridColor = isDark ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.08)';
+
+  const cfg = {
+    type:'line',
+    data:{
+      labels: dates,
+      datasets:[{
+        label:'Weighted Equity',
+        data: cumData,
+        borderColor: isDark ? '#e2e8f0' : '#1e293b',
+        backgroundColor: isDark ? 'rgba(226,232,240,.08)' : 'rgba(30,41,59,.08)',
+        fill:true, tension:.3, borderWidth:2, pointRadius:0
+      }]
+    },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      animation:{ duration:600 },
+      plugins:{ legend:{ display:false } },
+      scales:{
+        x:{ ticks:{ color:tickColor, maxTicksLimit:10, font:{size:10} }, grid:{ color:gridColor } },
+        y:{ ticks:{ color:tickColor, font:{size:10}, callback: v => '$'+v.toLocaleString() }, grid:{ color:gridColor } },
+      },
+    },
+  };
+
+  if (allocChart) { allocChart.destroy(); allocChart = null; }
+  allocChart = new Chart(document.getElementById('allocChart'), cfg);
+}
+
+function optimizeAlloc() {
+  const sorted = rows.slice().sort((a,b) => a.date.localeCompare(b.date));
+
+  // Build daily P/L per strategy
+  const stratPLs = {m8bf:[], strad:[], gxbf:[], bobf:[]};
+  for (const row of sorted) {
+    const s = row.signal || {};
+    const m = (s.theme === 'm8bf' && row.m8bfPL != null) ? row.m8bfPL : 0;
+    const st = row.stradPL != null ? row.stradPL : 0;
+    const g = row.gxbfPL != null ? row.gxbfPL : 0;
+    const b = (s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) ? row.bobfPL : 0;
+    if (m || st || g || b) {
+      stratPLs.m8bf.push(m); stratPLs.strad.push(st); stratPLs.gxbf.push(g); stratPLs.bobf.push(b);
+    }
+  }
+
+  const n = stratPLs.m8bf.length;
+  if (n < 2) return;
+
+  let bestSharpe = -Infinity;
+  let bestW = {m8bf:25, strad:25, gxbf:25, bobf:25};
+
+  // Brute force at 5% increments, sum = 100
+  for (let a = 0; a <= 100; a += 5) {
+    for (let b = 0; b <= 100 - a; b += 5) {
+      for (let c = 0; c <= 100 - a - b; c += 5) {
+        const d = 100 - a - b - c;
+        const wa = a/100, wb = b/100, wc = c/100, wd = d/100;
+        let sum = 0, sumSq = 0;
+        for (let i = 0; i < n; i++) {
+          const pl = wa * stratPLs.m8bf[i] + wb * stratPLs.strad[i] + wc * stratPLs.gxbf[i] + wd * stratPLs.bobf[i];
+          sum += pl;
+          sumSq += pl * pl;
+        }
+        const mean = sum / n;
+        const variance = sumSq / n - mean * mean;
+        const sharpe = variance > 0 ? mean / Math.sqrt(variance) : 0;
+        if (sharpe > bestSharpe) {
+          bestSharpe = sharpe;
+          bestW = {m8bf:a, strad:b, gxbf:c, bobf:d};
+        }
+      }
+    }
+  }
+
+  // Apply best weights
+  for (const k of ['m8bf','strad','gxbf','bobf']) {
+    allocWeights[k] = bestW[k];
+    const slider = document.querySelector(`.alloc-slider[oninput*="${k}"]`);
+    if (slider) slider.value = bestW[k];
+    const valEl = document.getElementById(`alloc-val-${k}`);
+    if (valEl) valEl.textContent = bestW[k] + '%';
+  }
+  updateAllocChart();
+}
+
+// ══════════════════════════════════════════════════════════════
+// EXPORT PNG
+// ══════════════════════════════════════════════════════════════
+
+async function exportPNG() {
+  const btn = document.querySelector('[onclick="exportPNG()"]');
+  btn.textContent = '⏳ Capturing…';
+  try {
+    const canvas = await html2canvas(document.body, {
+      backgroundColor: getComputedStyle(document.body).backgroundColor,
+      scale: 2,
+      logging: false,
+      useCORS: true,
+    });
+    const link = document.createElement('a');
+    link.download = `sigma3-history-${new Date().toISOString().slice(0,10)}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  } catch(e) {
+    console.error('Export failed:', e);
+  }
+  btn.textContent = '⬇ PNG';
+}
+
+// ══════════════════════════════════════════════════════════════
+// BOOT
+// ══════════════════════════════════════════════════════════════
 
 init();
 </script>
