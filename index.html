@@ -326,9 +326,6 @@
     </div>
     <ul class="schedule-list" id="earningsSchedule"></ul>
   </details>
-  <div style="margin-top:auto;padding:10px 14px;border-top:1px solid var(--border);">
-    <a href="history.html" class="schwab-btn" style="display:block;text-align:center;text-decoration:none;">Historical Signals</a>
-  </div>
 </aside>
 
 <!-- MAIN -->
@@ -336,7 +333,10 @@
 
   <div class="top-header">
     <h1><span>Σ3</span> VIX Strategy Helper</h1>
-    <div class="date-pill"><span id="todayDate">—</span> &nbsp;·&nbsp; <strong id="dayLabel">—</strong></div>
+    <div style="display:flex;align-items:center;gap:12px;">
+      <div class="date-pill"><span id="todayDate">—</span> &nbsp;·&nbsp; <strong id="dayLabel">—</strong></div>
+      <a href="history.html" class="schwab-btn primary" style="text-decoration:none;font-size:13px;padding:8px 18px;border-radius:8px;">Historical Signals</a>
+    </div>
   </div>
 
   <!-- SCHWAB INTEGRATION BAR -->
