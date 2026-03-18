@@ -1209,8 +1209,7 @@ flowchart TD
       }
 
       if(rec.startsWith("M8BF")){
-        if(fedDay){rec="No M8BF (Fed day)";theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on Fed days";badge="BLOCKED";strikeInfo=null;}
-        else if(msftMetaEarnings){
+        if(msftMetaEarnings){
           const tickers=earningsSchedule.filter(e=>e.date===todayLong()&&(e.ticker==='MSFT'||e.ticker==='META')).map(e=>e.ticker).join(', ');
           rec=`No M8BF (${tickers} earnings)`;theme="block";crossed=true;blockT="hard";blockD=`M8BF not traded on MSFT/META earnings days`;badge="BLOCKED";strikeInfo=null;
         }
