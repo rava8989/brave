@@ -43,7 +43,7 @@
     [data-theme="light"] .theme-toggle::after{transform:translateX(20px);}
 
     .table-wrap{padding:16px 24px;overflow-x:auto;}
-    table{width:100%;border-collapse:collapse;font-size:12px;min-width:1100px;}
+    table{width:100%;border-collapse:collapse;font-size:12px;min-width:1200px;}
     thead{position:sticky;top:0;z-index:5;}
     th{background:var(--bg2);border-bottom:2px solid var(--border);padding:8px 10px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);cursor:pointer;user-select:none;white-space:nowrap;}
     th:hover{color:var(--accent);}
@@ -252,7 +252,7 @@ function calculateSignal({vixToday,vixYOpen,vixYClose,spxGapPct,etDate}){
   else if(theme==='gxbf'){m8bfText="No M8BF (overnight VIX up)";stradText=`No Straddle (overnight VIX drop > ${T.DROP_GXBF})`;}
   else if(theme==='block'){if(rec.includes('M8BF')){stradText=`No Straddle (${oNight<=0?'overnight VIX down':'overnight VIX drop > '+T.DROP_GXBF})`;gxbfText=`No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;}else if(rec.includes('Straddle')||rec.includes('CPI')||rec.includes('Trade')){m8bfText="No M8BF";gxbfText="No GXBF";}else if(rec.includes('GXBF')){m8bfText="No M8BF";stradText="No Straddle";}}
 
-  return {rec,theme,crossed,badge,entryT,blockT,blockD,pmNote,strikeInfo,m8bfText,stradText,gxbfText,bobfRec,bobfBadge,bobfBlocks,oNight,o2o,spxGapPct,spxGapForcesM8BF,dayLabel:tradeWdLabel(etDate),dateStr:todayLong(etDate)};
+  return {rec,theme,crossed,badge,entryT,blockT,blockD,pmNote,strikeInfo,m8bfText,stradText,gxbfText,bobfRec,bobfBadge,bobfBlocks,oNight,o2o,spxGapPct,spxGapForcesM8BF,dayLabel:tradeWdLabel(etDate),dateStr:todayLong(etDate),eomDay};
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -279,7 +279,7 @@ async function init() {
   try {
     const resp = await fetch('history_data.json');
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const raw = await resp.json(); // [{date, vixOpen, vixClose, spxOpen, spxClose}, ...]
+    const raw = await resp.json();
 
     // Compute signals for each day (need previous day's data)
     for (let i = 1; i < raw.length; i++) {
@@ -300,6 +300,24 @@ async function init() {
         etDate,
       });
 
+      // Apply win rate override rules using previous day's M8BF win rate
+      const prevWR = prev.m8bfWR;
+      if (prevWR != null) {
+        const dow = etDate.getDay();
+        if (prevWR === 0 && signal.rec.startsWith("M8BF")) {
+          // 0% rule: M8BF → Straddle
+          if (!signal.eomDay) {
+            signal.rec = "Straddle @ 9:32 AM"; signal.theme = "strad"; signal.crossed = false;
+            signal.blockT = "0%rule"; signal.entryT = "9:32 AM"; signal.badge = "STRADDLE"; signal.strikeInfo = null;
+          }
+        } else if (prevWR >= 90 && signal.rec === "Straddle @ 9:32 AM") {
+          // 90% rule: Straddle → M8BF
+          const sc = m8Sched(dow);
+          signal.rec = m8Msg(etDate); signal.theme = "m8bf"; signal.badge = "M8BF";
+          signal.strikeInfo = sc; signal.entryT = sc?.window || ""; signal.blockT = "90%rule";
+        }
+      }
+
       allRows.push({
         date: cur.date,
         dayLabel: signal.dayLabel,
@@ -309,6 +327,8 @@ async function init() {
         overnightDrop: parseFloat((prev.vixClose - cur.vixOpen).toFixed(2)),
         o2o: parseFloat((prev.vixOpen - cur.vixOpen).toFixed(2)),
         spxGapPct: spxGapPct !== null ? parseFloat(spxGapPct.toFixed(2)) : null,
+        m8bfWR: cur.m8bfWR != null ? cur.m8bfWR : null,
+        prevWR: prevWR != null ? prevWR : null,
         signal,
       });
     }
@@ -348,6 +368,7 @@ const cols = [
   { key:'overnightDrop',label:'O/N Drop',  type:'number' },
   { key:'o2o',         label:'O2O',        type:'number' },
   { key:'spxGapPct',   label:'SPX Gap',    type:'number' },
+  { key:'m8bfWR',     label:'M8BF WR%',   type:'number' },
   { key:'signal',      label:'Signal',     type:'badge'  },
   { key:'m8bf',        label:'M8BF',       type:'check'  },
   { key:'strad',       label:'Straddle',   type:'check'  },
@@ -359,6 +380,7 @@ const cols = [
 function getValue(row, col) {
   switch(col.key) {
     case 'dayLabel': return row.dayLabel || '';
+    case 'm8bfWR': return row.m8bfWR != null ? row.m8bfWR : -1;
     case 'signal': return row.signal?.badge || '';
     case 'm8bf': return row.signal?.theme === 'm8bf' ? 1 : 0;
     case 'strad': return row.signal?.theme === 'strad' ? 1 : 0;
@@ -413,6 +435,7 @@ function renderTable() {
     h += `<td class="${valClass(row.overnightDrop)}">${fmtNum(row.overnightDrop)}</td>`;
     h += `<td class="${valClass(row.o2o)}">${fmtNum(row.o2o)}</td>`;
     h += `<td class="${valClass(row.spxGapPct)}">${row.spxGapPct!=null?row.spxGapPct.toFixed(2)+'%':'—'}</td>`;
+    h += `<td style="font-weight:700;${row.m8bfWR!=null?(row.m8bfWR>=90?'color:#22c55e':row.m8bfWR===0?'color:#ef4444':'color:var(--text)'):'color:var(--text3)'}">${row.m8bfWR!=null?row.m8bfWR+'%':'—'}</td>`;
     h += `<td><span class="${badgeClass(s.theme)}">${s.badge||'—'}</span></td>`;
     h += `<td class="${s.theme==='m8bf'?'check':'cross'}">${s.theme==='m8bf'?'✓':'✗'}</td>`;
     h += `<td class="${s.theme==='strad'?'check':'cross'}">${s.theme==='strad'?'✓':'✗'}</td>`;
