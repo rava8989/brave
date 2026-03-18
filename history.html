@@ -6,6 +6,7 @@
   <title>Σ3 — Historical Signals</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     :root {
       --bg:#f1f5f9; --bg2:#ffffff; --bg3:#f8fafc;
@@ -67,9 +68,39 @@
     .error-box a{color:var(--accent);}
     .footer{text-align:center;padding:20px;font-size:11px;color:var(--text3);}
 
+    .chart-card{margin:16px 24px 0;padding:16px 20px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);}
+
+    tfoot td{padding:8px 10px;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;border-top:2px solid var(--border);white-space:nowrap;background:var(--bg2);}
+
+    /* Strategy toggle pills */
+    .strat-toggles{display:flex;gap:8px;padding:12px 24px 0;flex-wrap:wrap;}
+    .strat-pill{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;padding:6px 16px;border-radius:20px;cursor:pointer;border:2px solid transparent;transition:all .15s;user-select:none;}
+    .strat-pill.active{opacity:1;}
+    .strat-pill.inactive{opacity:.35;filter:grayscale(.5);}
+    .strat-pill[data-strat="m8bf"]{background:rgba(167,139,250,.15);color:#a78bfa;border-color:#a78bfa;}
+    .strat-pill[data-strat="strad"]{background:rgba(34,211,238,.15);color:#22d3ee;border-color:#22d3ee;}
+    .strat-pill[data-strat="gxbf"]{background:rgba(45,212,191,.15);color:#2dd4bf;border-color:#2dd4bf;}
+    .strat-pill[data-strat="bobf"]{background:rgba(251,146,60,.15);color:#fb923c;border-color:#fb923c;}
+    .strat-pill.inactive{border-color:transparent;}
+
+    /* Stats cards */
+    .stats-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;padding:16px 24px 0;}
+    .stat-card{padding:14px 16px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg2);display:flex;flex-direction:column;gap:4px;}
+    .stat-card .stat-label{font-family:'Inter',sans-serif;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);}
+    .stat-card .stat-value{font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700;color:var(--text);}
+    .stat-card.card-green{background:rgba(34,197,94,.1);border-color:rgba(34,197,94,.25);}
+    .stat-card.card-green .stat-value{color:#22c55e;}
+    .stat-card.card-red{background:rgba(239,68,68,.1);border-color:rgba(239,68,68,.25);}
+    .stat-card.card-red .stat-value{color:#ef4444;}
+    [data-theme="light"] .stat-card.card-green{background:rgba(34,197,94,.08);border-color:rgba(34,197,94,.2);}
+    [data-theme="light"] .stat-card.card-red{background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.2);}
+
+    @media(max-width:1024px){.stats-grid{grid-template-columns:repeat(3,1fr);}}
     @media(max-width:768px){
       .header{padding:10px 14px;gap:10px;}
       .table-wrap{padding:8px;}
+      .stats-grid{grid-template-columns:repeat(2,1fr);padding:8px;}
+      .strat-toggles{padding:8px 8px 0;}
     }
   </style>
 </head>
@@ -85,6 +116,22 @@
       <button class="schwab-btn primary" data-months="0" onclick="filterMonths(0)">ALL</button>
     </div>
     <button class="theme-toggle" id="themeToggle" title="Toggle theme"></button>
+  </div>
+
+  <div class="strat-toggles" id="stratToggles">
+    <div class="strat-pill active" data-strat="m8bf" onclick="toggleStrat('m8bf')">M8BF</div>
+    <div class="strat-pill active" data-strat="strad" onclick="toggleStrat('strad')">Straddle</div>
+    <div class="strat-pill active" data-strat="gxbf" onclick="toggleStrat('gxbf')">GXBF</div>
+    <div class="strat-pill active" data-strat="bobf" onclick="toggleStrat('bobf')">BOBF</div>
+  </div>
+
+  <div class="stats-grid" id="statsGrid"></div>
+
+  <div class="chart-card" id="chartCard" style="display:none">
+    <div style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:var(--text2);margin-bottom:10px;">Equity Curve</div>
+    <div style="position:relative;height:320px;">
+      <canvas id="cumChart"></canvas>
+    </div>
   </div>
 
   <div id="content">
@@ -263,12 +310,94 @@ document.getElementById('themeToggle').addEventListener('click', () => {
   const n = c === 'dark' ? 'light' : 'dark';
   document.documentElement.setAttribute('data-theme', n);
   localStorage.setItem('s3theme', n);
+  if (cumChart) renderChart();
 });
 
 let allRows = [];   // computed once
 let rows = [];      // filtered view
 let sortCol = null;
 let sortAsc = true;
+const activeStrats = { m8bf:true, strad:true, gxbf:true, bobf:true };
+
+function toggleStrat(key) {
+  activeStrats[key] = !activeStrats[key];
+  document.querySelector(`.strat-pill[data-strat="${key}"]`).classList.toggle('active', activeStrats[key]);
+  document.querySelector(`.strat-pill[data-strat="${key}"]`).classList.toggle('inactive', !activeStrats[key]);
+  renderTable();
+}
+
+function computeStats(visibleRows) {
+  const pls = [];
+  for (const row of visibleRows) {
+    const s = row.signal || {};
+    if (activeStrats.m8bf && s.theme === 'm8bf' && row.m8bfPL != null) pls.push(row.m8bfPL);
+    if (activeStrats.strad && s.theme === 'strad' && row.stradPL != null) pls.push(row.stradPL);
+    if (activeStrats.gxbf && s.theme === 'gxbf' && row.gxbfPL != null) pls.push(row.gxbfPL);
+    if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) pls.push(row.bobfPL);
+  }
+  if (!pls.length) return null;
+
+  const wins = pls.filter(v => v > 0);
+  const losses = pls.filter(v => v < 0);
+  const totalPL = pls.reduce((a,b) => a+b, 0);
+  const totalTrades = pls.length;
+  const winPct = (wins.length / totalTrades) * 100;
+  const avgPerTrade = totalPL / totalTrades;
+  const avgWinner = wins.length ? wins.reduce((a,b) => a+b, 0) / wins.length : 0;
+  const avgLoser = losses.length ? losses.reduce((a,b) => a+b, 0) / losses.length : 0;
+  const maxWinner = wins.length ? Math.max(...wins) : 0;
+  const maxLoser = losses.length ? Math.min(...losses) : 0;
+  const sumWins = wins.reduce((a,b) => a+b, 0);
+  const sumLosses = Math.abs(losses.reduce((a,b) => a+b, 0));
+  const profitFactor = sumLosses > 0 ? sumWins / sumLosses : sumWins > 0 ? Infinity : 0;
+
+  // Sharpe: mean/stddev of daily PL
+  const mean = totalPL / totalTrades;
+  const variance = pls.reduce((s,v) => s + (v - mean) ** 2, 0) / totalTrades;
+  const sharpe = variance > 0 ? mean / Math.sqrt(variance) : 0;
+
+  // Max drawdown (peak-to-trough on cumulative)
+  // Sort rows by date ascending for cumulative
+  const sorted = visibleRows.slice().sort((a,b) => a.date.localeCompare(b.date));
+  let cum = 0, peak = 0, maxDD = 0;
+  for (const row of sorted) {
+    const s = row.signal || {};
+    if (activeStrats.m8bf && s.theme === 'm8bf' && row.m8bfPL != null) cum += row.m8bfPL;
+    if (activeStrats.strad && s.theme === 'strad' && row.stradPL != null) cum += row.stradPL;
+    if (activeStrats.gxbf && s.theme === 'gxbf' && row.gxbfPL != null) cum += row.gxbfPL;
+    if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) cum += row.bobfPL;
+    if (cum > peak) peak = cum;
+    const dd = peak - cum;
+    if (dd > maxDD) maxDD = dd;
+  }
+
+  return { totalPL, maxDD, winPct, sharpe, profitFactor, totalTrades, avgPerTrade, avgWinner, avgLoser, maxWinner, maxLoser, winners: wins.length };
+}
+
+function renderStats() {
+  const grid = document.getElementById('statsGrid');
+  const stats = computeStats(rows);
+  if (!stats) { grid.innerHTML = ''; return; }
+
+  const fmt = v => '$' + Math.round(v).toLocaleString();
+  const cards = [
+    { label:'P/L',          value: fmt(stats.totalPL),                  cls: stats.totalPL >= 0 ? 'card-green' : 'card-red' },
+    { label:'Max Drawdown',  value: fmt(stats.maxDD),                   cls: 'card-red' },
+    { label:'Win %',         value: stats.winPct.toFixed(1) + '%',      cls: 'card-green' },
+    { label:'Sharpe',        value: stats.sharpe.toFixed(2),            cls: '' },
+    { label:'Profit Factor', value: stats.profitFactor === Infinity ? '∞' : stats.profitFactor.toFixed(2), cls: '' },
+    { label:'Trades',        value: stats.totalTrades.toLocaleString(), cls: '' },
+    { label:'Avg / Trade',   value: fmt(stats.avgPerTrade),             cls: '' },
+    { label:'Avg Winner',    value: fmt(stats.avgWinner),               cls: 'card-green' },
+    { label:'Avg Loser',     value: fmt(stats.avgLoser),                cls: 'card-red' },
+    { label:'Max Winner',    value: fmt(stats.maxWinner),               cls: 'card-green' },
+    { label:'Max Loser',     value: fmt(stats.maxLoser),                cls: 'card-red' },
+    { label:'Winners',       value: stats.winners.toLocaleString(),     cls: '' },
+  ];
+  grid.innerHTML = cards.map(c =>
+    `<div class="stat-card ${c.cls}"><div class="stat-label">${c.label}</div><div class="stat-value">${c.value}</div></div>`
+  ).join('');
+}
 
 async function init() {
   try {
@@ -422,6 +551,9 @@ function renderTable() {
   });
   h += '</tr></thead><tbody>';
 
+  // Totals accumulators
+  let totM8=0, totStrad=0, totGxbf=0, totBobf=0;
+
   for (const row of rows) {
     const s = row.signal || {};
     h += '<tr>';
@@ -439,10 +571,77 @@ function renderTable() {
     h += stratCell(s.theme === 'gxbf', row.gxbfPL);
     h += stratCell(s.bobfBadge !== 'BLOCKED', row.bobfPL);
     h += '</tr>';
+
+    if (activeStrats.m8bf && s.theme === 'm8bf' && row.m8bfPL != null) totM8 += row.m8bfPL;
+    if (activeStrats.strad && s.theme === 'strad' && row.stradPL != null) totStrad += row.stradPL;
+    if (activeStrats.gxbf && s.theme === 'gxbf' && row.gxbfPL != null) totGxbf += row.gxbfPL;
+    if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) totBobf += row.bobfPL;
   }
 
-  h += '</tbody></table></div>';
+  // Totals row
+  const fc = (v, active) => active ? `<td class="${valClass(v)}" style="font-weight:700">$${Math.round(v).toLocaleString()}</td>` : '<td style="color:var(--text3);text-align:center">—</td>';
+  h += '</tbody><tfoot><tr>';
+  h += '<td colspan="9" style="text-align:right;font-family:Inter,sans-serif;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text2)">TOTAL</td>';
+  h += fc(totM8, activeStrats.m8bf) + fc(totStrad, activeStrats.strad) + fc(totGxbf, activeStrats.gxbf) + fc(totBobf, activeStrats.bobf);
+  h += '</tr></tfoot></table></div>';
   document.getElementById('content').innerHTML = h;
+  renderStats();
+  renderChart();
+}
+
+let cumChart = null;
+function renderChart() {
+  const card = document.getElementById('chartCard');
+  // Sort rows ascending by date for cumulative calc
+  const sorted = rows.slice().sort((a,b) => a.date.localeCompare(b.date));
+  if (!sorted.length) { card.style.display='none'; return; }
+  card.style.display = '';
+
+  const dates=[], cumM8=[], cumStrad=[], cumGxbf=[], cumBobf=[], cumAll=[];
+  let rm=0, rs=0, rg=0, rb=0;
+  for (const row of sorted) {
+    const s = row.signal || {};
+    if (activeStrats.m8bf && s.theme === 'm8bf' && row.m8bfPL != null) rm += row.m8bfPL;
+    if (activeStrats.strad && s.theme === 'strad' && row.stradPL != null) rs += row.stradPL;
+    if (activeStrats.gxbf && s.theme === 'gxbf' && row.gxbfPL != null) rg += row.gxbfPL;
+    if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) rb += row.bobfPL;
+    dates.push(row.date);
+    cumM8.push(rm); cumStrad.push(rs); cumGxbf.push(rg); cumBobf.push(rb);
+    cumAll.push(rm+rs+rg+rb);
+  }
+
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  const gridColor = isDark ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.08)';
+  const tickColor = isDark ? '#94a3b8' : '#475569';
+
+  const datasets = [
+    { label:'M8BF',     data:cumM8,    borderColor:'#a78bfa', backgroundColor:'rgba(167,139,250,.1)', tension:.3, borderWidth:2, pointRadius:0, pointHitRadius:6, hidden:!activeStrats.m8bf },
+    { label:'Straddle', data:cumStrad, borderColor:'#22d3ee', backgroundColor:'rgba(34,211,238,.1)',  tension:.3, borderWidth:2, pointRadius:0, pointHitRadius:6, hidden:!activeStrats.strad },
+    { label:'GXBF',     data:cumGxbf,  borderColor:'#2dd4bf', backgroundColor:'rgba(45,212,191,.1)',  tension:.3, borderWidth:2, pointRadius:0, pointHitRadius:6, hidden:!activeStrats.gxbf },
+    { label:'BOBF',     data:cumBobf,  borderColor:'#fb923c', backgroundColor:'rgba(251,146,60,.1)',  tension:.3, borderWidth:2, pointRadius:0, pointHitRadius:6, hidden:!activeStrats.bobf },
+    { label:'Combined', data:cumAll,   borderColor: isDark?'#e2e8f0':'#1e293b', backgroundColor: isDark?'rgba(226,232,240,.08)':'rgba(30,41,59,.08)', tension:.3, borderWidth:2.5, pointRadius:0, pointHitRadius:6, borderDash:[6,3] },
+  ];
+
+  const cfg = {
+    type:'line',
+    data:{ labels:dates, datasets },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      interaction:{ mode:'index', intersect:false },
+      plugins:{
+        legend:{ position:'top', labels:{ color:tickColor, usePointStyle:true, pointStyle:'line', font:{size:11} } },
+        tooltip:{ callbacks:{ label: ctx => `${ctx.dataset.label}: $${Math.round(ctx.parsed.y).toLocaleString()}` } },
+      },
+      scales:{
+        x:{ ticks:{ color:tickColor, maxTicksLimit:12, font:{size:10} }, grid:{ color:gridColor } },
+        y:{ ticks:{ color:tickColor, font:{size:10}, callback: v => '$'+v.toLocaleString() }, grid:{ color:gridColor } },
+      },
+    },
+  };
+
+  if (cumChart) { cumChart.destroy(); cumChart = null; }
+  const canvas = document.getElementById('cumChart');
+  cumChart = new Chart(canvas, cfg);
 }
 
 init();
