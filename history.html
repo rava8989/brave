@@ -326,7 +326,7 @@ async function init() {
         m8bfPL: cur.m8bfPL != null ? cur.m8bfPL : null,
         stradPL: cur.stradPL != null ? cur.stradPL : null,
         gxbfPL: null,   // no trade data yet
-        bobfPL: null,   // no trade data yet
+        bobfPL: cur.bobfPL != null ? cur.bobfPL : null,
         prevWR: prevWR != null ? prevWR : null,
         signal,
       });
@@ -381,7 +381,7 @@ function getValue(row, col) {
     case 'm8bfPL': return row.signal?.theme === 'm8bf' ? (row.m8bfPL != null ? row.m8bfPL : 0.1) : -Infinity;
     case 'stradPL': return row.signal?.theme === 'strad' ? (row.stradPL != null ? row.stradPL : 0.1) : -Infinity;
     case 'gxbfPL': return row.signal?.theme === 'gxbf' ? 0.1 : -Infinity;
-    case 'bobfPL': return row.signal?.bobfBadge !== 'BLOCKED' ? 0.1 : -Infinity;
+    case 'bobfPL': return row.signal?.bobfBadge !== 'BLOCKED' ? (row.bobfPL != null ? row.bobfPL : 0.1) : -Infinity;
     default: return row[col.key];
   }
 }
