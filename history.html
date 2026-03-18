@@ -289,10 +289,10 @@ function calculateSignal({vixToday,vixYOpen,vixYClose,spxGapPct,etDate}){
   else{bobfRec=isFri?"BOBF (Friday version)":"BOBF in play";bobfBadge=isFri?"FRIDAY VERSION":"IN PLAY";}
 
   let m8bfText=rec,stradText=rec,gxbfText=rec;
-  if(theme==='m8bf'){stradText=`No Straddle (${oNight<=0?'overnight VIX down':'overnight VIX drop > '+T.DROP_GXBF})`;gxbfText=`No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;}
+  if(theme==='m8bf'){stradText=`No Straddle (${oNight<=0?'overnight VIX up':'overnight VIX drop > '+T.DROP_GXBF})`;gxbfText=`No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;}
   else if(theme==='strad'){m8bfText=`No M8BF (${oNight>0?'overnight VIX up':'open-to-open ≤ '+T.O2O_M8BF})`;gxbfText=`No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;}
   else if(theme==='gxbf'){m8bfText="No M8BF (overnight VIX up)";stradText=`No Straddle (overnight VIX drop > ${T.DROP_GXBF})`;}
-  else if(theme==='block'){if(rec.includes('M8BF')){stradText=`No Straddle (${oNight<=0?'overnight VIX down':'overnight VIX drop > '+T.DROP_GXBF})`;gxbfText=`No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;}else if(rec.includes('Straddle')||rec.includes('CPI')||rec.includes('Trade')){m8bfText="No M8BF";gxbfText="No GXBF";}else if(rec.includes('GXBF')){m8bfText="No M8BF";stradText="No Straddle";}}
+  else if(theme==='block'){if(rec.includes('M8BF')){stradText=`No Straddle (${oNight<=0?'overnight VIX up':'overnight VIX drop > '+T.DROP_GXBF})`;gxbfText=`No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;}else if(rec.includes('Straddle')||rec.includes('CPI')||rec.includes('Trade')){m8bfText="No M8BF";gxbfText="No GXBF";}else if(rec.includes('GXBF')){m8bfText="No M8BF";stradText="No Straddle";}}
 
   return {rec,theme,crossed,badge,entryT,blockT,blockD,pmNote,strikeInfo,m8bfText,stradText,gxbfText,bobfRec,bobfBadge,bobfBlocks,oNight,o2o,spxGapPct,spxGapForcesM8BF,dayLabel:tradeWdLabel(etDate),dateStr:todayLong(etDate),eomDay};
 }
