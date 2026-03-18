@@ -95,10 +95,6 @@
     .filter-pill:hover{border-color:var(--accent);}
     .filter-pill.active{background:var(--accent);color:#fff;border-color:var(--accent);}
     .filter-input{font-size:11px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-family:'Inter',sans-serif;}
-    .excluded-tag{display:inline-flex;align-items:center;gap:4px;font-size:10px;padding:3px 8px;border-radius:10px;background:rgba(239,68,68,.15);color:#ef4444;font-family:'JetBrains Mono',monospace;}
-    .excluded-tag .tag-x{cursor:pointer;font-weight:700;font-size:12px;}
-    .compare-pickers{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
-    .compare-pickers label{font-size:10px;font-weight:600;color:var(--text2);}
 
     /* Rolling metrics pills */
     .rolling-pills{display:flex;gap:4px;padding:12px 24px 0;}
@@ -115,11 +111,6 @@
     [data-theme="light"] .stat-card.card-green{background:rgba(34,197,94,.08);border-color:rgba(34,197,94,.2);}
     [data-theme="light"] .stat-card.card-red{background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.2);}
 
-    /* Compare stats split */
-    .stats-compare{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:16px 24px 0;}
-    .stats-compare-col{display:flex;flex-direction:column;gap:8px;}
-    .stats-compare-col .compare-label{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:var(--accent);padding-bottom:4px;border-bottom:2px solid var(--accent);}
-    .stats-compare-col .stats-grid{padding:0;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));}
 
     /* Heatmap */
     .heatmap-section{margin:16px 24px 0;padding:16px 20px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow-x:auto;}
@@ -165,7 +156,7 @@
     /* Print */
     @media print{
       body{background:#fff;color:#000;}
-      .header,.filter-bar,.strat-toggles,.rolling-pills,.theme-toggle,.mc-controls,.alloc-controls,.compare-pickers,.schwab-btn,.filter-pill,.excluded-tag{display:none !important;}
+      .header,.filter-bar,.strat-toggles,.rolling-pills,.theme-toggle,.mc-controls,.alloc-controls,.schwab-btn,.filter-pill{display:none !important;}
       .chart-card,.heatmap-section,.stats-grid,.stat-card{box-shadow:none;border:1px solid #ddd;break-inside:avoid;background:#fff;}
       .stat-card .stat-label{color:#666;}
       .stat-card .stat-value{color:#000;}
@@ -213,24 +204,11 @@
       <div class="filter-pill" data-vix="high" onclick="setVixRegime('high')">High &gt;25</div>
     </div>
     <div class="filter-group">
-      <span class="filter-label">Exclude</span>
-      <input type="date" class="filter-input" id="exclStart">
+      <span class="filter-label">Range</span>
+      <input type="date" class="filter-input" id="dateStart" onchange="applyFilters()">
       <span style="color:var(--text3)">—</span>
-      <input type="date" class="filter-input" id="exclEnd">
-      <button class="schwab-btn" onclick="addExclusion()">Exclude</button>
-      <div id="excludedTags" style="display:flex;gap:4px;flex-wrap:wrap;"></div>
-    </div>
-    <div class="filter-group">
-      <button class="schwab-btn" id="compareBtn" onclick="toggleCompare()">Compare</button>
-      <div class="compare-pickers" id="comparePickers" style="display:none;">
-        <label>A:</label>
-        <input type="date" class="filter-input" id="periodAStart">
-        <input type="date" class="filter-input" id="periodAEnd">
-        <label>B:</label>
-        <input type="date" class="filter-input" id="periodBStart">
-        <input type="date" class="filter-input" id="periodBEnd">
-        <button class="schwab-btn" onclick="runCompare()">Go</button>
-      </div>
+      <input type="date" class="filter-input" id="dateEnd" onchange="applyFilters()">
+      <button class="schwab-btn" onclick="clearDateRange()">Clear</button>
     </div>
   </div>
 
@@ -488,9 +466,7 @@ const activeStrats = { m8bf:true, strad:true, gxbf:true, bobf:true };
 let soloKey = null;
 let activeDays = {1:true,2:true,3:true,4:true,5:true};
 let vixRegime = 'all';
-let excludedRanges = [];
 let rollingWindow = 0;
-let compareMode = false;
 let logScale = false;
 let barChartMode = 'monthly';
 let cumChart = null;
@@ -567,28 +543,10 @@ function setVixRegime(regime) {
   applyFilters();
 }
 
-function addExclusion() {
-  const s = document.getElementById('exclStart').value;
-  const e = document.getElementById('exclEnd').value;
-  if (!s || !e || s > e) return;
-  excludedRanges.push({start:s, end:e});
-  document.getElementById('exclStart').value = '';
-  document.getElementById('exclEnd').value = '';
-  renderExcludedTags();
+function clearDateRange() {
+  document.getElementById('dateStart').value = '';
+  document.getElementById('dateEnd').value = '';
   applyFilters();
-}
-
-function removeExclusion(idx) {
-  excludedRanges.splice(idx, 1);
-  renderExcludedTags();
-  applyFilters();
-}
-
-function renderExcludedTags() {
-  const c = document.getElementById('excludedTags');
-  c.innerHTML = excludedRanges.map((r,i) =>
-    `<div class="excluded-tag">${r.start} → ${r.end} <span class="tag-x" onclick="removeExclusion(${i})">✕</span></div>`
-  ).join('');
 }
 
 function setRolling(days) {
@@ -599,16 +557,6 @@ function setRolling(days) {
   applyFilters();
 }
 
-function toggleCompare() {
-  compareMode = !compareMode;
-  document.getElementById('compareBtn').classList.toggle('primary', compareMode);
-  document.getElementById('comparePickers').style.display = compareMode ? 'flex' : 'none';
-  if (!compareMode) applyFilters();
-}
-
-function runCompare() {
-  applyFilters();
-}
 
 function filterMonths(months) {
   currentMonths = months;
@@ -649,10 +597,11 @@ function applyFilters() {
     });
   }
 
-  // Step 4: excluded ranges
-  for (const ex of excludedRanges) {
-    filtered = filtered.filter(r => r.date < ex.start || r.date > ex.end);
-  }
+  // Step 4: date range picker
+  const dateStart = document.getElementById('dateStart').value;
+  const dateEnd = document.getElementById('dateEnd').value;
+  if (dateStart) filtered = filtered.filter(r => r.date >= dateStart);
+  if (dateEnd) filtered = filtered.filter(r => r.date <= dateEnd);
 
   // Step 5: rolling window (apply to the already-filtered set)
   if (rollingWindow > 0) {
@@ -770,26 +719,6 @@ function computeStats(visibleRows) {
 
 function renderStats() {
   const container = document.getElementById('statsContainer');
-
-  if (compareMode) {
-    const pA = document.getElementById('periodAStart').value;
-    const pAE = document.getElementById('periodAEnd').value;
-    const pB = document.getElementById('periodBStart').value;
-    const pBE = document.getElementById('periodBEnd').value;
-    if (pA && pAE && pB && pBE) {
-      const rowsA = rows.filter(r => r.date >= pA && r.date <= pAE);
-      const rowsB = rows.filter(r => r.date >= pB && r.date <= pBE);
-      const statsA = computeStats(rowsA);
-      const statsB = computeStats(rowsB);
-      container.innerHTML = `<div class="stats-compare">
-        <div class="stats-compare-col"><div class="compare-label">Period A: ${pA} → ${pAE}</div><div class="stats-grid" id="statsGridA"></div></div>
-        <div class="stats-compare-col"><div class="compare-label">Period B: ${pB} → ${pBE}</div><div class="stats-grid" id="statsGridB"></div></div>
-      </div>`;
-      fillStatsGrid(document.getElementById('statsGridA'), statsA);
-      fillStatsGrid(document.getElementById('statsGridB'), statsB);
-      return;
-    }
-  }
 
   container.innerHTML = '<div class="stats-grid" id="statsGrid"></div>';
   const stats = computeStats(rows);
@@ -1023,66 +952,13 @@ function toggleLogScale() {
   renderChart();
 }
 
-function buildCumCurve(rowSet) {
-  const sorted = rowSet.slice().sort((a,b) => a.date.localeCompare(b.date));
-  const cumArr = [];
-  let cum = 0;
-  for (const row of sorted) {
-    const pl = getRowPL(row);
-    if (pl !== null) cum += pl;
-    cumArr.push(cum);
-  }
-  return cumArr;
-}
-
 function renderChart() {
   const card = document.getElementById('chartCard');
   sortedRows = rows.slice().sort((a,b) => a.date.localeCompare(b.date));
   if (!sortedRows.length) { card.style.display='none'; return; }
   card.style.display = '';
 
-  // Compare mode: overlay two periods
-  if (compareMode) {
-    const pA = document.getElementById('periodAStart').value;
-    const pAE = document.getElementById('periodAEnd').value;
-    const pB = document.getElementById('periodBStart').value;
-    const pBE = document.getElementById('periodBEnd').value;
-    if (pA && pAE && pB && pBE) {
-      const rowsA = rows.filter(r => r.date >= pA && r.date <= pAE).sort((a,b) => a.date.localeCompare(b.date));
-      const rowsB = rows.filter(r => r.date >= pB && r.date <= pBE).sort((a,b) => a.date.localeCompare(b.date));
-      const cumA = buildCumCurve(rowsA);
-      const cumB = buildCumCurve(rowsB);
-      const maxLen = Math.max(cumA.length, cumB.length);
-      const labels = Array.from({length:maxLen}, (_,i) => `Day ${i+1}`);
 
-      const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-      const tickColor = isDark ? '#94a3b8' : '#475569';
-      const gridColor = isDark ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.08)';
-
-      const cfg = {
-        type:'line',
-        data:{
-          labels,
-          datasets:[
-            { label:`Period A (${pA} → ${pAE})`, data:cumA, borderColor:'#818cf8', backgroundColor:'rgba(129,140,248,.1)', tension:.3, borderWidth:2, pointRadius:0 },
-            { label:`Period B (${pB} → ${pBE})`, data:cumB, borderColor:'#fb923c', backgroundColor:'rgba(251,146,60,.1)', tension:.3, borderWidth:2, pointRadius:0 },
-          ]
-        },
-        options:{
-          responsive:true, maintainAspectRatio:false,
-          animation:{ duration:1000 },
-          plugins:{ legend:{ position:'top', labels:{ color:tickColor, font:{size:11} } } },
-          scales:{
-            x:{ ticks:{ color:tickColor, maxTicksLimit:12, font:{size:10} }, grid:{ color:gridColor } },
-            y:{ ticks:{ color:tickColor, font:{size:10}, callback: v => '$'+v.toLocaleString() }, grid:{ color:gridColor } },
-          },
-        },
-      };
-      if (cumChart) { cumChart.destroy(); cumChart = null; }
-      cumChart = new Chart(document.getElementById('cumChart'), cfg);
-      return;
-    }
-  }
 
   const dates=[], cumM8=[], cumStrad=[], cumGxbf=[], cumBobf=[], cumAll=[], ddAll=[];
   let rm=0, rs=0, rg=0, rb=0, peak=0;
