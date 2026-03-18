@@ -836,7 +836,7 @@ function parseCSVLine(line) {
 
 async function loadCSVStraddle() {
   try {
-    const resp = await fetch('data/gxbf.csv');
+    const resp = await fetch('static/data/gxbf.csv');
     if (!resp.ok) return {};
     const text = await resp.text();
     const lines = text.split('\n');
