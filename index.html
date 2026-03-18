@@ -1655,18 +1655,10 @@ flowchart TD
       // Get last 5 days of 1-min bars for VIX
       const end   = new Date();
       const start = new Date(end); start.setDate(start.getDate() - 5);
-      const url = `${SCHWAB.proxy()}/market/pricehistory?symbol=%24VIX.X&periodType=day&period=5&frequencyType=minute&frequency=1&startDate=${start.getTime()}&endDate=${end.getTime()}&needExtendedHoursData=true`;
+      const url = `${SCHWAB.proxy()}/market/pricehistory?symbol=%24VIX&periodType=day&period=5&frequencyType=minute&frequency=1&startDate=${start.getTime()}&endDate=${end.getTime()}&needExtendedHoursData=true`;
       const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       const data = await resp.json();
       console.log('VIX pricehistory response:', JSON.stringify(data).slice(0, 500));
-      // Test different symbol formats
-      for(const sym of ['%24VIX.X', '%24VIX', 'VIX', '%2FVIX']){
-        try{
-          const qResp = await fetch(`${SCHWAB.proxy()}/market/quotes?symbols=${sym}&fields=quote`, { headers: { Authorization: `Bearer ${token}` } });
-          const qData = await qResp.json();
-          console.log(`Quote [${sym}]:`, JSON.stringify(qData).slice(0, 300));
-        } catch(qe){ console.error(`Quote [${sym}] failed:`, qe); }
-      }
       if(!data.candles || !data.candles.length) throw new Error('No VIX data returned');
 
       const candles = data.candles;
@@ -1722,7 +1714,7 @@ flowchart TD
 
       // ── Fetch SPX data for gap check ──
       try{
-        const spxUrl = `${SCHWAB.proxy()}/market/pricehistory?symbol=%24SPX.X&periodType=day&period=5&frequencyType=minute&frequency=1&startDate=${start.getTime()}&endDate=${end.getTime()}&needExtendedHoursData=true`;
+        const spxUrl = `${SCHWAB.proxy()}/market/pricehistory?symbol=%24SPX&periodType=day&period=5&frequencyType=minute&frequency=1&startDate=${start.getTime()}&endDate=${end.getTime()}&needExtendedHoursData=true`;
         const spxResp = await fetch(spxUrl, { headers: { Authorization: `Bearer ${token}` } });
         const spxData = await spxResp.json();
         if(spxData.candles && spxData.candles.length){
@@ -1804,10 +1796,10 @@ flowchart TD
       if(!token){ clearInterval(_schwabStreamInterval); return; }
 
       try{
-        const url = `${SCHWAB.proxy()}/market/quotes?symbols=%24VIX.X&fields=quote`;
+        const url = `${SCHWAB.proxy()}/market/quotes?symbols=%24VIX&fields=quote`;
         const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
         const data = await resp.json();
-        const quote = data?.['$VIX.X']?.quote;
+        const quote = data?.['$VIX']?.quote;
         if(!quote) return;
 
         const openPrice = quote.openPrice || quote.lastPrice;
@@ -1823,10 +1815,10 @@ flowchart TD
 
         // Also fetch SPX open for gap check
         try{
-          const spxUrl = `${SCHWAB.proxy()}/market/quotes?symbols=%24SPX.X&fields=quote`;
+          const spxUrl = `${SCHWAB.proxy()}/market/quotes?symbols=%24SPX&fields=quote`;
           const spxR = await fetch(spxUrl, { headers: { Authorization: `Bearer ${token}` } });
           const spxD = await spxR.json();
-          const spxQ = spxD?.['$SPX.X']?.quote;
+          const spxQ = spxD?.['$SPX']?.quote;
           if(spxQ){
             const existing = SC.get('spx') || {};
             SC.set('spx', { yClose: existing.yClose, todayOpen: spxQ.openPrice || spxQ.lastPrice });
