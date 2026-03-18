@@ -325,7 +325,7 @@ async function init() {
         m8bfWR: cur.m8bfWR != null ? cur.m8bfWR : null,
         m8bfPL: cur.m8bfPL != null ? cur.m8bfPL : null,
         stradPL: cur.stradPL != null ? cur.stradPL : null,
-        gxbfPL: null,   // no trade data yet
+        gxbfPL: cur.gxbfPL != null ? cur.gxbfPL : null,
         bobfPL: cur.bobfPL != null ? cur.bobfPL : null,
         prevWR: prevWR != null ? prevWR : null,
         signal,
@@ -380,7 +380,7 @@ function getValue(row, col) {
     case 'm8bfWR': return row.m8bfWR != null ? row.m8bfWR : -1;
     case 'm8bfPL': return row.signal?.theme === 'm8bf' ? (row.m8bfPL != null ? row.m8bfPL : 0.1) : -Infinity;
     case 'stradPL': return row.signal?.theme === 'strad' ? (row.stradPL != null ? row.stradPL : 0.1) : -Infinity;
-    case 'gxbfPL': return row.signal?.theme === 'gxbf' ? 0.1 : -Infinity;
+    case 'gxbfPL': return row.signal?.theme === 'gxbf' ? (row.gxbfPL != null ? row.gxbfPL : 0.1) : -Infinity;
     case 'bobfPL': return row.signal?.bobfBadge !== 'BLOCKED' ? (row.bobfPL != null ? row.bobfPL : 0.1) : -Infinity;
     default: return row[col.key];
   }
