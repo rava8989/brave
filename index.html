@@ -1658,7 +1658,13 @@ flowchart TD
       const url = `${SCHWAB.proxy()}/market/pricehistory?symbol=%24VIX.X&periodType=day&period=5&frequencyType=minute&frequency=1&startDate=${start.getTime()}&endDate=${end.getTime()}&needExtendedHoursData=true`;
       const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       const data = await resp.json();
-      console.log('VIX response:', JSON.stringify(data).slice(0, 500));
+      console.log('VIX pricehistory response:', JSON.stringify(data).slice(0, 500));
+      // Also test quotes endpoint
+      try{
+        const qResp = await fetch(`${SCHWAB.proxy()}/market/quotes?symbols=%24VIX.X&fields=quote`, { headers: { Authorization: `Bearer ${token}` } });
+        const qData = await qResp.json();
+        console.log('VIX quote response:', JSON.stringify(qData).slice(0, 500));
+      } catch(qe){ console.error('Quote test failed:', qe); }
       if(!data.candles || !data.candles.length) throw new Error('No VIX data returned');
 
       const candles = data.candles;
