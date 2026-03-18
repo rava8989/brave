@@ -324,7 +324,7 @@ async function init() {
         spxGapPct: spxGapPct !== null ? parseFloat(spxGapPct.toFixed(2)) : null,
         m8bfWR: cur.m8bfWR != null ? cur.m8bfWR : null,
         m8bfPL: cur.m8bfPL != null ? cur.m8bfPL : null,
-        stradPL: null,  // no trade data yet
+        stradPL: cur.stradPL != null ? cur.stradPL : null,
         gxbfPL: null,   // no trade data yet
         bobfPL: null,   // no trade data yet
         prevWR: prevWR != null ? prevWR : null,
@@ -379,7 +379,7 @@ function getValue(row, col) {
     case 'dayLabel': return row.dayLabel || '';
     case 'm8bfWR': return row.m8bfWR != null ? row.m8bfWR : -1;
     case 'm8bfPL': return row.signal?.theme === 'm8bf' ? (row.m8bfPL != null ? row.m8bfPL : 0.1) : -Infinity;
-    case 'stradPL': return row.signal?.theme === 'strad' ? 0.1 : -Infinity;
+    case 'stradPL': return row.signal?.theme === 'strad' ? (row.stradPL != null ? row.stradPL : 0.1) : -Infinity;
     case 'gxbfPL': return row.signal?.theme === 'gxbf' ? 0.1 : -Infinity;
     case 'bobfPL': return row.signal?.bobfBadge !== 'BLOCKED' ? 0.1 : -Infinity;
     default: return row[col.key];
