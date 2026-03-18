@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Σ3 — Historical Signals</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg:#f1f5f9; --bg2:#ffffff; --bg3:#f8fafc;
+      --border:#e2e8f0;
+      --text:#1e293b; --text2:#475569; --text3:#94a3b8;
+      --accent:#6366f1; --accent2:#818cf8;
+      --shadow:0 1px 3px rgba(0,0,0,.08),0 4px 16px rgba(0,0,0,.06);
+      --radius:12px; --radius-sm:8px;
+      --col-m8bf:#7c3aed; --col-strad:#0891b2; --col-gxbf:#0891b2; --col-block:#dc2626;
+      --col-m8bf-bg:#ede9fe; --col-strad-bg:#cffafe; --col-gxbf-bg:#cffafe; --col-block-bg:#fee2e2;
+    }
+    [data-theme="dark"] {
+      --bg:#0f172a; --bg2:#1e293b; --bg3:#162032;
+      --border:#2d3f55;
+      --text:#e2e8f0; --text2:#94a3b8; --text3:#475569;
+      --accent:#818cf8; --accent2:#6366f1;
+      --shadow:0 1px 3px rgba(0,0,0,.3),0 4px 16px rgba(0,0,0,.25);
+      --col-m8bf:#a78bfa; --col-strad:#22d3ee; --col-gxbf:#22d3ee; --col-block:#f87171;
+      --col-m8bf-bg:#1e1340; --col-strad-bg:#0c2233; --col-gxbf-bg:#0c2233; --col-block-bg:#2d0e0e;
+    }
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+    body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;transition:background .2s,color .2s;}
+
+    .header{display:flex;align-items:center;gap:16px;padding:14px 24px;background:var(--bg2);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10;flex-wrap:wrap;}
+    .logo{font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:var(--accent);text-decoration:none;}
+    .header-title{font-family:'JetBrains Mono',monospace;font-size:15px;font-weight:600;color:var(--text2);}
+    .header-spacer{flex:1;}
+    .range-btns{display:flex;gap:4px;}
+    .schwab-btn{font-size:11px;font-weight:600;padding:5px 12px;border-radius:6px;cursor:pointer;border:1px solid var(--border);background:var(--bg3);color:var(--text2);font-family:'Inter',sans-serif;transition:background .15s;text-decoration:none;}
+    .schwab-btn:hover{background:var(--bg);}
+    .schwab-btn.primary{background:var(--accent);color:#fff;border-color:var(--accent);}
+    .schwab-btn.primary:hover{opacity:.85;}
+    .theme-toggle{background:var(--bg);border:1px solid var(--border);border-radius:20px;width:42px;height:22px;cursor:pointer;position:relative;transition:background .2s;flex-shrink:0;}
+    .theme-toggle::after{content:'';position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:var(--accent);transition:transform .2s;}
+    [data-theme="light"] .theme-toggle::after{transform:translateX(20px);}
+
+    .table-wrap{padding:16px 24px;overflow-x:auto;}
+    table{width:100%;border-collapse:collapse;font-size:12px;min-width:1100px;}
+    thead{position:sticky;top:0;z-index:5;}
+    th{background:var(--bg2);border-bottom:2px solid var(--border);padding:8px 10px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);cursor:pointer;user-select:none;white-space:nowrap;}
+    th:hover{color:var(--accent);}
+    th .sort-arrow{font-size:9px;margin-left:3px;opacity:.4;}
+    th.sorted .sort-arrow{opacity:1;color:var(--accent);}
+    td{padding:7px 10px;border-bottom:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:12px;white-space:nowrap;}
+    tr:hover td{background:var(--bg3);}
+    .col-date{font-weight:600;color:var(--text);}
+    .col-day{color:var(--text2);font-family:'Inter',sans-serif;font-size:11px;}
+    .val-pos{color:#22c55e;} .val-neg{color:#ef4444;} .val-zero{color:var(--text3);}
+
+    .sig-badge{display:inline-block;font-size:10px;font-weight:700;padding:2px 8px;border-radius:12px;text-transform:uppercase;letter-spacing:.04em;}
+    .sig-badge.m8bf{background:var(--col-m8bf-bg);color:var(--col-m8bf);}
+    .sig-badge.strad{background:var(--col-strad-bg);color:var(--col-strad);}
+    .sig-badge.gxbf{background:var(--col-gxbf-bg);color:var(--col-gxbf);}
+    .sig-badge.block{background:var(--col-block-bg);color:var(--col-block);}
+    .check{color:#22c55e;font-weight:700;font-size:14px;} .cross{color:#ef4444;font-weight:700;font-size:14px;}
+
+    .spinner-wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:80px 20px;gap:12px;}
+    .spinner{width:32px;height:32px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;}
+    @keyframes spin{to{transform:rotate(360deg);}}
+    .spinner-text{font-size:13px;color:var(--text3);}
+
+    .error-box{text-align:center;padding:60px 20px;color:var(--col-block);}
+    .error-box p{margin:8px 0;}
+    .error-box a{color:var(--accent);}
+    .footer{text-align:center;padding:20px;font-size:11px;color:var(--text3);}
+
+    @media(max-width:768px){
+      .header{padding:10px 14px;gap:10px;}
+      .table-wrap{padding:8px;}
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <a href="index.html" class="logo">Σ3</a>
+    <span class="header-title">Historical Signals</span>
+    <div class="header-spacer"></div>
+    <div class="range-btns">
+      <button class="schwab-btn" data-months="1" onclick="filterMonths(1)">1M</button>
+      <button class="schwab-btn" data-months="3" onclick="filterMonths(3)">3M</button>
+      <button class="schwab-btn" data-months="6" onclick="filterMonths(6)">6M</button>
+      <button class="schwab-btn primary" data-months="0" onclick="filterMonths(0)">ALL</button>
+    </div>
+    <button class="theme-toggle" id="themeToggle" title="Toggle theme"></button>
+  </div>
+
+  <div id="content">
+    <div class="spinner-wrap">
+      <div class="spinner"></div>
+      <div class="spinner-text">Loading historical signals…</div>
+    </div>
+  </div>
+
+  <div class="footer">Calendar data (CPI, Fed, OPEX) covers 2026 only. Signals for earlier dates may not reflect these events.</div>
+
+<script>
+// ══════════════════════════════════════════════════════════════
+// SIGNAL LOGIC (mirrored from schwab-proxy.js / index.html)
+// ══════════════════════════════════════════════════════════════
+
+const cpiSch   = ["January 13, 2026","February 13, 2026","March 11, 2026","April 10, 2026","May 12, 2026","June 10, 2026","July 14, 2026","August 12, 2026","September 11, 2026","October 14, 2026","November 10, 2026","December 10, 2026"];
+const fedSch   = ["January 28, 2026","March 18, 2026","April 29, 2026","June 17, 2026","July 29, 2026","September 16, 2026","October 28, 2026","December 9, 2026"];
+const opexSch  = ["January 16, 2026","February 20, 2026","March 20, 2026","April 17, 2026","May 15, 2026","June 18, 2026","July 17, 2026","August 21, 2026","September 18, 2026","October 16, 2026","November 20, 2026","December 18, 2026"];
+const holidays = ["January 1, 2026","January 19, 2026","February 16, 2026","April 3, 2026","May 25, 2026","June 19, 2026","July 3, 2026","September 7, 2026","November 26, 2026","December 25, 2026"];
+const vixSch   = ["January 21, 2026","February 18, 2026","March 18, 2026","April 15, 2026","May 20, 2026","June 17, 2026","July 15, 2026","August 19, 2026","September 16, 2026","October 21, 2026","November 18, 2026","December 16, 2026"];
+const earningsSchedule = [
+  { date:"January 28, 2026",  company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:true },
+  { date:"January 28, 2026",  company:"Meta",      ticker:"META", timing:"AH", confirmed:true },
+  { date:"January 29, 2026",  company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:true },
+  { date:"February 4, 2026",  company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:true },
+  { date:"February 5, 2026",  company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:true },
+  { date:"February 26, 2026", company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:true },
+  { date:"April 23, 2026",    company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:false },
+  { date:"April 28, 2026",    company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:false },
+  { date:"April 29, 2026",    company:"Meta",      ticker:"META", timing:"AH", confirmed:true  },
+  { date:"April 30, 2026",    company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:false },
+  { date:"April 30, 2026",    company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:false },
+  { date:"May 20, 2026",      company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:true  },
+  { date:"July 23, 2026",     company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:false },
+  { date:"July 28, 2026",     company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:false },
+  { date:"July 29, 2026",     company:"Meta",      ticker:"META", timing:"AH", confirmed:false },
+  { date:"July 30, 2026",     company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:false },
+  { date:"July 30, 2026",     company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:false },
+  { date:"August 19, 2026",   company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:false },
+  { date:"October 22, 2026",  company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:false },
+  { date:"October 27, 2026",  company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:false },
+  { date:"October 28, 2026",  company:"Meta",      ticker:"META", timing:"AH", confirmed:false },
+  { date:"October 29, 2026",  company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:false },
+  { date:"October 29, 2026",  company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:false },
+  { date:"November 18, 2026", company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:false },
+];
+
+const T = { DROP_GXBF: 0.65, DROP_STRAD_MIN: 0, O2O_M8BF: 1.4, VIX_MAX_GXBF: 25, VIX_MAX_BOBF: 23, SPX_GAP_THRESHOLD: 0.9 };
+
+function dateLong(d) { return d.toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' }); }
+const todayLong = d => dateLong(d);
+const isWkend = d => { const w = d.getDay(); return w === 0 || w === 6; };
+const isHol = d => holidays.includes(dateLong(d));
+const isTrade = d => !isWkend(d) && !isHol(d);
+function nextTrade(d) { const n = new Date(d); do { n.setDate(n.getDate()+1); } while(isWkend(n)||isHol(n)); return n; }
+function prevTrade(d) { const p = new Date(d); do { p.setDate(p.getDate()-1); } while(isWkend(p)||isHol(p)); return p; }
+function isTodayAfter(ds, etDate) { const d = new Date(ds); if(isNaN(d)) return false; const a = nextTrade(d); return a.getFullYear()===etDate.getFullYear()&&a.getMonth()===etDate.getMonth()&&a.getDate()===etDate.getDate(); }
+function isTodayBefore(ds, etDate) { const d = new Date(ds); if(isNaN(d)) return false; const b = prevTrade(d); return b.getFullYear()===etDate.getFullYear()&&b.getMonth()===etDate.getMonth()&&b.getDate()===etDate.getDate(); }
+function parseLong(s) { const d = new Date(s); return isNaN(d)?null:new Date(d.getFullYear(),d.getMonth(),d.getDate(),12); }
+function schedInMonth(list,ref) { const y=ref.getFullYear(),m=ref.getMonth(); for(const s of list){const d=parseLong(s);if(d&&d.getFullYear()===y&&d.getMonth()===m) return d;} return null; }
+function isPostVixBeforeOpex(ref) { const vx=schedInMonth(vixSch,ref),op=schedInMonth(opexSch,ref); if(!vx||!op||vx>=op) return false; const pv=nextTrade(vx); return pv.getFullYear()===ref.getFullYear()&&pv.getMonth()===ref.getMonth()&&pv.getDate()===ref.getDate(); }
+const isPostOpexMon = etDate => opexSch.some(ds=>isTodayAfter(ds,etDate))&&etDate.getDay()===1;
+const isLastTradeMo = d => nextTrade(d).getMonth()!==d.getMonth();
+function isEomN(n,d){const f=new Date(d.getFullYear(),d.getMonth()+1,1);let t=prevTrade(f);for(let i=0;i<n;i++)t=prevTrade(t);return t.getFullYear()===d.getFullYear()&&t.getMonth()===d.getMonth()&&t.getDate()===d.getDate();}
+const isFirstTradeMo = d => prevTrade(d).getMonth()!==d.getMonth();
+function isFirstTradeMon(d){const y=d.getFullYear(),m=d.getMonth();let x=new Date(y,m,1);while(isWkend(x)||isHol(x))x.setDate(x.getDate()+1);while(x.getDay()!==1)x=nextTrade(x);return x.getFullYear()===y&&x.getMonth()===m&&x.getDate()===d.getDate();}
+function m8Sched(dow){switch(dow){case 1:return{t:"10:00",window:"10:00–10:29",s:["05","45","70","95"],everyWeek:false};case 2:return{t:"12:00",window:"12:00–12:29",s:["00","05","35","45","70","75","85","90"],everyWeek:false};case 3:return{t:"11:30",window:"11:30–11:59",s:["30","45","50","70","80","95"],everyWeek:false};case 4:return{t:"11:30",window:"11:30–11:59",s:["05","15","55","75","85"],everyWeek:true};case 5:return{t:"13:00",window:"13:00–13:29",s:["45","55","65","70","75","85","95"],everyWeek:true};default:return null;}}
+function m8Msg(d){const sc=m8Sched(d.getDay());return sc?`M8BF — Window ${sc.window}`:"M8BF";}
+function ordinal(n){const s=["th","st","nd","rd"],v=n%100;return n+(s[(v-20)%10]||s[v]||s[0]);}
+function wdName(d){return["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][d]||"";}
+function tradeWdLabel(d){const t=new Date(d.getFullYear(),d.getMonth(),d.getDate());const dow=t.getDay(),ms=new Date(t.getFullYear(),t.getMonth(),1);let c=0;for(let x=new Date(ms);x<=t;x.setDate(x.getDate()+1)){if(!isTrade(x))continue;if(x.getDay()===dow)c++;}if(!isTrade(t))return`${wdName(dow)} (market closed)`;return`${ordinal(c)} ${wdName(dow)}`;}
+function isEarningsDay(etDate){return earningsSchedule.some(e=>e.date===todayLong(etDate));}
+
+function calculateSignal({vixToday,vixYOpen,vixYClose,spxGapPct,etDate}){
+  const cpiDay=cpiSch.includes(todayLong(etDate));
+  const dow=etDate.getDay();
+  const isMon=dow===1,isFri=dow===5,isWed=dow===3;
+  const nmDay=isFirstTradeMo(etDate),nmMon=isFirstTradeMon(etDate);
+  const fedDay=fedSch.includes(todayLong(etDate));
+  const opexDay=opexSch.includes(todayLong(etDate));
+  const postOpMon=isPostOpexMon(etDate);
+  const postOpDay=opexSch.some(ds=>isTodayAfter(ds,etDate));
+  const eomDay=isLastTradeMo(etDate),eom1=isEomN(1,etDate),eom2=isEomN(2,etDate);
+  const vixExpDay=vixSch.includes(todayLong(etDate));
+  const opex1=opexSch.some(ds=>isTodayBefore(ds,etDate));
+  const earningsDay=isEarningsDay(etDate);
+  const msftMetaEarnings=earningsSchedule.some(e=>e.date===todayLong(etDate)&&(e.ticker==='MSFT'||e.ticker==='META'));
+
+  const o2o=(vixYOpen!=null)?vixYOpen-vixToday:NaN;
+  const oNight=vixYClose-vixToday;
+
+  let spxGapForcesM8BF=false;
+  if(spxGapPct!==null&&spxGapPct!==undefined){spxGapForcesM8BF=Math.abs(spxGapPct)>=T.SPX_GAP_THRESHOLD;}
+
+  let rec="",theme="neutral",crossed=false,pmNote=false;
+  let blockT="",blockD="",entryT="",badge="";
+  let strikeInfo=null;
+
+  if(cpiDay){
+    if(oNight>0){rec="Long ATM Call @ 9:32 AM (CPI) — Max $13";theme="strad";entryT="9:32 AM";badge="CPI CALL";}
+    else{rec="No Trade (CPI, VIX up)";theme="block";crossed=true;blockT="hard";blockD="CPI day, VIX up";badge="BLOCKED";}
+  } else if(spxGapForcesM8BF){
+    const dir=spxGapPct>0?'▲':'▼';
+    rec=m8Msg(etDate);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";
+    blockD=`SPX gap ${dir}${Math.abs(spxGapPct).toFixed(2)}% ≥ ${T.SPX_GAP_THRESHOLD}% → M8BF forced`;
+  } else {
+    if(oNight>T.DROP_GXBF){
+      if(vixToday>=T.VIX_MAX_GXBF){rec=`No GXBF (VIX ${vixToday} ≥ ${T.VIX_MAX_GXBF})`;theme="block";crossed=true;blockT="vix";blockD=`VIX ${vixToday} ≥ ${T.VIX_MAX_GXBF}`;badge="BLOCKED";}
+      else{rec="GXBF @ 9:36 AM";theme="gxbf";entryT="9:36 AM";badge="GXBF";}
+    } else if(o2o>T.O2O_M8BF){
+      rec=m8Msg(etDate);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";
+    } else if(oNight>T.DROP_STRAD_MIN&&oNight<T.DROP_GXBF){
+      rec="Straddle @ 9:32 AM";theme="strad";entryT="9:32 AM";badge="STRADDLE";
+    } else {
+      rec=m8Msg(etDate);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";
+    }
+
+    if(rec.startsWith("M8BF")){
+      if(fedDay){rec="No M8BF (Fed day)";theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on Fed days";badge="BLOCKED";strikeInfo=null;}
+      else if(msftMetaEarnings){const tickers=earningsSchedule.filter(e=>e.date===todayLong(etDate)&&(e.ticker==='MSFT'||e.ticker==='META')).map(e=>e.ticker).join(', ');rec=`No M8BF (${tickers} earnings)`;theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on MSFT/META earnings days";badge="BLOCKED";strikeInfo=null;}
+      else if(eom1){rec="No M8BF (EOM-1)";theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on EOM-1 (no edge)";badge="BLOCKED";strikeInfo=null;}
+    }
+    if(isPostVixBeforeOpex(etDate)&&rec.startsWith("M8BF")){rec="No M8BF (post-VIX exp)";theme="block";crossed=true;blockT="hard";blockD="VIX exp before OPEX this month";badge="BLOCKED";strikeInfo=null;}
+
+    if(nmDay&&!isMon&&(rec.startsWith("M8BF")||rec.startsWith("No M8BF"))){rec="NM Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="NM STRADDLE";strikeInfo=null;}
+    if(eomDay){rec="Straddle @ 9:32 AM (EOM)";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="EOM STRADDLE";strikeInfo=null;}
+    if(isWed&&!fedDay&&!eomDay&&!nmDay&&rec.startsWith("Straddle")){rec=m8Msg(etDate);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";}
+    if(opexDay&&rec.startsWith("Straddle")){rec="No Straddle (OPEX day)";theme="block";crossed=true;blockT="hard";blockD="Straddle not on OPEX";badge="BLOCKED";}
+    if(postOpMon&&rec.startsWith("M8BF"))pmNote=true;
+
+    if(postOpDay){
+      const isM8=rec.startsWith("M8BF"),isStr=rec.startsWith("Straddle")||rec.startsWith("NM Straddle");
+      if(isM8||isStr){
+        if(vixToday>=T.VIX_MAX_GXBF){rec=`No GXBF (VIX ${vixToday} ≥ ${T.VIX_MAX_GXBF})`;theme="block";crossed=true;pmNote=false;blockT="vix";blockD=`OPEX+1 GXBF blocked, VIX ${vixToday}`;badge="BLOCKED";strikeInfo=null;}
+        else{rec="GXBF @ 9:36 AM (OPEX+1)";theme="gxbf";crossed=false;pmNote=false;blockT="";entryT="9:36 AM";badge="GXBF";strikeInfo=null;}
+      }
+    }
+  }
+
+  if(pmNote)rec+=" (afternoon times preferred)";
+
+  const bobfBlocks=[];
+  if(nmMon)bobfBlocks.push("NM Monday");
+  if(vixExpDay)bobfBlocks.push("VIX expiration");
+  if(opexDay)bobfBlocks.push("OPEX");
+  if(opex1)bobfBlocks.push("OPEX-1");
+  if(eom2)bobfBlocks.push("EOM-2");
+  if(eom1)bobfBlocks.push("EOM-1");
+  if(earningsDay){const tickers=earningsSchedule.filter(e=>e.date===todayLong(etDate)).map(e=>e.ticker).join(',');bobfBlocks.push(`earnings (${tickers})`);}
+  if(vixToday>T.VIX_MAX_BOBF)bobfBlocks.push("high VIX");
+
+  let bobfRec,bobfBadge;
+  if(bobfBlocks.length){bobfRec=`No BOBF (${bobfBlocks.join(", ")})`;bobfBadge="BLOCKED";}
+  else{bobfRec=isFri?"BOBF (Friday version)":"BOBF in play";bobfBadge=isFri?"FRIDAY VERSION":"IN PLAY";}
+
+  let m8bfText=rec,stradText=rec,gxbfText=rec;
+  if(theme==='m8bf'){stradText=`No Straddle (${oNight<=0?'overnight VIX down':'overnight VIX drop > '+T.DROP_GXBF})`;gxbfText=`No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;}
+  else if(theme==='strad'){m8bfText=`No M8BF (${oNight>0?'overnight VIX up':'open-to-open ≤ '+T.O2O_M8BF})`;gxbfText=`No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;}
+  else if(theme==='gxbf'){m8bfText="No M8BF (overnight VIX up)";stradText=`No Straddle (overnight VIX drop > ${T.DROP_GXBF})`;}
+  else if(theme==='block'){if(rec.includes('M8BF')){stradText=`No Straddle (${oNight<=0?'overnight VIX down':'overnight VIX drop > '+T.DROP_GXBF})`;gxbfText=`No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;}else if(rec.includes('Straddle')||rec.includes('CPI')||rec.includes('Trade')){m8bfText="No M8BF";gxbfText="No GXBF";}else if(rec.includes('GXBF')){m8bfText="No M8BF";stradText="No Straddle";}}
+
+  return {rec,theme,crossed,badge,entryT,blockT,blockD,pmNote,strikeInfo,m8bfText,stradText,gxbfText,bobfRec,bobfBadge,bobfBlocks,oNight,o2o,spxGapPct,spxGapForcesM8BF,dayLabel:tradeWdLabel(etDate),dateStr:todayLong(etDate)};
+}
+
+// ══════════════════════════════════════════════════════════════
+// UI
+// ══════════════════════════════════════════════════════════════
+
+(function(){
+  const s = localStorage.getItem('s3theme') || 'dark';
+  document.documentElement.setAttribute('data-theme', s);
+})();
+document.getElementById('themeToggle').addEventListener('click', () => {
+  const c = document.documentElement.getAttribute('data-theme');
+  const n = c === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', n);
+  localStorage.setItem('s3theme', n);
+});
+
+let allRows = [];   // computed once
+let rows = [];      // filtered view
+let sortCol = null;
+let sortAsc = true;
+
+async function init() {
+  try {
+    const resp = await fetch('history_data.json');
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const raw = await resp.json(); // [{date, vixOpen, vixClose, spxOpen, spxClose}, ...]
+
+    // Compute signals for each day (need previous day's data)
+    for (let i = 1; i < raw.length; i++) {
+      const cur = raw[i], prev = raw[i - 1];
+      const parts = cur.date.split('-');
+      const etDate = new Date(+parts[0], +parts[1] - 1, +parts[2], 12);
+
+      let spxGapPct = null;
+      if (cur.spxOpen != null && prev.spxClose != null) {
+        spxGapPct = ((cur.spxOpen - prev.spxClose) / prev.spxClose) * 100;
+      }
+
+      const signal = calculateSignal({
+        vixToday: cur.vixOpen,
+        vixYOpen: prev.vixOpen,
+        vixYClose: prev.vixClose,
+        spxGapPct,
+        etDate,
+      });
+
+      allRows.push({
+        date: cur.date,
+        dayLabel: signal.dayLabel,
+        vixOpen: cur.vixOpen,
+        vixPrevClose: prev.vixClose,
+        vixPrevOpen: prev.vixOpen,
+        overnightDrop: parseFloat((prev.vixClose - cur.vixOpen).toFixed(2)),
+        o2o: parseFloat((prev.vixOpen - cur.vixOpen).toFixed(2)),
+        spxGapPct: spxGapPct !== null ? parseFloat(spxGapPct.toFixed(2)) : null,
+        signal,
+      });
+    }
+
+    allRows.reverse(); // most recent first
+    filterMonths(0);   // show all by default
+  } catch (e) {
+    document.getElementById('content').innerHTML =
+      `<div class="error-box"><p>Failed to load history_data.json: ${e.message}</p><p>Run <code>python3 generate_history.py</code> to generate it.</p></div>`;
+  }
+}
+
+function filterMonths(months) {
+  document.querySelectorAll('.range-btns .schwab-btn').forEach(b => {
+    b.classList.toggle('primary', parseInt(b.dataset.months) === months);
+  });
+
+  if (months === 0) {
+    rows = allRows.slice();
+  } else {
+    const cutoff = new Date();
+    cutoff.setMonth(cutoff.getMonth() - months);
+    const cutoffStr = cutoff.toISOString().slice(0, 10);
+    rows = allRows.filter(r => r.date >= cutoffStr);
+  }
+  sortCol = null;
+  renderTable();
+}
+
+// ── Column defs ──
+const cols = [
+  { key:'date',        label:'Date',       type:'string' },
+  { key:'dayLabel',    label:'Day',        type:'string' },
+  { key:'vixOpen',     label:'VIX Open',   type:'number' },
+  { key:'vixPrevClose',label:'Prev Close', type:'number' },
+  { key:'vixPrevOpen', label:'Prev Open',  type:'number' },
+  { key:'overnightDrop',label:'O/N Drop',  type:'number' },
+  { key:'o2o',         label:'O2O',        type:'number' },
+  { key:'spxGapPct',   label:'SPX Gap',    type:'number' },
+  { key:'signal',      label:'Signal',     type:'badge'  },
+  { key:'m8bf',        label:'M8BF',       type:'check'  },
+  { key:'strad',       label:'Straddle',   type:'check'  },
+  { key:'gxbf',        label:'GXBF',       type:'check'  },
+  { key:'bobf',        label:'BOBF',       type:'check'  },
+  { key:'pnl',         label:'P/L',        type:'placeholder' },
+];
+
+function getValue(row, col) {
+  switch(col.key) {
+    case 'dayLabel': return row.dayLabel || '';
+    case 'signal': return row.signal?.badge || '';
+    case 'm8bf': return row.signal?.theme === 'm8bf' ? 1 : 0;
+    case 'strad': return row.signal?.theme === 'strad' ? 1 : 0;
+    case 'gxbf': return row.signal?.theme === 'gxbf' ? 1 : 0;
+    case 'bobf': return row.signal?.bobfBadge !== 'BLOCKED' ? 1 : 0;
+    case 'pnl': return 0;
+    default: return row[col.key];
+  }
+}
+
+function sortRows(colIdx) {
+  const col = cols[colIdx];
+  if (sortCol === colIdx) sortAsc = !sortAsc;
+  else { sortCol = colIdx; sortAsc = true; }
+
+  rows.sort((a, b) => {
+    let va = getValue(a, col), vb = getValue(b, col);
+    if (va == null) va = col.type === 'number' ? -Infinity : '';
+    if (vb == null) vb = col.type === 'number' ? -Infinity : '';
+    let cmp = typeof va === 'number' && typeof vb === 'number' ? va - vb : String(va).localeCompare(String(vb));
+    return sortAsc ? cmp : -cmp;
+  });
+  renderTable();
+}
+
+function valClass(v) { return v == null || v === 0 ? 'val-zero' : v > 0 ? 'val-pos' : 'val-neg'; }
+function fmtNum(v) { return v == null ? '—' : v.toFixed(2); }
+function badgeClass(theme) {
+  if (theme === 'm8bf') return 'sig-badge m8bf';
+  if (theme === 'strad') return 'sig-badge strad';
+  if (theme === 'gxbf') return 'sig-badge gxbf';
+  return 'sig-badge block';
+}
+
+function renderTable() {
+  let h = '<div class="table-wrap"><table><thead><tr>';
+  cols.forEach((col, i) => {
+    const sorted = sortCol === i;
+    const arrow = sorted ? (sortAsc ? '▲' : '▼') : '⇅';
+    h += `<th class="${sorted?'sorted':''}" onclick="sortRows(${i})">${col.label}<span class="sort-arrow">${arrow}</span></th>`;
+  });
+  h += '</tr></thead><tbody>';
+
+  for (const row of rows) {
+    const s = row.signal || {};
+    h += '<tr>';
+    h += `<td class="col-date">${row.date}</td>`;
+    h += `<td class="col-day">${row.dayLabel}</td>`;
+    h += `<td>${fmtNum(row.vixOpen)}</td>`;
+    h += `<td>${fmtNum(row.vixPrevClose)}</td>`;
+    h += `<td>${fmtNum(row.vixPrevOpen)}</td>`;
+    h += `<td class="${valClass(row.overnightDrop)}">${fmtNum(row.overnightDrop)}</td>`;
+    h += `<td class="${valClass(row.o2o)}">${fmtNum(row.o2o)}</td>`;
+    h += `<td class="${valClass(row.spxGapPct)}">${row.spxGapPct!=null?row.spxGapPct.toFixed(2)+'%':'—'}</td>`;
+    h += `<td><span class="${badgeClass(s.theme)}">${s.badge||'—'}</span></td>`;
+    h += `<td class="${s.theme==='m8bf'?'check':'cross'}">${s.theme==='m8bf'?'✓':'✗'}</td>`;
+    h += `<td class="${s.theme==='strad'?'check':'cross'}">${s.theme==='strad'?'✓':'✗'}</td>`;
+    h += `<td class="${s.theme==='gxbf'?'check':'cross'}">${s.theme==='gxbf'?'✓':'✗'}</td>`;
+    h += `<td class="${s.bobfBadge!=='BLOCKED'?'check':'cross'}">${s.bobfBadge!=='BLOCKED'?'✓':'✗'}</td>`;
+    h += '<td style="color:var(--text3)">—</td>';
+    h += '</tr>';
+  }
+
+  h += '</tbody></table></div>';
+  document.getElementById('content').innerHTML = h;
+}
+
+init();
+</script>
+</body>
+</html>
