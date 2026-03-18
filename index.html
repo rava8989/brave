@@ -1658,7 +1658,6 @@ flowchart TD
       const url = `${SCHWAB.proxy()}/market/pricehistory?symbol=%24VIX&periodType=day&period=5&frequencyType=minute&frequency=1&startDate=${start.getTime()}&endDate=${end.getTime()}&needExtendedHoursData=true`;
       const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       const data = await resp.json();
-      console.log('VIX pricehistory response:', JSON.stringify(data).slice(0, 500));
       if(!data.candles || !data.candles.length) throw new Error('No VIX data returned');
 
       const candles = data.candles;
@@ -1680,15 +1679,17 @@ flowchart TD
         const yCandles = candles.filter(c => new Date(c.datetime).toDateString() === yDate);
         // Sort by time
         yCandles.sort((a,b) => a.datetime - b.datetime);
-        // Yesterday open = first candle of the day (9:30 AM open)
+        // Convert candle timestamp to ET hours/minutes
+        const toET = ts => new Date(new Date(ts).toLocaleString('en-US', { timeZone: 'America/New_York' }));
+        // Yesterday open = first candle at 9:30 AM ET
         const openCandle = yCandles.find(c => {
-          const d = new Date(c.datetime);
+          const d = toET(c.datetime);
           return d.getHours() === 9 && d.getMinutes() >= 30 && d.getMinutes() <= 35;
         });
-        // Yesterday close = 4:15 PM candle
+        // Yesterday close = 4:15 PM ET candle
         const closeCandle = yCandles.slice().reverse().find(c => {
-          const d = new Date(c.datetime);
-          return (d.getHours() === 16 && d.getMinutes() >= 10) || d.getHours() > 16;
+          const d = toET(c.datetime);
+          return d.getHours() === 16 && d.getMinutes() >= 10 && d.getMinutes() <= 15;
         }) || yCandles[yCandles.length - 1];
 
         if(openCandle)  yOpen  = openCandle.open.toFixed(2);
