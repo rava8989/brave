@@ -836,8 +836,10 @@ function parseCSVLine(line) {
 
 async function loadCSVStraddle() {
   try {
-    const resp = await fetch('/static/data/gxbf.csv');
-    if (!resp.ok) return {};
+    let resp = await fetch('/static/data/gxbf.csv').catch(() => null);
+    if (!resp || !resp.ok) resp = await fetch('static/data/gxbf.csv').catch(() => null);
+    if (!resp || !resp.ok) resp = await fetch('data/gxbf.csv').catch(() => null);
+    if (!resp || !resp.ok) { console.warn('CSV straddle: all fetch paths failed'); return {}; }
     const text = await resp.text();
     const lines = text.split('\n');
     const lookup = {};
