@@ -1051,12 +1051,18 @@ function applyTP(trades) {
     const trough   = t[TROUGH];
     const pkFirst  = t[PKFIRST];
 
+    // Cap peak/trough at theoretical limits (data errors on extreme-move days)
+    const maxGain = t[MAXP];
+    const maxLoss = t[PREM] * 100;
+    const peakCapped   = peak   !== null ? Math.min(peak,   maxGain) : null;
+    const troughCapped = trough !== null ? Math.max(trough, -maxLoss) : null;
+
     let tpPnl, tpHit = false, slHit = false;
 
-    if (peak !== null) {
+    if (peakCapped !== null) {
       // Intraday data available
-      const hitTP = tpEnabled && peak   >= tpTarget;
-      const hitSL = slTarget !== null && trough <= -slTarget;
+      const hitTP = tpEnabled && peakCapped   >= tpTarget;
+      const hitSL = slTarget !== null && troughCapped <= -slTarget;
 
       if (hitTP && hitSL) {
         if (pkFirst) { tpPnl = tpTarget; tpHit = true; }
