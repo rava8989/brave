@@ -1724,7 +1724,9 @@ flowchart TD
           return d.getHours() === 16 && d.getMinutes() >= 10 && d.getMinutes() <= 15;
         }) || yCandles[yCandles.length - 1];
 
-        if(openCandle)  yOpen  = openCandle.open.toFixed(2);
+        const firstCandle = yCandles[0];
+        if(openCandle)       yOpen = openCandle.open.toFixed(2);
+        else if(firstCandle) yOpen = firstCandle.open.toFixed(2);
         if(closeCandle) yClose = closeCandle.close.toFixed(2);
       }
 
