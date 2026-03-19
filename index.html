@@ -1203,10 +1203,6 @@ flowchart TD
       if(oNight>T.DROP_GXBF){
         if(vToday>=T.VIX_MAX_GXBF){rec=`No GXBF (VIX ${vToday} ≥ ${T.VIX_MAX_GXBF})`;theme="block";crossed=true;blockT="vix";blockD=`VIX ${vToday} ≥ ${T.VIX_MAX_GXBF}`;badge="BLOCKED";}
         else{rec=`GXBF @ 9:36 AM`;theme="gxbf";entryT="9:36 AM";badge="GXBF";}
-      } else if(o2o>T.O2O_M8BF){
-        rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";
-      } else if(oNight>T.DROP_STRAD_MIN&&oNight<T.DROP_GXBF){
-        rec="Straddle @ 9:32 AM";theme="strad";entryT="9:32 AM";badge="STRADDLE";
       } else {
         rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";
       }
