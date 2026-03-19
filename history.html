@@ -807,10 +807,8 @@ async function init() {
       if (prevWR != null) {
         const dow = etDate.getDay();
         if (prevWR === 0 && signal.rec.startsWith("M8BF")) {
-          if (!signal.eomDay) {
-            signal.rec = "Straddle @ 9:32 AM"; signal.theme = "strad"; signal.crossed = false;
-            signal.blockT = "0%rule"; signal.entryT = "9:32 AM"; signal.badge = "STRADDLE"; signal.strikeInfo = null;
-          }
+          signal.rec = "No M8BF (prev 0% WR)"; signal.theme = "block"; signal.crossed = true;
+          signal.blockT = "0%rule"; signal.blockD = "Previous day M8BF win rate was 0%"; signal.badge = "BLOCKED"; signal.strikeInfo = null;
         } else if (prevWR >= 90 && signal.rec === "Straddle @ 9:32 AM") {
           const sc = m8Sched(dow);
           signal.rec = m8Msg(etDate); signal.theme = "m8bf"; signal.badge = "M8BF";
