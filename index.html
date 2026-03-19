@@ -534,31 +534,6 @@
 
   <div id="resultDayLabel">—</div>
 
-  <!-- FLOWCHART -->
-  <div class="flowchart">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-      <div class="fc-title" style="margin-bottom:0;">Decision Flowchart</div>
-      <div id="flowPath" style="font-size:11px;font-family:'JetBrains Mono',monospace;color:var(--text3);font-style:italic;">calculate to highlight path</div>
-    </div>
-    <div class="mermaid">
-flowchart TD
-  A["abs(SPX gap) ≥ 0.9%?"]
-  A -->|Yes| M0["M8BF (gap forced)"]
-  A -->|No| D["Overnight VIX drop > 0.65?"]
-  D -->|Yes| Y["GXBF @ 9:36 AM"]
-  D -->|No| C["Open-to-open VIX > 1.4?"]
-  C -->|Yes| M1["M8 Butterfly"]
-  C -->|No| F["Overnight VIX drop 0.01–0.65?"]
-  F -->|Yes| S["Straddle @ 9:32 AM"]
-  F -->|No| M2["M8 Butterfly"]
-  class M0,M1,M2 butterfly
-  class Y atm
-  class S straddle
-  classDef butterfly fill:#7c3aed,color:#fff,stroke:#5b21b6
-  classDef straddle fill:#0891b2,color:#fff,stroke:#0e7490
-  classDef atm fill:#b45309,color:#fff,stroke:#92400e
-    </div>
-  </div>
 
   <!-- STRATEGY DOC -->
   <section class="strategy-doc">
@@ -575,7 +550,6 @@ flowchart TD
       <li><strong>Not traded</strong> on EOM (last trading day of month) or EOM-1 (second-to-last trading day).</li>
       <li>No stop-loss — hold to expiration. Max risk: <strong>$1,400</strong>. Entry cost ≈ $14.</li>
     </ul>
-    <div class="strategy-image"><img src="./M8BF.jpg" alt="M8BF" loading="lazy" /></div>
 
     <hr class="divider">
     <h3>Straddle</h3>
@@ -684,8 +658,6 @@ flowchart TD
     SPX_GAP_THRESHOLD: 0.9,  // abs SPX gap % that forces M8BF
   };
 
-  /* Low win-rate strikes per DOW — shown crossed out in grid */
-  const LOW_WR = { 1:[], 2:["35"], 3:[], 4:[], 5:["75"] };
 
   /* ====== EARNINGS SCHEDULE ====== */
   // Format: { date, company, ticker, timing }
