@@ -577,7 +577,10 @@ tfoot td {
     </div>
   </div>
 
-  <button class="run-btn" id="runBtn">▶ RUN</button>
+  <div style="display:flex;gap:8px;align-items:center">
+    <button class="run-btn" id="runBtn">▶ RUN</button>
+    <button class="run-btn" id="m8bfModelBtn" style="background:linear-gradient(135deg,#6366f1,#818cf8);flex-shrink:0">⚡ CURRENT MODEL</button>
+  </div>
 </div>
 
 <!-- Content -->
@@ -620,6 +623,52 @@ const META   = {"minDate": "2024-08-01", "maxDate": "2026-03-17", "count": 30226
 const D=0,DAY=1,CP=2,PREM=3,SPR=4,PROF=5,MAXP=6,CTR=7,TIME=8,PEAK=9,TROUGH=10,PKFIRST=11;
 const DAY_NAMES = ['Monday','Tuesday','Wednesday','Thursday','Friday'];
 
+// ── M8BF Current Model ────────────────────────────────────────────────────────
+const M8BF_SKIP = new Set([
+  "2024-08-01","2024-08-15","2024-08-19","2024-08-21","2024-08-28","2024-08-29","2024-08-30","2024-09-03",
+  "2024-09-19","2024-09-23","2024-09-27","2024-09-30","2024-10-01","2024-10-17","2024-10-21","2024-10-23",
+  "2024-10-24","2024-10-29","2024-10-30","2024-10-31","2024-11-01","2024-11-14","2024-11-18","2024-11-20",
+  "2024-11-21","2024-11-27","2024-11-29","2024-12-02","2024-12-19","2024-12-23","2024-12-30","2024-12-31",
+  "2025-01-02","2025-01-16","2025-01-21","2025-01-22","2025-01-29","2025-01-30","2025-01-31","2025-02-03",
+  "2025-02-04","2025-02-05","2025-02-07","2025-02-20","2025-02-24","2025-02-26","2025-02-27","2025-02-28",
+  "2025-03-03","2025-03-20","2025-03-24","2025-03-28","2025-03-31","2025-04-01","2025-04-16","2025-04-21",
+  "2025-04-22","2025-04-23","2025-04-29","2025-04-30","2025-05-01","2025-05-02","2025-05-15","2025-05-19",
+  "2025-05-21","2025-05-28","2025-05-29","2025-05-30","2025-06-02","2025-06-18","2025-06-23","2025-06-27",
+  "2025-06-30","2025-07-01","2025-07-17","2025-07-21","2025-07-23","2025-07-24","2025-07-29","2025-07-30",
+  "2025-07-31","2025-08-01","2025-08-04","2025-08-14","2025-08-18","2025-08-20","2025-08-27","2025-08-28",
+  "2025-08-29","2025-09-02","2025-09-18","2025-09-22","2025-09-29","2025-09-30","2025-10-01","2025-10-16",
+  "2025-10-20","2025-10-22","2025-10-23","2025-10-28","2025-10-29","2025-10-30","2025-10-31","2025-11-03",
+  "2025-11-19","2025-11-20","2025-11-24","2025-11-26","2025-11-28","2025-12-01","2025-12-18","2025-12-22",
+  "2025-12-30","2025-12-31","2026-01-02","2026-01-15","2026-01-20","2026-01-21","2026-01-29","2026-01-30",
+  "2026-02-02","2026-02-04","2026-02-05","2026-02-06","2026-02-19","2026-02-23","2026-02-25","2026-02-26",
+  "2026-02-27","2026-03-02","2026-03-16","2026-03-17"
+]);
+const M8BF_BLOCKED = new Set([10,25,35,40,65,80,90]);
+// dow 0=Mon..4=Fri → [windowStart, windowEnd]
+const M8BF_WIN = {0:['10:00','10:30'],1:['13:30','14:00'],2:['12:00','12:30'],3:['11:00','11:30'],4:['13:00','13:30']};
+
+let m8bfTradesCache = null;
+function buildM8BFTrades() {
+  if (m8bfTradesCache) return m8bfTradesCache;
+  const byDate = {};
+  for (const t of TRADES) { (byDate[t[D]] = byDate[t[D]] || []).push(t); }
+  const result = [];
+  for (const date of Object.keys(byDate).sort()) {
+    if (M8BF_SKIP.has(date)) continue;
+    const dayTrades = byDate[date];
+    const dow = dayTrades[0][DAY];
+    const win = M8BF_WIN[dow];
+    if (!win) continue;
+    const [ws, we] = win;
+    const q = dayTrades
+      .filter(t => t[TIME] >= ws && t[TIME] <= we && !M8BF_BLOCKED.has(t[CTR] % 100))
+      .sort((a, b) => a[TIME] < b[TIME] ? -1 : 1);
+    if (q.length) result.push(q[0]);
+  }
+  m8bfTradesCache = result;
+  return result;
+}
+
 // ── State ─────────────────────────────────────────────────────────────────────
 let activeDays = new Set([0,1,2,3,4]);
 let tpEnabled  = false;
@@ -629,6 +678,7 @@ let slEnabled  = false;
 let slType     = '$';
 let slVal      = 500;
 let lastResult      = null;
+let useM8BFModel    = false;
 
 // ── Special day state ─────────────────────────────────────────────────────────
 let specialMode   = null;          // null | 'exclude' | 'only'
@@ -953,6 +1003,8 @@ document.getElementById('tabs').addEventListener('click', e => {
 
 // ── Core logic ────────────────────────────────────────────────────────────────
 function filterTrades(forceFull) {
+  if (useM8BFModel) return buildM8BFTrades();
+
   const from = document.getElementById('dateFrom').value;
   const to   = document.getElementById('dateTo').value;
 
@@ -1143,6 +1195,10 @@ document.getElementById('slBest').addEventListener('click', () => {
 
 // ── Run ───────────────────────────────────────────────────────────────────────
 document.getElementById('runBtn').onclick = () => {
+  useM8BFModel = false;
+  const mb = document.getElementById('m8bfModelBtn');
+  mb.style.outline = '';
+  mb.textContent = '⚡ CURRENT MODEL';
   const btn = document.getElementById('runBtn');
   btn.textContent = '⏳ Running…';
   btn.disabled = true;
@@ -1159,6 +1215,31 @@ document.getElementById('runBtn').onclick = () => {
     } finally {
       btn.textContent = '▶ RUN';
       btn.disabled = false;
+    }
+  }, 10);
+};
+
+document.getElementById('m8bfModelBtn').onclick = () => {
+  useM8BFModel = true;
+  const mb = document.getElementById('m8bfModelBtn');
+  mb.style.outline = '2px solid #22c55e';
+  mb.textContent = '⚡ CURRENT MODEL ✓';
+  const runBtn = document.getElementById('runBtn');
+  runBtn.textContent = '⏳ Running…';
+  runBtn.disabled = true;
+  setTimeout(() => {
+    try {
+      const filtered = filterTrades();
+      if (!filtered.length) {
+        document.getElementById('statsGrid').innerHTML =
+          '<div class="empty" style="grid-column:1/-1">No trades match the current filters.</div>';
+        return;
+      }
+      lastResult = applyTP(filtered);
+      renderAll(lastResult);
+    } finally {
+      runBtn.textContent = '▶ RUN';
+      runBtn.disabled = false;
     }
   }, 10);
 };
