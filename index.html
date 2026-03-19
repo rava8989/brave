@@ -804,12 +804,13 @@ flowchart TD
   // Updated from Strike Model — M8BF Edition image
   // Window = start of entry window; everyWeek = can trade even on non-M8BF days
   function m8Sched(dow){
+    const blocked=["10","25","35","40","65","80","90"];
     switch(dow){
-      case 1:return{t:"10:00",window:"10:00–10:30",s:["05","45","55","70","95"],                          everyWeek:false};
-      case 2:return{t:"13:30",window:"13:30–14:00",s:["00","05","30","35","45","55","75","85","95"],    everyWeek:false};
-      case 3:return{t:"11:30",window:"11:30–12:00",s:["30","45","50","70","80","95"],                  everyWeek:false};
-      case 4:return{t:"12:00",window:"12:00–12:30",s:["05","15","45","55"],                            everyWeek:true};
-      case 5:return{t:"11:30",window:"11:30–12:00",s:["05","55","75","95"],                            everyWeek:true};
+      case 1:return{t:"10:00",window:"10:00–10:30",blocked:blocked};
+      case 2:return{t:"13:30",window:"13:30–14:00",blocked:blocked};
+      case 3:return{t:"12:00",window:"12:00–12:30",blocked:blocked};
+      case 4:return{t:"11:00",window:"11:00–11:30",blocked:blocked};
+      case 5:return{t:"13:00",window:"13:00–13:30",blocked:blocked};
       default:return null;
     }
   }
@@ -1337,25 +1338,21 @@ flowchart TD
     // ── STRIKE GRID (inside M8BF card) ──
     const gw=document.getElementById('strikeGridWrap'), g=document.getElementById('strikeGrid');
     g.innerHTML='';
-    if(strikeInfo && strikeInfo.s){
+    if(strikeInfo && strikeInfo.blocked){
       gw.style.display='block';
       const lbl=document.getElementById('sgLabel');
       if(lbl){
-        const evBadge=strikeInfo.everyWeek
-          ? '<span style="background:#052016;color:#34d399;border:1px solid #34d399;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;margin-left:6px;">Every week</span>'
-          : '<span style="background:#082030;color:#38bdf8;border:1px solid #38bdf8;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;margin-left:6px;">M8BF days only</span>';
-        lbl.innerHTML=`Window ${strikeInfo.window} ${evBadge}`;
+        lbl.innerHTML=`Window ${strikeInfo.window} <span style="background:#052016;color:#34d399;border:1px solid #34d399;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;margin-left:6px;">Every week</span>`;
       }
-      const lwr=LOW_WR[dow]||[];
-      strikeInfo.s.forEach(s=>{
+      strikeInfo.blocked.forEach(s=>{
         const p=document.createElement('span');
-        p.className='sp'+(lwr.includes(s)?' lwr':'');
+        p.className='sp lwr';
         p.textContent=s;
         g.appendChild(p);
       });
       const rule=document.createElement('div');
       rule.style.cssText='width:100%;font-size:10px;opacity:.6;margin-top:6px;font-style:italic;';
-      rule.textContent='Enter first qualifying strike in window · 1 trade/day · skip if none appears';
+      rule.textContent='Skip red strikes · Take first qualifying strike in window · 1 trade/day';
       g.appendChild(rule);
     } else { gw.style.display='none'; }
 
