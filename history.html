@@ -426,10 +426,9 @@ function calculateSignal({vixToday,vixYOpen,vixYClose,spxGapPct,etDate}){
     }
 
     if(rec.startsWith("M8BF")){
-      if(msftMetaEarnings){const tickers=earningsSchedule.filter(e=>e.date===todayLong(etDate)&&(e.ticker==='MSFT'||e.ticker==='META')).map(e=>e.ticker).join(', ');rec=`No M8BF (${tickers} earnings)`;theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on MSFT/META earnings days";badge="BLOCKED";strikeInfo=null;}
-      else if(eom1){rec="No M8BF (EOM-1)";theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on EOM-1 (no edge)";badge="BLOCKED";strikeInfo=null;}
+      if(eomDay){rec="No M8BF (EOM)";theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on EOM";badge="BLOCKED";strikeInfo=null;}
+      else if(eom1){rec="No M8BF (EOM-1)";theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on EOM-1";badge="BLOCKED";strikeInfo=null;}
     }
-    if(isPostVixBeforeOpex(etDate)&&rec.startsWith("M8BF")){rec="No M8BF (post-VIX exp)";theme="block";crossed=true;blockT="hard";blockD="VIX exp before OPEX this month";badge="BLOCKED";strikeInfo=null;}
 
     if(nmDay&&!isMon&&(rec.startsWith("M8BF")||rec.startsWith("No M8BF"))){rec="NM Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="NM STRADDLE";strikeInfo=null;}
     if(eomDay){rec="Straddle @ 9:32 AM (EOM)";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="EOM STRADDLE";strikeInfo=null;}
