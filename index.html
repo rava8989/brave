@@ -543,12 +543,12 @@
     <hr class="divider">
     <h3>M8 Butterfly (M8BF)</h3>
     <ul>
-      <li><strong>Trades every week, every day Mon–Fri.</strong> No VIX filter required.</li>
-      <li>Each day has a fixed <strong>30-minute entry window</strong>: Mon 10:00–10:30 · Tue 13:30–14:00 · Wed 12:00–12:30 · Thu 11:00–11:30 · Fri 13:00–13:30.</li>
-      <li>Enter the <strong>first qualifying strike</strong> that appears inside the window. One trade per day. Skip the day if no qualifying strike appears.</li>
-      <li><strong>Banned strikes:</strong> 10, 25, 35, 40, 65, 80, 90 — never trade these regardless of day or signal. These are the 7 worst-performing strike endings by historical P&amp;L.</li>
-      <li><strong>Not traded</strong> on EOM (last trading day of month) or EOM-1 (second-to-last trading day).</li>
+      <li><strong>Trades every week, every day Mon–Fri</strong> inside fixed 30-minute windows: Mon 10:00–10:30 · Tue 13:30–14:00 · Wed 12:00–12:30 · Thu 11:00–11:30 · Fri 13:00–13:30.</li>
+      <li>Enter the <strong>first qualifying strike</strong> inside the window. One trade per day. Skip if none appears.</li>
+      <li><strong>Banned strikes:</strong> 10, 25, 35, 40, 65, 80, 90 — the 7 worst-performing strike endings by historical P&amp;L. Never trade these.</li>
+      <li><strong>Not traded on:</strong> EOM and EOM-1 · day before OPEX · day after OPEX · first trading day of month · VIX exp day when VIX exp falls after OPEX · all earnings days except AMZN · day after any earnings (NVDA, TSLA, AMZN, MSFT, META, GOOG, AAPL).</li>
       <li>No stop-loss — hold to expiration. Max risk: <strong>$1,400</strong>. Entry cost ≈ $14.</li>
+      <li>Historical (Aug 2024–Mar 2026): <strong>260 trades · 66.2% WR · $459 avg/trade · $119,270 total</strong>.</li>
     </ul>
 
     <hr class="divider">
@@ -582,7 +582,7 @@
     <h3>BOBF</h3>
     <ul>
       <li><a href="https://optionomega.com/share/gd2bRi16syr3R1UaGVUE" target="_blank" rel="noopener">OptionOmega – BOBF base</a></li>
-      <li><strong>Not traded</strong> on all 6 earnings days: MSFT, META, GOOGL, AMZN, AAPL, NVDA.</li>
+      <li><strong>Not traded</strong> on all 7 earnings days: MSFT, META, GOOGL, AMZN, AAPL, NVDA, TSLA.</li>
       <li><strong>Not traded</strong> on monthly VIX expiration days.</li>
       <li><strong>Not traded</strong> on OPEX.</li>
       <li><strong>Not traded</strong> on OPEX-1 (day before OPEX).</li>
@@ -664,11 +664,13 @@
     // ── Q1 2026 (Jan/Feb reports) ──
     { date:"January 28, 2026",  company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:true },
     { date:"January 28, 2026",  company:"Meta",      ticker:"META", timing:"AH", confirmed:true },
+    { date:"January 29, 2026",  company:"Tesla",     ticker:"TSLA", timing:"AH", confirmed:true },
     { date:"January 29, 2026",  company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:true },
     { date:"February 4, 2026",  company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:true },
     { date:"February 5, 2026",  company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:true },
     { date:"February 26, 2026", company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:true },
     // ── Q2 2026 (Apr/May reports) ──
+    { date:"April 22, 2026",    company:"Tesla",     ticker:"TSLA", timing:"AH", confirmed:false },
     { date:"April 23, 2026",    company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:false },
     { date:"April 28, 2026",    company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:false },
     { date:"April 29, 2026",    company:"Meta",      ticker:"META", timing:"AH", confirmed:true  },
@@ -676,6 +678,7 @@
     { date:"April 30, 2026",    company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:false },
     { date:"May 20, 2026",      company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:true  },
     // ── Q3 2026 (Jul/Aug reports — estimates) ──
+    { date:"July 22, 2026",     company:"Tesla",     ticker:"TSLA", timing:"AH", confirmed:false },
     { date:"July 23, 2026",     company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:false },
     { date:"July 28, 2026",     company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:false },
     { date:"July 29, 2026",     company:"Meta",      ticker:"META", timing:"AH", confirmed:false },
@@ -683,6 +686,7 @@
     { date:"July 30, 2026",     company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:false },
     { date:"August 19, 2026",   company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:false },
     // ── Q4 2026 (Oct/Nov reports — estimates) ──
+    { date:"October 21, 2026",  company:"Tesla",     ticker:"TSLA", timing:"AH", confirmed:false },
     { date:"October 22, 2026",  company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:false },
     { date:"October 27, 2026",  company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:false },
     { date:"October 28, 2026",  company:"Meta",      ticker:"META", timing:"AH", confirmed:false },
@@ -691,8 +695,19 @@
     { date:"November 18, 2026", company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:false },
   ];
 
-  /* Helper: is today an earnings day for any of the 6 companies? */
+  /* Helper: is today an earnings day for any of the 7 companies? */
   function isEarningsDay() { return earningsSchedule.some(e => e.date === todayLong()); }
+  /* M8BF-specific: earnings day that is NOT AMZN */
+  const isNonAmznEarningsDay = () => earningsSchedule.some(e => e.date === todayLong() && e.ticker !== 'AMZN');
+  /* M8BF-specific: today is the trading day after ANY of the 7 earnings */
+  const isDayAfterAnyEarnings = () => earningsSchedule.some(isTodayAfter);
+  /* M8BF-specific: today is VIX exp day AND VIX exp falls AFTER OPEX this month */
+  function isVixAfterOpexDay(ref=new Date()){
+    if(!isVixExp()) return false;
+    const vx=schedInMonth(vixSch,ref), op=schedInMonth(opexSch,ref);
+    if(!vx||!op) return false;
+    return vx > op;
+  }
 
   /* ====== SCHEDULES ====== */
   const cpiSch   = ["January 13, 2026","February 13, 2026","March 11, 2026","April 10, 2026","May 12, 2026","June 10, 2026","July 14, 2026","August 12, 2026","September 11, 2026","October 14, 2026","November 10, 2026","December 10, 2026"];
@@ -1104,9 +1119,20 @@
     const eomDay=isLastTradeMo(now), eom1=isEomN(1,now), eom2=isEomN(2,now);
     const vixExpDay=isVixExp(), opex1=opexSch.some(isTodayBefore);
     const earningsDay=isEarningsDay();
-    // MSFT or META earnings → block M8BF; other earnings → M8BF allowed
-    const msftMetaEarnings = earningsSchedule.some(e => e.date===todayLong() && (e.ticker==='MSFT'||e.ticker==='META'));
-    const otherEarningsOnly = earningsDay && !msftMetaEarnings;
+
+    // ── M8BF block rules (checked independently of other strategy cards) ──
+    const m8bfBlocked=(()=>{
+      const blk=(r,n)=>({r,n});
+      if(eomDay)                  return blk("No M8BF (EOM)",              "M8BF not traded on EOM");
+      if(eom1)                    return blk("No M8BF (EOM-1)",            "M8BF not traded on EOM-1");
+      if(opex1)                   return blk("No M8BF (day before OPEX)",  "Skipped day before OPEX");
+      if(postOpDay)               return blk("No M8BF (day after OPEX)",   "Skipped day after OPEX");
+      if(isNonAmznEarningsDay())  return blk("No M8BF (earnings)",         "Not traded on earnings days (except AMZN)");
+      if(isDayAfterAnyEarnings()) return blk("No M8BF (day after earnings)","Not traded day after any earnings");
+      if(isVixAfterOpexDay())     return blk("No M8BF (VIX exp post-OPEX)","VIX exp falls after OPEX this month");
+      if(nmDay)                   return blk("No M8BF (first trading day)", "Skipped on first trading day of month");
+      return null;
+    })();
 
     // tags
     const tmap={cpiTag:cpiDay,fedTag:fedDay,opexTag:opexDay,postOpexTag:postOpDay,eomTag:eomDay};
@@ -1214,11 +1240,18 @@
     const gxbfReason= document.getElementById('gxbfReason');
 
     // ── CARD 1: M8BF ──
-    // Active when theme is m8bf OR on Thu/Fri (every week)
     const dowSched = m8Sched(dow);
     const thurfri = dowSched && dowSched.everyWeek;
 
-    if(theme==='m8bf'){
+    if(m8bfBlocked){
+      // New skip rules take full priority — always show as BLOCKED
+      if(m8bfBlocked.r.includes('EOM')||m8bfBlocked.r.includes('OPEX')||m8bfBlocked.r.includes('earnings')||m8bfBlocked.r.includes('VIX')||m8bfBlocked.r.includes('first'))
+        strikeInfo=null;
+      cardM8bf.className='scard active-block';
+      m8bfBadge.textContent='BLOCKED';
+      m8bfRec.innerHTML=`<span class="crossed">${m8bfBlocked.r}</span>`;
+      m8bfReason.innerHTML=`<span class="block-hard">⛔ ${m8bfBlocked.n}</span>`;
+    } else if(theme==='m8bf'){
       cardM8bf.className='scard active-m8bf';
       m8bfBadge.textContent=entryT?`🕐 ${entryT}`:'TRADE';
       m8bfRec.innerHTML=crossed?`<span class="crossed">${rec}</span>`:rec;
