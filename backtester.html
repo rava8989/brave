@@ -233,7 +233,7 @@ body {
 
 /* TP slider */
 .tp-slider {
-  width: 140px;
+  width: 280px;
   accent-color: var(--accent);
   cursor: pointer;
 }
@@ -517,8 +517,8 @@ tfoot td {
   <div class="fg">
     <div class="fg-label">Take Profit</div>
     <div class="fg-row" style="gap:8px">
-      <button id="tpToggle" style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;padding:5px 13px;border-radius:6px;border:1.5px solid #22c55e;color:#22c55e;background:rgba(34,197,94,.08);cursor:pointer;transition:all .12s;white-space:nowrap">ON</button>
-      <div id="tpControls" style="display:flex;gap:8px" class="fg-row">
+      <button id="tpToggle" style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;padding:5px 13px;border-radius:6px;border:1.5px solid #475569;color:#475569;background:transparent;cursor:pointer;transition:all .12s;white-space:nowrap">OFF</button>
+      <div id="tpControls" style="display:none;gap:8px" class="fg-row">
         <div class="seg" id="tpTypeSeg">
           <button class="seg-btn active" data-tp="$">$</button>
           <button class="seg-btn" data-tp="x">% prem</button>
@@ -559,15 +559,26 @@ tfoot td {
     <div style="display:flex;flex-wrap:wrap;gap:4px;padding:2px 0" id="sdPills">
       <button class="tpill" data-sd="OPEX">OPEX</button>
       <button class="tpill" data-sd="OPEX-1">OPEX-1</button>
+      <button class="tpill" data-sd="OPEX+1">OPEX+1</button>
       <button class="tpill" data-sd="EOM">EOM</button>
       <button class="tpill" data-sd="EOM-1">EOM-1</button>
+      <button class="tpill" data-sd="NM">NM</button>
       <button class="tpill" data-sd="FED">FED</button>
       <button class="tpill" data-sd="CPI">CPI</button>
       <button class="tpill" data-sd="VIX">VIX EXP</button>
+      <button class="tpill" data-sd="AAPL">AAPL</button>
+      <button class="tpill" data-sd="GOOGL">GOOGL</button>
+      <button class="tpill" data-sd="MSFT">MSFT</button>
+      <button class="tpill" data-sd="TSLA">TSLA</button>
+      <button class="tpill" data-sd="META">META</button>
+      <button class="tpill" data-sd="NVDA">NVDA</button>
+      <button class="tpill" data-sd="AMZN">AMZN</button>
+      <button class="tpill" data-sd="ALL_EARNINGS">ALL EARNINGS</button>
     </div>
   </div>
 
   <button class="run-btn" id="runBtn">▶ RUN</button>
+  <span id="strikeModeIndicator" style="display:none;align-items:center;gap:6px;background:rgba(99,102,241,.18);border:1px solid #6366f1;border-radius:6px;padding:4px 10px;font-size:11px;font-weight:700;color:#818cf8;letter-spacing:.05em;white-space:nowrap">⚡ STRIKE MODE <button onclick="exitStrikeMode()" style="background:none;border:none;color:#818cf8;cursor:pointer;font-size:13px;line-height:1;padding:0 0 0 4px;opacity:.7" title="Exit strike mode">✕</button></span>
   <span style="display:inline-flex;align-items:center;gap:6px;margin-left:8px">
     <button class="run-btn" id="buildStrikeBtn" style="background:rgba(99,102,241,.15);border-color:#6366f1;color:#818cf8;margin-left:0">⚡ BUILD STRIKE MODEL</button>
     <span class="info-btn">i<span class="info-tip"><strong>How the Strike Model works</strong><ol><li>For each day of week, tests every 30-min entry window (9:35–15:45).</li><li>Each possible center strike "auditions" in every window — qualifies if win rate ≥ 55% and avg P&amp;L &gt; 0.</li><li>Qualified strikes vote for their best window, weighted by their avg P&amp;L. The window with highest total weighted score wins.</li><li>Final strikes = all strikes in the winning window with avg P&amp;L &gt; 0 and at least 15 appearances.</li><li>One trade per day: first qualifying strike found in the winning 30-min window.</li><li>End-of-month and EOM-1 dates are always excluded.</li></ol></span></span>
@@ -618,7 +629,7 @@ const DAY_NAMES = ['Monday','Tuesday','Wednesday','Thursday','Friday'];
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let activeDays = new Set([0,1,2,3,4]);
-let tpEnabled  = true;
+let tpEnabled  = false;
 let tpType     = '$';
 let tpVal      = 1000;
 let slEnabled  = false;
@@ -668,16 +679,25 @@ function _thirdFriday(year, month) {
     }
   }
 
-  // EOM / EOM-1 from actual trade dates
+  // OPEX+1: next actual trading day after each OPEX (from real trade dates)
+  const sortedDates = [...ALL_UNIQUE_DATES].sort();
+  const opexP1 = new Set();
+  opex.forEach(opexDate => {
+    const next = sortedDates.find(d => d > opexDate);
+    if (next) opexP1.add(next);
+  });
+
+  // EOM / EOM-1 / NM from actual trade dates
   const byMonth = {};
   ALL_UNIQUE_DATES.forEach(d => {
     const ym = d.slice(0, 7);
     if (!byMonth[ym]) byMonth[ym] = [];
     byMonth[ym].push(d);
   });
-  const eom = new Set(), eom1 = new Set();
+  const eom = new Set(), eom1 = new Set(), nm = new Set();
   Object.values(byMonth).forEach(ds => {
-    eom.add(ds[ds.length - 1]);
+    nm.add(ds[0]);                               // NM = first trading day of month
+    eom.add(ds[ds.length - 1]);                  // EOM = last trading day of month
     if (ds.length >= 2) eom1.add(ds[ds.length - 2]);
   });
 
@@ -700,7 +720,45 @@ function _thirdFriday(year, month) {
     '2026-01-13','2026-02-13','2026-03-11'
   ]);
 
-  window.SPECIAL_DATE_SETS = { OPEX: opex, 'OPEX-1': opex1, EOM: eom, 'EOM-1': eom1, FED: fed, CPI: cpi, VIX: vix };
+  // Earnings dates — verified via company IR pages, SEC 8-K filings, CNBC/Bloomberg coverage
+  // All AMC (after market close). Dates are the announcement day (IV crush day for 0DTE).
+  const aapl = new Set([
+    '2024-08-01','2024-10-31','2025-01-30','2025-05-01',
+    '2025-07-31','2025-10-30','2026-01-29'
+  ]);
+  const googl = new Set([
+    '2024-10-29','2025-02-04','2025-04-24','2025-07-23',
+    '2025-10-29','2026-02-04'
+  ]);
+  const msft = new Set([
+    '2024-10-30','2025-01-29','2025-04-30','2025-07-30',
+    '2025-10-29','2026-01-28'
+  ]);
+  const tsla = new Set([
+    '2024-10-23','2025-01-29','2025-04-22','2025-07-23',
+    '2025-10-22','2026-01-28'
+  ]);
+  const meta = new Set([
+    '2024-07-31','2024-10-30','2025-01-29','2025-04-30',
+    '2025-07-30','2025-10-29','2026-01-28'
+  ]);
+  const nvda = new Set([
+    '2024-08-28','2024-11-19','2025-02-26','2025-05-28',
+    '2025-08-27','2025-11-19','2026-02-25'
+  ]);
+  const amzn = new Set([
+    '2024-08-01','2024-10-31','2025-02-06','2025-05-01',
+    '2025-08-01','2025-10-30','2026-02-05'
+  ]);
+  const all_earnings = new Set([...aapl,...googl,...msft,...tsla,...meta,...nvda,...amzn]);
+
+  window.SPECIAL_DATE_SETS = {
+    OPEX: opex, 'OPEX-1': opex1, 'OPEX+1': opexP1,
+    EOM: eom, 'EOM-1': eom1, NM: nm,
+    FED: fed, CPI: cpi, VIX: vix,
+    AAPL: aapl, GOOGL: googl, MSFT: msft, TSLA: tsla,
+    META: meta, NVDA: nvda, AMZN: amzn, ALL_EARNINGS: all_earnings
+  };
 })();
 
 // ── Special day event handlers ─────────────────────────────────────────────────
@@ -903,9 +961,14 @@ document.getElementById('tabs').addEventListener('click', e => {
 });
 
 // ── Core logic ────────────────────────────────────────────────────────────────
-function filterTrades() {
+function filterTrades(forceFull) {
   const from = document.getElementById('dateFrom').value;
   const to   = document.getElementById('dateTo').value;
+
+  // When strike model is active, filter within its selected trades (not full TRADES).
+  // forceFull=true bypasses this — used internally by buildAndRenderStrike to always
+  // build the model from the complete dataset.
+  const source = (!forceFull && strikeBuilt && strikeRawTrades) ? strikeRawTrades : TRADES;
 
   // Build unified special-day set if filter is active
   let specialSet = null;
@@ -916,7 +979,7 @@ function filterTrades() {
     });
   }
 
-  return TRADES.filter(t => {
+  return source.filter(t => {
     if (from && t[D] < from) return false;
     if (to   && t[D] > to)   return false;
     if (!activeDays.has(t[DAY])) return false;
@@ -1105,9 +1168,9 @@ document.getElementById('runBtn').onclick = () => {
           '<div class="empty" style="grid-column:1/-1">No trades match the current filters.</div>';
         return;
       }
-      strikeBuilt = false; strikeRawTrades = null; // exit strike mode
       lastResult = applyTP(filtered);
       renderAll(lastResult);
+      if (strikeBuilt) _refreshStrikeSection(lastResult);
     } finally {
       btn.textContent = '▶ RUN';
       btn.disabled = false;
@@ -1647,7 +1710,7 @@ function maxStreak(pnls) {
 //   (used on TP/SL changes without rebuilding the model)
 
 function buildAndRenderStrike() {
-  const filtered = filterTrades();
+  const filtered = filterTrades(true); // always build from full TRADES, not prior strike output
   const out = document.getElementById('strikeOutput');
 
   if (!filtered.length) {
@@ -1804,22 +1867,32 @@ document.getElementById('buildStrikeBtn').addEventListener('click', () => {
   document.getElementById('tab-strike').classList.add('active');
   setTimeout(() => {
     const ok = buildAndRenderStrike();
-    if (ok) strikeBuilt = true;
+    if (ok) {
+      strikeBuilt = true;
+      document.getElementById('strikeModeIndicator').style.display = 'inline-flex';
+    }
     btn.textContent = '⚡ BUILD STRIKE MODEL';
     btn.disabled = false;
   }, 10);
 });
 
 // Auto-rerender all tabs when TP/SL changes while strike model is active
+function exitStrikeMode() {
+  strikeBuilt = false;
+  strikeRawTrades = null;
+  document.getElementById('strikeModeIndicator').style.display = 'none';
+  const filtered = filterTrades();
+  lastResult = applyTP(filtered);
+  renderAll(lastResult);
+}
+
 function maybeRefreshStrike() {
   if (!strikeBuilt || !strikeRawTrades) return;
-  // Re-apply TP/SL to stored raw trades
-  const results = applyTP(strikeRawTrades);
+  // Re-filter strikeRawTrades with current day/time/special-day filters, then re-apply TP/SL
+  const filtered = filterTrades(); // sources from strikeRawTrades automatically
+  const results = applyTP(filtered);
   lastResult = results;
-  renderAll(results);  // updates equity, sweep, calendar, dist, log
-  // Also need model + filtered for the strike section — read from DOM isn't possible,
-  // so we re-build only the section that needs model params (skip stats stay stable)
-  // Cheapest approach: rebuild just the strike section with stored raw trades
+  renderAll(results);
   _refreshStrikeSection(results);
 }
 
