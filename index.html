@@ -568,19 +568,11 @@ flowchart TD
     <hr class="divider">
     <h3>M8 Butterfly (M8BF)</h3>
     <ul>
-      <li><strong>Mon / Tue / Wed:</strong> requires M8BF signal — overnight VIX up, or open-to-open VIX &gt; 1.4. Skip entirely if no signal that day.</li>
-      <li><strong>Thu / Fri:</strong> trade every week — M8BF signal not required. On non-signal days it is optional but supported by data.</li>
-      <li>Enter the <strong>first qualifying strike</strong> that appears in the time window. One trade per day only. Skip the day entirely if no qualifying strike appears in the window.</li>
-      <li><strong>Not traded</strong> on Fed days.</li>
-      <li><strong>Not traded</strong> on MSFT and META earnings days.</li>
-      <li><strong>Not traded</strong> on EOM-1 (day before last trading day of month).</li>
-      <li><strong>Not traded</strong> post VIX expiration when VIX exp falls before OPEX in the same month.</li>
-      <li>GOOGL, AMZN, AAPL, NVDA earnings days — M8BF <strong>is allowed</strong>.</li>
-      <li>NM day (first trading day of month) and <strong>not a Monday</strong> → converts to NM Straddle @ 9:32 AM.</li>
-      <li>NM day falls on <strong>Monday</strong> → M8BF proceeds normally (no NM Straddle).</li>
-      <li>Post-OPEX Monday → M8BF proceeds but <strong>afternoon timing preferred</strong>.</li>
-      <li>Wednesday Straddle signal → converts to M8BF (unless Fed, CPI, EOM, or NM day).</li>
-      <li>Win rate &gt; 90% prior day → next day's Straddle signal converts to M8BF.</li>
+      <li><strong>Trades every week, every day Mon–Fri.</strong> No VIX filter required.</li>
+      <li>Each day has a fixed <strong>30-minute entry window</strong>: Mon 10:00–10:30 · Tue 13:30–14:00 · Wed 12:00–12:30 · Thu 11:00–11:30 · Fri 13:00–13:30.</li>
+      <li>Enter the <strong>first qualifying strike</strong> that appears inside the window. One trade per day. Skip the day if no qualifying strike appears.</li>
+      <li><strong>Banned strikes:</strong> 10, 25, 35, 40, 65, 80, 90 — never trade these regardless of day or signal. These are the 7 worst-performing strike endings by historical P&amp;L.</li>
+      <li><strong>Not traded</strong> on EOM (last trading day of month) or EOM-1 (second-to-last trading day).</li>
       <li>No stop-loss — hold to expiration. Max risk: <strong>$1,400</strong>. Entry cost ≈ $14.</li>
     </ul>
     <div class="strategy-image"><img src="./M8BF.jpg" alt="M8BF" loading="lazy" /></div>
@@ -1344,6 +1336,10 @@ flowchart TD
       if(lbl){
         lbl.innerHTML=`Window ${strikeInfo.window} <span style="background:#052016;color:#34d399;border:1px solid #34d399;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;margin-left:6px;">Every week</span>`;
       }
+      const bannedLbl=document.createElement('div');
+      bannedLbl.style.cssText='width:100%;font-size:10px;color:#f87171;font-weight:600;margin-bottom:4px;letter-spacing:.04em;text-transform:uppercase;';
+      bannedLbl.textContent='Banned strikes — skip these:';
+      g.appendChild(bannedLbl);
       strikeInfo.blocked.forEach(s=>{
         const p=document.createElement('span');
         p.className='sp lwr';
@@ -1352,7 +1348,7 @@ flowchart TD
       });
       const rule=document.createElement('div');
       rule.style.cssText='width:100%;font-size:10px;opacity:.6;margin-top:6px;font-style:italic;';
-      rule.textContent='Skip red strikes · Take first qualifying strike in window · 1 trade/day';
+      rule.textContent='Take first non-banned strike in window · 1 trade/day';
       g.appendChild(rule);
     } else { gw.style.display='none'; }
 
