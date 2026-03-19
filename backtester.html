@@ -578,11 +578,6 @@ tfoot td {
   </div>
 
   <button class="run-btn" id="runBtn">▶ RUN</button>
-  <span id="strikeModeIndicator" style="display:none;align-items:center;gap:6px;background:rgba(99,102,241,.18);border:1px solid #6366f1;border-radius:6px;padding:4px 10px;font-size:11px;font-weight:700;color:#818cf8;letter-spacing:.05em;white-space:nowrap">⚡ STRIKE MODE <button onclick="exitStrikeMode()" style="background:none;border:none;color:#818cf8;cursor:pointer;font-size:13px;line-height:1;padding:0 0 0 4px;opacity:.7" title="Exit strike mode">✕</button></span>
-  <span style="display:inline-flex;align-items:center;gap:6px;margin-left:8px">
-    <button class="run-btn" id="buildStrikeBtn" style="background:rgba(99,102,241,.15);border-color:#6366f1;color:#818cf8;margin-left:0">⚡ BUILD STRIKE MODEL</button>
-    <span class="info-btn">i<span class="info-tip"><strong>How the Strike Model works</strong><ol><li>For each day of week, tests every 30-min entry window (9:35–15:45).</li><li>Each possible center strike "auditions" in every window — qualifies if win rate ≥ 55% and avg P&amp;L &gt; 0.</li><li>Qualified strikes vote for their best window, weighted by their avg P&amp;L. The window with highest total weighted score wins.</li><li>Final strikes = all strikes in the winning window with avg P&amp;L &gt; 0 and at least 15 appearances.</li><li>One trade per day: first qualifying strike found in the winning 30-min window.</li><li>End-of-month and EOM-1 dates are always excluded.</li></ol></span></span>
-  </span>
 </div>
 
 <!-- Content -->
@@ -602,7 +597,6 @@ tfoot td {
     <button class="tab-btn" data-tab="calendar">Calendar</button>
     <button class="tab-btn" data-tab="dist">Distributions</button>
     <button class="tab-btn" data-tab="log">Trade Log</button>
-    <button class="tab-btn" data-tab="strike">Strike Model</button>
   </div>
 
   <div id="tab-equity"   class="tab-panel active"></div>
@@ -610,9 +604,8 @@ tfoot td {
   <div id="tab-calendar" class="tab-panel"></div>
   <div id="tab-dist"     class="tab-panel"></div>
   <div id="tab-log"      class="tab-panel"></div>
-  <div id="tab-strike"   class="tab-panel">
+  <div id="tab-strike"   class="tab-panel" style="display:none">
     <div id="strikeOutput">
-      <div class="empty">Set your filters and click <strong>⚡ BUILD MODEL</strong></div>
     </div>
   </div>
 
@@ -636,8 +629,6 @@ let slEnabled  = false;
 let slType     = '$';
 let slVal      = 500;
 let lastResult      = null;
-let strikeBuilt     = false;
-let strikeRawTrades = null;
 
 // ── Special day state ─────────────────────────────────────────────────────────
 let specialMode   = null;          // null | 'exclude' | 'only'
@@ -965,10 +956,7 @@ function filterTrades(forceFull) {
   const from = document.getElementById('dateFrom').value;
   const to   = document.getElementById('dateTo').value;
 
-  // When strike model is active, filter within its selected trades (not full TRADES).
-  // forceFull=true bypasses this — used internally by buildAndRenderStrike to always
-  // build the model from the complete dataset.
-  const source = (!forceFull && strikeBuilt && strikeRawTrades) ? strikeRawTrades : TRADES;
+  const source = TRADES;
 
   // Build unified special-day set if filter is active
   let specialSet = null;
@@ -1113,8 +1101,7 @@ document.getElementById('tpBest').addEventListener('click', () => {
   const btn = document.getElementById('tpBest');
   btn.classList.add('running'); btn.textContent = '…';
   setTimeout(() => {
-    // Use strike model trades when active, otherwise full filtered set
-    const trades = (strikeBuilt && strikeRawTrades) ? strikeRawTrades : filterTrades();
+    const trades = filterTrades();
     if (!trades.length) { btn.classList.remove('running'); btn.textContent = 'BEST'; return; }
     const getTarget = tpType === '$' ? (t, v) => v : (t, v) => t[PREM] * v;
     const { bestVal, bestPnl } = sweepPnl(trades, getTarget, false);
@@ -1136,8 +1123,7 @@ document.getElementById('slBest').addEventListener('click', () => {
   const btn = document.getElementById('slBest');
   btn.classList.add('running'); btn.textContent = '…';
   setTimeout(() => {
-    // Use strike model trades when active, otherwise full filtered set
-    const trades = (strikeBuilt && strikeRawTrades) ? strikeRawTrades : filterTrades();
+    const trades = filterTrades();
     if (!trades.length) { btn.classList.remove('running'); btn.textContent = 'BEST'; return; }
     const getTarget = slType === '$' ? (t, v) => v : (t, v) => t[PREM] * v;
     const { bestVal, bestPnl } = sweepPnl(trades, getTarget, true);
@@ -1170,7 +1156,6 @@ document.getElementById('runBtn').onclick = () => {
       }
       lastResult = applyTP(filtered);
       renderAll(lastResult);
-      if (strikeBuilt) _refreshStrikeSection(lastResult);
     } finally {
       btn.textContent = '▶ RUN';
       btn.disabled = false;
@@ -1540,158 +1525,6 @@ function renderAll(results) {
   renderLog(results);
 }
 
-// ── Strike Model ──────────────────────────────────────────────────────────────
-const REFERENCE_MODEL = {
-  0: { bucket: '10:00', strikes: [5, 45, 70, 95],             dayName: 'Monday' },
-  1: { bucket: '12:00', strikes: [0, 5, 35, 45, 70, 75, 85, 90], dayName: 'Tuesday' },
-  2: { bucket: '11:30', strikes: [30, 45, 50, 70, 80, 95],    dayName: 'Wednesday' },
-  3: { bucket: '11:30', strikes: [5, 15, 55, 75, 85],         dayName: 'Thursday' },
-  4: { bucket: '13:00', strikes: [45, 55, 65, 70, 75, 85, 95], dayName: 'Friday' },
-};
-
-function timeToBucket(t) {
-  const [h,m] = t.split(':').map(Number);
-  const b = Math.floor((h*60+m)/30)*30;
-  return `${String(Math.floor(b/60)).padStart(2,'0')}:${String(b%60).padStart(2,'0')}`;
-}
-
-function computeSkipDates(dateArr) {
-  // Group dates by YYYY-MM
-  const byMonth = {};
-  dateArr.forEach(d => {
-    const ym = d.slice(0,7);
-    if (!byMonth[ym]) byMonth[ym] = [];
-    byMonth[ym].push(d);
-  });
-  const skip = new Set();
-  Object.values(byMonth).forEach(dates => {
-    const sorted = [...dates].sort();
-    const uniq = [...new Set(sorted)];
-    if (uniq.length >= 1) skip.add(uniq[uniq.length - 1]); // EOM
-    if (uniq.length >= 2) skip.add(uniq[uniq.length - 2]); // EOM-1
-  });
-  return skip;
-}
-
-function buildStrikeModel(filtered) {
-  if (!filtered || filtered.length < 30) return null;
-
-  const allDates = [...new Set(filtered.map(t => t[D]))].sort();
-  const skipDates = computeSkipDates(allDates);
-
-  // Filter out EOM/EOM-1 dates
-  const trades = filtered.filter(t => !skipDates.has(t[D]));
-
-  const model = {};
-  const blacklist = new Set([25, 40]);
-  const MIN_STRIKE_N = 15;  // min occurrences per (strike, bucket)
-  const MIN_STRIKE_WR = 0.55; // min win rate for a strike to vote
-
-  for (let dayIdx = 0; dayIdx <= 4; dayIdx++) {
-    const dayTrades = trades.filter(t => t[DAY] === dayIdx);
-    if (dayTrades.length < 30) continue;
-
-    // Group by last2 strike, then by bucket
-    // For each (strike, bucket) pair: if avg>0 AND WR>=MIN_STRIKE_WR AND count>=MIN_STRIKE_N,
-    // cast a weighted vote (weight = avg P&L) for that bucket.
-    const bucketVotes = {}; // bucket -> total weighted vote
-
-    // Group by last2
-    const last2Groups = {};
-    dayTrades.forEach(t => {
-      const l2 = t[CTR] % 100;
-      if (!last2Groups[l2]) last2Groups[l2] = [];
-      last2Groups[l2].push(t);
-    });
-
-    Object.entries(last2Groups).forEach(([l2str, ts]) => {
-      const l2 = +l2str;
-      if (blacklist.has(l2)) return;
-
-      // Group this strike's trades by bucket
-      const bkMap = {};
-      ts.forEach(t => {
-        const bk = timeToBucket(t[TIME]);
-        if (!bkMap[bk]) bkMap[bk] = [];
-        bkMap[bk].push(t);
-      });
-
-      Object.entries(bkMap).forEach(([bk, bkTs]) => {
-        if (bkTs.length < MIN_STRIKE_N) return;
-        const avg = bkTs.reduce((s,t) => s + t[PROF], 0) / bkTs.length;
-        const wr  = bkTs.filter(t => t[PROF] > 0).length / bkTs.length;
-        if (avg > 0 && wr >= MIN_STRIKE_WR) {
-          bucketVotes[bk] = (bucketVotes[bk] || 0) + avg; // weighted by avg P&L
-        }
-      });
-    });
-
-    if (!Object.keys(bucketVotes).length) continue;
-
-    // Pick bucket with highest total weighted vote
-    const bestBucket = Object.entries(bucketVotes).sort((a,b) => b[1]-a[1])[0][0];
-
-    const bucketTrades = dayTrades.filter(t => timeToBucket(t[TIME]) === bestBucket);
-
-    // Group bucket trades by last2, keep strikes with avg > 0 and count >= MIN_STRIKE_N
-    const bucketLast2 = {};
-    bucketTrades.forEach(t => {
-      const l2 = t[CTR] % 100;
-      if (!bucketLast2[l2]) bucketLast2[l2] = [];
-      bucketLast2[l2].push(t);
-    });
-
-    const finalStrikes = [];
-    Object.entries(bucketLast2).forEach(([l2str, ts]) => {
-      const l2 = +l2str;
-      if (blacklist.has(l2)) return;
-      if (ts.length < MIN_STRIKE_N) return;
-      const avg = ts.reduce((s,t) => s + t[PROF], 0) / ts.length;
-      if (avg > 0) finalStrikes.push(l2);
-    });
-
-    if (!finalStrikes.length) continue;
-
-    model[dayIdx] = {
-      bucket: bestBucket,
-      strikes: finalStrikes.sort((a,b) => a-b),
-      dayName: DAY_NAMES[dayIdx],
-    };
-  }
-
-  return Object.keys(model).length ? model : null;
-}
-
-function runStrikeModel(model, filtered) {
-  const allDates = [...new Set(filtered.map(t => t[D]))].sort();
-  const skipDates = computeSkipDates(allDates);
-  const picked = [];
-
-  Object.entries(model).forEach(([dayIdxStr, cfg]) => {
-    const dayIdx = +dayIdxStr;
-    const strikesSet = new Set(cfg.strikes);
-
-    // All dates for this day, excluding skip dates
-    const dayDates = [...new Set(
-      filtered.filter(t => t[DAY] === dayIdx && !skipDates.has(t[D])).map(t => t[D])
-    )].sort();
-
-    dayDates.forEach(date => {
-      // Trades on this date in the model bucket window and with qualifying last2
-      const candidates = filtered.filter(t =>
-        t[D] === date &&
-        t[DAY] === dayIdx &&
-        timeToBucket(t[TIME]) === cfg.bucket &&
-        strikesSet.has(t[CTR] % 100)
-      ).sort((a,b) => a[TIME] < b[TIME] ? -1 : a[TIME] > b[TIME] ? 1 : 0);
-
-      if (candidates.length) picked.push(candidates[0]);
-    });
-  });
-
-  return picked.sort((a,b) => a[D] < b[D] ? -1 : a[D] > b[D] ? 1 : 0);
-}
-
 function maxDrawdown(pnls) {
   let cum=0, peak=0, dd=0;
   pnls.forEach(p => { cum+=p; peak=Math.max(peak,cum); dd=Math.min(dd,cum-peak); });
@@ -1704,209 +1537,6 @@ function maxStreak(pnls) {
   return ms;
 }
 
-// ── Strike Model rendering ─────────────────────────────────────────────────────
-// buildAndRenderStrike(): builds the model fresh from current filters + populates ALL tabs
-// renderStrikeSection(model, filtered, smTrades): re-renders just the strike tab content
-//   (used on TP/SL changes without rebuilding the model)
-
-function buildAndRenderStrike() {
-  const filtered = filterTrades(true); // always build from full TRADES, not prior strike output
-  const out = document.getElementById('strikeOutput');
-
-  if (!filtered.length) {
-    out.innerHTML = '<div class="empty">No trades match the current filters.</div>';
-    return false;
-  }
-
-  const model = buildStrikeModel(filtered);
-  if (!model) {
-    out.innerHTML = '<div class="empty">Not enough data to build a strike model. Try a wider date range.</div>';
-    return false;
-  }
-
-  const smTrades = runStrikeModel(model, filtered);
-  if (!smTrades.length) {
-    out.innerHTML = '<div class="empty">Strike model produced no trades. Try a wider date range.</div>';
-    return false;
-  }
-
-  // Store raw trades so TP/SL can be re-applied without rebuilding
-  strikeRawTrades = smTrades;
-
-  const results = applyTP(smTrades);
-
-  // Populate ALL tabs with strike model data
-  lastResult = results;
-  renderAll(results);
-
-  // Render strike-specific section
-  renderStrikeSection(model, filtered, smTrades, results);
-  return true;
-}
-
-function renderStrikeSection(model, filtered, smTrades, results) {
-  const out = document.getElementById('strikeOutput');
-  const anyActive  = tpEnabled || slEnabled;
-
-  // --- Section A: Model Parameters ---
-  // Compute skip stats
-  const allDates   = [...new Set(filtered.map(t => t[D]))].sort();
-  const skipDates  = computeSkipDates(allDates);
-  const totalEOMSkipped = skipDates.size;
-
-  // Build per-day stats: possible dates, traded dates, no-match dates
-  const perDayStats = {};
-  Object.entries(model).forEach(([diStr, cfg]) => {
-    const di = +diStr;
-    // Possible dates: that day of week, not EOM
-    const possibleDates = [...new Set(
-      filtered.filter(t => t[DAY] === di && !skipDates.has(t[D])).map(t => t[D])
-    )];
-    // Traded dates: those that appear in smTrades
-    const tradedDates = new Set(smTrades.filter(t => t[DAY] === di).map(t => t[D]));
-    const tradedCount = tradedDates.size;
-    const noMatchCount = possibleDates.length - tradedCount;
-    perDayStats[di] = { possible: possibleDates.length, traded: tradedCount, noMatch: noMatchCount };
-  });
-
-  const totalPossible = Object.values(perDayStats).reduce((s,v) => s + v.possible, 0);
-  const totalTraded   = Object.values(perDayStats).reduce((s,v) => s + v.traded, 0);
-  const totalNoMatch  = Object.values(perDayStats).reduce((s,v) => s + v.noMatch, 0);
-
-  const dayRows = Object.entries(model).map(([di, cfg]) => {
-    const pills = cfg.strikes.map(s =>
-      `<span class="tpill active" style="pointer-events:none">x${String(s).padStart(2,'0')}</span>`
-    ).join(' ');
-    const [bh, bm] = cfg.bucket.split(':').map(Number);
-    const endMin = bh*60+bm+30;
-    const endStr = `${String(Math.floor(endMin/60)).padStart(2,'0')}:${String(endMin%60).padStart(2,'0')}`;
-    const st = perDayStats[+di] || {traded:0, possible:0, noMatch:0};
-    return `<tr>
-      <td style="font-weight:600;color:var(--text)">${cfg.dayName}</td>
-      <td>${cfg.bucket}–${endStr}</td>
-      <td style="text-align:center">${st.traded}</td>
-      <td style="text-align:center;color:var(--sub)">${st.noMatch > 0 ? st.noMatch : '—'}</td>
-      <td style="padding:6px 12px">${pills}</td>
-    </tr>`;
-  }).join('');
-
-  const sectionA = `
-    <div class="chart-card" style="margin-bottom:16px">
-      <div class="chart-card-header">
-        <div class="chart-title">Model Parameters</div>
-        <div class="chart-sub">${Object.keys(model).length} active days · ${totalTraded} trades · ${totalEOMSkipped} EOM dates skipped · ${totalNoMatch} days with no strike match</div>
-      </div>
-      <div class="tbl-wrap">
-        <table style="min-width:0">
-          <thead><tr>
-            <th>Day</th>
-            <th>Entry Window</th>
-            <th style="text-align:center">Trades</th>
-            <th style="text-align:center">No Match</th>
-            <th>Qualified Strikes</th>
-          </tr></thead>
-          <tbody>${dayRows}</tbody>
-        </table>
-      </div>
-    </div>`;
-
-  // adjLabel needed for sections C and D labels
-  const adjLabel = getAdjLabel();
-
-  // --- Section D: Per-day breakdown ---
-  const sectionD = buildDayBreakdown(results, anyActive, adjLabel);
-
-  // Strike Model tab = model parameters + per-day breakdown only.
-  // Everything else (equity curve, TP sweep, calendar, log) is in the other tabs via renderAll.
-  out.innerHTML = sectionA + sectionD;
-}
-
-function buildDayBreakdown(results, anyActive, adjLabel) {
-  const dayBreakdown = {};
-  results.forEach(r => {
-    if (!dayBreakdown[r.day]) dayBreakdown[r.day] = { profits:[], tpPnls:[] };
-    dayBreakdown[r.day].profits.push(r.profit);
-    dayBreakdown[r.day].tpPnls.push(r.tpPnl);
-  });
-  const plLabel = anyActive ? (adjLabel || 'TP/SL P&L') : 'Total P&L';
-  const rows = Object.entries(dayBreakdown).sort((a,b)=>+a[0]-+b[0]).map(([di,data])=>{
-    const n = data.profits.length;
-    const pnls = anyActive ? data.tpPnls : data.profits;
-    const tot = pnls.reduce((s,v)=>s+v,0), avg=tot/n, wins=pnls.filter(v=>v>0).length;
-    const wr2=(wins/n*100).toFixed(1);
-    return `<tr>
-      <td style="font-weight:600;color:var(--text)">${DAY_NAMES[+di]}</td>
-      <td>${n}</td>
-      <td class="${avg>=0?'pos':'neg'}">${fmt$(avg)}</td>
-      <td class="${tot>=0?'pos':'neg'}">${fmt$(tot)}</td>
-      <td class="${+wr2>=50?'pos':''}">${wr2}%</td>
-    </tr>`;
-  }).join('');
-  return `<div class="chart-card" style="margin-bottom:16px">
-    <div class="chart-card-header"><div class="chart-title">Per-Day Breakdown</div></div>
-    <div class="tbl-wrap">
-      <table style="min-width:0">
-        <thead><tr><th>Day</th><th>Trades</th><th>Avg P&L</th><th>${plLabel}</th><th>Win Rate</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>
-  </div>`;
-}
-
-// ── Strike Model button ───────────────────────────────────────────────────────
-document.getElementById('buildStrikeBtn').addEventListener('click', () => {
-  const btn = document.getElementById('buildStrikeBtn');
-  btn.textContent = '⏳ Building…';
-  btn.disabled = true;
-  // Show tabs bar so all tabs are accessible
-  document.getElementById('tabs').style.display = 'flex';
-  // Switch to Strike Model tab
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-  document.querySelector('[data-tab="strike"]').classList.add('active');
-  document.getElementById('tab-strike').classList.add('active');
-  setTimeout(() => {
-    const ok = buildAndRenderStrike();
-    if (ok) {
-      strikeBuilt = true;
-      document.getElementById('strikeModeIndicator').style.display = 'inline-flex';
-    }
-    btn.textContent = '⚡ BUILD STRIKE MODEL';
-    btn.disabled = false;
-  }, 10);
-});
-
-// Auto-rerender all tabs when TP/SL changes while strike model is active
-function exitStrikeMode() {
-  strikeBuilt = false;
-  strikeRawTrades = null;
-  document.getElementById('strikeModeIndicator').style.display = 'none';
-  const filtered = filterTrades();
-  lastResult = applyTP(filtered);
-  renderAll(lastResult);
-}
-
-function maybeRefreshStrike() {
-  if (!strikeBuilt || !strikeRawTrades) return;
-  // Re-filter strikeRawTrades with current day/time/special-day filters, then re-apply TP/SL
-  const filtered = filterTrades(); // sources from strikeRawTrades automatically
-  const results = applyTP(filtered);
-  lastResult = results;
-  renderAll(results);
-  _refreshStrikeSection(results);
-}
-
-function _refreshStrikeSection(results) {
-  // Only the per-day breakdown changes with TP/SL — model params table is static.
-  // Everything else (equity, sweep, etc.) was already updated by renderAll() in maybeRefreshStrike.
-  const out = document.getElementById('strikeOutput');
-  if (!out || !out.children.length) return;
-  const anyActive = tpEnabled || slEnabled;
-  const adjLabel  = getAdjLabel();
-  const newSection = buildDayBreakdown(results, anyActive, adjLabel);
-  const existing = out.querySelector('.chart-card:last-of-type');
-  if (existing) existing.outerHTML = newSection;
-}
 </script>
 </body>
 </html>
