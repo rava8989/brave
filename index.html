@@ -141,6 +141,7 @@
     .ml{color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;}
     .mv{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:15px;color:var(--text);}
     .mv.up{color:#ef4444;} .mv.dn{color:#22c55e;}
+    .mv.gap-up{color:#22c55e!important;} .mv.gap-dn{color:#ef4444!important;}
     .msep{color:var(--border);}
 
     /* TAGS */
@@ -1171,8 +1172,8 @@
       spxSepEl.style.display='inline';
       const dir=spxGapPct>0?'▲':'▼';
       spxGapEl.textContent=`${dir}${Math.abs(spxGapPct).toFixed(2)}%`;
-      spxGapEl.className='mv';
-      spxGapEl.style.color=spxGapPct>0?'#22c55e':'#ef4444';
+      spxGapEl.className=spxGapPct>0?'mv gap-up':'mv gap-dn';
+      spxGapEl.style.color='';
     } else {
       spxGapWrap.style.display='none';
       spxSepEl.style.display='none';
@@ -1765,8 +1766,8 @@
             return d.getHours() === 9 && d.getMinutes() >= 30;
           });
           if(spxOpenCandle) spxTodayOpen = spxOpenCandle.open;
-          // Store for gap check
-          if(spxYClose) SC.set('spx', { yClose: spxYClose, todayOpen: spxTodayOpen });
+          // Store for gap check, then re-run to show colored gap
+          if(spxYClose){ SC.set('spx', { yClose: spxYClose, todayOpen: spxTodayOpen }); calculateStrategy(); }
         }
       } catch(e){ /* SPX fetch failed silently — gap check just won't fire */ }
 
