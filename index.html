@@ -189,6 +189,8 @@
     .scard-body{padding:12px 14px;}
     .scard-main{font-family:'JetBrains Mono',monospace;font-size:clamp(13px,1.6vw,18px);font-weight:700;line-height:1.35;margin-bottom:4px;}
     .scard-reason{font-size:11px;opacity:.7;font-style:italic;line-height:1.4;margin-top:4px;}
+    .pattern-note{font-size:11px;color:var(--text3);margin-top:10px;padding:6px 9px;border-left:2px solid var(--border);line-height:1.55;border-radius:0 4px 4px 0;background:rgba(255,255,255,.03);}
+    .pattern-note .pn-item{margin-bottom:3px;}.pattern-note .pn-item:last-child{margin-bottom:0;}
     /* card themes */
     .scard.active-m8bf {border-color:var(--col-m8bf); background:var(--col-m8bf-bg); color:var(--col-m8bf);}
     .scard.active-strad{border-color:var(--col-strad); background:var(--col-strad-bg);color:var(--col-strad);}
@@ -482,6 +484,7 @@
           <div class="sg-label" id="sgLabel">Qualified Strikes</div>
           <div class="sg" id="strikeGrid"></div>
         </div>
+        <div id="m8bfPatternNote" class="pattern-note" style="display:none;"></div>
       </div>
     </div>
 
@@ -1347,10 +1350,6 @@
         p.textContent=s;
         g.appendChild(p);
       });
-      const rule=document.createElement('div');
-      rule.style.cssText='width:100%;font-size:10px;opacity:.6;margin-top:6px;font-style:italic;';
-      rule.textContent='Take first non-banned strike in window · 1 trade/day';
-      g.appendChild(rule);
     } else { gw.style.display='none'; }
 
     // ── CARD 4: BOBF ──
@@ -2077,6 +2076,43 @@
     await discordPost(msg);
   }
 
+  async function loadM8BFPatternNotes() {
+    try {
+      const resp = await fetch('./history_data.json');
+      const data = await resp.json();
+      const rows = data.filter(r => r.m8bfWR != null)
+                       .sort((a, b) => a.date.localeCompare(b.date));
+      if (rows.length < 2) return;
+      const AVG = 55, notes = [];
+      const last = rows[rows.length - 1];
+      const daysDiff = (new Date() - new Date(last.date + 'T12:00:00')) / 86400000;
+      if (daysDiff <= 7) {
+        const lastWR = parseFloat(last.m8bfWR);
+        if (lastWR === 0) {
+          notes.push(`Last session (${last.date}) was 0% win rate — historically the next day averages just 33% vs 55% overall.`);
+        } else if (lastWR <= 5) {
+          notes.push(`Last session (${last.date}) was ${lastWR}% — sub-5% days are mixed, averaging ~50% next day.`);
+        }
+        if (last.vixClose && parseFloat(last.vixClose) > 25) {
+          notes.push(`VIX closed at ${parseFloat(last.vixClose).toFixed(1)} last session — historically M8BF averages ~44% when prior VIX close is above 25.`);
+        }
+      }
+      let streak = 0;
+      for (let i = rows.length - 1; i >= 0; i--) {
+        if (parseFloat(rows[i].m8bfWR) < AVG) streak++;
+        else break;
+      }
+      if (streak >= 3) {
+        notes.push(`${streak} consecutive below-average sessions — historically averages 79% win rate on the next day.`);
+      }
+      const el = document.getElementById('m8bfPatternNote');
+      if (el && notes.length > 0) {
+        el.innerHTML = notes.map(n => `<div class="pn-item">${n}</div>`).join('');
+        el.style.display = 'block';
+      }
+    } catch(e) {}
+  }
+
   document.addEventListener('DOMContentLoaded',()=>{
     initTheme();
     renderSched(cpiSch,  'cpiSchedule');
@@ -2089,6 +2125,7 @@
     document.getElementById('yesterdayOpen').disabled=isCpi();
     loadInputs(); // #7: restore today's inputs if available
     schwabInit(); // Schwab integration
+    loadM8BFPatternNotes();
     discordStatus(); // Discord bot status
     document.getElementById('resultDayLabel').textContent=tradeWdLabel();
 
