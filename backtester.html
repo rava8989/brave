@@ -1200,29 +1200,41 @@ document.getElementById('slBest').addEventListener('click', () => {
 });
 
 // ── Run ───────────────────────────────────────────────────────────────────────
+async function runPipeline(btn) {
+  btn.textContent = '⏳ Running…';
+  btn.disabled = true;
+  await new Promise(r => setTimeout(r, 10)); // let browser paint button state
+  try {
+    const filtered = filterTrades();
+    if (!filtered.length) {
+      document.getElementById('statsGrid').innerHTML =
+        '<div class="empty" style="grid-column:1/-1">No trades match the current filters.</div>';
+      return;
+    }
+    lastResult = applyTP(filtered);
+    // Render everything except sweep synchronously (fast)
+    renderKPIs(lastResult);
+    renderEquity(lastResult);
+    renderCalendar(lastResult);
+    renderDist(lastResult);
+    renderLog(lastResult);
+    btn.textContent = '▶ RUN';
+    btn.disabled = false;
+    // Sweep is expensive — run async after UI is already responsive
+    await renderSweep(filtered);
+  } catch(e) {
+    btn.textContent = '▶ RUN';
+    btn.disabled = false;
+    throw e;
+  }
+}
+
 document.getElementById('runBtn').onclick = () => {
   useM8BFModel = false;
   const mb = document.getElementById('m8bfModelBtn');
   mb.style.outline = '';
   mb.textContent = '⚡ CURRENT MODEL';
-  const btn = document.getElementById('runBtn');
-  btn.textContent = '⏳ Running…';
-  btn.disabled = true;
-  setTimeout(() => {
-    try {
-      const filtered = filterTrades();
-      if (!filtered.length) {
-        document.getElementById('statsGrid').innerHTML =
-          '<div class="empty" style="grid-column:1/-1">No trades match the current filters.</div>';
-        return;
-      }
-      lastResult = applyTP(filtered);
-      renderAll(lastResult);
-    } finally {
-      btn.textContent = '▶ RUN';
-      btn.disabled = false;
-    }
-  }, 10);
+  runPipeline(document.getElementById('runBtn'));
 };
 
 document.getElementById('m8bfModelBtn').onclick = () => {
@@ -1230,24 +1242,7 @@ document.getElementById('m8bfModelBtn').onclick = () => {
   const mb = document.getElementById('m8bfModelBtn');
   mb.style.outline = '2px solid #22c55e';
   mb.textContent = '⚡ CURRENT MODEL ✓';
-  const runBtn = document.getElementById('runBtn');
-  runBtn.textContent = '⏳ Running…';
-  runBtn.disabled = true;
-  setTimeout(() => {
-    try {
-      const filtered = filterTrades();
-      if (!filtered.length) {
-        document.getElementById('statsGrid').innerHTML =
-          '<div class="empty" style="grid-column:1/-1">No trades match the current filters.</div>';
-        return;
-      }
-      lastResult = applyTP(filtered);
-      renderAll(lastResult);
-    } finally {
-      runBtn.textContent = '▶ RUN';
-      runBtn.disabled = false;
-    }
-  }, 10);
+  runPipeline(document.getElementById('runBtn'));
 };
 
 // ── Render helpers ────────────────────────────────────────────────────────────
@@ -1354,8 +1349,10 @@ function renderEquity(results) {
 }
 
 // ── TP Sweep ──────────────────────────────────────────────────────────────────
-function renderSweep(results) {
+async function renderSweep(filtered) {
   const el = document.getElementById('tab-sweep');
+  el.innerHTML = '<div style="padding:24px;color:var(--text3);font-family:\'JetBrains Mono\',monospace;font-size:12px">Computing sweep…</div>';
+  await new Promise(r => setTimeout(r, 0)); // yield so "Computing" renders
 
   // build sweep for current tpType
   const pts = [], wr = [], hr = [];
@@ -1363,8 +1360,11 @@ function renderSweep(results) {
   if (tpType==='$') vals = Array.from({length:320},(_,i)=>(i+1)*25);
   else vals = Array.from({length:40},(_,i)=>(i+1)*25);  // 25% to 1000%
 
-  const filtered = filterTrades();
-  vals.forEach(v => {
+  // Process in chunks of 20 to stay responsive
+  const CHUNK = 20;
+  for (let ci = 0; ci < vals.length; ci += CHUNK) {
+    const chunk = vals.slice(ci, ci + CHUNK);
+    chunk.forEach(v => {
     let total=0, wins=0, hits=0;
     filtered.forEach(t => {
       const tgt    = tpType==='$' ? v : t[PREM]*v;
@@ -1392,7 +1392,9 @@ function renderSweep(results) {
     pts.push(total);
     wr.push(wins/filtered.length*100);
     hr.push(hits/filtered.length*100);
-  });
+    });
+    await new Promise(r => setTimeout(r, 0)); // yield between chunks
+  }
 
   const bestIdx = pts.indexOf(Math.max(...pts));
   const bestV   = vals[bestIdx];
@@ -1606,7 +1608,6 @@ function renderLog(results) {
 function renderAll(results) {
   renderKPIs(results);
   renderEquity(results);
-  renderSweep(results);
   renderCalendar(results);
   renderDist(results);
   renderLog(results);
