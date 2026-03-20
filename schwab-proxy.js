@@ -448,30 +448,42 @@ async function handleScheduled(env) {
 
   if (vixYClose === null) throw new Error('Could not determine yesterday VIX close');
 
-  // 3. Get today's VIX open from candles (first 1-min candle at 9:30-9:35 ET)
+  // 3. Get today's VIX open from candles — first 1-min candle at or after 9:30 ET
   let vixToday = null;
-  const todayCandles = candles.filter(c => toET(new Date(c.datetime)).toDateString() === todayStr);
-  todayCandles.sort((a, b) => a.datetime - b.datetime);
-  const todayOpenCandle = todayCandles.find(c => {
+  const todayCandles = candles.filter(c => {
     const d = toET(new Date(c.datetime));
-    return d.getHours() === 9 && d.getMinutes() >= 30 && d.getMinutes() <= 35;
+    if (d.toDateString() !== todayStr) return false;
+    const mins = d.getHours() * 60 + d.getMinutes();
+    return mins >= 570; // 9:30 ET = 570 minutes
   });
-  if (todayOpenCandle) vixToday = parseFloat(todayOpenCandle.open.toFixed(2));
+  todayCandles.sort((a, b) => a.datetime - b.datetime);
+  if (todayCandles.length > 0) {
+    // Use the open of the very first candle at or after 9:30 ET
+    vixToday = parseFloat(todayCandles[0].open.toFixed(2));
+  }
 
-  // Fallback: quote API if candle not yet available (e.g. called right at open)
+  // Fallback: re-fetch with fresh history if candle not yet in first response
   if (vixToday === null) {
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const vixQuoteUrl = `https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`;
-      const vixQuote = await fetchSchwabJSON(vixQuoteUrl, token);
-      const quote = vixQuote?.['$VIX']?.quote;
-      if (quote) {
-        vixToday = quote.openPrice || quote.lastPrice;
-        if (vixToday) { vixToday = parseFloat(vixToday.toFixed(2)); break; }
-      }
-      if (attempt < 4) await new Promise(r => setTimeout(r, 30000));
+    await new Promise(r => setTimeout(r, 15000)); // wait 15s for candle to appear
+    const retry = await fetchSchwabJSON(vixHistUrl, token);
+    if (retry.candles) {
+      const rc = retry.candles.filter(c => {
+        const d = toET(new Date(c.datetime));
+        return d.toDateString() === todayStr && d.getHours() * 60 + d.getMinutes() >= 570;
+      }).sort((a, b) => a.datetime - b.datetime);
+      if (rc.length > 0) vixToday = parseFloat(rc[0].open.toFixed(2));
     }
   }
-  if (vixToday === null) throw new Error('Could not get VIX today open after 5 attempts');
+
+  // Last resort: quote API (less accurate but better than failing)
+  if (vixToday === null) {
+    const vixQuote = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`, token);
+    const quote = vixQuote?.['$VIX']?.quote;
+    if (quote?.openPrice) vixToday = parseFloat(quote.openPrice.toFixed(2));
+    else if (quote?.lastPrice) vixToday = parseFloat(quote.lastPrice.toFixed(2));
+  }
+
+  if (vixToday === null) throw new Error('Could not get VIX today open');
 
   // 4. Fetch SPX quote → gap %
   let spxGapPct = null;
