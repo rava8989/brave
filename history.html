@@ -822,15 +822,15 @@ async function init() {
         vixOpen: cur.vixOpen,
         vixPrevClose: prev.vixClose,
         vixPrevOpen: prev.vixOpen,
-        overnightDrop: parseFloat((prev.vixClose - cur.vixOpen).toFixed(2)),
-        o2o: parseFloat((prev.vixOpen - cur.vixOpen).toFixed(2)),
+        overnightDrop: (prev.vixClose != null && cur.vixOpen != null) ? parseFloat((prev.vixClose - cur.vixOpen).toFixed(2)) : null,
+        o2o: (prev.vixOpen != null && cur.vixOpen != null) ? parseFloat((prev.vixOpen - cur.vixOpen).toFixed(2)) : null,
         spxGapPct: spxGapPct !== null ? parseFloat(spxGapPct.toFixed(2)) : null,
         spxOpen: cur.spxOpen != null ? cur.spxOpen : null,
         spxClose: cur.spxClose != null ? cur.spxClose : null,
         m8bfWR: cur.m8bfWR != null ? cur.m8bfWR : null,
         m8bfPL: cur.m8bfPL != null ? cur.m8bfPL : null,
-        stradPL: cur.date in STRAD_PL ? STRAD_PL[cur.date] : null,
-        gxbfPL: cur.date in GXBF_PL ? GXBF_PL[cur.date] : null,
+        stradPL: cur.date in STRAD_PL ? STRAD_PL[cur.date] : (cur.stradPL != null ? cur.stradPL : null),
+        gxbfPL: cur.date in GXBF_PL ? GXBF_PL[cur.date] : (cur.gxbfPL != null ? cur.gxbfPL : null),
         bobfPL: cur.bobfPL != null ? cur.bobfPL : null,
         prevWR: prevWR != null ? prevWR : null,
         signal,
@@ -838,6 +838,9 @@ async function init() {
     }
 
     allRows.reverse();
+    // Always reset date range to full history (clears any browser-cached values)
+    document.getElementById('dateStart').value = '';
+    if (allRows.length) document.getElementById('dateEnd').value = allRows[0].date;
     filterMonths(0);
   } catch (e) {
     document.getElementById('content').innerHTML =
@@ -880,7 +883,7 @@ function getValue(row, col) {
 function sortRows(colIdx) {
   const col = cols[colIdx];
   if (sortCol === colIdx) sortAsc = !sortAsc;
-  else { sortCol = colIdx; sortAsc = true; }
+  else { sortCol = colIdx; sortAsc = colIdx !== 0; }  // date col: newest first by default
 
   rows.sort((a, b) => {
     let va = getValue(a, col), vb = getValue(b, col);
