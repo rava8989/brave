@@ -1055,6 +1055,9 @@ function applyTP(trades) {
     const peakCapped   = peak   !== null ? Math.min(peak,   maxGain) : null;
     const troughCapped = trough !== null ? Math.max(trough, -maxLoss) : null;
 
+    // When TP or SL is active, exclude trades without intraday data
+    if ((tpEnabled || slEnabled) && peakCapped === null) return null;
+
     let tpPnl, tpHit = false, slHit = false;
 
     if (peakCapped !== null) {
@@ -1073,10 +1076,7 @@ function applyTP(trades) {
         tpPnl = t[PROF];
       }
     } else {
-      // No intraday data — expiry-only fallback
-      if (tpEnabled && t[PROF] >= tpTarget) { tpPnl = tpTarget; tpHit = true; }
-      else if (slTarget !== null && t[PROF] <= -slTarget) { tpPnl = -slTarget; slHit = true; }
-      else tpPnl = t[PROF];
+      tpPnl = t[PROF];
     }
 
     return {
@@ -1212,7 +1212,7 @@ async function runPipeline(btn) {
       btn.textContent = '▶ RUN'; btn.disabled = false;
       return;
     }
-    lastResult = applyTP(filtered);
+    lastResult = applyTP(filtered).filter(Boolean);
     renderKPIs(lastResult);    await yield$();
     renderEquity(lastResult);  await yield$();
     renderCalendar(lastResult);await yield$();
@@ -1381,18 +1381,13 @@ async function renderSweep(filtered) {
       const trough = t[TROUGH];
       const pkFirst= t[PKFIRST];
       let pnl, hit = false;
-      if (peak !== null) {
-        const hitTP = peak >= tgt;
-        const hitSL = slTgt !== null && trough <= -slTgt;
-        if (hitTP && hitSL) { pnl = pkFirst ? tgt : -slTgt; hit = pkFirst; }
-        else if (hitTP)     { pnl = tgt;      hit = true; }
-        else if (hitSL)     { pnl = -slTgt; }
-        else                { pnl = t[PROF]; }
-      } else {
-        if (t[PROF] >= tgt) { pnl = tgt; hit = true; }
-        else if (slTgt !== null && t[PROF] <= -slTgt) { pnl = -slTgt; }
-        else pnl = t[PROF];
-      }
+      if (peak === null) return; // skip trades without intraday data in sweep
+      const hitTP = peak >= tgt;
+      const hitSL = slTgt !== null && trough <= -slTgt;
+      if (hitTP && hitSL) { pnl = pkFirst ? tgt : -slTgt; hit = pkFirst; }
+      else if (hitTP)     { pnl = tgt;      hit = true; }
+      else if (hitSL)     { pnl = -slTgt; }
+      else                { pnl = t[PROF]; }
       total += pnl;
       if (pnl > 0) wins++;
       if (hit) hits++;
