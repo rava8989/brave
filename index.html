@@ -2007,6 +2007,16 @@
     inner += `${sigColor(gxbf)}GXBF     │ ${gxbf}${RST}\n`;
     inner += `${sigColor(bobf)}BOBF     │ ${bobf}${RST}\n`;
 
+    // Pattern notes
+    const patternEl = document.getElementById('m8bfPatternNote');
+    if (patternEl && patternEl.style.display !== 'none') {
+      const patternLines = Array.from(patternEl.querySelectorAll('.pn-item')).map(el => el.textContent);
+      if (patternLines.length > 0) {
+        inner += `${DIM}${'─'.repeat(34)}${RST}\n`;
+        patternLines.forEach(line => { inner += `${DIM}⚠ ${line}${RST}\n`; });
+      }
+    }
+
     // VIX values — dim
     const vYestClose    = document.getElementById('yesterdayClose').value;
     const vYestOpen     = document.getElementById('yesterdayOpen').value;
