@@ -2105,6 +2105,26 @@
         if (dow === 2 || dow === 3 || dow === 4) {
           notes.push(`Tuesday–Thursday historically average 53.5% win rate vs 57% on Mondays and Fridays.`);
         }
+        // Pattern 6: VIX intraday spike yesterday
+        if (last.vixOpen && last.vixClose) {
+          const vixIntraday = (parseFloat(last.vixClose) - parseFloat(last.vixOpen)) / parseFloat(last.vixOpen) * 100;
+          if (vixIntraday >= 10) {
+            notes.push(`VIX spiked ${vixIntraday.toFixed(1)}% intraday last session — historically M8BF averages ~44% the next day when VIX rises 10%+ in a day.`);
+          } else if (vixIntraday >= 5) {
+            notes.push(`VIX rose ${vixIntraday.toFixed(1)}% intraday last session — historically M8BF averages ~49% the next day when VIX rises 5-10% in a day.`);
+          }
+        }
+        // Pattern 7: SPX daily return yesterday
+        if (last.spxOpen && last.spxClose) {
+          const spxRet = (parseFloat(last.spxClose) - parseFloat(last.spxOpen)) / parseFloat(last.spxOpen) * 100;
+          if (spxRet <= -2) {
+            notes.push(`SPX fell ${Math.abs(spxRet).toFixed(1)}% last session — historically M8BF averages ~29% the next day after a 2%+ SPX down day.`);
+          } else if (spxRet <= -1) {
+            notes.push(`SPX fell ${Math.abs(spxRet).toFixed(1)}% last session — historically M8BF averages ~41% the next day after a 1-2% SPX down day.`);
+          } else if (spxRet >= 1) {
+            notes.push(`SPX rose ${spxRet.toFixed(1)}% last session — historically M8BF averages ~49% the next day after a 1%+ SPX up day.`);
+          }
+        }
       }
       // Pattern 3: 3+ consecutive below-avg sessions
       let streak = 0;
