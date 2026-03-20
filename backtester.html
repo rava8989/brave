@@ -579,7 +579,7 @@ tfoot td {
 
   <div style="display:flex;gap:8px;align-items:center">
     <button class="run-btn" id="runBtn">▶ RUN</button>
-    <button class="run-btn" id="m8bfModelBtn" style="background:linear-gradient(135deg,#6366f1,#818cf8);flex-shrink:0">⚡ CURRENT MODEL</button>
+    <button class="run-btn" id="m8bfModelBtn" style="background:linear-gradient(135deg,#6366f1,#818cf8);flex-shrink:0">⚡ CURRENT M8BF MODEL</button>
   </div>
 </div>
 
@@ -1003,12 +1003,10 @@ document.getElementById('tabs').addEventListener('click', e => {
 
 // ── Core logic ────────────────────────────────────────────────────────────────
 function filterTrades(forceFull) {
-  if (useM8BFModel) return buildM8BFTrades();
-
   const from = document.getElementById('dateFrom').value;
   const to   = document.getElementById('dateTo').value;
 
-  const source = TRADES;
+  const source = useM8BFModel ? buildM8BFTrades() : TRADES;
 
   // Build unified special-day set if filter is active
   let specialSet = null;
@@ -1234,7 +1232,7 @@ document.getElementById('runBtn').onclick = () => {
   useM8BFModel = false;
   const mb = document.getElementById('m8bfModelBtn');
   mb.style.outline = '';
-  mb.textContent = '⚡ CURRENT MODEL';
+  mb.textContent = '⚡ CURRENT M8BF MODEL';
   runPipeline(document.getElementById('runBtn'));
 };
 
@@ -1242,7 +1240,7 @@ document.getElementById('m8bfModelBtn').onclick = () => {
   useM8BFModel = true;
   const mb = document.getElementById('m8bfModelBtn');
   mb.style.outline = '2px solid #22c55e';
-  mb.textContent = '⚡ CURRENT MODEL ✓';
+  mb.textContent = '⚡ CURRENT M8BF MODEL ✓';
   runPipeline(document.getElementById('runBtn'));
 };
 
