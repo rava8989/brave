@@ -1200,27 +1200,28 @@ document.getElementById('slBest').addEventListener('click', () => {
 });
 
 // ── Run ───────────────────────────────────────────────────────────────────────
+const yield$ = () => new Promise(r => setTimeout(r, 0));
+
 async function runPipeline(btn) {
   btn.textContent = '⏳ Running…';
   btn.disabled = true;
-  await new Promise(r => setTimeout(r, 10)); // let browser paint button state
+  await yield$();
   try {
     const filtered = filterTrades();
     if (!filtered.length) {
       document.getElementById('statsGrid').innerHTML =
         '<div class="empty" style="grid-column:1/-1">No trades match the current filters.</div>';
+      btn.textContent = '▶ RUN'; btn.disabled = false;
       return;
     }
     lastResult = applyTP(filtered);
-    // Render everything except sweep synchronously (fast)
-    renderKPIs(lastResult);
-    renderEquity(lastResult);
-    renderCalendar(lastResult);
-    renderDist(lastResult);
+    renderKPIs(lastResult);    await yield$();
+    renderEquity(lastResult);  await yield$();
+    renderCalendar(lastResult);await yield$();
+    renderDist(lastResult);    await yield$();
     renderLog(lastResult);
     btn.textContent = '▶ RUN';
     btn.disabled = false;
-    // Sweep is expensive — run async after UI is already responsive
     await renderSweep(filtered);
   } catch(e) {
     btn.textContent = '▶ RUN';
@@ -1323,28 +1324,37 @@ function renderEquity(results) {
   let se=0, st=0;
   results.forEach(r => { se += r.profit; st += r.tpPnl; expireCum.push(se); tpCum.push(st); });
 
+  // Downsample to max 3000 points for performance
+  const MAX_PTS = 3000;
+  function downsample(arr) {
+    if (arr.length <= MAX_PTS) return arr;
+    const step = arr.length / MAX_PTS;
+    return Array.from({length: MAX_PTS}, (_, i) => arr[Math.round(i * step)]);
+  }
+
   const acc = isDark() ? '#818cf8' : '#6366f1';
   Plotly.newPlot('chartEquity', [
-    { y: expireCum, mode:'lines', name:'Expire', line:{color:'#475569',width:1.5,dash:'dot'}, hovertemplate:'$%{y:,.0f}<extra>Expire</extra>' },
-    { y: tpCum,     mode:'lines', name:'TP',     line:{color:acc,width:2},
+    { y: downsample(expireCum), mode:'lines', name:'Expire', line:{color:'#475569',width:1.5,dash:'dot'}, hovertemplate:'$%{y:,.0f}<extra>Expire</extra>' },
+    { y: downsample(tpCum),     mode:'lines', name:'TP',     line:{color:acc,width:2},
       fill:'tozeroy', fillcolor: isDark()?'rgba(129,140,248,.07)':'rgba(99,102,241,.06)',
       hovertemplate:'$%{y:,.0f}<extra>TP</extra>' },
   ], { ...plotCfg(), height:300, yaxis:{...plotCfg().yaxis,tickformat:'$,.0f'}, hovermode:'x unified',
-       shapes:[{type:'line',x0:0,x1:results.length,y0:0,y1:0,line:{color:'#2d3f55',width:1}}]
+       shapes:[{type:'line',x0:0,x1:Math.min(results.length,MAX_PTS),y0:0,y1:0,line:{color:'#2d3f55',width:1}}]
   }, PLOTLY_CFG);
 
   const gc = isDark() ? '#22c55e' : '#16a34a';
   const rc = isDark() ? '#ef4444' : '#dc2626';
   const oc = isDark()?'#f59e0b':'#d97706';
-  const barColors = results.map(r => r.profit > 0 ? gc : rc);
-  const tpColors  = results.map(r => r.tpHit ? oc : (r.tpPnl>0?gc:rc));
+  const sample = results.length > MAX_PTS ? downsample(results) : results;
+  const barColors = sample.map(r => r.profit > 0 ? gc : rc);
+  const tpColors  = sample.map(r => r.tpHit ? oc : (r.tpPnl>0?gc:rc));
 
   Plotly.newPlot('chartBars', [
-    { y: results.map(r=>r.profit), type:'bar', name:'Expire', marker:{color:barColors,opacity:.35}, hovertemplate:'$%{y:,.0f}<extra>Expire</extra>' },
-    { y: results.map(r=>r.tpPnl), type:'bar', name:'TP',     marker:{color:tpColors,opacity:.85},  hovertemplate:'$%{y:,.0f}<extra>TP</extra>' },
+    { y: sample.map(r=>r.profit), type:'bar', name:'Expire', marker:{color:barColors,opacity:.35}, hovertemplate:'$%{y:,.0f}<extra>Expire</extra>' },
+    { y: sample.map(r=>r.tpPnl), type:'bar', name:'TP',     marker:{color:tpColors,opacity:.85},  hovertemplate:'$%{y:,.0f}<extra>TP</extra>' },
   ], { ...plotCfg(), height:200, barmode:'overlay', bargap:0,
        yaxis:{...plotCfg().yaxis,tickformat:'$,.0f'},
-       shapes:[{type:'line',x0:0,x1:results.length,y0:0,y1:0,line:{color:'#2d3f55',width:1}}]
+       shapes:[{type:'line',x0:0,x1:sample.length,y0:0,y1:0,line:{color:'#2d3f55',width:1}}]
   }, PLOTLY_CFG);
 }
 
@@ -1489,16 +1499,21 @@ function renderDist(results) {
   const acc = isDark() ? '#818cf8' : '#6366f1';
   const base = plotCfg();
 
+  // Downsample scatter to max 3000 points for performance
+  const scatterSample = results.length > 3000
+    ? results.filter((_, i) => i % Math.ceil(results.length / 3000) === 0)
+    : results;
+
   Plotly.newPlot('chartHist',[
     {x:results.map(r=>r.profit), type:'histogram',nbinsx:60,name:'Expire',marker:{color:'#334155',opacity:.65}},
     {x:results.map(r=>r.tpPnl), type:'histogram',nbinsx:60,name:'TP',    marker:{color:acc,opacity:.75}},
   ],{...base,height:300,barmode:'overlay',xaxis:{...base.xaxis,tickformat:'$,.0f'},shapes:[{type:'line',x0:0,x1:0,y0:0,y1:1,yref:'paper',line:{color:'#2d3f55',width:1}}]},PLOTLY_CFG);
 
-  const mx = Math.max(...results.map(r=>Math.abs(r.profit)));
+  const mx = Math.max(...scatterSample.map(r=>Math.abs(r.profit)));
   Plotly.newPlot('chartScatter',[
     {x:[-mx,mx],y:[-mx,mx],mode:'lines',line:{color:'#2d3f55',width:1},showlegend:false},
-    {x:results.map(r=>r.profit),y:results.map(r=>r.tpPnl),mode:'markers',
-     marker:{color:results.map(r=>r.tpHit?'#f59e0b':acc),size:3,opacity:.45},
+    {x:scatterSample.map(r=>r.profit),y:scatterSample.map(r=>r.tpPnl),mode:'markers',
+     marker:{color:scatterSample.map(r=>r.tpHit?'#f59e0b':acc),size:3,opacity:.45},
      hovertemplate:'Expire: $%{x:,.0f}<br>TP: $%{y:,.0f}<extra></extra>'},
   ],{...base,height:300,xaxis:{...base.xaxis,tickformat:'$,.0f',title:'Expire P&L'},yaxis:{...base.yaxis,tickformat:'$,.0f',title:'TP P&L'}},PLOTLY_CFG);
 }
