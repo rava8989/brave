@@ -1,0 +1,774 @@
+/**
+ * Schwab API Proxy — Cloudflare Worker
+ *
+ * Routes:
+ *   POST /token   → Token exchange & refresh (injects Basic auth from env secret)
+ *   GET  /market/* → Pass-through proxy for market data (forwards Bearer token)
+ *   POST /sync    → Browser pushes tokens/creds/discord config to KV
+ *   GET  /status  → Returns last cron run result from KV
+ *   OPTIONS *      → CORS preflight
+ *
+ * Env vars (set in Cloudflare dashboard):
+ *   SCHWAB_APP_SECRET  — encrypted secret from Schwab developer portal
+ *   ALLOWED_ORIGIN     — e.g. https://user.github.io
+ *   SYNC_SECRET        — shared secret for /sync endpoint
+ *
+ * KV binding: SIGNAL_KV
+ */
+
+// ════════════════════════════════════════════════════════════════════
+// CALENDAR DATA (ported from index.html)
+// ════════════════════════════════════════════════════════════════════
+
+const cpiSch   = ["January 13, 2026","February 13, 2026","March 11, 2026","April 10, 2026","May 12, 2026","June 10, 2026","July 14, 2026","August 12, 2026","September 11, 2026","October 14, 2026","November 10, 2026","December 10, 2026"];
+const fedSch   = ["January 28, 2026","March 18, 2026","April 29, 2026","June 17, 2026","July 29, 2026","September 16, 2026","October 28, 2026","December 9, 2026"];
+const opexSch  = ["January 16, 2026","February 20, 2026","March 20, 2026","April 17, 2026","May 15, 2026","June 18, 2026","July 17, 2026","August 21, 2026","September 18, 2026","October 16, 2026","November 20, 2026","December 18, 2026"];
+const holidays = ["January 1, 2026","January 19, 2026","February 16, 2026","April 3, 2026","May 25, 2026","June 19, 2026","July 3, 2026","September 7, 2026","November 26, 2026","December 25, 2026"];
+const vixSch   = ["January 21, 2026","February 18, 2026","March 18, 2026","April 15, 2026","May 20, 2026","June 17, 2026","July 15, 2026","August 19, 2026","September 16, 2026","October 21, 2026","November 18, 2026","December 16, 2026"];
+
+const earningsSchedule = [
+  { date:"January 28, 2026",  company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:true },
+  { date:"January 28, 2026",  company:"Meta",      ticker:"META", timing:"AH", confirmed:true },
+  { date:"January 29, 2026",  company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:true },
+  { date:"February 4, 2026",  company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:true },
+  { date:"February 5, 2026",  company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:true },
+  { date:"February 26, 2026", company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:true },
+  { date:"April 23, 2026",    company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:false },
+  { date:"April 28, 2026",    company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:false },
+  { date:"April 29, 2026",    company:"Meta",      ticker:"META", timing:"AH", confirmed:true  },
+  { date:"April 30, 2026",    company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:false },
+  { date:"April 30, 2026",    company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:false },
+  { date:"May 20, 2026",      company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:true  },
+  { date:"July 23, 2026",     company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:false },
+  { date:"July 28, 2026",     company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:false },
+  { date:"July 29, 2026",     company:"Meta",      ticker:"META", timing:"AH", confirmed:false },
+  { date:"July 30, 2026",     company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:false },
+  { date:"July 30, 2026",     company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:false },
+  { date:"August 19, 2026",   company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:false },
+  { date:"October 22, 2026",  company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:false },
+  { date:"October 27, 2026",  company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:false },
+  { date:"October 28, 2026",  company:"Meta",      ticker:"META", timing:"AH", confirmed:false },
+  { date:"October 29, 2026",  company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:false },
+  { date:"October 29, 2026",  company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:false },
+  { date:"November 18, 2026", company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:false },
+];
+
+const T = {
+  DROP_GXBF: 0.65, DROP_STRAD_MIN: 0,
+  O2O_M8BF: 1.4, VIX_MAX_GXBF: 25, VIX_MAX_BOBF: 23,
+  SPX_GAP_THRESHOLD: 0.9,
+};
+
+// ════════════════════════════════════════════════════════════════════
+// DATE HELPERS (ported from index.html — uses ET dates)
+// ════════════════════════════════════════════════════════════════════
+
+function toET(d = new Date()) {
+  return new Date(d.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+}
+
+function dateLong(d) {
+  return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+}
+
+function todayLong(etDate) { return dateLong(etDate); }
+
+const isWkend = d => { const w = d.getDay(); return w === 0 || w === 6; };
+const isHol   = d => holidays.includes(dateLong(d));
+const isTrade = d => !isWkend(d) && !isHol(d);
+
+function nextTrade(d) { const n = new Date(d); do { n.setDate(n.getDate() + 1); } while (isWkend(n) || isHol(n)); return n; }
+function prevTrade(d) { const p = new Date(d); do { p.setDate(p.getDate() - 1); } while (isWkend(p) || isHol(p)); return p; }
+
+function isTodayAfter(ds, etDate) {
+  const d = new Date(ds); if (isNaN(d)) return false;
+  const a = nextTrade(d);
+  return a.getFullYear() === etDate.getFullYear() && a.getMonth() === etDate.getMonth() && a.getDate() === etDate.getDate();
+}
+function isTodayBefore(ds, etDate) {
+  const d = new Date(ds); if (isNaN(d)) return false;
+  const b = prevTrade(d);
+  return b.getFullYear() === etDate.getFullYear() && b.getMonth() === etDate.getMonth() && b.getDate() === etDate.getDate();
+}
+
+function parseLong(s) { const d = new Date(s); return isNaN(d) ? null : new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12); }
+function schedInMonth(list, ref) {
+  const y = ref.getFullYear(), m = ref.getMonth();
+  for (const s of list) { const d = parseLong(s); if (d && d.getFullYear() === y && d.getMonth() === m) return d; }
+  return null;
+}
+
+function isPostVixBeforeOpex(ref) {
+  const vx = schedInMonth(vixSch, ref), op = schedInMonth(opexSch, ref);
+  if (!vx || !op || vx >= op) return false;
+  const pv = nextTrade(vx);
+  return pv.getFullYear() === ref.getFullYear() && pv.getMonth() === ref.getMonth() && pv.getDate() === ref.getDate();
+}
+
+const isPostOpexMon = (etDate) => opexSch.some(ds => isTodayAfter(ds, etDate)) && etDate.getDay() === 1;
+const isLastTradeMo = (d) => nextTrade(d).getMonth() !== d.getMonth();
+function isEomN(n, d) { const f = new Date(d.getFullYear(), d.getMonth() + 1, 1); let t = prevTrade(f); for (let i = 0; i < n; i++) t = prevTrade(t); return t.getFullYear() === d.getFullYear() && t.getMonth() === d.getMonth() && t.getDate() === d.getDate(); }
+const isFirstTradeMo = (d) => prevTrade(d).getMonth() !== d.getMonth();
+function isFirstTradeMon(d) {
+  const y = d.getFullYear(), m = d.getMonth();
+  let x = new Date(y, m, 1); while (isWkend(x) || isHol(x)) x.setDate(x.getDate() + 1);
+  while (x.getDay() !== 1) x = nextTrade(x);
+  return x.getFullYear() === y && x.getMonth() === m && x.getDate() === d.getDate();
+}
+
+function m8Sched(dow) {
+  switch (dow) {
+    case 1: return { t: "10:00", window: "10:00–10:29", s: ["05", "45", "70", "95"], everyWeek: false };
+    case 2: return { t: "12:00", window: "12:00–12:29", s: ["00", "05", "35", "45", "70", "75", "85", "90"], everyWeek: false };
+    case 3: return { t: "11:30", window: "11:30–11:59", s: ["30", "45", "50", "70", "80", "95"], everyWeek: false };
+    case 4: return { t: "11:30", window: "11:30–11:59", s: ["05", "15", "55", "75", "85"], everyWeek: true };
+    case 5: return { t: "13:00", window: "13:00–13:29", s: ["45", "55", "65", "70", "75", "85", "95"], everyWeek: true };
+    default: return null;
+  }
+}
+function m8Msg(d) { const sc = m8Sched(d.getDay()); return sc ? `M8BF — Window ${sc.window}` : "M8BF"; }
+
+function ordinal(n) { const s = ["th", "st", "nd", "rd"], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); }
+function wdName(d) { return ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][d] || ""; }
+function tradeWdLabel(d) {
+  const t = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const dow = t.getDay(), ms = new Date(t.getFullYear(), t.getMonth(), 1);
+  let c = 0;
+  for (let x = new Date(ms); x <= t; x.setDate(x.getDate() + 1)) { if (!isTrade(x)) continue; if (x.getDay() === dow) c++; }
+  if (!isTrade(t)) return `${wdName(dow)} (market closed)`;
+  return `${ordinal(c)} ${wdName(dow)}`;
+}
+
+function isEarningsDay(etDate) { return earningsSchedule.some(e => e.date === todayLong(etDate)); }
+
+// ════════════════════════════════════════════════════════════════════
+// SIGNAL CALCULATION (ported from index.html calculateStrategy)
+// Win rate overrides default to unchecked (wr0=false, wr90=false)
+// ════════════════════════════════════════════════════════════════════
+
+function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate }) {
+  const cpiDay = cpiSch.includes(todayLong(etDate));
+  const dow = etDate.getDay();
+  const isMon = dow === 1, isFri = dow === 5, isWed = dow === 3;
+  const nmDay = isFirstTradeMo(etDate), nmMon = isFirstTradeMon(etDate);
+  const fedDay = fedSch.includes(todayLong(etDate));
+  const opexDay = opexSch.includes(todayLong(etDate));
+  const postOpMon = isPostOpexMon(etDate);
+  const postOpDay = opexSch.some(ds => isTodayAfter(ds, etDate));
+  const eomDay = isLastTradeMo(etDate), eom1 = isEomN(1, etDate), eom2 = isEomN(2, etDate);
+  const vixExpDay = vixSch.includes(todayLong(etDate));
+  const opex1 = opexSch.some(ds => isTodayBefore(ds, etDate));
+  const earningsDay = isEarningsDay(etDate);
+  const msftMetaEarnings = earningsSchedule.some(e => e.date === todayLong(etDate) && (e.ticker === 'MSFT' || e.ticker === 'META'));
+
+  const o2o = (vixYOpen != null) ? vixYOpen - vixToday : NaN;
+  const oNight = vixYClose - vixToday;
+
+  let spxGapForcesM8BF = false;
+  if (spxGapPct !== null && spxGapPct !== undefined) {
+    spxGapForcesM8BF = Math.abs(spxGapPct) >= T.SPX_GAP_THRESHOLD;
+  }
+
+  let rec = "", theme = "neutral", crossed = false, pmNote = false;
+  let blockT = "", blockD = "", entryT = "", badge = "";
+  let strikeInfo = null;
+
+  if (cpiDay) {
+    if (oNight > 0) { rec = "Long ATM Call @ 9:32 AM (CPI) — Max $13"; theme = "strad"; entryT = "9:32 AM"; badge = "CPI CALL"; }
+    else { rec = "No Trade (CPI, VIX up)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "CPI day, VIX up"; badge = "BLOCKED"; }
+  } else if (spxGapForcesM8BF) {
+    const dir = spxGapPct > 0 ? '▲' : '▼';
+    rec = m8Msg(etDate); theme = "m8bf"; badge = "M8BF"; strikeInfo = m8Sched(dow); entryT = strikeInfo?.window || "";
+    blockD = `SPX gap ${dir}${Math.abs(spxGapPct).toFixed(2)}% ≥ ${T.SPX_GAP_THRESHOLD}% → M8BF forced`;
+  } else {
+    if (oNight > T.DROP_GXBF) {
+      if (vixToday >= T.VIX_MAX_GXBF) { rec = `No GXBF (VIX ${vixToday} ≥ ${T.VIX_MAX_GXBF})`; theme = "block"; crossed = true; blockT = "vix"; blockD = `VIX ${vixToday} ≥ ${T.VIX_MAX_GXBF}`; badge = "BLOCKED"; }
+      else { rec = `GXBF @ 9:36 AM`; theme = "gxbf"; entryT = "9:36 AM"; badge = "GXBF"; }
+    } else if (o2o > T.O2O_M8BF) {
+      rec = m8Msg(etDate); theme = "m8bf"; badge = "M8BF"; strikeInfo = m8Sched(dow); entryT = strikeInfo?.window || "";
+    } else if (oNight > T.DROP_STRAD_MIN && oNight < T.DROP_GXBF) {
+      rec = "Straddle @ 9:32 AM"; theme = "strad"; entryT = "9:32 AM"; badge = "STRADDLE";
+    } else {
+      rec = m8Msg(etDate); theme = "m8bf"; badge = "M8BF"; strikeInfo = m8Sched(dow); entryT = strikeInfo?.window || "";
+    }
+
+    if (rec.startsWith("M8BF")) {
+      if (fedDay) { rec = "No M8BF (Fed day)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "M8BF not traded on Fed days"; badge = "BLOCKED"; strikeInfo = null; }
+      else if (msftMetaEarnings) {
+        const tickers = earningsSchedule.filter(e => e.date === todayLong(etDate) && (e.ticker === 'MSFT' || e.ticker === 'META')).map(e => e.ticker).join(', ');
+        rec = `No M8BF (${tickers} earnings)`; theme = "block"; crossed = true; blockT = "hard"; blockD = `M8BF not traded on MSFT/META earnings days`; badge = "BLOCKED"; strikeInfo = null;
+      }
+      else if (eom1) { rec = "No M8BF (EOM-1)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "M8BF not traded on EOM-1 (no edge)"; badge = "BLOCKED"; strikeInfo = null; }
+    }
+    if (isPostVixBeforeOpex(etDate) && rec.startsWith("M8BF")) { rec = "No M8BF (post-VIX exp)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "VIX exp before OPEX this month"; badge = "BLOCKED"; strikeInfo = null; }
+
+    if (nmDay && !isMon && (rec.startsWith("M8BF") || rec.startsWith("No M8BF"))) { rec = "NM Straddle @ 9:32 AM"; theme = "strad"; crossed = false; blockT = ""; entryT = "9:32 AM"; badge = "NM STRADDLE"; strikeInfo = null; }
+    if (eomDay) { rec = "Straddle @ 9:32 AM (EOM)"; theme = "strad"; crossed = false; blockT = ""; entryT = "9:32 AM"; badge = "EOM STRADDLE"; strikeInfo = null; }
+    if (isWed && !fedDay && !eomDay && !nmDay && rec.startsWith("Straddle")) { rec = m8Msg(etDate); theme = "m8bf"; badge = "M8BF"; strikeInfo = m8Sched(dow); entryT = strikeInfo?.window || ""; }
+    if (opexDay && rec.startsWith("Straddle")) { rec = "No Straddle (OPEX day)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "Straddle not on OPEX"; badge = "BLOCKED"; }
+    if (postOpMon && rec.startsWith("M8BF")) pmNote = true;
+
+    // Win rate overrides: default unchecked → skip
+
+    if (postOpDay) {
+      const isM8 = rec.startsWith("M8BF"), isStr = rec.startsWith("Straddle") || rec.startsWith("NM Straddle");
+      if (isM8 || isStr) {
+        if (vixToday >= T.VIX_MAX_GXBF) { rec = `No GXBF (VIX ${vixToday} ≥ ${T.VIX_MAX_GXBF})`; theme = "block"; crossed = true; pmNote = false; blockT = "vix"; blockD = `OPEX+1 GXBF blocked, VIX ${vixToday}`; badge = "BLOCKED"; strikeInfo = null; }
+        else { rec = "GXBF @ 9:36 AM (OPEX+1)"; theme = "gxbf"; crossed = false; pmNote = false; blockT = ""; entryT = "9:36 AM"; badge = "GXBF"; strikeInfo = null; }
+      }
+    }
+  }
+
+  if (pmNote) rec += " (afternoon times preferred)";
+
+  // ── BOBF card logic ──
+  const bobfBlocks = [];
+  if (nmMon) bobfBlocks.push("NM Monday");
+  if (vixExpDay) bobfBlocks.push("VIX expiration");
+  if (opexDay) bobfBlocks.push("OPEX");
+  if (opex1) bobfBlocks.push("OPEX-1");
+  if (eom2) bobfBlocks.push("EOM-2");
+  if (eom1) bobfBlocks.push("EOM-1");
+  if (earningsDay) { const tickers = earningsSchedule.filter(e => e.date === todayLong(etDate)).map(e => e.ticker).join(','); bobfBlocks.push(`earnings (${tickers})`); }
+  if (vixToday > T.VIX_MAX_BOBF) bobfBlocks.push("high VIX");
+
+  let bobfRec, bobfBadge;
+  if (bobfBlocks.length) {
+    bobfRec = `No BOBF (${bobfBlocks.join(", ")})`;
+    bobfBadge = "BLOCKED";
+  } else {
+    bobfRec = isFri ? "BOBF (Friday version)" : "BOBF in play";
+    bobfBadge = isFri ? "FRIDAY VERSION" : "IN PLAY";
+  }
+
+  // ── Build dimmed card texts for inactive strategies ──
+  let m8bfText = rec, stradText = rec, gxbfText = rec;
+
+  if (theme === 'm8bf') {
+    stradText = `No Straddle (${oNight <= 0 ? 'overnight VIX down' : 'overnight VIX drop > ' + T.DROP_GXBF})`;
+    gxbfText = `No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;
+  } else if (theme === 'strad') {
+    m8bfText = `No M8BF (${oNight > 0 ? 'overnight VIX up' : 'open-to-open ≤ ' + T.O2O_M8BF})`;
+    gxbfText = `No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;
+  } else if (theme === 'gxbf') {
+    m8bfText = `No M8BF (overnight VIX up)`;
+    stradText = `No Straddle (overnight VIX drop > ${T.DROP_GXBF})`;
+  } else if (theme === 'block') {
+    // keep rec as-is for the blocked card
+    if (rec.includes('M8BF')) {
+      stradText = `No Straddle (${oNight <= 0 ? 'overnight VIX down' : 'overnight VIX drop > ' + T.DROP_GXBF})`;
+      gxbfText = `No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;
+    } else if (rec.includes('Straddle') || rec.includes('CPI') || rec.includes('Trade')) {
+      m8bfText = `No M8BF`;
+      gxbfText = `No GXBF`;
+    } else if (rec.includes('GXBF')) {
+      m8bfText = `No M8BF`;
+      stradText = `No Straddle`;
+    }
+  }
+
+  return {
+    rec, theme, crossed, badge, entryT, blockT, blockD, pmNote,
+    strikeInfo,
+    m8bfText, stradText, gxbfText,
+    bobfRec, bobfBadge, bobfBlocks,
+    oNight, o2o,
+    spxGapPct, spxGapForcesM8BF,
+    dayLabel: tradeWdLabel(etDate),
+    dateStr: todayLong(etDate),
+    cpiDay, fedDay, opexDay, postOpDay: opexSch.some(ds => isTodayAfter(ds, etDate)), eomDay,
+  };
+}
+
+// ════════════════════════════════════════════════════════════════════
+// DISCORD MESSAGE BUILDER (ported from index.html discordBuildMessage)
+// ════════════════════════════════════════════════════════════════════
+
+function buildDiscordMessage(signal, vixValues) {
+  const GRN = '\x1b[32m', RED = '\x1b[31m', DIM = '\x1b[2m', RST = '\x1b[0m';
+
+  const isActive  = text => text && !text.startsWith('No ');
+  const isBlocked = text => text && text.startsWith('No ');
+  const sigColor  = text => isActive(text) ? GRN : isBlocked(text) ? RED : DIM;
+
+  const m8bfDisplay = signal.m8bfText.replace(/^M8BF\s*[—-]\s*/, '').replace(/^M8BF$/, '—');
+  const strikes = (signal.strikeInfo && signal.theme === 'm8bf') ? signal.strikeInfo.s.join('  ') : '';
+  const m8bfReason = signal.blockT === 'hard' && signal.rec.includes('M8BF') ? signal.blockD : '';
+
+  let inner = `${DIM}📅 ${signal.dateStr} — ${signal.dayLabel}${RST}\n`;
+  inner += `${DIM}${'─'.repeat(34)}${RST}\n`;
+
+  const mc = sigColor(signal.m8bfText);
+  inner += `${mc}M8BF     │ ${m8bfDisplay}${RST}\n`;
+  if (strikes) inner += `${mc}         │ ${strikes}${RST}\n`;
+  if (m8bfReason) inner += `${mc}         │ ${m8bfReason}${RST}\n`;
+  inner += `${sigColor(signal.stradText)}Straddle │ ${signal.stradText}${RST}\n`;
+  inner += `${sigColor(signal.gxbfText)}GXBF     │ ${signal.gxbfText}${RST}\n`;
+  inner += `${sigColor(signal.bobfRec)}BOBF     │ ${signal.bobfRec}${RST}\n`;
+
+  // VIX values
+  inner += `${DIM}${'─'.repeat(34)}${RST}\n`;
+  inner += `${DIM}VIX Prev Close  │ ${vixValues.yClose ?? '—'}${RST}\n`;
+  inner += `${DIM}VIX Prev Open   │ ${vixValues.yOpen ?? '—'}${RST}\n`;
+  inner += `${DIM}VIX Today Open  │ ${vixValues.todayOpen ?? '—'}${RST}\n`;
+  inner += `${DIM}Overnight Drop  │ ${signal.oNight.toFixed(2)}${RST}\n`;
+  inner += `${DIM}Open-to-Open    │ ${isNaN(signal.o2o) ? '—' : signal.o2o.toFixed(2)}${RST}\n`;
+
+  // SPX gap
+  if (signal.spxGapPct !== null && signal.spxGapPct !== undefined) {
+    const dir = signal.spxGapPct > 0 ? '▲' : '▼';
+    const forced = signal.spxGapForcesM8BF;
+    inner += `${DIM}${'─'.repeat(34)}${RST}\n`;
+    inner += `${forced ? RED : DIM}SPX Gap         │ ${dir}${Math.abs(signal.spxGapPct).toFixed(2)}%${forced ? ' ⚠️ M8BF forced' : ''}${RST}\n`;
+  }
+
+  return `\`\`\`ansi\n${inner}\`\`\`\n*Not financial advice. For informational purposes only.*`;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// SCHWAB TOKEN HELPERS
+// ════════════════════════════════════════════════════════════════════
+
+async function getAccessToken(env) {
+  const tokensRaw = await env.SIGNAL_KV.get('schwab_tokens');
+  if (!tokensRaw) throw new Error('No Schwab tokens in KV — sync from browser first');
+  const tokens = JSON.parse(tokensRaw);
+
+  // Check refresh token not expired
+  if (Date.now() > tokens.refreshExpiry) {
+    throw new Error('Schwab refresh token expired — re-authenticate in browser');
+  }
+
+  // Refresh access token if within 2 minutes of expiry
+  if (Date.now() > tokens.expiry - 120000) {
+    const credsRaw = await env.SIGNAL_KV.get('schwab_creds');
+    if (!credsRaw) throw new Error('No Schwab creds in KV');
+    const creds = JSON.parse(credsRaw);
+
+    const body = new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: tokens.refresh,
+    });
+
+    const resp = await fetch('https://api.schwabapi.com/v1/oauth/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Authorization': 'Basic ' + btoa(`${creds.appKey}:${env.SCHWAB_APP_SECRET}`),
+      },
+      body,
+    });
+
+    const data = await resp.json();
+    if (!data.access_token) throw new Error('Token refresh failed: ' + (data.error_description || JSON.stringify(data)));
+
+    const newTokens = {
+      access: data.access_token,
+      refresh: data.refresh_token || tokens.refresh,
+      expiry: Date.now() + (data.expires_in * 1000),
+      refreshExpiry: tokens.refreshExpiry,
+    };
+    await env.SIGNAL_KV.put('schwab_tokens', JSON.stringify(newTokens));
+    return newTokens.access;
+  }
+
+  return tokens.access;
+}
+
+async function fetchSchwabJSON(url, token) {
+  const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  return resp.json();
+}
+
+// ════════════════════════════════════════════════════════════════════
+// SCHEDULED HANDLER (Cron Trigger)
+// ════════════════════════════════════════════════════════════════════
+
+async function handleScheduled(env) {
+  const etNow = toET();
+  const dow = etNow.getDay();
+
+  // Not a weekday → skip
+  if (dow === 0 || dow === 6) return { status: 'skipped', reason: 'weekend' };
+
+  // Not a trading day (holiday) → skip
+  if (!isTrade(etNow)) return { status: 'skipped', reason: 'holiday' };
+
+  // DST-safe: we fire at both :31 past 13:00 and 14:00 UTC. Check if ET hour is 9.
+  const etHour = etNow.getHours();
+  const etMin = etNow.getMinutes();
+  if (etHour !== 9 || etMin < 30 || etMin > 40) {
+    return { status: 'skipped', reason: `not 9:30 ET (currently ${etHour}:${String(etMin).padStart(2, '0')} ET)` };
+  }
+
+  // 1. Get access token
+  const token = await getAccessToken(env);
+
+  // 2. Fetch VIX 5-day history → yesterday open + close
+  const end = Date.now();
+  const start = end - 5 * 24 * 60 * 60 * 1000;
+  const vixHistUrl = `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24VIX&periodType=day&period=5&frequencyType=minute&frequency=1&startDate=${start}&endDate=${end}&needExtendedHoursData=true`;
+  const vixHist = await fetchSchwabJSON(vixHistUrl, token);
+  if (!vixHist.candles || !vixHist.candles.length) throw new Error('No VIX history data');
+
+  const candles = vixHist.candles;
+  const todayStr = etNow.toDateString();
+
+  // Find yesterday's trading day
+  let yDate = null;
+  for (let i = candles.length - 1; i >= 0; i--) {
+    const d = new Date(candles[i].datetime);
+    const dET = toET(d);
+    if (dET.toDateString() !== todayStr) { yDate = dET.toDateString(); break; }
+  }
+
+  let vixYOpen = null, vixYClose = null;
+  if (yDate) {
+    const yCandles = candles.filter(c => toET(new Date(c.datetime)).toDateString() === yDate);
+    yCandles.sort((a, b) => a.datetime - b.datetime);
+    const openCandle = yCandles.find(c => {
+      const d = toET(new Date(c.datetime));
+      return d.getHours() === 9 && d.getMinutes() >= 30 && d.getMinutes() <= 35;
+    });
+    const closeCandle = yCandles.slice().reverse().find(c => {
+      const d = toET(new Date(c.datetime));
+      return d.getHours() === 16 && d.getMinutes() >= 10 && d.getMinutes() <= 15;
+    }) || yCandles[yCandles.length - 1];
+
+    if (openCandle) vixYOpen = parseFloat(openCandle.open.toFixed(2));
+    if (closeCandle) vixYClose = parseFloat(closeCandle.close.toFixed(2));
+  }
+
+  // Override yClose with quote's closePrice (official previous close)
+  try {
+    const qData = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`, token);
+    const qClose = qData?.['$VIX']?.quote?.closePrice;
+    if (qClose) vixYClose = parseFloat(qClose.toFixed(2));
+  } catch (e) { /* fall back to candle close */ }
+
+  if (vixYClose === null) throw new Error('Could not determine yesterday VIX close');
+
+  // 3. Get today's VIX open from candles (first 1-min candle at 9:30-9:35 ET)
+  let vixToday = null;
+  const todayCandles = candles.filter(c => toET(new Date(c.datetime)).toDateString() === todayStr);
+  todayCandles.sort((a, b) => a.datetime - b.datetime);
+  const todayOpenCandle = todayCandles.find(c => {
+    const d = toET(new Date(c.datetime));
+    return d.getHours() === 9 && d.getMinutes() >= 30 && d.getMinutes() <= 35;
+  });
+  if (todayOpenCandle) vixToday = parseFloat(todayOpenCandle.open.toFixed(2));
+
+  // Fallback: quote API if candle not yet available (e.g. called right at open)
+  if (vixToday === null) {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const vixQuoteUrl = `https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`;
+      const vixQuote = await fetchSchwabJSON(vixQuoteUrl, token);
+      const quote = vixQuote?.['$VIX']?.quote;
+      if (quote) {
+        vixToday = quote.openPrice || quote.lastPrice;
+        if (vixToday) { vixToday = parseFloat(vixToday.toFixed(2)); break; }
+      }
+      if (attempt < 4) await new Promise(r => setTimeout(r, 30000));
+    }
+  }
+  if (vixToday === null) throw new Error('Could not get VIX today open after 5 attempts');
+
+  // 4. Fetch SPX quote → gap %
+  let spxGapPct = null;
+  try {
+    // Get SPX yesterday close from history
+    const spxHistUrl = `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24SPX&periodType=day&period=5&frequencyType=minute&frequency=1&startDate=${start}&endDate=${end}&needExtendedHoursData=true`;
+    const spxHist = await fetchSchwabJSON(spxHistUrl, token);
+    let spxYClose = null;
+    if (spxHist.candles && yDate) {
+      const spxYCandles = spxHist.candles.filter(c => toET(new Date(c.datetime)).toDateString() === yDate);
+      spxYCandles.sort((a, b) => a.datetime - b.datetime);
+      const spxCloseCandle = spxYCandles.slice().reverse().find(c => {
+        const d = toET(new Date(c.datetime));
+        return d.getHours() === 16 && d.getMinutes() >= 10 && d.getMinutes() <= 15;
+      }) || (spxYCandles.length ? spxYCandles[spxYCandles.length - 1] : null);
+      if (spxCloseCandle) spxYClose = spxCloseCandle.close;
+    }
+
+    // Get SPX today open from quote
+    const spxQuoteUrl = `https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24SPX&fields=quote`;
+    const spxQuote = await fetchSchwabJSON(spxQuoteUrl, token);
+    const spxQ = spxQuote?.['$SPX']?.quote;
+    const spxTodayOpen = spxQ ? (spxQ.openPrice || spxQ.lastPrice) : null;
+
+    if (spxYClose && spxTodayOpen) {
+      spxGapPct = ((spxTodayOpen - spxYClose) / spxYClose) * 100;
+    }
+  } catch (e) { /* SPX gap is optional */ }
+
+  // 5. Calculate signal
+  const signal = calculateSignal({
+    vixToday,
+    vixYOpen,
+    vixYClose,
+    spxGapPct,
+    etDate: etNow,
+  });
+
+  // 6. Build Discord message
+  const vixValues = { yOpen: vixYOpen, yClose: vixYClose, todayOpen: vixToday };
+  const message = buildDiscordMessage(signal, vixValues);
+
+  // 7. Post to Discord
+  const dcRaw = await env.SIGNAL_KV.get('discord_config');
+  if (!dcRaw) throw new Error('No Discord config in KV — sync from browser');
+  const dc = JSON.parse(dcRaw);
+
+  const dcResp = await fetch(dc.proxyUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userId: dc.channelId, message }),
+  });
+  const dcData = await dcResp.json();
+  if (!dcResp.ok) throw new Error('Discord post failed: ' + JSON.stringify(dcData));
+
+  return {
+    status: 'success',
+    signal: signal.rec,
+    badge: signal.badge,
+    vix: { todayOpen: vixToday, yOpen: vixYOpen, yClose: vixYClose },
+    spxGapPct,
+    postedAt: new Date().toISOString(),
+  };
+}
+
+// ════════════════════════════════════════════════════════════════════
+// WORKER EXPORT
+// ════════════════════════════════════════════════════════════════════
+
+export default {
+  async fetch(request, env) {
+    const origin = request.headers.get('Origin') || '';
+    const allowed = env.ALLOWED_ORIGIN || '*';
+    const corsOk = allowed === '*' || origin === allowed;
+
+    const corsHeaders = {
+      'Access-Control-Allow-Origin': corsOk ? origin || '*' : '',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Sync-Secret',
+      'Access-Control-Max-Age': '86400',
+    };
+
+    const url = new URL(request.url);
+
+    // ── GET /status ── Public debug endpoint (no CORS restriction)
+    if (url.pathname === '/status' && request.method === 'GET') {
+      try {
+        const lastRun = await env.SIGNAL_KV.get('last_run');
+        return jsonResp(lastRun ? JSON.parse(lastRun) : { status: 'never_run' }, 200, {});
+      } catch (e) {
+        return jsonResp({ error: e.message }, 500, {});
+      }
+    }
+
+    // ── GET /vix-for-date ── No CORS restriction (script access), secured by secret
+    if (url.pathname === '/vix-for-date' && request.method === 'GET') {
+      const secret = request.headers.get('X-Sync-Secret');
+      if (!secret || secret !== env.SYNC_SECRET) {
+        return jsonResp({ error: 'Unauthorized' }, 401, {});
+      }
+      try {
+        const dateStr = url.searchParams.get('date');
+        if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+          return jsonResp({ error: 'Invalid date param, expected YYYY-MM-DD' }, 400, {});
+        }
+        const token = await getAccessToken(env);
+        const [y, m, d] = dateStr.split('-').map(Number);
+        // Use noon–22:00 UTC to stay within the ET trading day (avoids prev-day bleed)
+        // 12:00 UTC = ~7-8 AM ET (before open), 22:00 UTC = ~5-6 PM ET (after close)
+        const dayStart = Date.UTC(y, m - 1, d, 12, 0, 0);
+        const dayEnd   = Date.UTC(y, m - 1, d, 22, 0, 0);
+        const vixUrl = `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24VIX&periodType=day&period=1&frequencyType=minute&frequency=1&startDate=${dayStart}&endDate=${dayEnd}&needExtendedHoursData=false`;
+        const spxUrl = `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24SPX&periodType=day&period=1&frequencyType=minute&frequency=1&startDate=${dayStart}&endDate=${dayEnd}&needExtendedHoursData=false`;
+        const [vixData, spxData] = await Promise.all([fetchSchwabJSON(vixUrl, token), fetchSchwabJSON(spxUrl, token)]);
+        function extractOHLC(candles) {
+          if (!candles || !candles.length) return { open: null, close: null };
+          candles.sort((a, b) => a.datetime - b.datetime);
+          const openCandle  = candles.find(c => { const et = toET(new Date(c.datetime)); return et.getHours() * 60 + et.getMinutes() >= 570; });
+          const closeCandle = candles.slice().reverse().find(c => { const et = toET(new Date(c.datetime)); return et.getHours() * 60 + et.getMinutes() <= 975; });
+          return { open: openCandle ? parseFloat(openCandle.open.toFixed(2)) : null, close: closeCandle ? parseFloat(closeCandle.close.toFixed(2)) : null };
+        }
+        const vixOHLC = extractOHLC(vixData.candles);
+        const spxOHLC = extractOHLC(spxData.candles);
+        return jsonResp({ date: dateStr, vixOpen: vixOHLC.open, vixClose: vixOHLC.close, spxOpen: spxOHLC.open, spxClose: spxOHLC.close }, 200, {});
+      } catch (e) {
+        return jsonResp({ error: e.message }, 500, {});
+      }
+    }
+
+    // Preflight
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { status: 204, headers: corsHeaders });
+    }
+
+    if (!corsOk) {
+      return new Response('Forbidden', { status: 403 });
+    }
+
+    try {
+      // ── POST /sync ── Browser pushes tokens/creds/discord to KV
+      if (url.pathname === '/sync' && request.method === 'POST') {
+        const secret = request.headers.get('X-Sync-Secret');
+        if (!secret || secret !== env.SYNC_SECRET) {
+          return jsonResp({ error: 'Unauthorized' }, 401, corsHeaders);
+        }
+
+        const json = await request.json();
+        const { schwab_tokens, schwab_creds, discord_config } = json;
+
+        if (schwab_tokens) await env.SIGNAL_KV.put('schwab_tokens', JSON.stringify(schwab_tokens));
+        if (schwab_creds)  await env.SIGNAL_KV.put('schwab_creds', JSON.stringify(schwab_creds));
+        if (discord_config) await env.SIGNAL_KV.put('discord_config', JSON.stringify(discord_config));
+
+        return jsonResp({ ok: true, synced: Object.keys(json) }, 200, corsHeaders);
+      }
+
+      // ── POST /token ──
+      if (url.pathname === '/token' && request.method === 'POST') {
+        const json = await request.json();
+        const { app_key, grant_type, code, redirect_uri, refresh_token } = json;
+        if (!app_key || !grant_type) {
+          return jsonResp({ error: 'Missing app_key or grant_type' }, 400, corsHeaders);
+        }
+
+        const body = new URLSearchParams({ grant_type });
+        if (grant_type === 'authorization_code') {
+          body.set('code', code);
+          body.set('redirect_uri', redirect_uri);
+        } else if (grant_type === 'refresh_token') {
+          body.set('refresh_token', refresh_token);
+        }
+
+        const resp = await fetch('https://api.schwabapi.com/v1/oauth/token', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Authorization': 'Basic ' + btoa(`${app_key}:${env.SCHWAB_APP_SECRET}`),
+          },
+          body,
+        });
+
+        const data = await resp.json();
+        return jsonResp(data, resp.status, corsHeaders);
+      }
+
+      // ── GET /market/* ──
+      if (url.pathname.startsWith('/market/') && request.method === 'GET') {
+        const subpath = url.pathname.slice('/market'.length);
+        const upstream = `https://api.schwabapi.com/marketdata/v1${subpath}${url.search}`;
+
+        const resp = await fetch(upstream, {
+          headers: {
+            'Authorization': request.headers.get('Authorization') || '',
+          },
+        });
+
+        const data = await resp.json();
+        return jsonResp(data, resp.status, corsHeaders);
+      }
+
+      // ── GET /history ── Historical signals table
+      if (url.pathname === '/history' && request.method === 'GET') {
+        const months = Math.min(Math.max(parseInt(url.searchParams.get('months')) || 6, 1), 12);
+        const token = await getAccessToken(env);
+
+        const vixUrl = `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24VIX&periodType=month&period=${months}&frequencyType=daily&frequency=1`;
+        const spxUrl = `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24SPX&periodType=month&period=${months}&frequencyType=daily&frequency=1`;
+
+        const [vixData, spxData] = await Promise.all([
+          fetchSchwabJSON(vixUrl, token),
+          fetchSchwabJSON(spxUrl, token),
+        ]);
+
+        if (!vixData.candles?.length) return jsonResp({ error: 'No VIX data' }, 502, corsHeaders);
+        if (!spxData.candles?.length) return jsonResp({ error: 'No SPX data' }, 502, corsHeaders);
+
+        // Sort ascending
+        vixData.candles.sort((a, b) => a.datetime - b.datetime);
+        spxData.candles.sort((a, b) => a.datetime - b.datetime);
+
+        // Build SPX lookup by date string
+        const spxByDate = new Map();
+        for (const c of spxData.candles) {
+          const d = toET(new Date(c.datetime));
+          const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+          spxByDate.set(key, c);
+        }
+
+        const rows = [];
+        const vix = vixData.candles;
+        for (let i = 1; i < vix.length; i++) {
+          const d = toET(new Date(vix[i].datetime));
+          const etDate = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12);
+          if (!isTrade(etDate)) continue;
+
+          const dateKey = `${etDate.getFullYear()}-${String(etDate.getMonth()+1).padStart(2,'0')}-${String(etDate.getDate()).padStart(2,'0')}`;
+          const prevD = toET(new Date(vix[i-1].datetime));
+          const prevKey = `${prevD.getFullYear()}-${String(prevD.getMonth()+1).padStart(2,'0')}-${String(prevD.getDate()).padStart(2,'0')}`;
+
+          const vixTodayOpen = parseFloat(vix[i].open.toFixed(2));
+          const vixPrevClose = parseFloat(vix[i-1].close.toFixed(2));
+          const vixPrevOpen = parseFloat(vix[i-1].open.toFixed(2));
+
+          let spxGapPct = null;
+          const spxToday = spxByDate.get(dateKey);
+          const spxPrev = spxByDate.get(prevKey);
+          if (spxToday && spxPrev) {
+            spxGapPct = ((spxToday.open - spxPrev.close) / spxPrev.close) * 100;
+          }
+
+          const signal = calculateSignal({
+            vixToday: vixTodayOpen,
+            vixYOpen: vixPrevOpen,
+            vixYClose: vixPrevClose,
+            spxGapPct,
+            etDate,
+          });
+
+          rows.push({
+            date: dateKey,
+            dateLong: dateLong(etDate),
+            dayLabel: signal.dayLabel,
+            vixOpen: vixTodayOpen,
+            vixPrevClose,
+            vixPrevOpen,
+            overnightDrop: parseFloat((vixPrevClose - vixTodayOpen).toFixed(2)),
+            o2o: parseFloat((vixPrevOpen - vixTodayOpen).toFixed(2)),
+            spxGapPct: spxGapPct !== null ? parseFloat(spxGapPct.toFixed(2)) : null,
+            signal,
+          });
+        }
+
+        rows.reverse(); // most recent first
+        return jsonResp(rows, 200, corsHeaders);
+      }
+
+      return jsonResp({ error: 'Not found' }, 404, corsHeaders);
+    } catch (e) {
+      return jsonResp({ error: e.message }, 500, corsHeaders);
+    }
+  },
+
+  async scheduled(event, env, ctx) {
+    let result;
+    try {
+      result = await handleScheduled(env);
+    } catch (e) {
+      result = { status: 'error', error: e.message, date: new Date().toISOString() };
+    }
+    result.date = result.date || new Date().toISOString();
+    await env.SIGNAL_KV.put('last_run', JSON.stringify(result));
+  },
+};
+
+function jsonResp(data, status, headers) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json', ...headers },
+  });
+}
