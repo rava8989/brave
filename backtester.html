@@ -1085,7 +1085,7 @@ function applyTP(trades) {
       date: t[D], day: t[DAY], cp: t[CP],
       prem: t[PREM], spread: t[SPR],
       profit: t[PROF], center: t[CTR], time: t[TIME],
-      peak: t[PEAK], trough: t[TROUGH],
+      peak: peakCapped, trough: troughCapped,
       tpPnl, tpHit, slHit,
     };
   });
