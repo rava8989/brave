@@ -856,7 +856,31 @@ document.getElementById('hdrMeta').textContent =
   (META.hasIntraday ? ` · ${META.hasIntraday.toLocaleString()} intraday` : '');
 
 // ── Entry Time filter ─────────────────────────────────────────────────────────
-const ALL_TIMES  = [...new Set(TRADES.map(t => t[TIME]))].sort();
+// Generate fixed 5-min slots 9:35 → 15:45
+function makeTimeSlots() {
+  const slots = [];
+  for (let h = 9; h <= 15; h++) {
+    const mStart = (h === 9) ? 35 : 0;
+    const mEnd   = (h === 15) ? 45 : 55;
+    for (let m = mStart; m <= mEnd; m += 5) {
+      slots.push(`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`);
+    }
+  }
+  return slots;
+}
+const ALL_TIMES = makeTimeSlots();
+
+// Round a "HH:MM" time DOWN to nearest 5-min slot; return null if > 15:45
+function bucketTime(raw) {
+  const [hh, mm] = raw.split(':').map(Number);
+  const mins = hh * 60 + mm;
+  if (mins > 15 * 60 + 45) return null;
+  const bucketed = Math.floor(mins / 5) * 5;
+  const bh = Math.floor(bucketed / 60);
+  const bm = bucketed % 60;
+  return `${String(bh).padStart(2,'0')}:${String(bm).padStart(2,'0')}`;
+}
+
 let activeTimes  = new Set(ALL_TIMES);
 
 const timePillsEl = document.getElementById('timePills');
@@ -1022,7 +1046,8 @@ function filterTrades(forceFull) {
     if (from && t[D] < from) return false;
     if (to   && t[D] > to)   return false;
     if (!activeDays.has(t[DAY])) return false;
-    if (!activeTimes.has(t[TIME])) return false;
+    const bt = bucketTime(t[TIME]);
+    if (!bt || !activeTimes.has(bt)) return false;
     if (specialSet) {
       const isSpecial = specialSet.has(t[D]);
       if (specialMode === 'exclude' && isSpecial) return false;
