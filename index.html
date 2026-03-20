@@ -2087,16 +2087,26 @@
       const last = rows[rows.length - 1];
       const daysDiff = (new Date() - new Date(last.date + 'T12:00:00')) / 86400000;
       if (daysDiff <= 7) {
-        const lastWR = parseFloat(last.m8bfWR);
-        if (lastWR === 0) {
+        // Pattern 1: yesterday was 0%
+        if (parseFloat(last.m8bfWR) === 0) {
           notes.push(`Last session (${last.date}) was 0% win rate — historically the next day averages just 33% vs 55% overall.`);
-        } else if (lastWR <= 5) {
-          notes.push(`Last session (${last.date}) was ${lastWR}% — sub-5% days are mixed, averaging ~50% next day.`);
         }
-        if (last.vixClose && parseFloat(last.vixClose) > 25) {
-          notes.push(`VIX closed at ${parseFloat(last.vixClose).toFixed(1)} last session — historically M8BF averages ~44% when prior VIX close is above 25.`);
+        // Pattern 4: VIX close tiers
+        if (last.vixClose) {
+          const vc = parseFloat(last.vixClose);
+          if (vc >= 30) {
+            notes.push(`VIX closed at ${vc.toFixed(1)} last session — historically M8BF averages ~40% the next day when prior VIX close is 30 or above.`);
+          } else if (vc >= 25) {
+            notes.push(`VIX closed at ${vc.toFixed(1)} last session — historically M8BF averages ~44% the next day when prior VIX close is 25-30.`);
+          }
+        }
+        // Pattern 5: day of week
+        const dow = new Date().getDay(); // 0=Sun,1=Mon,...,5=Fri
+        if (dow === 2 || dow === 3 || dow === 4) {
+          notes.push(`Tuesday–Thursday historically average 53.5% win rate vs 57% on Mondays and Fridays.`);
         }
       }
+      // Pattern 3: 3+ consecutive below-avg sessions
       let streak = 0;
       for (let i = rows.length - 1; i >= 0; i--) {
         if (parseFloat(rows[i].m8bfWR) < AVG) streak++;
