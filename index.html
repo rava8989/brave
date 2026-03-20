@@ -1398,6 +1398,9 @@
 
     // #7: persist inputs
     saveInputs();
+
+    // Refresh pattern notes now that VIX open field is populated
+    loadM8BFPatternNotes();
   }
 
   /* ====== RENDER EARNINGS SCHEDULE ====== */
@@ -2202,6 +2205,44 @@
       const dow = new Date().getDay();
       if (dow === 2 || dow === 3 || dow === 4) {
         notes.push(`Tuesday–Thursday historically average 53.5% win rate vs 57% on Mondays and Fridays.`);
+      }
+
+      // Month of year seasonality
+      const mon = new Date().getMonth() + 1;
+      const monNotes = {
+        3: `March — historically M8BF averages 47.7% in March (-7% below avg).`,
+        4: `April — historically M8BF averages 44.5% in April (-10.5% below avg).`,
+        5: `May — historically M8BF averages 62.1% in May (+7% above avg).`,
+        6: `June — historically M8BF averages 60.6% in June (+6% above avg).`,
+      };
+      if (monNotes[mon]) notes.push(monNotes[mon]);
+
+      // VIX open level today (from form field — populated by Schwab or manual entry)
+      const todayVix = parseFloat(document.getElementById('todayOpen')?.value);
+      if (!isNaN(todayVix)) {
+        if (todayVix >= 30) {
+          notes.push(`Today's VIX opened at ${todayVix.toFixed(1)} — historically M8BF averages ~38% on days VIX opens 30+ (-17% below avg).`);
+        } else if (todayVix >= 25) {
+          notes.push(`Today's VIX opened at ${todayVix.toFixed(1)} — historically M8BF averages ~46% on days VIX opens 25-30 (-9% below avg).`);
+        } else if (todayVix >= 20) {
+          notes.push(`Today's VIX opened at ${todayVix.toFixed(1)} — historically M8BF averages ~49% on days VIX opens 20-25 (-6% below avg).`);
+        }
+      }
+
+      // VIX overnight drop 10%+ (yesterday close vs today open)
+      if (!isNaN(todayVix) && last.vixClose && daysDiff <= 7) {
+        const vixON = (todayVix - parseFloat(last.vixClose)) / parseFloat(last.vixClose) * 100;
+        if (vixON <= -10) {
+          notes.push(`VIX dropped ${Math.abs(vixON).toFixed(1)}% overnight (yesterday closed ${parseFloat(last.vixClose).toFixed(1)}, opened ${todayVix.toFixed(1)}) — historically M8BF averages ~42% when VIX falls 10%+ overnight (-13% below avg).`);
+        }
+      }
+
+      // 2 consecutive 90%+ sessions
+      if (daysDiff <= 7 && rows.length >= 2) {
+        const r1 = rows[rows.length - 1], r2 = rows[rows.length - 2];
+        if (parseFloat(r1.m8bfWR) >= 90 && parseFloat(r2.m8bfWR) >= 90) {
+          notes.push(`Two consecutive 90%+ sessions — historically M8BF averages 64.1% the next day (+9% above avg).`);
+        }
       }
 
       // 3+ consecutive below-avg sessions
