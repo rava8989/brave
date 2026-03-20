@@ -1171,7 +1171,8 @@
       spxSepEl.style.display='inline';
       const dir=spxGapPct>0?'▲':'▼';
       spxGapEl.textContent=`${dir}${Math.abs(spxGapPct).toFixed(2)}%`;
-      spxGapEl.className='mv'+(spxGapForcesM8BF?' up':'');
+      spxGapEl.className='mv';
+      spxGapEl.style.color=spxGapPct>0?'#22c55e':'#ef4444';
     } else {
       spxGapWrap.style.display='none';
       spxSepEl.style.display='none';
@@ -2096,47 +2097,113 @@
       const AVG = 55, notes = [];
       const last = rows[rows.length - 1];
       const daysDiff = (new Date() - new Date(last.date + 'T12:00:00')) / 86400000;
+
+      // Helper: "Month Day, Year" → "YYYY-MM-DD"
+      function longToISO(s) {
+        const d = new Date(s); if (isNaN(d)) return null;
+        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      }
+
+      // === TODAY IS A SPECIAL DAY ===
+      if (isOpex()) {
+        notes.push(`Today is OPEX — historically M8BF averages 65.7% on OPEX days (+10.7% above avg).`);
+      }
+      if (isFed()) {
+        notes.push(`Today is a FED day — historically M8BF averages 44.8% on Fed decision days (-10% below avg).`);
+      }
+      if (isLastTradeMo()) {
+        notes.push(`Today is EOM (last trading day of month) — historically M8BF averages ~47% on EOM days (-8% below avg).`);
+      } else if (isEomN(1)) {
+        notes.push(`Today is EOM-1 (second-to-last trading day) — historically M8BF averages ~47% on EOM-1 days (-8% below avg).`);
+      }
+      earningsSchedule.filter(e => e.date === todayLong()).forEach(e => {
+        const map = { MSFT:'29.5%', META:'29.5%', AAPL:'31.4%', NVDA:'64.1%', TSLA:'61.3%' };
+        const avg = map[e.ticker];
+        if (!avg) return;
+        const dir = (e.ticker==='NVDA'||e.ticker==='TSLA') ? 'above' : 'below';
+        notes.push(`Today is ${e.company} earnings day — historically M8BF averages ${avg} on ${e.ticker} earnings days (${dir} avg).`);
+      });
+
+      // === TOMORROW IS A SPECIAL DAY ===
+      if (fedSch.some(isTodayBefore)) {
+        notes.push(`Tomorrow is a FED day — historically M8BF averages 72.1% the day before Fed decisions (+17% above avg).`);
+      }
+      if (opexSch.some(isTodayBefore)) {
+        notes.push(`Tomorrow is OPEX — historically M8BF averages 44.8% the day before OPEX (-10% below avg).`);
+      }
+      earningsSchedule.filter(e => isTodayBefore(e.date)).forEach(e => {
+        const good = { MSFT:'68.3%', META:'68.3%', TSLA:'67.3%' };
+        const bad  = { AMZN:'~29%',  AAPL:'~29%' };
+        if (good[e.ticker]) {
+          notes.push(`Tomorrow is ${e.company} earnings — historically M8BF averages ${good[e.ticker]} the day before ${e.ticker} earnings (+12-13% above avg).`);
+        } else if (bad[e.ticker]) {
+          notes.push(`Tomorrow is ${e.company} earnings — historically M8BF averages ${bad[e.ticker]} the day before ${e.ticker} earnings (-26% below avg).`);
+        }
+      });
+
+      // === YESTERDAY WAS A SPECIAL DAY (from history_data last session) ===
       if (daysDiff <= 7) {
-        // Pattern 1: yesterday was 0%
+        const fedISO = fedSch.map(longToISO);
+        const cpiISO = cpiSch.map(longToISO);
+        if (fedISO.includes(last.date)) {
+          notes.push(`Yesterday was a FED day — historically M8BF averages 43.9% the day after Fed decisions (-11% below avg).`);
+        }
+        if (cpiISO.includes(last.date)) {
+          notes.push(`Yesterday was a CPI day — historically M8BF averages 61.6% the day after CPI (+6.6% above avg).`);
+        }
+        const lastD = new Date(last.date + 'T12:00:00');
+        if (isFirstTradeMo(lastD)) {
+          notes.push(`Yesterday was the first trading day of the month — historically M8BF averages 66.1% after a new-month open (+11% above avg).`);
+        }
+        earningsSchedule.filter(e => longToISO(e.date) === last.date).forEach(e => {
+          const map = { MSFT:'31.2%', META:'31.2%', AMZN:'39.4%', GOOGL:'40.7%' };
+          const avg = map[e.ticker];
+          if (!avg) return;
+          notes.push(`Yesterday was ${e.company} earnings — historically M8BF averages ${avg} the day after ${e.ticker} earnings (below avg).`);
+        });
+
+        // 0% last session
         if (parseFloat(last.m8bfWR) === 0) {
           notes.push(`Last session (${last.date}) was 0% win rate — historically the next day averages just 33% vs 55% overall.`);
         }
-        // Pattern 4: VIX close tiers
+        // VIX close tiers
         if (last.vixClose) {
           const vc = parseFloat(last.vixClose);
           if (vc >= 30) {
-            notes.push(`VIX closed at ${vc.toFixed(1)} last session — historically M8BF averages ~40% the next day when prior VIX close is 30 or above.`);
+            notes.push(`VIX closed at ${vc.toFixed(1)} last session — historically M8BF averages ~40% the next day when prior VIX close is 30+.`);
           } else if (vc >= 25) {
             notes.push(`VIX closed at ${vc.toFixed(1)} last session — historically M8BF averages ~44% the next day when prior VIX close is 25-30.`);
           }
         }
-        // Pattern 5: day of week
-        const dow = new Date().getDay(); // 0=Sun,1=Mon,...,5=Fri
-        if (dow === 2 || dow === 3 || dow === 4) {
-          notes.push(`Tuesday–Thursday historically average 53.5% win rate vs 57% on Mondays and Fridays.`);
-        }
-        // Pattern 6: VIX intraday spike yesterday
+        // VIX intraday spike
         if (last.vixOpen && last.vixClose) {
-          const vixIntraday = (parseFloat(last.vixClose) - parseFloat(last.vixOpen)) / parseFloat(last.vixOpen) * 100;
-          if (vixIntraday >= 10) {
-            notes.push(`VIX spiked ${vixIntraday.toFixed(1)}% intraday last session — historically M8BF averages ~44% the next day when VIX rises 10%+ in a day.`);
-          } else if (vixIntraday >= 5) {
-            notes.push(`VIX rose ${vixIntraday.toFixed(1)}% intraday last session — historically M8BF averages ~49% the next day when VIX rises 5-10% in a day.`);
+          const vi = (parseFloat(last.vixClose) - parseFloat(last.vixOpen)) / parseFloat(last.vixOpen) * 100;
+          if (vi >= 10) {
+            notes.push(`VIX spiked ${vi.toFixed(1)}% intraday last session — historically M8BF averages ~44% the next day when VIX rises 10%+ in a day.`);
+          } else if (vi >= 5) {
+            notes.push(`VIX rose ${vi.toFixed(1)}% intraday last session — historically M8BF averages ~49% the next day when VIX rises 5-10% in a day.`);
           }
         }
-        // Pattern 7: SPX daily return yesterday
+        // SPX daily return
         if (last.spxOpen && last.spxClose) {
-          const spxRet = (parseFloat(last.spxClose) - parseFloat(last.spxOpen)) / parseFloat(last.spxOpen) * 100;
-          if (spxRet <= -2) {
-            notes.push(`SPX fell ${Math.abs(spxRet).toFixed(1)}% last session — historically M8BF averages ~29% the next day after a 2%+ SPX down day.`);
-          } else if (spxRet <= -1) {
-            notes.push(`SPX fell ${Math.abs(spxRet).toFixed(1)}% last session — historically M8BF averages ~41% the next day after a 1-2% SPX down day.`);
-          } else if (spxRet >= 1) {
-            notes.push(`SPX rose ${spxRet.toFixed(1)}% last session — historically M8BF averages ~49% the next day after a 1%+ SPX up day.`);
+          const sr = (parseFloat(last.spxClose) - parseFloat(last.spxOpen)) / parseFloat(last.spxOpen) * 100;
+          if (sr <= -2) {
+            notes.push(`SPX fell ${Math.abs(sr).toFixed(1)}% last session — historically M8BF averages ~29% the next day after a 2%+ SPX down day.`);
+          } else if (sr <= -1) {
+            notes.push(`SPX fell ${Math.abs(sr).toFixed(1)}% last session — historically M8BF averages ~41% the next day after a 1-2% SPX down day.`);
+          } else if (sr >= 1) {
+            notes.push(`SPX rose ${sr.toFixed(1)}% last session — historically M8BF averages ~49% the next day after a 1%+ SPX up day.`);
           }
         }
       }
-      // Pattern 3: 3+ consecutive below-avg sessions
+
+      // Day of week
+      const dow = new Date().getDay();
+      if (dow === 2 || dow === 3 || dow === 4) {
+        notes.push(`Tuesday–Thursday historically average 53.5% win rate vs 57% on Mondays and Fridays.`);
+      }
+
+      // 3+ consecutive below-avg sessions
       let streak = 0;
       for (let i = rows.length - 1; i >= 0; i--) {
         if (parseFloat(rows[i].m8bfWR) < AVG) streak++;
@@ -2145,6 +2212,7 @@
       if (streak >= 3) {
         notes.push(`${streak} consecutive below-average sessions — historically averages 79% win rate on the next day.`);
       }
+
       const el = document.getElementById('m8bfPatternNote');
       if (el && notes.length > 0) {
         el.innerHTML = notes.map(n => `<div class="pn-item">${n}</div>`).join('');
