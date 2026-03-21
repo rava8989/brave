@@ -868,6 +868,7 @@ const cols = [
   { key:'stradPL',     label:'Straddle',   type:'stratPL' },
   { key:'gxbfPL',      label:'GXBF',       type:'stratPL' },
   { key:'bobfPL',      label:'BOBF',       type:'stratPL' },
+  { key:'totalPL',     label:'Total',      type:'stratPL' },
 ];
 
 function getValue(row, col) {
@@ -878,6 +879,14 @@ function getValue(row, col) {
     case 'stradPL': return row.stradPL != null ? row.stradPL : -Infinity;
     case 'gxbfPL': return row.gxbfPL != null ? row.gxbfPL : -Infinity;
     case 'bobfPL': return row.signal?.bobfBadge !== 'BLOCKED' ? (row.bobfPL != null ? row.bobfPL : 0.1) : -Infinity;
+    case 'totalPL': {
+      const s = row.signal || {}; let t = 0;
+      if (activeStrats.m8bf && s.theme === 'm8bf' && row.m8bfPL != null) t += row.m8bfPL;
+      if (activeStrats.strad && row.stradPL != null) t += row.stradPL;
+      if (activeStrats.gxbf && row.gxbfPL != null) t += row.gxbfPL;
+      if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) t += row.bobfPL;
+      return t;
+    }
     default: return row[col.key];
   }
 }
@@ -934,6 +943,18 @@ function renderTable() {
     h += stratCell(row.stradPL != null, row.stradPL);
     h += stratCell(row.gxbfPL != null, row.gxbfPL);
     h += stratCell(s.bobfBadge !== 'BLOCKED', row.bobfPL);
+
+    let dayTotal = 0, hasDayTrade = false;
+    if (activeStrats.m8bf && s.theme === 'm8bf' && row.m8bfPL != null) { dayTotal += row.m8bfPL; hasDayTrade = true; }
+    if (activeStrats.strad && row.stradPL != null) { dayTotal += row.stradPL; hasDayTrade = true; }
+    if (activeStrats.gxbf && row.gxbfPL != null) { dayTotal += row.gxbfPL; hasDayTrade = true; }
+    if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) { dayTotal += row.bobfPL; hasDayTrade = true; }
+    if (hasDayTrade) {
+      const cls = dayTotal > 0 ? 'val-pos' : dayTotal < 0 ? 'val-neg' : 'val-zero';
+      h += `<td class="${cls}" style="font-weight:700">$${dayTotal.toLocaleString()}</td>`;
+    } else {
+      h += '<td style="color:var(--text3);text-align:center">—</td>';
+    }
     h += '</tr>';
 
     if (activeStrats.m8bf && s.theme === 'm8bf' && row.m8bfPL != null) totM8 += row.m8bfPL;
@@ -945,7 +966,9 @@ function renderTable() {
   const fc = (v, active) => active ? `<td class="${valClass(v)}" style="font-weight:700">$${Math.round(v).toLocaleString()}</td>` : '<td style="color:var(--text3);text-align:center">—</td>';
   h += '</tbody><tfoot><tr>';
   h += '<td colspan="9" style="text-align:right;font-family:Inter,sans-serif;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text2)">TOTAL</td>';
+  const totAll = (activeStrats.m8bf ? totM8 : 0) + (activeStrats.strad ? totStrad : 0) + (activeStrats.gxbf ? totGxbf : 0) + (activeStrats.bobf ? totBobf : 0);
   h += fc(totM8, activeStrats.m8bf) + fc(totStrad, activeStrats.strad) + fc(totGxbf, activeStrats.gxbf) + fc(totBobf, activeStrats.bobf);
+  h += `<td class="${valClass(totAll)}" style="font-weight:700">$${Math.round(totAll).toLocaleString()}</td>`;
   h += '</tr></tfoot></table></div>';
   document.getElementById('content').innerHTML = h;
   renderAll();
