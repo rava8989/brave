@@ -1221,7 +1221,9 @@
       if(postOpDay){
         const isM8=rec.startsWith("M8BF"), isStr=rec.startsWith("Straddle")||rec.startsWith("NM Straddle");
         if(isM8||isStr){
+          const vixOvernightPct = (vToday - vYClose) / vYClose * 100;
           if(vToday>=T.VIX_MAX_GXBF){rec=`No GXBF (VIX ${vToday} ≥ ${T.VIX_MAX_GXBF})`;theme="block";crossed=true;pmNote=false;blockT="vix";blockD=`OPEX+1 GXBF blocked, VIX ${vToday}`;badge="BLOCKED";strikeInfo=null;}
+          else if(vixOvernightPct>=2){rec=`No GXBF (VIX gapped up ${vixOvernightPct.toFixed(1)}% overnight)`;theme="block";crossed=true;pmNote=false;blockT="vix";blockD=`OPEX+1 GXBF blocked — VIX gap up ${vixOvernightPct.toFixed(1)}%`;badge="BLOCKED";strikeInfo=null;}
           else{rec="GXBF @ 9:36 AM (OPEX+1)";theme="gxbf";crossed=false;pmNote=false;blockT="";entryT="9:36 AM";badge="GXBF";strikeInfo=null;}
         }
       }
