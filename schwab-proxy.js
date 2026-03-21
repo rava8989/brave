@@ -384,6 +384,67 @@ async function fetchSchwabJSON(url, token) {
 // SCHEDULED HANDLER (Cron Trigger)
 // ════════════════════════════════════════════════════════════════════
 
+async function handleEOD(env, etNow) {
+  const todayISO = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
+  const token = await getAccessToken(env);
+
+  const end = Date.now();
+  const start = end - 3 * 24 * 60 * 60 * 1000;
+  const todayStr = etNow.toDateString();
+
+  // Fetch VIX close
+  let vixClose = null;
+  try {
+    const vixHist = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24VIX&periodType=day&period=3&frequencyType=minute&frequency=1&startDate=${start}&endDate=${end}&needExtendedHoursData=true`, token);
+    if (vixHist.candles) {
+      const todayCandles = vixHist.candles.filter(c => toET(new Date(c.datetime)).toDateString() === todayStr);
+      todayCandles.sort((a, b) => a.datetime - b.datetime);
+      // Last candle at or before 16:15
+      const closeCandle = todayCandles.slice().reverse().find(c => {
+        const d = toET(new Date(c.datetime));
+        return d.getHours() * 60 + d.getMinutes() <= 16 * 60 + 15;
+      });
+      if (closeCandle) vixClose = parseFloat(closeCandle.close.toFixed(2));
+    }
+    // Fallback: quote closePrice
+    if (vixClose === null) {
+      const q = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`, token);
+      const cp = q?.['$VIX']?.quote?.closePrice;
+      if (cp) vixClose = parseFloat(cp.toFixed(2));
+    }
+  } catch (e) { /* non-fatal */ }
+
+  // Fetch SPX close
+  let spxClose = null;
+  try {
+    const spxHist = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24SPX&periodType=day&period=3&frequencyType=minute&frequency=1&startDate=${start}&endDate=${end}&needExtendedHoursData=true`, token);
+    if (spxHist.candles) {
+      const todayCandles = spxHist.candles.filter(c => toET(new Date(c.datetime)).toDateString() === todayStr);
+      todayCandles.sort((a, b) => a.datetime - b.datetime);
+      const closeCandle = todayCandles.slice().reverse().find(c => {
+        const d = toET(new Date(c.datetime));
+        return d.getHours() * 60 + d.getMinutes() <= 16 * 60 + 15;
+      });
+      if (closeCandle) spxClose = parseFloat(closeCandle.close.toFixed(2));
+    }
+    if (spxClose === null) {
+      const q = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24SPX&fields=quote`, token);
+      const cp = q?.['$SPX']?.quote?.closePrice;
+      if (cp) spxClose = parseFloat(cp.toFixed(2));
+    }
+  } catch (e) { /* non-fatal */ }
+
+  const fields = {};
+  if (vixClose != null) fields.vixClose = vixClose;
+  if (spxClose != null) fields.spxClose = spxClose;
+
+  if (Object.keys(fields).length > 0) {
+    await upsertHistoryGitHub(env, todayISO, fields);
+  }
+
+  return { status: 'eod', date: todayISO, vixClose, spxClose };
+}
+
 async function handleScheduled(env) {
   const etNow = toET();
   const dow = etNow.getDay();
@@ -394,12 +455,17 @@ async function handleScheduled(env) {
   // Not a trading day (holiday) → skip
   if (!isTrade(etNow)) return { status: 'skipped', reason: 'holiday' };
 
-  // DST-safe: we fire at both :31 past 13:00 and 14:00 UTC. Check if ET hour is 9.
+  // DST-safe: we fire at both UTC times. Check if ET time is 9:30-9:40 (open) or 16:00-16:15 (close).
   const etHour = etNow.getHours();
   const etMin = etNow.getMinutes();
-  if (etHour !== 9 || etMin < 30 || etMin > 40) {
-    return { status: 'skipped', reason: `not 9:30 ET (currently ${etHour}:${String(etMin).padStart(2, '0')} ET)` };
+  const isMorning = etHour === 9  && etMin >= 30 && etMin <= 40;
+  const isEOD     = etHour === 16 && etMin >= 0  && etMin <= 15;
+  if (!isMorning && !isEOD) {
+    return { status: 'skipped', reason: `not 9:30 or 16:05 ET (currently ${etHour}:${String(etMin).padStart(2, '0')} ET)` };
   }
+
+  // EOD cron: just capture vixClose + spxClose then return
+  if (isEOD) return handleEOD(env, etNow);
 
   // 1. Get access token
   const token = await getAccessToken(env);
@@ -485,8 +551,9 @@ async function handleScheduled(env) {
 
   if (vixToday === null) throw new Error('Could not get VIX today open');
 
-  // 4. Fetch SPX quote → gap %
+  // 4. Fetch SPX quote → gap % + today's SPX open
   let spxGapPct = null;
+  let spxTodayOpen = null;
   try {
     // Get SPX yesterday close from history
     const spxHistUrl = `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24SPX&periodType=day&period=5&frequencyType=minute&frequency=1&startDate=${start}&endDate=${end}&needExtendedHoursData=true`;
@@ -506,12 +573,21 @@ async function handleScheduled(env) {
     const spxQuoteUrl = `https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24SPX&fields=quote`;
     const spxQuote = await fetchSchwabJSON(spxQuoteUrl, token);
     const spxQ = spxQuote?.['$SPX']?.quote;
-    const spxTodayOpen = spxQ ? (spxQ.openPrice || spxQ.lastPrice) : null;
+    spxTodayOpen = spxQ ? parseFloat((spxQ.openPrice || spxQ.lastPrice).toFixed(2)) : null;
 
     if (spxYClose && spxTodayOpen) {
       spxGapPct = ((spxTodayOpen - spxYClose) / spxYClose) * 100;
     }
   } catch (e) { /* SPX gap is optional */ }
+
+  // 4b. Write vixOpen + spxOpen to history_data.json via GitHub API
+  const todayISO = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
+  try {
+    await upsertHistoryGitHub(env, todayISO, {
+      vixOpen: vixToday,
+      ...(spxTodayOpen != null ? { spxOpen: spxTodayOpen } : {}),
+    });
+  } catch (e) { /* non-fatal — Discord still fires */ }
 
   // 5. Calculate signal
   const signal = calculateSignal({
@@ -545,8 +621,63 @@ async function handleScheduled(env) {
     badge: signal.badge,
     vix: { todayOpen: vixToday, yOpen: vixYOpen, yClose: vixYClose },
     spxGapPct,
+    spxOpen: spxTodayOpen,
+    githubDate: todayISO,
     postedAt: new Date().toISOString(),
   };
+}
+
+// ════════════════════════════════════════════════════════════════════
+// GITHUB HISTORY UPSERT
+// Reads history_data.json from GitHub, merges fields for dateStr,
+// commits back. Requires GITHUB_TOKEN env var (repo: rava8989/brave).
+// ════════════════════════════════════════════════════════════════════
+
+async function upsertHistoryGitHub(env, dateStr, fields) {
+  const token = env.GITHUB_TOKEN;
+  if (!token) throw new Error('GITHUB_TOKEN not set');
+
+  const apiUrl = 'https://api.github.com/repos/rava8989/brave/contents/history_data.json';
+  const headers = {
+    'Authorization': `Bearer ${token}`,
+    'Accept': 'application/vnd.github+json',
+    'User-Agent': 'schwab-proxy-worker/1.0',
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
+
+  // 1. Fetch current file
+  const getResp = await fetch(apiUrl, { headers });
+  if (!getResp.ok) throw new Error(`GitHub GET failed: ${getResp.status}`);
+  const meta = await getResp.json();
+  const sha = meta.sha;
+  const content = JSON.parse(atob(meta.content.replace(/\n/g, '')));
+
+  // 2. Upsert today's row
+  const idx = content.findIndex(r => r.date === dateStr);
+  if (idx >= 0) {
+    // Only overwrite fields that are still null/missing (don't clobber m8bfPL etc.)
+    for (const [k, v] of Object.entries(fields)) {
+      if (content[idx][k] == null) content[idx][k] = v;
+    }
+  } else {
+    content.push({ date: dateStr, ...fields });
+    content.sort((a, b) => a.date.localeCompare(b.date));
+  }
+
+  // 3. Push back
+  const putResp = await fetch(apiUrl, {
+    method: 'PUT',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      message: `auto: vixOpen/spxOpen for ${dateStr}`,
+      content: btoa(JSON.stringify(content, null, 0)),
+      sha,
+    }),
+  });
+  if (!putResp.ok) {
+    const err = await putResp.text();
+    throw new Error(`GitHub PUT failed: ${putResp.status} — ${err}`);
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════
