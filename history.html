@@ -400,7 +400,7 @@ function calculateSignal({vixToday,vixYOpen,vixYClose,spxGapPct,etDate}){
   const msftMetaEarnings=earningsSchedule.some(e=>e.date===todayLong(etDate)&&(e.ticker==='MSFT'||e.ticker==='META'));
 
   const o2o=(vixYOpen!=null)?vixYOpen-vixToday:NaN;
-  const oNight=vixYClose-vixToday;
+  const oNight=(vixYClose!=null)?vixYClose-vixToday:NaN;
 
   let spxGapForcesM8BF=false;
   if(spxGapPct!==null&&spxGapPct!==undefined){spxGapForcesM8BF=Math.abs(spxGapPct)>=T.SPX_GAP_THRESHOLD;}
@@ -416,9 +416,6 @@ function calculateSignal({vixToday,vixYOpen,vixYClose,spxGapPct,etDate}){
     const dir=spxGapPct>0?'▲':'▼';
     rec=m8Msg(etDate);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";
     blockD=`SPX gap ${dir}${Math.abs(spxGapPct).toFixed(2)}% ≥ ${T.SPX_GAP_THRESHOLD}% → M8BF forced`;
-  } else if(dow===4||dow===5){
-    // Thu/Fri: M8BF is always the default — VIX overnight logic does not apply
-    rec=m8Msg(etDate);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";
   } else {
     if(oNight>T.DROP_GXBF){
       if(vixToday>=T.VIX_MAX_GXBF){rec=`No GXBF (VIX ${vixToday} ≥ ${T.VIX_MAX_GXBF})`;theme="block";crossed=true;blockT="vix";blockD=`VIX ${vixToday} ≥ ${T.VIX_MAX_GXBF}`;badge="BLOCKED";}
@@ -434,7 +431,7 @@ function calculateSignal({vixToday,vixYOpen,vixYClose,spxGapPct,etDate}){
 
     if(nmDay&&!isMon&&(rec.startsWith("M8BF")||rec.startsWith("No M8BF"))){rec="NM Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="NM STRADDLE";strikeInfo=null;}
     if(eomDay){rec="Straddle @ 9:32 AM (EOM)";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="EOM STRADDLE";strikeInfo=null;}
-    if(isWed&&!eomDay&&!nmDay&&rec.startsWith("Straddle")){rec=m8Msg(etDate);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";}
+    if(isWed&&!fedDay&&!eomDay&&!nmDay&&rec.startsWith("Straddle")){rec=m8Msg(etDate);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";}
     if(opexDay&&rec.startsWith("Straddle")){rec="No Straddle (OPEX day)";theme="block";crossed=true;blockT="hard";blockD="Straddle not on OPEX";badge="BLOCKED";}
     if(postOpMon&&rec.startsWith("M8BF"))pmNote=true;
 
@@ -940,8 +937,8 @@ function renderTable() {
     h += `<td class="${valClass(row.spxGapPct)}">${row.spxGapPct!=null?row.spxGapPct.toFixed(2)+'%':'—'}</td>`;
     h += `<td style="font-weight:700;${row.m8bfWR!=null?(row.m8bfWR>=90?'color:#22c55e':row.m8bfWR<25?'color:#ef4444':'color:var(--text)'):'color:var(--text3)'}">${row.m8bfWR!=null?row.m8bfWR+'%':'—'}</td>`;
     h += stratCell(s.theme === 'm8bf', row.m8bfPL);
-    h += stratCell(row.stradPL != null, row.stradPL);
-    h += stratCell(row.gxbfPL != null, row.gxbfPL);
+    h += stratCell(activeStrats.strad && row.stradPL != null, row.stradPL);
+    h += stratCell(activeStrats.gxbf && row.gxbfPL != null, row.gxbfPL);
     h += stratCell(s.bobfBadge !== 'BLOCKED', row.bobfPL);
 
     let dayTotal = 0, hasDayTrade = false;
