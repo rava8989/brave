@@ -831,8 +831,8 @@
     if(isFirstTradeMo()) flags.push({txt:'NM', cls:'tag tag-postopex'});
     if(isEarningsDay()){
       const todayEntries = earningsSchedule.filter(e=>e.date===todayLong());
-      const blocked = todayEntries.filter(e=>e.ticker==='MSFT'||e.ticker==='META').map(e=>e.ticker);
-      const allowed = todayEntries.filter(e=>e.ticker!=='MSFT'&&e.ticker!=='META').map(e=>e.ticker);
+      const blocked = todayEntries.filter(e=>e.ticker!=='AMZN').map(e=>e.ticker);
+      const allowed = todayEntries.filter(e=>e.ticker==='AMZN').map(e=>e.ticker);
       if(blocked.length) flags.push({txt:`🚫 Earnings: ${blocked.join(' · ')}`, cls:'tag tag-opex'});
       if(allowed.length) flags.push({txt:`📋 Earnings: ${allowed.join(' · ')} (M8BF ok)`, cls:'tag tag-postopex'});
     }
@@ -1028,7 +1028,11 @@
     document.getElementById('gxbfBadge').textContent='—';
     document.getElementById('bobfRec').textContent='Calculate to see signal';
     document.getElementById('bobfBadge').textContent='—';
+    document.getElementById('bobfReason').innerHTML = '';
     document.getElementById('strikeGridWrap').style.display='none';
+    document.getElementById('spxGapWrap').style.display='none';
+    document.getElementById('spxSep').style.display='none';
+    document.getElementById('m8bfPatternNote').style.display='none';
     document.getElementById('cardM8bf').className='scard';
     document.getElementById('cardStrad').className='scard';
     document.getElementById('cardGxbf').className='scard';
@@ -1102,7 +1106,7 @@
       if(postOpDay)               return blk("No M8BF (day after OPEX)",   "Skipped day after OPEX");
       if(isNonAmznEarningsDay())  return blk("No M8BF (earnings)",         "Not traded on earnings days (except AMZN)");
       if(isDayAfterAnyEarnings()) return blk("No M8BF (day after earnings)","Not traded day after any earnings");
-      if(isVixAfterOpexDay())     return blk("No M8BF (VIX exp post-OPEX)","VIX exp falls after OPEX this month");
+      if(isPostVixBeforeOpex())   return blk("No M8BF (day after VIX exp)","M8BF blocked on first trading day after VIX exp (VIX exp before OPEX)");
       if(nmDay)                   return blk("No M8BF (first trading day)", "Skipped on first trading day of month");
       return null;
     })();
@@ -1180,7 +1184,7 @@
       if(postOpMon&&rec.startsWith("M8BF")) pmNote=true;
 
       if(wr0.checked){
-        if(rec.startsWith("M8BF")){
+        if(rec.startsWith("M8BF") && !fedDay){
           rec="Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="0%rule";entryT="9:32 AM";badge="STRADDLE";strikeInfo=null;
         }
       } else if(wr90.checked){
@@ -2079,7 +2083,11 @@
     await discordPost(msg);
   }
 
+  let _wrFetchInProgress = false;
+
   async function loadM8BFPatternNotes() {
+    if (_wrFetchInProgress) return;
+    _wrFetchInProgress = true;
     try {
       const resp = await fetch('./history_data.json');
       const data = await resp.json();
@@ -2106,7 +2114,9 @@
       const daysDiff = (new Date() - new Date(last.date + 'T12:00:00')) / 86400000;
 
       function longToISO(s) {
-        const d = new Date(s); if (isNaN(d)) return null;
+        // Append noon to avoid UTC midnight timezone shift (same pattern as parseLong)
+        const d = new Date(s + ' 12:00:00');
+        if (isNaN(d)) return null;
         return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
       }
       function dateToISO(d) {
@@ -2182,7 +2192,7 @@
       });
 
       // === YESTERDAY WAS A SPECIAL DAY ===
-      if (daysDiff <= 7) {
+      if (daysDiff <= 3) {
         if (isTodayAfterTW()) notes.push(`Yesterday was Triple Witching — historically averages 47.6% the day after (-7.4% below avg).`);
 
         const lastD = new Date(last.date + 'T12:00:00');
@@ -2256,7 +2266,10 @@
       } else if (el) {
         el.style.display = 'none';
       }
-    } catch(e) {}
+    } catch(e) {
+    } finally {
+      _wrFetchInProgress = false;
+    }
   }
 
   document.addEventListener('DOMContentLoaded',()=>{

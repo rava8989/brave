@@ -446,6 +446,13 @@ function calculateSignal({vixToday,vixYOpen,vixYClose,spxGapPct,etDate}){
 
   if(pmNote)rec+=" (afternoon times preferred)";
 
+  // o2o override: if o2o > 1.4 and signal is Straddle (not EOM), force M8BF
+  if (o2o > T.O2O_M8BF && !eomDay && (rec === "Straddle @ 9:32 AM" || rec.startsWith("NM Straddle"))) {
+    rec = m8Msg(etDate); theme = "m8bf"; badge = "M8BF";
+    const sc = m8Sched(etDate.getDay());
+    strikeInfo = sc; entryT = sc?.window || ""; blockT = "o2o>" + T.O2O_M8BF;
+  }
+
   const bobfBlocks=[];
   if(nmMon)bobfBlocks.push("NM Monday");
   if(vixExpDay)bobfBlocks.push("VIX expiration");
@@ -463,7 +470,7 @@ function calculateSignal({vixToday,vixYOpen,vixYClose,spxGapPct,etDate}){
   let m8bfText=rec,stradText=rec,gxbfText=rec;
   const _oNUp=isNaN(oNight)||oNight<=0,_oNDrop=!isNaN(oNight)&&oNight>0;
   if(theme==='m8bf'){stradText=`No Straddle (${_oNUp?'overnight VIX up':'overnight VIX drop > '+T.DROP_GXBF})`;gxbfText=`No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;}
-  else if(theme==='strad'){m8bfText=`No M8BF (${_oNDrop?'overnight VIX up':'open-to-open ≤ '+T.O2O_M8BF})`;gxbfText=`No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;}
+  else if(theme==='strad'){m8bfText=`No M8BF (${_oNDrop?'open-to-open ≤ '+T.O2O_M8BF:'overnight VIX up'})`;gxbfText=`No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;}
   else if(theme==='gxbf'){m8bfText="No M8BF (overnight VIX up)";stradText=`No Straddle (overnight VIX drop > ${T.DROP_GXBF})`;}
   else if(theme==='block'){if(rec.includes('M8BF')){stradText=`No Straddle (${_oNUp?'overnight VIX up':'overnight VIX drop > '+T.DROP_GXBF})`;gxbfText=`No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;}else if(rec.includes('Straddle')||rec.includes('CPI')||rec.includes('Trade')){m8bfText="No M8BF";gxbfText="No GXBF";}else if(rec.includes('GXBF')){m8bfText="No M8BF";stradText="No Straddle";}}
 
@@ -803,7 +810,8 @@ async function init() {
         etDate,
       });
 
-      const prevWR = prev.m8bfWR;
+      const prevWREntry = raw.slice(0, i).reverse().find(r => r.m8bfWR != null);
+      const prevWR = prevWREntry ? prevWREntry.m8bfWR : null;
       if (prevWR != null) {
         const dow = etDate.getDay();
         if (prevWR === 0 && signal.rec.startsWith("M8BF")) {
@@ -840,7 +848,7 @@ async function init() {
     allRows.reverse();
     // Always reset date range to full history (clears any browser-cached values)
     document.getElementById('dateStart').value = '';
-    if (allRows.length) document.getElementById('dateEnd').value = allRows[0].date;
+    document.getElementById('dateEnd').value = '';  // no ceiling
     filterMonths(0);
   } catch (e) {
     document.getElementById('content').innerHTML =
@@ -940,7 +948,7 @@ function renderTable() {
     h += stratCell(s.theme === 'm8bf', row.m8bfPL);
     h += stratCell(activeStrats.strad && row.stradPL != null, row.stradPL);
     h += stratCell(activeStrats.gxbf && row.gxbfPL != null, row.gxbfPL);
-    h += stratCell(s.bobfBadge !== 'BLOCKED', row.bobfPL);
+    h += stratCell(activeStrats.bobf && s.bobfBadge !== 'BLOCKED', row.bobfPL);
 
     let dayTotal = 0, hasDayTrade = false;
     if (activeStrats.m8bf && s.theme === 'm8bf' && row.m8bfPL != null) { dayTotal += row.m8bfPL; hasDayTrade = true; }
