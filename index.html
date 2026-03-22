@@ -8,25 +8,6 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 
-  <script type="module">
-    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
-    window._mermaidInit = () => {
-      const dark = document.documentElement.getAttribute('data-theme') === 'dark';
-      mermaid.initialize({
-        startOnLoad: false,
-        theme: dark ? 'dark' : 'default',
-      });
-      document.querySelectorAll('.mermaid').forEach(el => {
-        const code = el.getAttribute('data-src') || el.textContent;
-        el.removeAttribute('data-processed');
-        el.textContent = code;
-        el.setAttribute('data-src', code);
-      });
-      mermaid.run({ nodes: document.querySelectorAll('.mermaid') });
-    };
-    window._mermaidInit();
-  </script>
-
   <style>
     :root {
       --bg:#f1f5f9; --bg2:#ffffff; --bg3:#f8fafc;
@@ -213,10 +194,6 @@
 
     #resultDayLabel{text-align:right;font-size:11px;color:var(--text3);margin-bottom:14px;font-family:'JetBrains Mono',monospace;}
 
-    /* FLOWCHART */
-    .flowchart{margin:18px 0;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:14px;overflow-x:auto;}
-    .fc-title{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);margin-bottom:10px;}
-
     /* STRATEGY DOC */
     .strategy-doc{background:var(--bg2);border:1px solid var(--border);padding:22px;margin:0 0 60px;border-radius:var(--radius);box-shadow:var(--shadow);text-align:left;line-height:1.6;color:var(--text);}
     .strategy-doc h2{font-size:17px;margin:0 0 10px;font-family:'JetBrains Mono',monospace;color:var(--accent);}
@@ -244,7 +221,7 @@
     /* #8: Print styles */
     @media print {
       body{background:#fff;color:#000;display:block;}
-      .sidebar,.calcRow,.metrics-bar,.flowchart,.strategy-doc,#resultDayLabel{display:none;}
+      .sidebar,.calcRow,.metrics-bar,.strategy-doc,#resultDayLabel{display:none;}
       .main{padding:10px;}
       .signal-stack{flex-direction:column;}
       .scard{border:2px solid #ccc !important;background:#f9f9f9 !important;color:#000 !important;box-shadow:none;}
@@ -285,7 +262,6 @@
       .date-pill{font-size:11px;padding:3px 10px;}
       .sg{gap:5px;}
       .sp{font-size:11px;padding:2px 7px;}
-      .flowchart{padding:10px;}
     }
   </style>
 </head>
@@ -562,9 +538,10 @@
       <li>Entry: <strong>9:32 AM</strong>.</li>
       <li><strong>Not traded</strong> on OPEX days.</li>
       <li><strong>Not traded</strong> on Wednesdays — converts to M8BF (unless Fed, CPI, EOM, or NM day).</li>
+      <li><strong>Open-to-open VIX drop &gt; 1.4</strong> → Straddle cancelled, converts to M8BF. Does <strong>not</strong> apply on EOM days.</li>
       <li>Win rate = 0% prior day → next day is automatic Straddle regardless of VIX signal.</li>
       <li>Win rate = 0% prior day on a <strong>Fed day</strong> → Straddle still blocked (Fed day takes priority).</li>
-      <li>EOM (last trading day of month) → automatic <strong>EOM Straddle</strong> @ 9:32 AM. Max risk: <strong>$3,500</strong>.</li>
+      <li>EOM (last trading day of month) → automatic <strong>EOM Straddle</strong> @ 9:32 AM. BOBF remains in play. Max risk: <strong>$3,500</strong>.</li>
       <li>NM (first trading day of month, non-Monday) → <strong>NM Straddle</strong> @ 9:32 AM. Max risk: <strong>$3,200</strong>.</li>
     </ul>
     <div class="strategy-image"><img src="./Straddle.jpg" alt="Straddle" loading="lazy" /></div>
@@ -577,6 +554,7 @@
       <li>Allowed on Fed days.</li>
       <li>Automatic GXBF on OPEX+1 — overrides M8BF and Straddle signals that day.</li>
       <li>Maximum VIX allowed: <strong>25</strong>. Blocked if VIX ≥ 25.</li>
+      <li><strong>OPEX+1 blocked</strong> if VIX gaps up <strong>≥ 2%</strong> overnight (today's open vs yesterday's close).</li>
       <li>CPI day takes full priority — OPEX+1 GXBF does not fire on CPI days.</li>
       <li>Max risk: <strong>$1,400</strong>.</li>
     </ul>
@@ -913,21 +891,6 @@
     });
   }
 
-  /* ====== #6: FLOWCHART PATH HIGHLIGHT ====== */
-  function updateFlowPath(oNight, o2o, result){
-    const el=document.getElementById('flowPath');
-    if(!el) return;
-    let path='';
-    if(oNight>0.65)       path='VIX drop > 0.65 → GXBF';
-    else if(o2o>1.4)      path='Open-to-open > 1.4 → M8BF';
-    else if(oNight>0&&oNight<=0.65) path='VIX drop 0.01–0.65 → Straddle';
-    else                  path='VIX up / flat → M8BF';
-    el.textContent=`📍 ${path}`;
-    el.style.color='var(--accent)';
-    el.style.fontStyle='normal';
-    el.style.fontWeight='600';
-  }
-
   /* ====== #7: PERSIST INPUTS VIA localStorage ====== */
   // Track which fields were auto-filled by Schwab vs manually typed
   // Auto values = saved to localStorage and restored on reload
@@ -1026,7 +989,6 @@
   document.getElementById('themeToggle').addEventListener('click',()=>{
     const c=document.documentElement.getAttribute('data-theme'), n=c==='dark'?'light':'dark';
     document.documentElement.setAttribute('data-theme',n); localStorage.setItem('s3theme',n); updateThemeLbl(n);
-    setTimeout(window._mermaidInit,50);
   });
 
   /* ====== MUTUAL EXCLUSION ====== */
@@ -1218,6 +1180,13 @@
         if(rec==="Straddle @ 9:32 AM"){const sc=m8Sched(dow);rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=sc;entryT=sc?.window||"";blockT="90%rule";}
       }
 
+      // o2o cancels non-EOM straddles → M8BF
+      if(!eomDay && (rec.startsWith("Straddle") || rec.startsWith("NM Straddle")) && o2o > T.O2O_M8BF) {
+        rec = m8Msg(now); theme = "m8bf"; badge = "M8BF";
+        strikeInfo = m8Sched(dow); entryT = strikeInfo?.window || "";
+        blockT = "o2o"; blockD = `Open-to-open VIX drop ${o2o.toFixed(2)} > ${T.O2O_M8BF} — Straddle cancelled → M8BF`;
+      }
+
       if(postOpDay){
         const isM8=rec.startsWith("M8BF"), isStr=rec.startsWith("Straddle")||rec.startsWith("NM Straddle");
         if(isM8||isStr){
@@ -1394,9 +1363,6 @@
     else if(theme==='block' && rec.includes('Straddle'))setTodayTrade('pillStrad');
     else if(theme==='block' && rec.includes('GXBF'))   setTodayTrade('pillGxbf');
     else                        setTodayTrade(null);
-
-    // #6: highlight flowchart path
-    updateFlowPath(oNight, o2o, rec);
 
     // #7: persist inputs
     saveInputs();
