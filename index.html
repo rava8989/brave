@@ -525,7 +525,7 @@
     <ul>
       <li><strong>Trades every week, every day Mon–Fri</strong> inside fixed 30-minute windows: Mon 10:00–10:30 · Tue 13:30–14:00 · Wed 12:00–12:30 · Thu 11:00–11:30 · Fri 13:00–13:30.</li>
       <li>Enter the <strong>first qualifying strike</strong> inside the window. One trade per day. Skip if none appears.</li>
-      <li><strong>Banned strikes:</strong> 10, 25, 35, 40, 65, 80, 90 — the 7 worst-performing strike endings by historical P&amp;L. Never trade these.</li>
+      <li><strong>Banned strikes:</strong> 10, 25, 35, 40, 65, 80, 90 — the 7 worst-performing strike endings by historical P&amp;L. Never trade these. Strike ending in 95 additionally blocked on Thursdays (28.6% WR, -$591 avg).</li>
       <li><strong>Not traded on:</strong> EOM and EOM-1 · day before OPEX · day after OPEX · first trading day of month · VIX exp day when VIX exp falls after OPEX · all earnings days except AMZN · day after any earnings (NVDA, TSLA, AMZN, MSFT, META, GOOG, AAPL).</li>
       <li>No stop-loss — hold to expiration. Max risk: <strong>$1,400</strong>. Entry cost ≈ $14.</li>
       <li>Historical (Aug 2024–Mar 2026): <strong>260 trades · 66.2% WR · $459 avg/trade · $119,270 total</strong>.</li>
@@ -762,11 +762,12 @@
   // Window = start of entry window; everyWeek = can trade even on non-M8BF days
   function m8Sched(dow){
     const blocked=["10","25","35","40","65","80","90"];
+    const blockedThu=["10","25","35","40","65","80","90","95"];
     switch(dow){
       case 1:return{t:"10:00",window:"10:00–10:30",blocked:blocked};
       case 2:return{t:"13:30",window:"13:30–14:00",blocked:blocked};
       case 3:return{t:"12:00",window:"12:00–12:30",blocked:blocked};
-      case 4:return{t:"11:00",window:"11:00–11:30",blocked:blocked};
+      case 4:return{t:"11:00",window:"11:00–11:30",blocked:blockedThu,thuNote:true};
       case 5:return{t:"13:00",window:"13:00–13:30",blocked:blocked};
       default:return null;
     }
@@ -1321,8 +1322,18 @@
         const p=document.createElement('span');
         p.className='sp lwr';
         p.textContent=s;
+        if(strikeInfo.thuNote && s==='95'){
+          p.title='Blocked on Thursdays only (28.6% WR, -$591 avg)';
+          p.style.cssText='outline:1px dashed #f87171;';
+        }
         g.appendChild(p);
       });
+      if(strikeInfo.thuNote){
+        const thuLbl=document.createElement('div');
+        thuLbl.style.cssText='width:100%;font-size:10px;color:#f87171;font-style:italic;margin-top:4px;';
+        thuLbl.textContent='95 additionally blocked Thursdays (28.6% WR, -$591 avg)';
+        g.appendChild(thuLbl);
+      }
     } else { gw.style.display='none'; }
 
     // ── CARD 4: BOBF ──
