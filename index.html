@@ -1106,7 +1106,7 @@
       if(postOpDay)               return blk("No M8BF (day after OPEX)",   "Skipped day after OPEX");
       if(isNonAmznEarningsDay())  return blk("No M8BF (earnings)",         "Not traded on earnings days (except AMZN)");
       if(isDayAfterAnyEarnings()) return blk("No M8BF (day after earnings)","Not traded day after any earnings");
-      if(isPostVixBeforeOpex())   return blk("No M8BF (day after VIX exp)","M8BF blocked on first trading day after VIX exp (VIX exp before OPEX)");
+      if(isVixAfterOpexDay())     return blk("No M8BF (VIX exp day)",      "VIX exp day when VIX exp falls after OPEX");
       if(nmDay)                   return blk("No M8BF (first trading day)", "Skipped on first trading day of month");
       return null;
     })();
