@@ -371,7 +371,7 @@ function isTodayAfter(ds, etDate) { const d = new Date(ds); if(isNaN(d)) return 
 function isTodayBefore(ds, etDate) { const d = new Date(ds); if(isNaN(d)) return false; const b = prevTrade(d); return b.getFullYear()===etDate.getFullYear()&&b.getMonth()===etDate.getMonth()&&b.getDate()===etDate.getDate(); }
 function parseLong(s) { const d = new Date(s); return isNaN(d)?null:new Date(d.getFullYear(),d.getMonth(),d.getDate(),12); }
 function schedInMonth(list,ref) { const y=ref.getFullYear(),m=ref.getMonth(); for(const s of list){const d=parseLong(s);if(d&&d.getFullYear()===y&&d.getMonth()===m) return d;} return null; }
-function isPostVixBeforeOpex(ref) { const vx=schedInMonth(vixSch,ref),op=schedInMonth(opexSch,ref); if(!vx||!op||vx>=op) return false; const pv=nextTrade(vx); return pv.getFullYear()===ref.getFullYear()&&pv.getMonth()===ref.getMonth()&&pv.getDate()===ref.getDate(); }
+function isVixAfterOpexDay(ref) { if(!vixSch.includes(todayLong(ref))) return false; const vx=schedInMonth(vixSch,ref),op=schedInMonth(opexSch,ref); if(!vx||!op) return false; return vx>op; }
 const isPostOpexMon = etDate => opexSch.some(ds=>isTodayAfter(ds,etDate))&&etDate.getDay()===1;
 const isLastTradeMo = d => nextTrade(d).getMonth()!==d.getMonth();
 function isEomN(n,d){const f=new Date(d.getFullYear(),d.getMonth()+1,1);let t=prevTrade(f);for(let i=0;i<n;i++)t=prevTrade(t);return t.getFullYear()===d.getFullYear()&&t.getMonth()===d.getMonth()&&t.getDate()===d.getDate();}
@@ -425,8 +425,10 @@ function calculateSignal({vixToday,vixYOpen,vixYClose,spxGapPct,etDate}){
     }
 
     if(rec.startsWith("M8BF")){
-      if(eomDay){rec="No M8BF (EOM)";theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on EOM";badge="BLOCKED";strikeInfo=null;}
-      else if(eom1){rec="No M8BF (EOM-1)";theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on EOM-1";badge="BLOCKED";strikeInfo=null;}
+      if(eomDay)                    {rec="No M8BF (EOM)";           theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on EOM";                  badge="BLOCKED";strikeInfo=null;}
+      else if(eom1)                 {rec="No M8BF (EOM-1)";         theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on EOM-1";                badge="BLOCKED";strikeInfo=null;}
+      else if(opex1)                {rec="No M8BF (day before OPEX)";theme="block";crossed=true;blockT="hard";blockD="Skipped day before OPEX";               badge="BLOCKED";strikeInfo=null;}
+      else if(isVixAfterOpexDay(etDate)){rec="No M8BF (VIX exp day)";theme="block";crossed=true;blockT="hard";blockD="VIX exp day when VIX exp falls after OPEX";badge="BLOCKED";strikeInfo=null;}
     }
 
     if(nmDay&&!isMon&&(rec.startsWith("M8BF")||rec.startsWith("No M8BF"))){rec="NM Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="NM STRADDLE";strikeInfo=null;}
