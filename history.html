@@ -271,7 +271,7 @@
     </div>
   </div>
 
-  <div class="chart-card" id="monteCarloCard" style="display:none"
+  <div class="chart-card" id="monteCarloCard" style="display:none">
     <div class="chart-card-header">
       <span class="chart-card-title">Monte Carlo Simulation</span>
     </div>
@@ -965,7 +965,8 @@ function renderTable() {
   h += '<td colspan="9" style="text-align:right;font-family:Inter,sans-serif;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text2)">TOTAL</td>';
   const totAll = (activeStrats.m8bf ? totM8 : 0) + (activeStrats.strad ? totStrad : 0) + (activeStrats.gxbf ? totGxbf : 0) + (activeStrats.bobf ? totBobf : 0);
   h += fc(totM8, activeStrats.m8bf) + fc(totStrad, activeStrats.strad) + fc(totGxbf, activeStrats.gxbf) + fc(totBobf, activeStrats.bobf);
-  h += `<td class="${valClass(totAll)}" style="font-weight:700">$${Math.round(totAll).toLocaleString()}</td>`;
+  const anyActive = activeStrats.m8bf || activeStrats.strad || activeStrats.gxbf || activeStrats.bobf;
+  h += anyActive ? `<td class="${valClass(totAll)}" style="font-weight:700">$${Math.round(totAll).toLocaleString()}</td>` : `<td style="color:var(--text3);text-align:center">—</td>`;
   h += '</tr></tfoot></table></div>';
   document.getElementById('content').innerHTML = h;
   renderAll();
