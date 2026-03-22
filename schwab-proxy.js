@@ -21,6 +21,7 @@
 // ════════════════════════════════════════════════════════════════════
 
 const rateLimitMap = new Map(); // Map<ip, {count: number, reset: number}>
+let _tokenRefreshPromise = null; // mutex: prevents concurrent Schwab token refreshes
 
 function checkRateLimit(request) {
   const ip = request.headers.get('CF-Connecting-IP') || request.headers.get('X-Forwarded-For') || 'unknown';
@@ -367,35 +368,46 @@ async function getAccessToken(env) {
 
   // Refresh access token if within 2 minutes of expiry
   if (Date.now() > tokens.expiry - 120000) {
-    const credsRaw = await env.SIGNAL_KV.get('schwab_creds');
-    if (!credsRaw) throw new Error('No Schwab creds in KV');
-    const creds = JSON.parse(credsRaw);
+    // Mutex: if a refresh is already in-flight, all concurrent callers share the same promise
+    // so only ONE actual Schwab refresh call is made (Schwab refresh tokens are single-use)
+    if (!_tokenRefreshPromise) {
+      _tokenRefreshPromise = (async () => {
+        try {
+          const credsRaw = await env.SIGNAL_KV.get('schwab_creds');
+          if (!credsRaw) throw new Error('No Schwab creds in KV');
+          const creds = JSON.parse(credsRaw);
 
-    const body = new URLSearchParams({
-      grant_type: 'refresh_token',
-      refresh_token: tokens.refresh,
-    });
+          const body = new URLSearchParams({
+            grant_type: 'refresh_token',
+            refresh_token: tokens.refresh,
+          });
 
-    const resp = await fetch('https://api.schwabapi.com/v1/oauth/token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Authorization': 'Basic ' + btoa(`${creds.appKey}:${env.SCHWAB_APP_SECRET}`),
-      },
-      body,
-    });
+          const resp = await fetch('https://api.schwabapi.com/v1/oauth/token', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'Authorization': 'Basic ' + btoa(`${creds.appKey}:${env.SCHWAB_APP_SECRET}`),
+            },
+            body,
+          });
 
-    const data = await resp.json();
-    if (!data.access_token) throw new Error('Token refresh failed: ' + (data.error_description || JSON.stringify(data)));
+          const data = await resp.json();
+          if (!data.access_token) throw new Error('Token refresh failed: ' + (data.error_description || JSON.stringify(data)));
 
-    const newTokens = {
-      access: data.access_token,
-      refresh: data.refresh_token || tokens.refresh,
-      expiry: Date.now() + (data.expires_in * 1000),
-      refreshExpiry: tokens.refreshExpiry,
-    };
-    await env.SIGNAL_KV.put('schwab_tokens', JSON.stringify(newTokens));
-    return newTokens.access;
+          const newTokens = {
+            access: data.access_token,
+            refresh: data.refresh_token || tokens.refresh,
+            expiry: Date.now() + (data.expires_in * 1000),
+            refreshExpiry: tokens.refreshExpiry,
+          };
+          await env.SIGNAL_KV.put('schwab_tokens', JSON.stringify(newTokens));
+          return newTokens.access;
+        } finally {
+          _tokenRefreshPromise = null;
+        }
+      })();
+    }
+    return await _tokenRefreshPromise;
   }
 
   return tokens.access;
@@ -634,7 +646,7 @@ async function handleScheduled(env) {
   const dc = JSON.parse(dcRaw);
 
   // Validate proxyUrl against allowlist — only Discord webhook URLs are permitted
-  const discordWebhookPattern = /^https:\/\/discord\.com\/api\/webhooks\/[^/]+\/[^/]+/;
+  const discordWebhookPattern = /^https:\/\/discord\.com\/api\/webhooks\/[^/?#]+\/[^/?#]+$/;
   if (!dc.proxyUrl || !discordWebhookPattern.test(dc.proxyUrl)) {
     throw new Error('Invalid proxyUrl: must be a Discord webhook URL (https://discord.com/api/webhooks/*)');
   }
@@ -739,8 +751,11 @@ export default {
       return jsonResp({ error: 'Rate limit exceeded' }, 429, corsHeaders);
     }
 
-    // ── GET /status ── Public debug endpoint (no CORS restriction)
+    // ── GET /status ── Secured debug endpoint
     if (url.pathname === '/status' && request.method === 'GET') {
+      if (request.headers.get('X-Sync-Secret') !== env.SYNC_SECRET) {
+        return jsonResp({ error: 'Unauthorized' }, 401, corsHeaders);
+      }
       try {
         const lastRun = await env.SIGNAL_KV.get('last_run');
         return jsonResp(lastRun ? JSON.parse(lastRun) : { status: 'never_run' }, 200, {});
