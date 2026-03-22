@@ -2094,6 +2094,8 @@
         if (!isNaN(wr)) {
           wr90el.checked = wr >= 90;
           wr0el.checked = wr === 0;
+          // Re-run in case Schwab auto-calculate already fired before this fetch completed
+          calculateStrategy();
         }
       }
 
