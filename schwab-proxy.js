@@ -607,6 +607,12 @@ async function handleScheduled(env) {
   if (!dcRaw) throw new Error('No Discord config in KV — sync from browser');
   const dc = JSON.parse(dcRaw);
 
+  // Validate proxyUrl against allowlist — only Discord webhook URLs are permitted
+  const discordWebhookPattern = /^https:\/\/discord\.com\/api\/webhooks\/[^/]+\/[^/]+/;
+  if (!dc.proxyUrl || !discordWebhookPattern.test(dc.proxyUrl)) {
+    throw new Error('Invalid proxyUrl: must be a Discord webhook URL (https://discord.com/api/webhooks/*)');
+  }
+
   const dcResp = await fetch(dc.proxyUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -687,8 +693,11 @@ async function upsertHistoryGitHub(env, dateStr, fields) {
 export default {
   async fetch(request, env) {
     const origin = request.headers.get('Origin') || '';
-    const allowed = env.ALLOWED_ORIGIN || '*';
-    const corsOk = allowed === '*' || origin === allowed;
+    if (!env.ALLOWED_ORIGIN) {
+      console.error('ALLOWED_ORIGIN env var is not set — all cross-origin requests will be blocked');
+    }
+    const allowed = env.ALLOWED_ORIGIN || 'null';
+    const corsOk = origin !== '' && origin === allowed;
 
     const corsHeaders = {
       'Access-Control-Allow-Origin': corsOk ? origin || '*' : '',
@@ -773,6 +782,11 @@ export default {
 
       // ── POST /token ──
       if (url.pathname === '/token' && request.method === 'POST') {
+        const tokenSecret = request.headers.get('X-Sync-Secret');
+        if (!tokenSecret || tokenSecret !== env.SYNC_SECRET) {
+          return jsonResp({ error: 'Unauthorized' }, 401, corsHeaders);
+        }
+
         const json = await request.json();
         const { app_key, grant_type, code, redirect_uri, refresh_token } = json;
         if (!app_key || !grant_type) {

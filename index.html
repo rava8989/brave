@@ -2149,6 +2149,8 @@
           META: { wr:'19.2%', diff:'-35.8%' },
           AAPL: { wr:'36.5%', diff:'-18.5%' },
           AMZN: { wr:'38.4%', diff:'-16.6%' },
+          NVDA: { wr:'42.9%', diff:'-12.1%' },
+          TSLA: { wr:'52.3%', diff:'-2.7%'  },
         };
         const info = map[e.ticker];
         if (info) notes.push(`Today is ${e.company} earnings — historically averages ${info.wr} on ${e.ticker} earnings days (${info.diff} vs avg).`);
@@ -2190,6 +2192,7 @@
             MSFT: { wr:'36.5%', diff:'-18.5%' },
             META: { wr:'36.5%', diff:'-18.5%' },
             GOOGL:{ wr:'16.5%', diff:'-38.5%' },
+            AAPL: { wr:'38.4%', diff:'-16.6%' },
           };
           const info = map[e.ticker];
           if (info) notes.push(`Yesterday was ${e.company} earnings — historically averages ${info.wr} the day after ${e.ticker} earnings (${info.diff} vs avg).`);
