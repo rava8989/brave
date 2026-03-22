@@ -1155,7 +1155,7 @@
     if(cpiDay){
       if(oNight>0){rec="Long ATM Call @ 9:32 AM (CPI) — Max $13";theme="strad";entryT="9:32 AM";badge="CPI CALL";}
       else{rec="No Trade (CPI, VIX up)";theme="block";crossed=true;blockT="hard";blockD="CPI day, VIX up";badge="BLOCKED";}
-    } else if(spxGapForcesM8BF){
+    } else if(spxGapForcesM8BF && !eomDay){
       // SPX gap ≥ 0.9% in either direction → M8BF regardless of VIX
       const dir = spxGapPct > 0 ? '▲' : '▼';
       rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";
@@ -1184,7 +1184,7 @@
           rec="Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="0%rule";entryT="9:32 AM";badge="STRADDLE";strikeInfo=null;
         }
       } else if(wr90.checked){
-        if(rec==="Straddle @ 9:32 AM"){const sc=m8Sched(dow);rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=sc;entryT=sc?.window||"";blockT="90%rule";}
+        if(rec==="Straddle @ 9:32 AM"||rec==="Straddle @ 9:32 AM (EOM)"){const sc=m8Sched(dow);rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=sc;entryT=sc?.window||"";blockT="90%rule";}
       }
 
       // o2o cancels non-EOM straddles → M8BF
@@ -2084,6 +2084,19 @@
       const rows = data.filter(r => r.m8bfWR != null)
                        .sort((a, b) => a.date.localeCompare(b.date));
       if (rows.length < 2) return;
+
+      // Auto-set WR checkboxes from previous day's m8bfWR
+      const prevWRRow = rows[rows.length - 1]; // most recent day with m8bfWR
+      if (prevWRRow && prevWRRow.m8bfWR != null) {
+        const wr = parseFloat(prevWRRow.m8bfWR);
+        const wr90el = document.getElementById('winrate90');
+        const wr0el = document.getElementById('winrate0');
+        if (!isNaN(wr)) {
+          wr90el.checked = wr >= 90;
+          wr0el.checked = wr === 0;
+        }
+      }
+
       const notes = [];
       const last = rows[rows.length - 1];
       const daysDiff = (new Date() - new Date(last.date + 'T12:00:00')) / 86400000;
