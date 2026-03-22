@@ -624,6 +624,13 @@
     <hr class="divider">
     <p>All trades held to expiration.</p>
     <p class="muted-note"><strong>Disclaimer:</strong> For informational and educational purposes only. Not financial advice. Trading options involves significant risk.</p>
+
+    <hr class="divider">
+    <h3>Recent Changes</h3>
+    <ul>
+      <li><strong>GXBF on OPEX+1 blocked when VIX gaps up ≥ 2% overnight</strong> — if today's VIX open is ≥ 2% above yesterday's VIX close, the automatic OPEX+1 GXBF signal is suppressed entirely.</li>
+      <li><strong>o2o &gt; 1.4 cancels Straddle → M8BF (except EOM)</strong> — when the open-to-open VIX drop (yesterday's VIX open minus today's VIX open) exceeds 1.4, any Straddle or NM Straddle signal converts to M8BF. This override does not apply on EOM days.</li>
+    </ul>
   </section>
 
 </div><!-- /main -->
@@ -1236,6 +1243,7 @@
       else if(blockT==='vix') m8bfReason.innerHTML=`<span class="block-vix">⚠️ ${blockD}</span>`;
       else if(spxGapForcesM8BF) m8bfReason.innerHTML=`<span style="color:var(--col-gxbf);font-style:italic;">📐 ${blockD}</span>`;
       else if(blockT==='90%rule') m8bfReason.innerHTML=`<span style="color:var(--accent);font-style:italic;">📈 90% rule — Straddle → M8BF</span>`;
+      else if(blockT==='o2o') m8bfReason.innerHTML=`<span style="color:var(--accent);font-style:italic;">📉 o2o > ${T.O2O_M8BF} — Straddle cancelled → M8BF</span>`;
       else m8bfReason.textContent='';
     } else if(theme==='block' && rec.includes('M8BF')){
       cardM8bf.className='scard active-block';
