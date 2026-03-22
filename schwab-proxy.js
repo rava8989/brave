@@ -803,6 +803,11 @@ export default {
       // ── GET /market/* ──
       if (url.pathname.startsWith('/market/') && request.method === 'GET') {
         const subpath = url.pathname.slice('/market'.length);
+        // Allowlist: only permit safe read-only market data endpoints
+        const ALLOWED = ['/pricehistory', '/quotes', '/chains', '/markets', '/instruments'];
+        if (!ALLOWED.some(p => subpath.startsWith(p))) {
+          return jsonResp({ error: 'Path not allowed' }, 403, corsHeaders);
+        }
         const upstream = `https://api.schwabapi.com/marketdata/v1${subpath}${url.search}`;
 
         const resp = await fetch(upstream, {
