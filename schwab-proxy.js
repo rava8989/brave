@@ -17,6 +17,32 @@
  */
 
 // ════════════════════════════════════════════════════════════════════
+// RATE LIMITING
+// ════════════════════════════════════════════════════════════════════
+
+const rateLimitMap = new Map(); // Map<ip, {count: number, reset: number}>
+
+function checkRateLimit(request) {
+  const ip = request.headers.get('CF-Connecting-IP') || request.headers.get('X-Forwarded-For') || 'unknown';
+  const now = Date.now();
+
+  // Clean up expired entries
+  for (const [key, val] of rateLimitMap) {
+    if (val.reset < now) rateLimitMap.delete(key);
+  }
+
+  const entry = rateLimitMap.get(ip);
+  if (!entry || entry.reset < now) {
+    rateLimitMap.set(ip, { count: 1, reset: now + 60_000 });
+    return false; // not rate limited
+  }
+
+  entry.count += 1;
+  if (entry.count > 60) return true; // rate limited
+  return false;
+}
+
+// ════════════════════════════════════════════════════════════════════
 // CALENDAR DATA (ported from index.html)
 // ════════════════════════════════════════════════════════════════════
 
@@ -708,6 +734,11 @@ export default {
 
     const url = new URL(request.url);
 
+    // ── Rate limiting ──
+    if (checkRateLimit(request)) {
+      return jsonResp({ error: 'Rate limit exceeded' }, 429, corsHeaders);
+    }
+
     // ── GET /status ── Public debug endpoint (no CORS restriction)
     if (url.pathname === '/status' && request.method === 'GET') {
       try {
@@ -771,6 +802,18 @@ export default {
         }
 
         const json = await request.json();
+
+        // Validate optional history record fields if present
+        if ('date' in json && (typeof json.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(json.date))) {
+          return jsonResp({ error: 'Invalid payload: date' }, 400, corsHeaders);
+        }
+        const numOrNull = ['m8bfPL', 'stradPL', 'gxbfPL', 'bobfPL', 'm8bfWR', 'vixOpen', 'vixClose', 'spxOpen', 'spxClose'];
+        for (const field of numOrNull) {
+          if (field in json && json[field] !== null && typeof json[field] !== 'number') {
+            return jsonResp({ error: `Invalid payload: ${field}` }, 400, corsHeaders);
+          }
+        }
+
         const { schwab_tokens, schwab_creds, discord_config } = json;
 
         if (schwab_tokens) await env.SIGNAL_KV.put('schwab_tokens', JSON.stringify(schwab_tokens));
