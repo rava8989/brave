@@ -1159,8 +1159,8 @@
     if(cpiDay){
       if(oNight>0){rec="Long ATM Call @ 9:32 AM (CPI) — Max $13";theme="strad";entryT="9:32 AM";badge="CPI CALL";}
       else{rec="No Trade (CPI, VIX up)";theme="block";crossed=true;blockT="hard";blockD="CPI day, VIX up";badge="BLOCKED";}
-    } else if(spxGapForcesM8BF && !eomDay){
-      // SPX gap ≥ 0.9% in either direction → M8BF regardless of VIX
+    } else if(spxGapForcesM8BF && !eomDay && !postOpDay){
+      // SPX gap ≥ 0.9% in either direction → M8BF regardless of VIX (but not on OPEX+1 — GXBF takes priority)
       const dir = spxGapPct > 0 ? '▲' : '▼';
       rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";
       blockD=`SPX gap ${dir}${Math.abs(spxGapPct).toFixed(2)}% ≥ ${T.SPX_GAP_THRESHOLD}% → M8BF forced`;
