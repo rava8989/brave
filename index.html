@@ -1721,14 +1721,16 @@
       if(yOpen) markAutoFilled('yesterdayOpen', yOpen);
       if(yClose) markAutoFilled('yesterdayClose', yClose);
 
-      // If today already has a 9:30+ print, fill that too
-      const todayCandles = candles.filter(c => new Date(c.datetime).toDateString() === todayStr);
-      const todayOpen = todayCandles.find(c => {
-        const d = new Date(c.datetime);
-        return d.getHours() === 9 && d.getMinutes() >= 30;
+      // If today already has a 9:30 print, fill that too (use ET for hour check)
+      const toET_today = ts => new Date(new Date(ts).toLocaleString('en-US', { timeZone: 'America/New_York' }));
+      const etTodayStr = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' })).toDateString();
+      const todayCandles = candles.filter(c => toET_today(c.datetime).toDateString() === etTodayStr);
+      const todayOpenCandle = todayCandles.find(c => {
+        const d = toET_today(c.datetime);
+        return d.getHours() === 9 && d.getMinutes() === 30;
       });
-      if(todayOpen){
-        markAutoFilled('todayOpen', todayOpen.open.toFixed(2));
+      if(todayOpenCandle){
+        markAutoFilled('todayOpen', todayOpenCandle.open.toFixed(2));
         calculateStrategy();
       }
 
@@ -1752,11 +1754,12 @@
             }) || spxYCandles[spxYCandles.length - 1];
             if(spxCloseCandle) spxYClose = spxCloseCandle.close;
           }
-          // Today's 9:30 open
-          const spxTodayCandles = spxCandles.filter(c => new Date(c.datetime).toDateString() === todayStr);
+          // Today's 9:30 open (use ET for hour check)
+          const toET_spx = ts => new Date(new Date(ts).toLocaleString('en-US', { timeZone: 'America/New_York' }));
+          const spxTodayCandles = spxCandles.filter(c => toET_spx(c.datetime).toDateString() === etTodayStr);
           const spxOpenCandle = spxTodayCandles.find(c => {
-            const d = new Date(c.datetime);
-            return d.getHours() === 9 && d.getMinutes() >= 30;
+            const d = toET_spx(c.datetime);
+            return d.getHours() === 9 && d.getMinutes() === 30;
           });
           if(spxOpenCandle) spxTodayOpen = spxOpenCandle.open;
           // Store for gap check, then re-run to show colored gap
@@ -1820,32 +1823,45 @@
       if(!token){ clearInterval(_schwabStreamInterval); return; }
 
       try{
-        const url = `${SCHWAB.proxy()}/market/quotes?symbols=%24VIX&fields=quote`;
+        // Fetch last 2 hours of 1-min candles and look for the exact 9:30 AM ET candle
+        const pollNow = new Date();
+        const pollStart = new Date(pollNow.getTime() - 2 * 60 * 60 * 1000);
+        const toET_poll = ts => new Date(new Date(ts).toLocaleString('en-US', { timeZone: 'America/New_York' }));
+        const url = `${SCHWAB.proxy()}/market/pricehistory?symbol=%24VIX&periodType=day&period=1&frequencyType=minute&frequency=1&startDate=${pollStart.getTime()}&endDate=${pollNow.getTime()}&needExtendedHoursData=false`;
         const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
         const data = await resp.json();
-        const quote = data?.['$VIX']?.quote;
-        if(!quote) return;
+        const candles = data?.candles;
+        if(!candles?.length) return;
 
-        const openPrice = quote.openPrice || quote.lastPrice;
-        if(!openPrice) return;
+        const openCandle = candles.find(c => {
+          const d = toET_poll(c.datetime);
+          return d.getHours() === 9 && d.getMinutes() === 30;
+        });
+        const openPrice = openCandle?.open;
+        if(!openPrice) return; // 9:30 candle not yet available — retry in 10s
 
-        // Check it's a fresh today print (after 9:30 AM)
-        const etNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-        if(etNow.getHours() < 9 || (etNow.getHours() === 9 && etNow.getMinutes() < 30)) return;
+        const etNow = toET_poll(pollNow);
 
         // Got it — fill and calculate
         clearInterval(_schwabStreamInterval);
         markAutoFilled('todayOpen', openPrice.toFixed(2));
 
-        // Also fetch SPX open for gap check
+        // Also fetch SPX 9:30 candle for gap check
         try{
-          const spxUrl = `${SCHWAB.proxy()}/market/quotes?symbols=%24SPX&fields=quote`;
+          const spxPollStart = new Date(pollNow.getTime() - 2 * 60 * 60 * 1000);
+          const spxUrl = `${SCHWAB.proxy()}/market/pricehistory?symbol=%24SPX&periodType=day&period=1&frequencyType=minute&frequency=1&startDate=${spxPollStart.getTime()}&endDate=${pollNow.getTime()}&needExtendedHoursData=false`;
           const spxR = await fetch(spxUrl, { headers: { Authorization: `Bearer ${token}` } });
           const spxD = await spxR.json();
-          const spxQ = spxD?.['$SPX']?.quote;
-          if(spxQ){
-            const existing = SC.get('spx') || {};
-            SC.set('spx', { yClose: existing.yClose, todayOpen: spxQ.openPrice || spxQ.lastPrice });
+          const spxCandles = spxD?.candles;
+          if(spxCandles?.length){
+            const spxOpenCandle = spxCandles.find(c => {
+              const d = toET_poll(c.datetime);
+              return d.getHours() === 9 && d.getMinutes() === 30;
+            });
+            if(spxOpenCandle){
+              const existing = SC.get('spx') || {};
+              SC.set('spx', { yClose: existing.yClose, todayOpen: spxOpenCandle.open });
+            }
           }
         } catch(e){ /* silent */ }
 
