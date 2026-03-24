@@ -1264,10 +1264,17 @@
       m8bfRec.textContent=`M8BF — Window ${dowSched.window}`;
       m8bfReason.innerHTML=`<span style="opacity:.65;font-style:italic;">Optional today (Thu/Fri)</span>`;
       strikeInfo = dowSched;
+    } else if(theme==='strad'||theme==='gxbf'){
+      // M8BF runs independently of overnight VIX — show window/strikes alongside straddle/GXBF
+      cardM8bf.className='scard active-m8bf';
+      m8bfBadge.textContent=dowSched?`🕐 ${dowSched.window}`:'TRADE';
+      m8bfRec.textContent=dowSched?`M8BF — Window ${dowSched.window}`:'M8BF';
+      m8bfReason.textContent='';
+      strikeInfo=dowSched;
     } else {
       cardM8bf.className='scard dimmed';
       m8bfBadge.textContent='—';
-      m8bfRec.textContent=`No M8BF (${oNight>0?'overnight VIX up':'open-to-open ≤ '+T.O2O_M8BF})`;
+      m8bfRec.textContent='No M8BF';
       m8bfReason.textContent='';
     }
 
