@@ -420,6 +420,8 @@ function calculateSignal({vixToday,vixYOpen,vixYClose,spxGapPct,etDate}){
     if(oNight>T.DROP_GXBF){
       if(vixToday>=T.VIX_MAX_GXBF){rec=`No GXBF (VIX ${vixToday} ≥ ${T.VIX_MAX_GXBF})`;theme="block";crossed=true;blockT="vix";blockD=`VIX ${vixToday} ≥ ${T.VIX_MAX_GXBF}`;badge="BLOCKED";}
       else{rec="GXBF @ 9:36 AM";theme="gxbf";entryT="9:36 AM";badge="GXBF";}
+    } else if(oNight>0){
+      rec="Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="STRADDLE";strikeInfo=null;
     } else {
       rec=m8Msg(etDate);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";
     }
@@ -431,7 +433,7 @@ function calculateSignal({vixToday,vixYOpen,vixYClose,spxGapPct,etDate}){
       else if(isVixAfterOpexDay(etDate)){rec="No M8BF (VIX exp day)";theme="block";crossed=true;blockT="hard";blockD="VIX exp day when VIX exp falls after OPEX";badge="BLOCKED";strikeInfo=null;}
     }
 
-    if(nmDay&&!isMon&&(rec.startsWith("M8BF")||rec.startsWith("No M8BF"))){rec="NM Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="NM STRADDLE";strikeInfo=null;}
+    if(nmDay&&!isMon&&(rec.startsWith("M8BF")||rec.startsWith("No M8BF")||rec.startsWith("Straddle"))){rec="NM Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="NM STRADDLE";strikeInfo=null;}
     if(eomDay){rec="Straddle @ 9:32 AM (EOM)";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="EOM STRADDLE";strikeInfo=null;}
     if(isWed&&!fedDay&&!eomDay&&!nmDay&&rec.startsWith("Straddle")){rec=m8Msg(etDate);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";}
     if(opexDay&&rec.startsWith("Straddle")){rec="No Straddle (OPEX day)";theme="block";crossed=true;blockT="hard";blockD="Straddle not on OPEX";badge="BLOCKED";}
