@@ -653,7 +653,7 @@ function getRowPL(row) {
   // Returns the active P/L for this row based on activeStrats, or null
   const s = row.signal || {};
   let pl = 0, hasTrade = false;
-  if (activeStrats.m8bf && s.theme === 'm8bf' && row.m8bfPL != null) { pl += row.m8bfPL; hasTrade = true; }
+  if (activeStrats.m8bf && s.m8bfRan && row.m8bfPL != null) { pl += row.m8bfPL; hasTrade = true; }
   if (activeStrats.strad && row.stradPL != null) { pl += row.stradPL; hasTrade = true; }
   if (activeStrats.gxbf && row.gxbfPL != null) { pl += row.gxbfPL; hasTrade = true; }
   if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) { pl += row.bobfPL; hasTrade = true; }
@@ -664,7 +664,7 @@ function computeStats(visibleRows) {
   const pls = [];
   for (const row of visibleRows) {
     const s = row.signal || {};
-    if (activeStrats.m8bf && s.theme === 'm8bf' && row.m8bfPL != null) pls.push(row.m8bfPL);
+    if (activeStrats.m8bf && s.m8bfRan && row.m8bfPL != null) pls.push(row.m8bfPL);
     if (activeStrats.strad && row.stradPL != null) pls.push(row.stradPL);
     if (activeStrats.gxbf && row.gxbfPL != null) pls.push(row.gxbfPL);
     if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) pls.push(row.bobfPL);
@@ -705,7 +705,7 @@ function computeStats(visibleRows) {
   let cum = 0, peak = 0, maxDD = 0;
   for (const row of sorted) {
     const s = row.signal || {};
-    if (activeStrats.m8bf && s.theme === 'm8bf' && row.m8bfPL != null) cum += row.m8bfPL;
+    if (activeStrats.m8bf && s.m8bfRan && row.m8bfPL != null) cum += row.m8bfPL;
     if (activeStrats.strad && row.stradPL != null) cum += row.stradPL;
     if (activeStrats.gxbf && row.gxbfPL != null) cum += row.gxbfPL;
     if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) cum += row.bobfPL;
@@ -828,6 +828,10 @@ async function init() {
         }
       }
 
+      // M8BF runs whenever it's not hard-blocked (theme=strad/gxbf = runs alongside; blockT=0%rule = user override off)
+      signal.m8bfRan = (signal.theme === 'm8bf') ||
+                       ((signal.theme === 'strad' || signal.theme === 'gxbf') && signal.blockT !== '0%rule');
+
       allRows.push({
         date: cur.date,
         dayLabel: signal.dayLabel,
@@ -891,7 +895,7 @@ function getValue(row, col) {
     case 'bobfPL': return row.signal?.bobfBadge !== 'BLOCKED' ? (row.bobfPL != null ? row.bobfPL : 0.1) : -Infinity;
     case 'totalPL': {
       const s = row.signal || {}; let t = 0;
-      if (activeStrats.m8bf && s.theme === 'm8bf' && row.m8bfPL != null) t += row.m8bfPL;
+      if (activeStrats.m8bf && s.m8bfRan && row.m8bfPL != null) t += row.m8bfPL;
       if (activeStrats.strad && row.stradPL != null) t += row.stradPL;
       if (activeStrats.gxbf && row.gxbfPL != null) t += row.gxbfPL;
       if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) t += row.bobfPL;
@@ -949,13 +953,13 @@ function renderTable() {
     h += `<td class="${valClass(row.o2o)}">${fmtNum(row.o2o)}</td>`;
     h += `<td class="${valClass(row.spxGapPct)}">${row.spxGapPct!=null?row.spxGapPct.toFixed(2)+'%':'—'}</td>`;
     h += `<td style="font-weight:700;${row.m8bfWR!=null?(row.m8bfWR>=90?'color:#22c55e':row.m8bfWR<25?'color:#ef4444':'color:var(--text)'):'color:var(--text3)'}">${row.m8bfWR!=null?row.m8bfWR+'%':'—'}</td>`;
-    h += stratCell(s.theme === 'm8bf', row.m8bfPL);
+    h += stratCell(s.m8bfRan, row.m8bfPL);
     h += stratCell(activeStrats.strad && row.stradPL != null, row.stradPL);
     h += stratCell(activeStrats.gxbf && row.gxbfPL != null, row.gxbfPL);
     h += stratCell(activeStrats.bobf && s.bobfBadge !== 'BLOCKED', row.bobfPL);
 
     let dayTotal = 0, hasDayTrade = false;
-    if (activeStrats.m8bf && s.theme === 'm8bf' && row.m8bfPL != null) { dayTotal += row.m8bfPL; hasDayTrade = true; }
+    if (activeStrats.m8bf && s.m8bfRan && row.m8bfPL != null) { dayTotal += row.m8bfPL; hasDayTrade = true; }
     if (activeStrats.strad && row.stradPL != null) { dayTotal += row.stradPL; hasDayTrade = true; }
     if (activeStrats.gxbf && row.gxbfPL != null) { dayTotal += row.gxbfPL; hasDayTrade = true; }
     if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) { dayTotal += row.bobfPL; hasDayTrade = true; }
@@ -967,7 +971,7 @@ function renderTable() {
     }
     h += '</tr>';
 
-    if (activeStrats.m8bf && s.theme === 'm8bf' && row.m8bfPL != null) totM8 += row.m8bfPL;
+    if (activeStrats.m8bf && s.m8bfRan && row.m8bfPL != null) totM8 += row.m8bfPL;
     if (activeStrats.strad && row.stradPL != null) totStrad += row.stradPL;
     if (activeStrats.gxbf && row.gxbfPL != null) totGxbf += row.gxbfPL;
     if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) totBobf += row.bobfPL;
@@ -1026,7 +1030,7 @@ function renderChart() {
     const row = sortedRows[i];
     const s = row.signal || {};
     let dayPL = 0;
-    if (activeStrats.m8bf && s.theme === 'm8bf' && row.m8bfPL != null) { rm += row.m8bfPL; dayPL += row.m8bfPL; }
+    if (activeStrats.m8bf && s.m8bfRan && row.m8bfPL != null) { rm += row.m8bfPL; dayPL += row.m8bfPL; }
     if (activeStrats.strad && row.stradPL != null) { rs += row.stradPL; dayPL += row.stradPL; }
     if (activeStrats.gxbf && row.gxbfPL != null) { rg += row.gxbfPL; dayPL += row.gxbfPL; }
     if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) { rb += row.bobfPL; dayPL += row.bobfPL; }
@@ -1416,7 +1420,7 @@ function renderCorrelation() {
   for (const k of strats) dailyPL[k] = {};
   for (const row of sorted) {
     const s = row.signal || {};
-    if (s.theme === 'm8bf' && row.m8bfPL != null) dailyPL.m8bf[row.date] = row.m8bfPL;
+    if (s.m8bfRan && row.m8bfPL != null) dailyPL.m8bf[row.date] = row.m8bfPL;
     if (row.stradPL != null) dailyPL.strad[row.date] = row.stradPL;
     if (row.gxbfPL != null) dailyPL.gxbf[row.date] = row.gxbfPL;
     if (s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) dailyPL.bobf[row.date] = row.bobfPL;
@@ -1513,7 +1517,7 @@ function updateAllocChart() {
   const dates = [];
   for (const row of sorted) {
     const s = row.signal || {};
-    const m = (s.theme === 'm8bf' && row.m8bfPL != null) ? row.m8bfPL : 0;
+    const m = (s.m8bfRan && row.m8bfPL != null) ? row.m8bfPL : 0;
     const st = row.stradPL != null ? row.stradPL : 0;
     const g = row.gxbfPL != null ? row.gxbfPL : 0;
     const b = (s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) ? row.bobfPL : 0;
@@ -1598,7 +1602,7 @@ function optimizeAlloc() {
   const stratPLs = {m8bf:[], strad:[], gxbf:[], bobf:[]};
   for (const row of sorted) {
     const s = row.signal || {};
-    const m = (s.theme === 'm8bf' && row.m8bfPL != null) ? row.m8bfPL : 0;
+    const m = (s.m8bfRan && row.m8bfPL != null) ? row.m8bfPL : 0;
     const st = row.stradPL != null ? row.stradPL : 0;
     const g = row.gxbfPL != null ? row.gxbfPL : 0;
     const b = (s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) ? row.bobfPL : 0;
