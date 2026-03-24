@@ -1230,52 +1230,23 @@
 
     // ── CARD 1: M8BF ──
     const dowSched = m8Sched(dow);
-    const thurfri = dowSched && dowSched.everyWeek;
 
     if(m8bfBlocked){
-      // New skip rules take full priority — always show as BLOCKED
-      if(m8bfBlocked.r.includes('EOM')||m8bfBlocked.r.includes('OPEX')||m8bfBlocked.r.includes('earnings')||m8bfBlocked.r.includes('VIX')||m8bfBlocked.r.includes('first'))
-        strikeInfo=null;
       cardM8bf.className='scard active-block';
       m8bfBadge.textContent='BLOCKED';
       m8bfRec.innerHTML=`<span class="crossed">${m8bfBlocked.r}</span>`;
       m8bfReason.innerHTML=`<span class="block-hard">⛔ ${m8bfBlocked.n}</span>`;
-    } else if(theme==='m8bf'){
-      cardM8bf.className='scard active-m8bf';
-      m8bfBadge.textContent=entryT?`🕐 ${entryT}`:'TRADE';
-      m8bfRec.innerHTML=crossed?`<span class="crossed">${rec}</span>`:rec;
-      if(blockT==='hard') m8bfReason.innerHTML=`<span class="block-hard">⛔ ${blockD}</span>`;
-      else if(blockT==='vix') m8bfReason.innerHTML=`<span class="block-vix">⚠️ ${blockD}</span>`;
-      else if(spxGapForcesM8BF) m8bfReason.innerHTML=`<span style="color:var(--col-gxbf);font-style:italic;">📐 ${blockD}</span>`;
-      else if(blockT==='90%rule') m8bfReason.innerHTML=`<span style="color:var(--accent);font-style:italic;">📈 90% rule — Straddle → M8BF</span>`;
-      else if(blockT==='o2o') m8bfReason.innerHTML=`<span style="color:var(--accent);font-style:italic;">📉 o2o > ${T.O2O_M8BF} — Straddle cancelled → M8BF</span>`;
-      else m8bfReason.textContent='';
-    } else if(theme==='block' && rec.includes('M8BF')){
-      cardM8bf.className='scard active-block';
-      m8bfBadge.textContent='BLOCKED';
-      m8bfRec.innerHTML=`<span class="crossed">${rec}</span>`;
-      if(blockT==='hard') m8bfReason.innerHTML=`<span class="block-hard">⛔ ${blockD}</span>`;
-      else if(blockT==='vix') m8bfReason.innerHTML=`<span class="block-vix">⚠️ ${blockD}</span>`;
-      else m8bfReason.textContent='';
-    } else if(thurfri){
-      // Thu/Fri — M8BF is optional even on non-M8BF days
-      cardM8bf.className='scard';
-      m8bfBadge.textContent=`🕐 ${dowSched.window}`;
-      m8bfRec.textContent=`M8BF — Window ${dowSched.window}`;
-      m8bfReason.innerHTML=`<span style="opacity:.65;font-style:italic;">Optional today (Thu/Fri)</span>`;
-      strikeInfo = dowSched;
-    } else if(theme==='strad'||theme==='gxbf'){
-      // M8BF runs independently of overnight VIX — show window/strikes alongside straddle/GXBF
+      strikeInfo=null;
+    } else {
+      // M8BF always runs when not hard-blocked — independent of overnight VIX
       cardM8bf.className='scard active-m8bf';
       m8bfBadge.textContent=dowSched?`🕐 ${dowSched.window}`:'TRADE';
       m8bfRec.textContent=dowSched?`M8BF — Window ${dowSched.window}`:'M8BF';
-      m8bfReason.textContent='';
       strikeInfo=dowSched;
-    } else {
-      cardM8bf.className='scard dimmed';
-      m8bfBadge.textContent='—';
-      m8bfRec.textContent='No M8BF';
-      m8bfReason.textContent='';
+      if(spxGapForcesM8BF) m8bfReason.innerHTML=`<span style="color:var(--col-gxbf);font-style:italic;">📐 ${blockD}</span>`;
+      else if(blockT==='90%rule') m8bfReason.innerHTML=`<span style="color:var(--accent);font-style:italic;">📈 90% rule — Straddle → M8BF</span>`;
+      else if(blockT==='o2o') m8bfReason.innerHTML=`<span style="color:var(--accent);font-style:italic;">📉 o2o > ${T.O2O_M8BF} — Straddle cancelled → M8BF</span>`;
+      else m8bfReason.textContent='';
     }
 
     // ── CARD 2: Straddle / CPI / NM / EOM ──
