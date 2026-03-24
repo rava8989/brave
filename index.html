@@ -1705,10 +1705,10 @@
       const toET_today = ts => new Date(new Date(ts).toLocaleString('en-US', { timeZone: 'America/New_York' }));
       const etTodayStr = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' })).toDateString();
       const todayCandles = candles.filter(c => toET_today(c.datetime).toDateString() === etTodayStr);
-      const todayOpenCandle = todayCandles.find(c => {
-        const d = toET_today(c.datetime);
-        return d.getHours() === 9 && d.getMinutes() === 30;
-      });
+      // First candle at or after 9:30 AM ET (handles VIX lag of 1-2 min)
+      const todayOpenCandle = todayCandles
+        .filter(c => { const d=toET_today(c.datetime); return d.getHours()>9||(d.getHours()===9&&d.getMinutes()>=30); })
+        .sort((a,b) => a.datetime - b.datetime)[0];
       if(todayOpenCandle){
         markAutoFilled('todayOpen', todayOpenCandle.open.toFixed(2));
         calculateStrategy();
@@ -1737,10 +1737,9 @@
           // Today's 9:30 open (use ET for hour check)
           const toET_spx = ts => new Date(new Date(ts).toLocaleString('en-US', { timeZone: 'America/New_York' }));
           const spxTodayCandles = spxCandles.filter(c => toET_spx(c.datetime).toDateString() === etTodayStr);
-          const spxOpenCandle = spxTodayCandles.find(c => {
-            const d = toET_spx(c.datetime);
-            return d.getHours() === 9 && d.getMinutes() === 30;
-          });
+          const spxOpenCandle = spxTodayCandles
+            .filter(c => { const d=toET_spx(c.datetime); return d.getHours()>9||(d.getHours()===9&&d.getMinutes()>=30); })
+            .sort((a,b) => a.datetime - b.datetime)[0];
           if(spxOpenCandle) spxTodayOpen = spxOpenCandle.open;
           // Store for gap check, then re-run to show colored gap
           if(spxYClose){ SC.set('spx', { yClose: spxYClose, todayOpen: spxTodayOpen }); calculateStrategy(); }
@@ -1813,10 +1812,10 @@
         const candles = data?.candles;
         if(!candles?.length) return;
 
-        const openCandle = candles.find(c => {
-          const d = toET_poll(c.datetime);
-          return d.getHours() === 9 && d.getMinutes() === 30;
-        });
+        // First candle at or after 9:30 AM ET
+        const openCandle = candles
+          .filter(c => { const d=toET_poll(c.datetime); return d.getHours()>9||(d.getHours()===9&&d.getMinutes()>=30); })
+          .sort((a,b) => a.datetime - b.datetime)[0];
         const openPrice = openCandle?.open;
         if(!openPrice) return; // 9:30 candle not yet available — retry in 10s
 
@@ -1834,10 +1833,9 @@
           const spxD = await spxR.json();
           const spxCandles = spxD?.candles;
           if(spxCandles?.length){
-            const spxOpenCandle = spxCandles.find(c => {
-              const d = toET_poll(c.datetime);
-              return d.getHours() === 9 && d.getMinutes() === 30;
-            });
+            const spxOpenCandle = spxCandles
+              .filter(c => { const d=toET_poll(c.datetime); return d.getHours()>9||(d.getHours()===9&&d.getMinutes()>=30); })
+              .sort((a,b) => a.datetime - b.datetime)[0];
             if(spxOpenCandle){
               const existing = SC.get('spx') || {};
               SC.set('spx', { yClose: existing.yClose, todayOpen: spxOpenCandle.open });
