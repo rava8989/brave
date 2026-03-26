@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Σ3 — Live P&L</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    :root {
+      --bg:#f1f5f9; --bg2:#ffffff; --bg3:#f8fafc;
+      --border:#e2e8f0;
+      --text:#1e293b; --text2:#475569; --text3:#94a3b8;
+      --accent:#6366f1; --accent2:#818cf8;
+      --shadow:0 1px 3px rgba(0,0,0,.08),0 4px 16px rgba(0,0,0,.06);
+      --radius:12px; --radius-sm:8px;
+      --green:#22c55e; --red:#ef4444; --yellow:#f59e0b;
+    }
+    [data-theme="dark"] {
+      --bg:#0f172a; --bg2:#1e293b; --bg3:#162032;
+      --border:#2d3f55;
+      --text:#e2e8f0; --text2:#94a3b8; --text3:#475569;
+      --accent:#818cf8; --accent2:#6366f1;
+      --shadow:0 1px 3px rgba(0,0,0,.3),0 4px 16px rgba(0,0,0,.25);
+      --green:#4ade80; --red:#f87171; --yellow:#fbbf24;
+    }
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+    body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;transition:background .2s,color .2s;}
+
+    /* HEADER */
+    .header{display:flex;align-items:center;gap:16px;padding:12px 24px;background:var(--bg2);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10;flex-wrap:wrap;}
+    .logo{font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:var(--accent);text-decoration:none;}
+    .nav{display:flex;gap:4px;}
+    .nav a{font-size:12px;font-weight:500;padding:5px 12px;border-radius:6px;color:var(--text2);text-decoration:none;transition:background .15s,color .15s;border:1px solid transparent;}
+    .nav a:hover{background:var(--bg3);color:var(--text);}
+    .nav a.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+    .header-spacer{flex:1;}
+    .live-badge{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--text3);font-family:'JetBrains Mono',monospace;}
+    .live-dot{width:8px;height:8px;border-radius:50%;background:var(--text3);}
+    .live-dot.green{background:var(--green);box-shadow:0 0 6px var(--green);animation:pulse 2s infinite;}
+    .live-dot.yellow{background:var(--yellow);}
+    .live-dot.red{background:var(--red);}
+    @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.4;}}
+    .theme-toggle{background:var(--bg);border:1px solid var(--border);border-radius:20px;width:42px;height:22px;cursor:pointer;position:relative;transition:background .2s;flex-shrink:0;}
+    .theme-toggle::after{content:'';position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:var(--accent);transition:transform .2s;}
+    [data-theme="light"] .theme-toggle::after{transform:translateX(20px);}
+
+    /* MAIN LAYOUT */
+    .main{max-width:1100px;margin:0 auto;padding:20px 24px;}
+
+    /* NO TRADE STATE */
+    .no-trade{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:80px 20px;gap:16px;text-align:center;}
+    .no-trade-icon{font-size:48px;opacity:.3;}
+    .no-trade-title{font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700;color:var(--text2);}
+    .no-trade-sub{font-size:13px;color:var(--text3);max-width:380px;line-height:1.6;}
+
+    /* STATS ROW */
+    .stats-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:20px;}
+    .stat-card{padding:16px 18px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg2);box-shadow:var(--shadow);}
+    .stat-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);font-family:'Inter',sans-serif;margin-bottom:6px;}
+    .stat-value{font-family:'JetBrains Mono',monospace;font-size:22px;font-weight:700;color:var(--text);}
+    .stat-value.green{color:var(--green);}
+    .stat-value.red{color:var(--red);}
+    .stat-value.yellow{color:var(--yellow);}
+    .stat-sub{font-size:11px;color:var(--text3);margin-top:3px;font-family:'JetBrains Mono',monospace;}
+
+    /* CHART CARD */
+    .chart-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px;margin-bottom:20px;}
+    .chart-header{display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;}
+    .chart-title{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:var(--text2);}
+    .chart-header-spacer{flex:1;}
+    .last-update{font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;}
+    .chart-wrap{position:relative;height:260px;}
+
+    /* BUTTERFLY VIZ */
+    .bf-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px;margin-bottom:20px;}
+    .bf-title{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:var(--text2);margin-bottom:16px;}
+    .bf-viz{position:relative;height:80px;}
+    .bf-track{position:absolute;top:50%;left:0;right:0;height:4px;background:var(--border);border-radius:2px;transform:translateY(-50%);}
+    .bf-fill{position:absolute;top:50%;height:4px;background:linear-gradient(90deg,var(--accent),var(--accent2));border-radius:2px;transform:translateY(-50%);transition:width .4s ease,left .4s ease;}
+    .bf-label{position:absolute;top:50%;transform:translateX(-50%) translateY(-50%);display:flex;flex-direction:column;align-items:center;gap:2px;}
+    .bf-label-line{width:2px;height:18px;background:var(--border);}
+    .bf-label-line.accent{background:var(--accent);}
+    .bf-label-line.spx{background:var(--yellow);height:24px;}
+    .bf-label-val{font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;color:var(--text2);white-space:nowrap;}
+    .bf-label-name{font-family:'Inter',sans-serif;font-size:9px;color:var(--text3);white-space:nowrap;}
+    .bf-label.top .bf-label-line{order:2;}
+    .bf-label.top .bf-label-val{order:1;}
+    .bf-label.top .bf-label-name{order:0;}
+    .bf-label.bot .bf-label-line{order:0;}
+    .bf-label.bot .bf-label-val{order:1;}
+    .bf-label.bot .bf-label-name{order:2;}
+
+    /* TRADE DETAILS */
+    .details-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px;margin-bottom:20px;}
+    .details-title{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:var(--text2);margin-bottom:14px;}
+    .details-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;}
+    .detail-row{display:flex;flex-direction:column;gap:2px;padding:10px 12px;border-radius:var(--radius-sm);background:var(--bg3);border:1px solid var(--border);}
+    .detail-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);font-family:'Inter',sans-serif;}
+    .detail-val{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:var(--text);}
+
+    /* STATUS BAR */
+    .status-bar{display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:20px;font-size:12px;color:var(--text2);font-family:'JetBrains Mono',monospace;}
+    .status-bar .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+
+    /* CLOSED BANNER */
+    .closed-banner{padding:12px 16px;border-radius:var(--radius-sm);margin-bottom:20px;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;text-align:center;border:1px solid;}
+    .closed-banner.win{background:rgba(34,197,94,.1);border-color:rgba(34,197,94,.3);color:var(--green);}
+    .closed-banner.loss{background:rgba(239,68,68,.1);border-color:rgba(239,68,68,.3);color:var(--red);}
+
+    .footer{text-align:center;padding:24px;font-size:11px;color:var(--text3);}
+    .footer a{color:var(--accent);text-decoration:none;}
+
+    /* SPX price ticker */
+    .spx-ticker{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text2);display:flex;align-items:center;gap:6px;}
+    .spx-price{font-weight:700;color:var(--text);}
+    .spx-chg.up{color:var(--green);}
+    .spx-chg.dn{color:var(--red);}
+
+    /* Schwab connect banner */
+    .connect-banner{padding:10px 16px;background:rgba(99,102,241,.1);border:1px solid rgba(99,102,241,.3);border-radius:var(--radius-sm);margin-bottom:20px;display:flex;align-items:center;gap:10px;font-size:12px;color:var(--accent);}
+    .connect-banner a{color:var(--accent);font-weight:600;margin-left:auto;text-decoration:none;padding:4px 10px;border:1px solid var(--accent);border-radius:6px;font-family:'JetBrains Mono',monospace;}
+    .connect-banner a:hover{background:var(--accent);color:#fff;}
+    .hidden{display:none!important;}
+  </style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <a class="logo" href="index.html">Σ3</a>
+  <nav class="nav">
+    <a href="index.html">Dashboard</a>
+    <a href="history.html">History</a>
+    <a href="backtester.html">Backtester</a>
+    <a href="live.html" class="active">Live P&L</a>
+  </nav>
+  <div class="header-spacer"></div>
+  <div class="spx-ticker" id="spxTicker"><span>SPX</span><span class="spx-price" id="spxPrice">—</span><span class="spx-chg" id="spxChg"></span></div>
+  <div class="live-badge"><div class="live-dot" id="liveDot"></div><span id="liveLabel">CONNECTING</span></div>
+  <button class="theme-toggle" id="themeToggle" title="Toggle theme"></button>
+</div>
+
+<div class="main" id="mainContent">
+  <!-- Dynamically rendered -->
+</div>
+
+<div class="footer">Σ3 Live P&L · M8BF · <a href="https://rava8989.github.io/brave/">rava8989.github.io/brave</a></div>
+
+<script>
+// ─── Theme ───────────────────────────────────────────────────────────────────
+const html = document.documentElement;
+const saved = localStorage.getItem('theme') || 'dark';
+html.setAttribute('data-theme', saved);
+document.getElementById('themeToggle').addEventListener('click', () => {
+  const next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  html.setAttribute('data-theme', next);
+  localStorage.setItem('theme', next);
+  if (plChart) updateChartTheme();
+});
+
+// ─── State ───────────────────────────────────────────────────────────────────
+let trade = null;         // today_trade.json data
+let plHistory = [];       // [{time, spx, pl}]
+let plChart = null;
+let schwabConnected = false;
+let marketStatus = 'unknown'; // pre-market | open | closed
+let spxPrice = null;
+let spxPrevClose = null;
+let pollTimer = null;
+
+// ─── Market Hours (ET) ───────────────────────────────────────────────────────
+function getNowET() {
+  return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+}
+function getMarketStatus() {
+  const now = getNowET();
+  const h = now.getHours(), m = now.getMinutes();
+  const mins = h * 60 + m;
+  const day = now.getDay();
+  if (day === 0 || day === 6) return 'closed';
+  if (mins < 9 * 60 + 30) return 'pre-market';
+  if (mins <= 16 * 60) return 'open';
+  return 'closed';
+}
+
+// ─── P&L Formula ─────────────────────────────────────────────────────────────
+function computePL(trade, spxNow) {
+  const { bf_lower, bf_upper, premium } = trade;
+  const wing = (bf_upper - bf_lower) / 2;
+  const intrinsic = Math.max(0, Math.min(spxNow - bf_lower, bf_upper - spxNow));
+  const clipped = Math.min(intrinsic, wing);
+  return Math.round((clipped - premium) * 100);
+}
+
+// ─── Load today_trade.json ────────────────────────────────────────────────────
+async function loadTrade() {
+  try {
+    const r = await fetch('today_trade.json?v=' + Date.now());
+    if (!r.ok) { trade = null; return; }
+    trade = await r.json();
+  } catch {
+    trade = null;
+  }
+}
+
+// ─── Schwab API ───────────────────────────────────────────────────────────────
+// Placeholder — will be wired after OAuth setup
+async function fetchSPXFromSchwab() {
+  // TODO: call Schwab Market Data API
+  // GET https://api.schwabapi.com/marketdata/v1/quotes?symbols=$SPX.X
+  // Authorization: Bearer <access_token>
+  // Returns: { '$SPX.X': { quote: { lastPrice, closePrice } } }
+  return null;
+}
+
+async function refreshSPX() {
+  const val = await fetchSPXFromSchwab();
+  if (val !== null) {
+    spxPrice = val.last;
+    spxPrevClose = val.prevClose;
+    schwabConnected = true;
+    return true;
+  }
+  return false;
+}
+
+// ─── UI Helpers ──────────────────────────────────────────────────────────────
+function fmt$(n) {
+  if (n === null || n === undefined) return '—';
+  const s = Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  return (n >= 0 ? '+$' : '-$') + s;
+}
+function fmtSpx(n) {
+  if (!n) return '—';
+  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function plClass(pl) {
+  if (pl === null || pl === undefined) return '';
+  return pl >= 0 ? 'green' : 'red';
+}
+function timeLabel() {
+  return getNowET().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+}
+
+// ─── Chart ───────────────────────────────────────────────────────────────────
+function isDark() { return html.getAttribute('data-theme') === 'dark'; }
+function chartColors() {
+  return {
+    grid: isDark() ? '#2d3f55' : '#e2e8f0',
+    text: isDark() ? '#94a3b8' : '#475569',
+    zero: isDark() ? '#475569' : '#cbd5e1',
+  };
+}
+function createChart() {
+  const ctx = document.getElementById('plCanvas');
+  if (!ctx) return;
+  const c = chartColors();
+  plChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{
+        label: 'P&L ($)',
+        data: [],
+        borderColor: '#818cf8',
+        backgroundColor: 'rgba(129,140,248,.08)',
+        borderWidth: 2,
+        pointRadius: 2,
+        pointHoverRadius: 4,
+        fill: true,
+        tension: 0.3,
+      }, {
+        label: 'Zero',
+        data: [],
+        borderColor: c.zero,
+        borderWidth: 1,
+        borderDash: [4, 4],
+        pointRadius: 0,
+        fill: false,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: isDark() ? '#1e293b' : '#fff',
+          borderColor: isDark() ? '#2d3f55' : '#e2e8f0',
+          borderWidth: 1,
+          titleColor: isDark() ? '#e2e8f0' : '#1e293b',
+          bodyColor: isDark() ? '#94a3b8' : '#475569',
+          callbacks: {
+            label: ctx => ctx.datasetIndex === 0 ? fmt$(ctx.parsed.y) : null,
+          }
+        }
+      },
+      scales: {
+        x: {
+          ticks: { color: c.text, font: { family: 'JetBrains Mono', size: 10 }, maxTicksLimit: 8 },
+          grid: { color: c.grid },
+        },
+        y: {
+          ticks: { color: c.text, font: { family: 'JetBrains Mono', size: 10 }, callback: v => fmt$(v) },
+          grid: { color: c.grid },
+        }
+      }
+    }
+  });
+}
+function updateChartTheme() {
+  if (!plChart) return;
+  const c = chartColors();
+  plChart.options.scales.x.ticks.color = c.text;
+  plChart.options.scales.x.grid.color = c.grid;
+  plChart.options.scales.y.ticks.color = c.text;
+  plChart.options.scales.y.grid.color = c.grid;
+  plChart.data.datasets[1].borderColor = c.zero;
+  plChart.update();
+}
+function pushChartPoint(time, pl) {
+  if (!plChart) return;
+  plChart.data.labels.push(time);
+  plChart.data.datasets[0].data.push(pl);
+  plChart.data.datasets[1].data.push(0);
+  // Update color based on last P&L
+  plChart.data.datasets[0].borderColor = pl >= 0 ? '#4ade80' : '#f87171';
+  plChart.data.datasets[0].backgroundColor = pl >= 0 ? 'rgba(74,222,128,.08)' : 'rgba(248,113,113,.08)';
+  plChart.update('none');
+}
+function rebuildChart() {
+  if (!plChart) return;
+  plChart.data.labels = plHistory.map(p => p.time);
+  plChart.data.datasets[0].data = plHistory.map(p => p.pl);
+  plChart.data.datasets[1].data = plHistory.map(() => 0);
+  const last = plHistory[plHistory.length - 1];
+  if (last) {
+    plChart.data.datasets[0].borderColor = last.pl >= 0 ? '#4ade80' : '#f87171';
+    plChart.data.datasets[0].backgroundColor = last.pl >= 0 ? 'rgba(74,222,128,.08)' : 'rgba(248,113,113,.08)';
+  }
+  plChart.update();
+}
+
+// ─── Butterfly VIZ ───────────────────────────────────────────────────────────
+function renderBFViz(trade, spxNow) {
+  const wrap = document.getElementById('bfViz');
+  if (!wrap) return;
+  const { bf_lower, bf_upper, center } = trade;
+  const pad = (bf_upper - bf_lower) * 0.4;
+  const lo = bf_lower - pad, hi = bf_upper + pad;
+  const range = hi - lo;
+  const pct = v => ((v - lo) / range * 100).toFixed(2) + '%';
+
+  const spxPct = spxNow ? ((spxNow - lo) / range * 100) : null;
+  const fillLo = pct(bf_lower);
+  const fillW = ((bf_upper - bf_lower) / range * 100).toFixed(2) + '%';
+
+  wrap.innerHTML = `
+    <div class="bf-track"></div>
+    <div class="bf-fill" style="left:${fillLo};width:${fillW}"></div>
+    <div class="bf-label top" style="left:${pct(bf_lower)}">
+      <div class="bf-label-name">Lower</div>
+      <div class="bf-label-val">${bf_lower}</div>
+      <div class="bf-label-line accent"></div>
+    </div>
+    <div class="bf-label top" style="left:${pct(center)}">
+      <div class="bf-label-name">Center</div>
+      <div class="bf-label-val">${center}</div>
+      <div class="bf-label-line accent"></div>
+    </div>
+    <div class="bf-label top" style="left:${pct(bf_upper)}">
+      <div class="bf-label-name">Upper</div>
+      <div class="bf-label-val">${bf_upper}</div>
+      <div class="bf-label-line accent"></div>
+    </div>
+    ${spxNow && spxPct !== null ? `
+    <div class="bf-label bot" style="left:${spxPct.toFixed(2)}%">
+      <div class="bf-label-line spx"></div>
+      <div class="bf-label-val" style="color:var(--yellow)">${fmtSpx(spxNow)}</div>
+      <div class="bf-label-name" style="color:var(--yellow)">SPX</div>
+    </div>` : ''}
+  `;
+}
+
+// ─── SPX ticker update ───────────────────────────────────────────────────────
+function updateSPXTicker() {
+  document.getElementById('spxPrice').textContent = spxPrice ? fmtSpx(spxPrice) : '—';
+  const chgEl = document.getElementById('spxChg');
+  if (spxPrice && spxPrevClose) {
+    const chg = spxPrice - spxPrevClose;
+    const pct = (chg / spxPrevClose * 100).toFixed(2);
+    chgEl.textContent = (chg >= 0 ? '+' : '') + chg.toFixed(2) + ' (' + (chg >= 0 ? '+' : '') + pct + '%)';
+    chgEl.className = 'spx-chg ' + (chg >= 0 ? 'up' : 'dn');
+  } else {
+    chgEl.textContent = '';
+  }
+}
+
+// ─── Live Status ─────────────────────────────────────────────────────────────
+function updateLiveBadge() {
+  const dot = document.getElementById('liveDot');
+  const lbl = document.getElementById('liveLabel');
+  marketStatus = getMarketStatus();
+  if (schwabConnected && marketStatus === 'open') {
+    dot.className = 'live-dot green';
+    lbl.textContent = 'LIVE';
+  } else if (marketStatus === 'open') {
+    dot.className = 'live-dot yellow';
+    lbl.textContent = 'MARKET OPEN';
+  } else if (marketStatus === 'pre-market') {
+    dot.className = 'live-dot yellow';
+    lbl.textContent = 'PRE-MARKET';
+  } else {
+    dot.className = 'live-dot red';
+    lbl.textContent = 'MARKET CLOSED';
+  }
+}
+
+// ─── RENDER ──────────────────────────────────────────────────────────────────
+function render() {
+  const main = document.getElementById('mainContent');
+  if (!trade || !trade.triggered) {
+    main.innerHTML = `
+      <div class="no-trade">
+        <div class="no-trade-icon">📡</div>
+        <div class="no-trade-title">No Signal Today</div>
+        <div class="no-trade-sub">The M8BF scraper is monitoring Discord for signals. A trade will appear here automatically once a valid signal hits the window.</div>
+      </div>
+    `;
+    return;
+  }
+
+  const currentPL = (trade.status === 'closed' && trade.final_pl !== null)
+    ? trade.final_pl
+    : (spxPrice !== null ? computePL(trade, spxPrice) : null);
+
+  const currentIntrinsic = spxPrice !== null
+    ? Math.min(Math.max(0, Math.min(spxPrice - trade.bf_lower, trade.bf_upper - spxPrice)), (trade.bf_upper - trade.bf_lower) / 2)
+    : null;
+
+  const statusDot = trade.status === 'closed' ? 'red' : (schwabConnected ? 'green' : 'yellow');
+  const statusText = trade.status === 'closed'
+    ? `CLOSED · SPX ${fmtSpx(trade.spx_close)}`
+    : (schwabConnected ? `LIVE · Last update ${document.getElementById('lastUpdate')?.textContent || '—'}` : 'WAITING FOR SCHWAB CONNECTION');
+
+  main.innerHTML = `
+    ${!schwabConnected && trade.status !== 'closed' ? `
+    <div class="connect-banner">
+      <span>⚡ Connect Schwab API for live SPX pricing and real-time P&L</span>
+      <a href="schwab_auth.html">Connect Schwab →</a>
+    </div>` : ''}
+
+    ${trade.status === 'closed' ? `
+    <div class="closed-banner ${currentPL >= 0 ? 'win' : 'loss'}">
+      TRADE CLOSED · Final P&L: ${fmt$(currentPL)} · SPX Close: ${fmtSpx(trade.spx_close)}
+    </div>` : ''}
+
+    <div class="status-bar">
+      <div class="dot" style="background:var(--${statusDot})"></div>
+      <span>${statusText}</span>
+    </div>
+
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="stat-label">Current P&L</div>
+        <div class="stat-value ${plClass(currentPL)}" id="statPL">${fmt$(currentPL)}</div>
+        <div class="stat-sub" id="statPLSub">${currentPL !== null ? (currentPL >= 0 ? 'Profit' : 'Loss') : 'Waiting…'}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">SPX Now</div>
+        <div class="stat-value" id="statSPX">${fmtSpx(spxPrice)}</div>
+        <div class="stat-sub">Entry window: ${trade.window || '—'}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Premium Paid</div>
+        <div class="stat-value">$${(trade.premium * 100).toFixed(0)}</div>
+        <div class="stat-sub">${trade.premium.toFixed(2)} per share × 100</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Intrinsic Value</div>
+        <div class="stat-value" id="statIntrinsic">${currentIntrinsic !== null ? '$' + (currentIntrinsic * 100).toFixed(0) : '—'}</div>
+        <div class="stat-sub" id="statIntrinsicSub">${currentIntrinsic !== null ? currentIntrinsic.toFixed(2) + ' per share' : 'Waiting…'}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Signal Time</div>
+        <div class="stat-value" style="font-size:16px">${trade.signal_time || '—'}</div>
+        <div class="stat-sub">${trade.date || '—'} ET</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Max Profit</div>
+        <div class="stat-value green">$${Math.round(((trade.bf_upper - trade.bf_lower) / 2 - trade.premium) * 100)}</div>
+        <div class="stat-sub">At SPX = ${trade.center}</div>
+      </div>
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-header">
+        <span class="chart-title">P&L Chart (Intraday)</span>
+        <div class="chart-header-spacer"></div>
+        <span class="last-update" id="lastUpdate">—</span>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="plCanvas"></canvas>
+      </div>
+    </div>
+
+    <div class="bf-card">
+      <div class="bf-title">Butterfly Structure · ${trade.bf_lower} / ${trade.center} / ${trade.bf_upper}</div>
+      <div class="bf-viz" id="bfViz"></div>
+    </div>
+
+    <div class="details-card">
+      <div class="details-title">Trade Details</div>
+      <div class="details-grid">
+        <div class="detail-row"><span class="detail-label">Date</span><span class="detail-val">${trade.date}</span></div>
+        <div class="detail-row"><span class="detail-label">Signal Time (ET)</span><span class="detail-val">${trade.signal_time}</span></div>
+        <div class="detail-row"><span class="detail-label">Window</span><span class="detail-val">${trade.window || '—'}</span></div>
+        <div class="detail-row"><span class="detail-label">Center</span><span class="detail-val">${trade.center}</span></div>
+        <div class="detail-row"><span class="detail-label">Lower Strike</span><span class="detail-val">${trade.bf_lower}</span></div>
+        <div class="detail-row"><span class="detail-label">Upper Strike</span><span class="detail-val">${trade.bf_upper}</span></div>
+        <div class="detail-row"><span class="detail-label">Wing Width</span><span class="detail-val">${(trade.bf_upper - trade.bf_lower) / 2}</span></div>
+        <div class="detail-row"><span class="detail-label">Premium</span><span class="detail-val">${trade.premium.toFixed(2)}</span></div>
+        <div class="detail-row"><span class="detail-label">Max Loss</span><span class="detail-val" style="color:var(--red)">-$${Math.round(trade.premium * 100)}</span></div>
+        <div class="detail-row"><span class="detail-label">Max Profit</span><span class="detail-val" style="color:var(--green)">+$${Math.round(((trade.bf_upper - trade.bf_lower) / 2 - trade.premium) * 100)}</span></div>
+        <div class="detail-row"><span class="detail-label">Status</span><span class="detail-val">${(trade.status || 'open').toUpperCase()}</span></div>
+        <div class="detail-row"><span class="detail-label">T1 (M8BF)</span><span class="detail-val">${trade.t1 !== undefined ? trade.t1 : trade.center + 5}</span></div>
+      </div>
+    </div>
+  `;
+
+  createChart();
+  renderBFViz(trade, spxPrice);
+  rebuildChart();
+}
+
+// ─── Ticker (live updates every 30s) ─────────────────────────────────────────
+async function tick() {
+  updateLiveBadge();
+
+  const fetched = await refreshSPX();
+
+  if (fetched && trade && trade.triggered && trade.status !== 'closed') {
+    const pl = computePL(trade, spxPrice);
+    const t = timeLabel();
+    plHistory.push({ time: t, spx: spxPrice, pl });
+    // Keep last 390 points (full trading day at 1/min)
+    if (plHistory.length > 390) plHistory.shift();
+
+    // Update stats in-place if chart already rendered
+    const statPL = document.getElementById('statPL');
+    if (statPL) {
+      statPL.textContent = fmt$(pl);
+      statPL.className = 'stat-value ' + plClass(pl);
+    }
+    const statSPX = document.getElementById('statSPX');
+    if (statSPX) statSPX.textContent = fmtSpx(spxPrice);
+    const intrinsic = Math.min(Math.max(0, Math.min(spxPrice - trade.bf_lower, trade.bf_upper - spxPrice)), (trade.bf_upper - trade.bf_lower) / 2);
+    const statI = document.getElementById('statIntrinsic');
+    if (statI) statI.textContent = '$' + (intrinsic * 100).toFixed(0);
+    const statISub = document.getElementById('statIntrinsicSub');
+    if (statISub) statISub.textContent = intrinsic.toFixed(2) + ' per share';
+    const lu = document.getElementById('lastUpdate');
+    if (lu) lu.textContent = 'Updated ' + t;
+    pushChartPoint(t, pl);
+    renderBFViz(trade, spxPrice);
+  }
+
+  updateSPXTicker();
+}
+
+// ─── INIT ─────────────────────────────────────────────────────────────────────
+async function init() {
+  await loadTrade();
+  updateLiveBadge();
+  render();
+  await tick();
+  pollTimer = setInterval(tick, 30_000);
+}
+
+init();
+</script>
+</body>
+</html>
