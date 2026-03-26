@@ -205,25 +205,56 @@ async function loadTrade() {
   }
 }
 
-// ─── Schwab API ───────────────────────────────────────────────────────────────
-// Placeholder — will be wired after OAuth setup
-async function fetchSPXFromSchwab() {
-  // TODO: call Schwab Market Data API
-  // GET https://api.schwabapi.com/marketdata/v1/quotes?symbols=$SPX.X
-  // Authorization: Bearer <access_token>
-  // Returns: { '$SPX.X': { quote: { lastPrice, closePrice } } }
-  return null;
+// ─── OAuth Callback Handler ───────────────────────────────────────────────────
+// When Schwab redirects here with ?code=XXX, show it prominently for copy-paste
+function checkOAuthCallback() {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('code');
+  if (!code) return;
+
+  // Show overlay with the code
+  const overlay = document.createElement('div');
+  overlay.style.cssText = `position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:999;display:flex;align-items:center;justify-content:center;`;
+  overlay.innerHTML = `
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:32px;max-width:600px;width:90%;text-align:center;">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:700;color:var(--accent);margin-bottom:8px;">✅ Schwab Auth Code Received</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:16px;">Copy this full URL and paste it into schwab_auth.py on your Windows machine:</div>
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px;font-family:'JetBrains Mono',monospace;font-size:11px;word-break:break-all;color:var(--text);text-align:left;">${window.location.href}</div>
+      <button onclick="navigator.clipboard.writeText('${window.location.href}').then(()=>this.textContent='Copied!')" style="margin-top:16px;padding:8px 24px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;cursor:pointer;">Copy URL</button>
+      <div style="margin-top:12px;font-size:11px;color:var(--text3);">Then close this and dismiss this overlay.</div>
+      <button onclick="this.closest('div[style]').remove()" style="margin-top:8px;padding:6px 16px;background:transparent;color:var(--text3);border:1px solid var(--border);border-radius:6px;font-size:11px;cursor:pointer;">Dismiss</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
 }
 
+// ─── SPX Live Data ────────────────────────────────────────────────────────────
+// The Windows machine writes spx_live.json every 60s. We poll it here.
+let lastSpxTimestamp = null;
+
 async function refreshSPX() {
-  const val = await fetchSPXFromSchwab();
-  if (val !== null) {
-    spxPrice = val.last;
-    spxPrevClose = val.prevClose;
+  try {
+    const r = await fetch('spx_live.json?v=' + Date.now());
+    if (!r.ok) return false;
+    const data = await r.json();
+    if (!data.price) return false;
+
+    // Check staleness — if > 5 min old, treat as disconnected
+    const age = (Date.now() - new Date(data.timestamp).getTime()) / 1000;
+    if (age > 300) {
+      schwabConnected = false;
+      return false;
+    }
+
+    spxPrice = data.price;
+    spxPrevClose = data.prev_close;
     schwabConnected = true;
+    lastSpxTimestamp = data.timestamp;
     return true;
+  } catch {
+    schwabConnected = false;
+    return false;
   }
-  return false;
 }
 
 // ─── UI Helpers ──────────────────────────────────────────────────────────────
@@ -449,8 +480,7 @@ function render() {
   main.innerHTML = `
     ${!schwabConnected && trade.status !== 'closed' ? `
     <div class="connect-banner">
-      <span>⚡ Connect Schwab API for live SPX pricing and real-time P&L</span>
-      <a href="schwab_auth.html">Connect Schwab →</a>
+      <span>⚡ Waiting for Windows machine to connect Schwab API — start live_updater.py</span>
     </div>` : ''}
 
     ${trade.status === 'closed' ? `
@@ -573,6 +603,7 @@ async function tick() {
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 async function init() {
+  checkOAuthCallback();
   await loadTrade();
   updateLiveBadge();
   render();
