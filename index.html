@@ -523,10 +523,10 @@
     <hr class="divider">
     <h3>M8 Butterfly (M8BF)</h3>
     <ul>
-      <li><strong>Trades every week, every day Mon–Fri</strong> inside fixed 30-minute windows: Mon 10:00–10:30 · Tue 13:30–14:00 · Wed 12:00–12:30 · Thu 11:00–11:30 · Fri 13:00–13:30.</li>
-      <li>Enter the <strong>first qualifying strike</strong> inside the window. One trade per day. Skip if none appears.</li>
-      <li><strong>Banned strikes:</strong> 10, 25, 35, 40, 65, 80, 90 — the 7 worst-performing strike endings by historical P&amp;L. Never trade these. Strike ending in 95 additionally blocked on Thursdays (28.6% WR, -$591 avg).</li>
-      <li><strong>Not traded on:</strong> EOM and EOM-1 · day before OPEX · day after OPEX · first trading day of month · VIX exp day when VIX exp falls after OPEX · all earnings days except AMZN · day after any earnings (NVDA, TSLA, AMZN, MSFT, META, GOOG, AAPL).</li>
+      <li><strong>Trades every week, every day Mon–Fri</strong> inside fixed 30-minute windows: Mon 11:00–11:30 · Tue 13:30–14:00 · Wed 12:00–12:30 · Thu 11:00–11:30 · Fri 13:00–13:30.</li>
+      <li>Enter the <strong>first qualifying center strike</strong> inside the window. One trade per day. Skip if none appears.</li>
+      <li><strong>Banned center strikes (full):</strong> 10, 25, 35, 40, 65, 80 — bad on both T1 sides. <strong>Combo bans:</strong> T1=x00→x95 · T1=x20→x15 · T1=x55→x50 · T1=x65→x60 · T1=x85→x90 — bad on one side only.</li>
+      <li><strong>Not traded on:</strong> EOM · day before OPEX · all earnings days except AMZN and TSLA · day after any earnings (NVDA, MSFT, META, GOOG, AAPL) · NVDA earnings days. <strong>Use discretion on:</strong> EOM-1 · first trading day of month · VIX exp day · CPI day · Fed decision day.</li>
       <li>No stop-loss — hold to expiration. Entry cost ≈ $14.</li>
     </ul>
 
@@ -685,8 +685,8 @@
 
   /* Helper: is today an earnings day for any of the 7 companies? */
   function isEarningsDay() { return earningsSchedule.some(e => e.date === todayLong()); }
-  /* M8BF-specific: earnings day that is NOT AMZN */
-  const isNonAmznEarningsDay = () => earningsSchedule.some(e => e.date === todayLong() && e.ticker !== 'AMZN');
+  /* M8BF-specific: earnings day that is NOT AMZN or TSLA */
+  const isNonAmznTslaEarningsDay = () => earningsSchedule.some(e => e.date === todayLong() && e.ticker !== 'AMZN' && e.ticker !== 'TSLA');
   /* M8BF-specific: today is the trading day after ANY of the 7 earnings */
   const isDayAfterAnyEarnings = () => earningsSchedule.some(isTodayAfter);
   /* M8BF-specific: today is VIX exp day AND VIX exp falls AFTER OPEX this month */
@@ -767,14 +767,14 @@
   // Updated from Strike Model — M8BF Edition image
   // Window = start of entry window; everyWeek = can trade even on non-M8BF days
   function m8Sched(dow){
-    const blocked=["10","25","35","40","65","80","90"];
-    const blockedThu=["10","25","35","40","65","80","90","95"];
+    const blocked=["10","25","35","40","65","80"];
+    const comboBans={0:95,20:15,55:50,65:60,85:90};
     switch(dow){
-      case 1:return{t:"10:00",window:"10:00–10:30",blocked:blocked};
-      case 2:return{t:"13:30",window:"13:30–14:00",blocked:blocked};
-      case 3:return{t:"12:00",window:"12:00–12:30",blocked:blocked};
-      case 4:return{t:"11:00",window:"11:00–11:30",blocked:blockedThu,thuNote:true};
-      case 5:return{t:"13:00",window:"13:00–13:30",blocked:blocked};
+      case 1:return{t:"11:00",window:"11:00–11:30",blocked:blocked,comboBans:comboBans};
+      case 2:return{t:"13:30",window:"13:30–14:00",blocked:blocked,comboBans:comboBans};
+      case 3:return{t:"12:00",window:"12:00–12:30",blocked:blocked,comboBans:comboBans};
+      case 4:return{t:"11:00",window:"11:00–11:30",blocked:blocked,comboBans:comboBans};
+      case 5:return{t:"13:00",window:"13:00–13:30",blocked:blocked,comboBans:comboBans};
       default:return null;
     }
   }
@@ -1101,10 +1101,8 @@
     const m8bfBlocked=(()=>{
       const blk=(r,n)=>({r,n});
       if(eomDay)                  return blk("No M8BF (EOM)",              "M8BF not traded on EOM");
-      if(eom1)                    return blk("No M8BF (EOM-1)",            "M8BF not traded on EOM-1");
       if(opex1)                   return blk("No M8BF (day before OPEX)",  "Skipped day before OPEX");
-      if(postOpDay)               return blk("No M8BF (day after OPEX)",   "Skipped day after OPEX");
-      if(isNonAmznEarningsDay())  return blk("No M8BF (earnings)",         "Not traded on earnings days (except AMZN)");
+      if(isNonAmznTslaEarningsDay()) return blk("No M8BF (earnings)",      "Not traded on earnings days (except AMZN/TSLA)");
       if(isDayAfterAnyEarnings()) return blk("No M8BF (day after earnings)","Not traded day after any earnings");
       if(isVixAfterOpexDay())     return blk("No M8BF (VIX exp day)",      "VIX exp day when VIX exp falls after OPEX");
       if(nmDay)                   return blk("No M8BF (first trading day)", "Skipped on first trading day of month");
@@ -1159,7 +1157,7 @@
     if(cpiDay){
       if(oNight>0){rec="Long ATM Call @ 9:32 AM (CPI) — Max $13";theme="strad";entryT="9:32 AM";badge="CPI CALL";}
       else{rec="No Trade (CPI, VIX up)";theme="block";crossed=true;blockT="hard";blockD="CPI day, VIX up";badge="BLOCKED";}
-    } else if(spxGapForcesM8BF && !eomDay && !postOpDay){
+    } else if(spxGapForcesM8BF && !eomDay){
       // SPX gap ≥ 0.9% in either direction → M8BF regardless of VIX (but not on OPEX+1 — GXBF takes priority)
       const dir = spxGapPct > 0 ? '▲' : '▼';
       rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";
@@ -1176,7 +1174,6 @@
 
       if(rec.startsWith("M8BF")){
         if(eomDay){rec="No M8BF (EOM)";theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on EOM";badge="BLOCKED";strikeInfo=null;}
-        else if(eom1){rec="No M8BF (EOM-1)";theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on EOM-1";badge="BLOCKED";strikeInfo=null;}
       }
 
       if(nmDay&&!isMon&&(rec.startsWith("M8BF")||rec.startsWith("No M8BF")||rec.startsWith("Straddle"))){rec="NM Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="NM STRADDLE";strikeInfo=null;}
@@ -1307,23 +1304,26 @@
       }
       const bannedLbl=document.createElement('div');
       bannedLbl.style.cssText='width:100%;font-size:10px;color:#f87171;font-weight:600;margin-bottom:4px;letter-spacing:.04em;text-transform:uppercase;';
-      bannedLbl.textContent='Banned strikes — skip these:';
+      bannedLbl.textContent='Banned center strikes — skip these:';
       g.appendChild(bannedLbl);
       strikeInfo.blocked.forEach(s=>{
         const p=document.createElement('span');
         p.className='sp lwr';
         p.textContent=s;
-        if(strikeInfo.thuNote && s==='95'){
-          p.title='Blocked on Thursdays only (28.6% WR, -$591 avg)';
-          p.style.cssText='outline:1px dashed #f87171;';
-        }
         g.appendChild(p);
       });
-      if(strikeInfo.thuNote){
-        const thuLbl=document.createElement('div');
-        thuLbl.style.cssText='width:100%;font-size:10px;color:#f87171;font-style:italic;margin-top:4px;';
-        thuLbl.textContent='95 additionally blocked Thursdays (28.6% WR, -$591 avg)';
-        g.appendChild(thuLbl);
+      if(strikeInfo.comboBans){
+        const comboLbl=document.createElement('div');
+        comboLbl.style.cssText='width:100%;font-size:10px;color:#fcd34d;font-weight:600;margin:6px 0 4px;letter-spacing:.04em;text-transform:uppercase;';
+        comboLbl.textContent='Combo bans (T1 → center):';
+        g.appendChild(comboLbl);
+        Object.entries(strikeInfo.comboBans).forEach(([t1,center])=>{
+          const p=document.createElement('span');
+          p.className='sp lwr';
+          p.style.cssText='background:#2b1f00;border-color:#78350f;color:#fcd34d;font-size:10px;';
+          p.textContent=`${t1}→${center}`;
+          g.appendChild(p);
+        });
       }
     } else { gw.style.display='none'; }
 
@@ -2142,23 +2142,23 @@
         if (!isNaN(todayVix) && todayVix < 18) {
           notes.push(`Today is OPEX with VIX below 18 — M8BF historically averages 74.5% on OPEX + low-VIX days (+19.5% above avg).`);
         } else {
-          notes.push(`Today is OPEX — M8BF historically averages 64.6% (+9.6% above avg).`);
+          notes.push(`Today is OPEX — M8BF historically averages 93.3% (+29.3% above avg).`);
         }
       }
-      if (isFed())         notes.push(`Today is a FED day — M8BF historically averages 43.5% (-11.5% below avg).`);
-      if (isLastTradeMo()) notes.push(`Today is EOM (last trading day of month) — M8BF historically averages 47.2% (-7.8% below avg).`);
-      if (isVixExp())      notes.push(`Today is VIX expiry — M8BF historically averages 48.3% (-6.7% below avg).`);
-      if (isNMplus1())     notes.push(`Today is the 2nd trading day of the month — M8BF historically averages 66.2% (+11.2% above avg).`);
+      if (isFed())         notes.push(`Today is a FED day — M8BF historically averages 55.6% (-8.4% below avg).`);
+      if (isLastTradeMo()) notes.push(`Today is EOM (last trading day of month) — M8BF historically averages 33.3% (-30.7% below avg).`);
+      if (isVixExp())      notes.push(`Today is VIX expiry — M8BF historically averages 60.0% (-4.0% below avg).`);
+      if (isNMplus1())     notes.push(`Today is the 2nd trading day of the month — M8BF historically averages 38.5% (-25.5% below avg).`);
 
       earningsSchedule.filter(e => e.date === todayLong()).forEach(e => {
         const map = {
-          GOOGL:{ wr:'76.4%', diff:'+21.4%' },
-          MSFT: { wr:'19.2%', diff:'-35.8%' },
-          META: { wr:'19.2%', diff:'-35.8%' },
-          AAPL: { wr:'36.5%', diff:'-18.5%' },
-          AMZN: { wr:'38.4%', diff:'-16.6%' },
-          NVDA: { wr:'42.9%', diff:'-12.1%' },
-          TSLA: { wr:'52.3%', diff:'-2.7%'  },
+          GOOGL:{ wr:'100%',  diff:'+36.0%' },
+          MSFT: { wr:'19.2%', diff:'-44.8%' },
+          META: { wr:'19.2%', diff:'-44.8%' },
+          AAPL: { wr:'36.5%', diff:'-27.5%' },
+          AMZN: { wr:'66.7%', diff:'+2.7%'  },
+          NVDA: { wr:'28.6%', diff:'-35.4%' },
+          TSLA: { wr:'66.7%', diff:'+2.7%'  },
         };
         const info = map[e.ticker];
         if (info) notes.push(`Today is ${e.company} earnings — M8BF historically averages ${info.wr} on ${e.ticker} earnings days (${info.diff} vs avg).`);
@@ -2171,8 +2171,8 @@
       }
 
       // === TOMORROW IS A SPECIAL DAY ===
-      if (fedSch.some(isTodayBefore))  notes.push(`Tomorrow is a FED day — M8BF historically averages 69.3% the day before Fed decisions (+14.3% above avg).`);
-      if (opexSch.some(isTodayBefore)) notes.push(`Tomorrow is OPEX — M8BF historically averages 44.7% the day before OPEX (-10.3% below avg).`);
+      if (fedSch.some(isTodayBefore))  notes.push(`Tomorrow is a FED day — M8BF historically averages 72.7% the day before Fed decisions (+8.7% above avg).`);
+      if (opexSch.some(isTodayBefore)) notes.push(`Tomorrow is OPEX — M8BF historically averages 50.0% the day before OPEX (-14.0% below avg).`);
       if (isTodayBeforeTW())           notes.push(`Tomorrow is Triple Witching — M8BF historically averages 33.5% the day before Triple Witching (-21.5% below avg).`);
 
       earningsSchedule.filter(e => isTodayBefore(e.date)).forEach(e => {
@@ -2188,6 +2188,7 @@
       // === YESTERDAY WAS A SPECIAL DAY ===
       if (daysDiff <= 3) {
         if (isTodayAfterTW()) notes.push(`Yesterday was Triple Witching — M8BF historically averages 47.6% the day after (-7.4% below avg).`);
+        if (opexSch.some(isTodayAfter)) notes.push(`Yesterday was OPEX — M8BF historically averages 73.3% the day after OPEX (+9.3% above avg). HIGH CONFIDENCE.`);
 
         const lastD = new Date(last.date + 'T12:00:00');
         if (isFirstTradeMo(lastD)) notes.push(`Yesterday was the first trading day of the month — M8BF historically averages 66.2% the day after (+11.2% above avg).`);
