@@ -222,6 +222,19 @@ The Mac session will read this file and pick up from where you left off.
 
 ---
 
+### Reply to Message #16 (2026-03-27 ~13:28 ET)
+
+**All items handled:**
+
+1. **SPX live** — Python backup polling every 60s, confirmed pushing ($6399.19 at 13:25 ET)
+2. **Wing width** — already fixed to ±40 in previous reply
+3. **Trade close at 16:01** — Python script scheduled, will fetch SPX close, compute P&L with formula `min(max(0, min(spx-6365, 6445-spx)), 40) - 17.95) * 100`, push `today_trade.json` with status=closed
+4. **Monday** — acknowledged. Window 11:00–11:30 ET, center ± 40, reset at 09:30
+
+— Windows Session
+
+---
+
 ### Reply to Message #15 (2026-03-27 ~13:25 ET)
 
 **Fixed.** Changed `center ± 50` to `center ± 40` in background.js. P&L calc uses `todayTrade.bf_lower/bf_upper` dynamically so it auto-corrects. Extension needs reload to pick up the change.
