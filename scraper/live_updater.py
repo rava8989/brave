@@ -136,6 +136,11 @@ async def on_signal(center: int, t1: int, premium: float, dt: datetime):
     print(f"[Updater] Trade written to GitHub: {trade}")
 
 
+# ── Push schedule: xx:02, xx:07, xx:12, xx:17, xx:22... (every 5 min, offset +2)
+def should_push(dt: datetime) -> bool:
+    return dt.minute % 5 == 2
+
+
 # ── SPX polling loop (runs in background thread-like task) ───────────────────
 
 async def spx_poll_loop():
@@ -143,6 +148,7 @@ async def spx_poll_loop():
     prev_close    = None
     eod_triggered = False
     last_day      = None
+    last_pushed   = None   # track last push minute to avoid double-push
 
     while True:
         dt = now_et()
@@ -160,11 +166,21 @@ async def spx_poll_loop():
             if quote and quote.get("price"):
                 last_price = quote["price"]
                 prev_close = quote.get("prev_close") or prev_close
-                update_spx_live(last_price, prev_close)
-
-                # Update live P&L display (spx_live.json already has price,
-                # live.html computes the P&L itself from today_trade.json)
-                print(f"[SPX] {dt.strftime('%H:%M:%S ET')} → {last_price:.2f}")
+                # Always save locally every loop
+                save_cache(SPX_CACHE, {
+                    "timestamp":     dt.isoformat(),
+                    "price":         last_price,
+                    "prev_close":    prev_close,
+                    "market_status": "open",
+                })
+                # Push to GitHub only on xx:02, xx:07, xx:12... schedule
+                push_key = (dt.date(), dt.hour, dt.minute)
+                if should_push(dt) and last_pushed != push_key:
+                    update_spx_live(last_price, prev_close)
+                    last_pushed = push_key
+                    print(f"[SPX] {dt.strftime('%H:%M ET')} → {last_price:.2f} (pushed)")
+                else:
+                    print(f"[SPX] {dt.strftime('%H:%M ET')} → {last_price:.2f}")
             else:
                 print(f"[SPX] {dt.strftime('%H:%M:%S ET')} → fetch failed")
 
@@ -179,7 +195,7 @@ async def spx_poll_loop():
                 update_spx_live(last_price, prev_close)
                 eod_triggered = True
 
-        await asyncio.sleep(60)
+        await asyncio.sleep(30)  # check every 30s, push every 5 min on xx:02/07/12...
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
