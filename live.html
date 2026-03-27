@@ -986,9 +986,10 @@ async function tick() {
   const stateChanged = (trade?.triggered !== prevTriggered) || (trade?.status !== prevStatus);
   if (stateChanged) { render(); }
 
-  const fetched = await refreshSPX();
+  await refreshSPX();
 
-  if (fetched && trade && trade.triggered && trade.status !== 'closed') {
+  // Update chart with last known price even when data is stale — chart never freezes
+  if (spxPrice !== null && trade && trade.triggered && trade.status !== 'closed') {
     const pl = computePL(trade, spxPrice);
     const t = timeLabel();
     plHistory.push({ time: t, spx: spxPrice, pl });
