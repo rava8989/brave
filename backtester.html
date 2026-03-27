@@ -857,8 +857,14 @@ document.getElementById('themeBtn').onclick = () => {
 };
 
 // ── Date inputs init ──────────────────────────────────────────────────────────
-document.getElementById('dateFrom').value = META.minDate;
-document.getElementById('dateTo').value   = META.maxDate;
+const dateFrom = document.getElementById('dateFrom');
+const dateTo   = document.getElementById('dateTo');
+dateFrom.value = META.minDate;
+dateFrom.min   = META.minDate;
+dateFrom.max   = META.maxDate;
+dateTo.value   = META.maxDate;
+dateTo.min     = META.minDate;
+dateTo.max     = META.maxDate;
 document.getElementById('hdrMeta').textContent =
   `${META.count.toLocaleString()} trades · ${META.minDate} → ${META.maxDate}` +
   (META.hasIntraday ? ` · ${META.hasIntraday.toLocaleString()} intraday` : '');
