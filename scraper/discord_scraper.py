@@ -158,14 +158,19 @@ async def fetch_signal_for_date(page, channel_id: str, target_date) -> tuple | N
     after_snow  = str(int(start_et.timestamp() * 1000 - discord_epoch) << 22)
     before_snow = str(int(end_et.timestamp()   * 1000 - discord_epoch) << 22)
 
+    # Validate IDs are numeric-only (Discord snowflakes) before injecting into JS
+    if not str(channel_id).isdigit() or not after_snow.isdigit() or not before_snow.isdigit():
+        print(f"[Backfill] Invalid channel_id or snowflake — aborting")
+        return None
+
     try:
-        messages = await page.evaluate(f"""
-            async () => {{
-                const r = await fetch('/api/v9/channels/{channel_id}/messages?limit=100&after={after_snow}&before={before_snow}');
+        messages = await page.evaluate("""
+            async ([ch, after, before]) => {
+                const r = await fetch(`/api/v9/channels/${ch}/messages?limit=100&after=${after}&before=${before}`);
                 if (!r.ok) return [];
                 return await r.json();
-            }}
-        """)
+            }
+        """, [str(channel_id), after_snow, before_snow])
     except Exception as e:
         print(f"[Backfill] Discord API error for {target_date}: {e}")
         return None
@@ -236,6 +241,7 @@ async def run_scraper(on_signal_callback, poll_interval: int = 30,
             await on_startup(page)
 
         triggered_today = set()   # avoid double-triggering same center
+        scrape_fail_count = 0
 
         while True:
             async def on_signal(center, t1, premium, dt):
@@ -246,5 +252,14 @@ async def run_scraper(on_signal_callback, poll_interval: int = 30,
                 print(f"[Scraper] ✅ SIGNAL: center={center} t1={t1} premium={premium} at {dt.strftime('%H:%M ET')}")
                 await on_signal_callback(center, t1, premium, dt)
 
-            await scrape_once(page, on_signal)
+            try:
+                await scrape_once(page, on_signal)
+                scrape_fail_count = 0
+            except Exception as e:
+                scrape_fail_count += 1
+                backoff = min(30 * (2 ** (scrape_fail_count - 1)), 300)
+                print(f"[Scraper] Error (attempt {scrape_fail_count}, backoff {backoff}s): {e}")
+                await asyncio.sleep(backoff)
+                continue
+
             await asyncio.sleep(poll_interval)

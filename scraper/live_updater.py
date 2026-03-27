@@ -66,7 +66,10 @@ def load_cache(path: Path, default: dict) -> dict:
         return default
 
 def save_cache(path: Path, data: dict):
-    path.write_text(json.dumps(data, indent=2))
+    """Atomic write — write to .tmp then rename to avoid race condition corruption."""
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2))
+    tmp.replace(path)
 
 
 # ── Daily reset ───────────────────────────────────────────────────────────────
@@ -205,6 +208,7 @@ async def spx_poll_loop():
     eod_triggered = False
     last_day      = None
     last_pushed   = None   # track last push minute to avoid double-push
+    fail_count    = 0      # consecutive Schwab failures for backoff
 
     while True:
         dt = now_et()
@@ -220,7 +224,13 @@ async def spx_poll_loop():
         if is_market_open(dt):
             quote = schwab_client.get_spx_price()
             if quote and quote.get("price"):
-                last_price = quote["price"]
+                raw = quote["price"]
+                if not (1000 < raw < 15000):
+                    print(f"[SPX] ⚠️  Sanity check failed: price={raw} — ignoring")
+                    await asyncio.sleep(30)
+                    continue
+                last_price = raw
+                fail_count = 0
                 prev_close = quote.get("prev_close") or prev_close
                 # Always save locally every loop
                 save_cache(SPX_CACHE, {
@@ -238,7 +248,11 @@ async def spx_poll_loop():
                 else:
                     print(f"[SPX] {dt.strftime('%H:%M ET')} → {last_price:.2f}")
             else:
-                print(f"[SPX] {dt.strftime('%H:%M:%S ET')} → fetch failed")
+                fail_count += 1
+                backoff = min(30 * (2 ** (fail_count - 1)), 300)  # 30s, 60s, 120s … max 5 min
+                print(f"[SPX] {dt.strftime('%H:%M:%S ET')} → fetch failed (attempt {fail_count}, backoff {backoff}s)")
+                await asyncio.sleep(backoff)
+                continue
 
         # EOD close at 16:01 ET
         elif not eod_triggered and dt.hour == 16 and dt.minute >= 1:

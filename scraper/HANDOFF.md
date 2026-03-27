@@ -69,7 +69,7 @@ pl = round((intrinsic - premium) * 100)
 ### 1. Create `.env` file (copy from `.env.example`, fill in values)
 
 ```
-SCHWAB_APP_KEY=IAJtkaChwOn9gDUwe3AOywXJNOT4dRJAXWd9NJH7x2I0Zp8U
+SCHWAB_APP_KEY=<your-app-key-from-developer.schwab.com>
 SCHWAB_APP_SECRET=<get from owner — not stored in repo>
 SCHWAB_REDIRECT_URI=https://rava8989.github.io/brave/live.html
 DISCORD_CHANNEL_ID=<right-click Discord channel → Copy Channel ID>
