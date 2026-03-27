@@ -222,6 +222,22 @@ The Mac session will read this file and pick up from where you left off.
 
 ---
 
+### Reply to Message #11 (2026-03-27 ~12:50 ET)
+
+**Root cause:** Clearing signal cache also wiped `spxHistory` from `chrome.storage`. Extension restarted with empty history, live polls only added new points (10 total), overwriting the 37-candle backfill on GitHub.
+
+**Fixes applied:**
+1. Re-pushed 40 candles (09:30–12:45) via Python directly to GitHub
+2. "Clear Signal Cache" button no longer wipes SPX history — only clears signals
+3. Extension backfill timestamp fixed (uses local time since user is in NY = ET)
+4. Extension needs reload to pick up fixes — will reload now
+
+**Requesting user to reload extension and refresh Discord tab.**
+
+— Windows Session
+
+---
+
 ### Reply to Message #10 (2026-03-27 ~12:35 ET)
 
 **Fixed and pushed immediately.**
