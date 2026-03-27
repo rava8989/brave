@@ -34,8 +34,10 @@ ET = ZoneInfo("America/New_York")
 # Local cache paths (not committed)
 DATA_DIR    = Path(__file__).parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
-TRADE_CACHE = DATA_DIR / "today_trade.json"
-SPX_CACHE   = DATA_DIR / "spx_live.json"
+TRADE_CACHE    = DATA_DIR / "today_trade.json"
+SPX_CACHE      = DATA_DIR / "spx_live.json"
+SPX_HIST_CACHE = DATA_DIR / "spx_history.json"
+SIG_CACHE      = DATA_DIR / "signals_today.json"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -125,6 +127,49 @@ def update_spx_live(price: float, prev_close: float):
     return data
 
 
+# ── SPX history accumulation ──────────────────────────────────────────────────
+
+def reset_spx_history():
+    data = {"date": date.today().strftime("%Y-%m-%d"), "data": []}
+    save_cache(SPX_HIST_CACHE, data)
+    push_json("spx_history.json", data, f"reset: spx_history {data['date']}")
+
+def append_spx_history(price: float, dt: datetime):
+    hist = load_cache(SPX_HIST_CACHE, {"date": date.today().strftime("%Y-%m-%d"), "data": []})
+    if hist.get("date") != date.today().strftime("%Y-%m-%d"):
+        hist = {"date": date.today().strftime("%Y-%m-%d"), "data": []}
+    hist["data"].append({"time": dt.strftime("%H:%M"), "price": round(price, 2)})
+    save_cache(SPX_HIST_CACHE, hist)
+    push_json("spx_history.json", hist, f"spx_hist: {dt.strftime('%H:%M')} {price:.2f}")
+
+
+# ── Signals today accumulation ───────────────────────────────────────────────
+
+def reset_signals_today():
+    data = {"date": date.today().strftime("%Y-%m-%d"), "signals": []}
+    save_cache(SIG_CACHE, data)
+    push_json("signals_today.json", data, f"reset: signals_today {data['date']}")
+
+def append_signal_today(center: int, t1: int, premium: float, dt: datetime, banned: bool):
+    sigs = load_cache(SIG_CACHE, {"date": date.today().strftime("%Y-%m-%d"), "signals": []})
+    if sigs.get("date") != date.today().strftime("%Y-%m-%d"):
+        sigs = {"date": date.today().strftime("%Y-%m-%d"), "signals": []}
+    # Deduplicate by center (same signal seen multiple polls)
+    existing = {s["center"] for s in sigs["signals"]}
+    if center in existing:
+        return
+    sigs["signals"].append({
+        "time": dt.strftime("%H:%M"),
+        "center": center,
+        "t1": t1,
+        "premium": premium,
+        "banned": banned,
+    })
+    save_cache(SIG_CACHE, sigs)
+    push_json("signals_today.json", sigs, f"signal_log: center={center} banned={banned}")
+    print(f"[Signals] Logged: center={center} t1={t1} premium={premium} banned={banned}")
+
+
 # ── Signal callback (from discord scraper) ───────────────────────────────────
 
 async def on_signal(center: int, t1: int, premium: float, dt: datetime):
@@ -138,6 +183,11 @@ async def on_signal(center: int, t1: int, premium: float, dt: datetime):
     save_cache(TRADE_CACHE, trade)
     push_json("today_trade.json", trade, f"signal: M8BF center={center} t1={t1}")
     print(f"[Updater] Trade written to GitHub: {trade}")
+
+
+async def on_any_signal(center: int, t1: int, premium: float, dt: datetime, banned: bool):
+    """Log ALL signals to signals_today.json (including banned/outside window)."""
+    append_signal_today(center, t1, premium, dt, banned)
 
 
 # ── Backfill missing dates on startup ────────────────────────────────────────
@@ -218,6 +268,8 @@ async def spx_poll_loop():
             trade = load_cache(TRADE_CACHE, {})
             if is_new_day(trade):
                 reset_trade()
+                reset_spx_history()
+                reset_signals_today()
                 eod_triggered = False
             last_day = dt.date()
 
@@ -243,6 +295,7 @@ async def spx_poll_loop():
                 push_key = (dt.date(), dt.hour, dt.minute)
                 if should_push(dt) and last_pushed != push_key:
                     update_spx_live(last_price, prev_close)
+                    append_spx_history(last_price, dt)
                     last_pushed = push_key
                     print(f"[SPX] {dt.strftime('%H:%M ET')} → {last_price:.2f} (pushed)")
                 else:
@@ -271,7 +324,7 @@ async def spx_poll_loop():
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 async def main():
-    print("[Updater] Starting Σ3 Live Updater")
+    print("[Updater] Starting S3 Live Updater")
     print(f"[Updater] Time: {now_et().strftime('%Y-%m-%d %H:%M ET')}")
 
     # Verify Schwab tokens exist
@@ -287,7 +340,8 @@ async def main():
     # backfill_missing_dates runs once after Discord login before the main loop
     await asyncio.gather(
         spx_poll_loop(),
-        run_scraper(on_signal, poll_interval=30, on_startup=backfill_missing_dates),
+        run_scraper(on_signal, poll_interval=30, on_startup=backfill_missing_dates,
+                    on_any_signal_callback=on_any_signal),
     )
 
 if __name__ == "__main__":
