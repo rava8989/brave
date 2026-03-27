@@ -392,7 +392,7 @@ function updateSPXChartTheme() {
 // ─── Load today_trade.json ────────────────────────────────────────────────────
 async function loadTrade() {
   try {
-    const r = await fetch('today_trade.json?v=' + Date.now());
+    const r = await fetch(RAW + 'today_trade.json', { cache: 'no-store' });
     if (!r.ok) { trade = null; return; }
     trade = await r.json();
   } catch {
@@ -970,6 +970,13 @@ async function tick() {
   await loadSPXHistory();
   await loadSignals();
   rebuildSPXChart();
+
+  // Re-check trade state every tick — catches trigger/close without page refresh
+  const prevTriggered = trade?.triggered;
+  const prevStatus = trade?.status;
+  await loadTrade();
+  const stateChanged = (trade?.triggered !== prevTriggered) || (trade?.status !== prevStatus);
+  if (stateChanged) { render(); }
 
   const fetched = await refreshSPX();
 
