@@ -476,8 +476,17 @@ async function handleEOD(env, etNow) {
     }
   } catch (e) { /* non-fatal */ }
 
+  // Stooq fallback for SPX close when Schwab tokens are expired
+  if (spxClose === null) {
+    try {
+      const todayISO2 = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
+      spxClose = await getSpxCloseForDate(todayISO2);
+    } catch (e) { /* non-fatal */ }
+  }
+
   // Read today_trade.json from GitHub — written by live_updater.py at EOD
   let m8bfPL = null;
+  let m8bfWR = null;
   try {
     const tradeResp = await fetch(
       `https://raw.githubusercontent.com/rava8989/brave/main/today_trade.json?t=${Date.now()}`,
@@ -485,12 +494,15 @@ async function handleEOD(env, etNow) {
     );
     if (tradeResp.ok) {
       const trade = await tradeResp.json();
-      if (
-        trade.date === todayISO &&
-        trade.status === 'closed' &&
-        typeof trade.final_pl === 'number'
-      ) {
+      if (trade.date === todayISO && trade.status === 'closed' && typeof trade.final_pl === 'number') {
         m8bfPL = trade.final_pl;
+        // Compute m8bfWR: % of butterfly wing width captured by SPX close
+        if (spxClose != null && trade.bf_lower != null && trade.bf_upper != null) {
+          const wing = (trade.bf_upper - trade.bf_lower) / 2;
+          const intrinsic = Math.max(0, Math.min(spxClose - trade.bf_lower, trade.bf_upper - spxClose));
+          const clipped = Math.min(intrinsic, wing);
+          m8bfWR = Math.round(clipped / wing * 100);
+        }
       }
     }
   } catch (e) { /* non-fatal */ }
@@ -499,9 +511,10 @@ async function handleEOD(env, etNow) {
   if (vixClose != null) fields.vixClose = vixClose;
   if (spxClose != null) fields.spxClose = spxClose;
   if (m8bfPL != null) fields.m8bfPL = m8bfPL;
+  if (m8bfWR != null) fields.m8bfWR = m8bfWR;
 
   if (Object.keys(fields).length > 0) {
-    await upsertHistoryGitHub(env, todayISO, fields, true);
+    await upsertHistoryGitHub(env, todayISO, fields);
   }
 
   return { status: 'eod', date: todayISO, vixClose, spxClose, m8bfPL };
@@ -634,10 +647,12 @@ async function handleScheduled(env) {
     discordResult = await pollDiscordSignals(env);
   }
 
-  // EOD cron: capture vixClose + spxClose + m8bfPL
+  // EOD cron: capture vixClose + spxClose + m8bfPL + backfill any missing m8bfWR
   if (isEOD) {
     const eodResult = await handleEOD(env, etNow);
-    return { ...eodResult, discord: discordResult };
+    let backfillResult = {};
+    try { backfillResult = await backfillMissingWR(env); } catch(e) { backfillResult = { error: e.message }; }
+    return { ...eodResult, discord: discordResult, backfill: backfillResult };
   }
 
   if (!isMorning) {
@@ -816,7 +831,7 @@ async function handleScheduled(env) {
 // commits back. Requires GITHUB_TOKEN env var (repo: rava8989/brave).
 // ════════════════════════════════════════════════════════════════════
 
-async function upsertHistoryGitHub(env, dateStr, fields, computeWR = false) {
+async function upsertHistoryGitHub(env, dateStr, fields) {
   const token = env.GITHUB_TOKEN;
   if (!token) throw new Error('GITHUB_TOKEN not set');
 
@@ -847,22 +862,6 @@ async function upsertHistoryGitHub(env, dateStr, fields, computeWR = false) {
     content.sort((a, b) => a.date.localeCompare(b.date));
   }
 
-  // 2b. Compute rolling 20-day M8BF win rate if P&L was just written
-  if (computeWR) {
-    const finalIdx = content.findIndex(r => r.date === dateStr);
-    if (finalIdx >= 0) {
-      const WINDOW = 20;
-      const signalDays = content
-        .filter(r => r.m8bfPL != null && r.date <= dateStr)
-        .sort((a, b) => a.date.localeCompare(b.date))
-        .slice(-WINDOW);
-      if (signalDays.length > 0) {
-        const wins = signalDays.filter(r => r.m8bfPL >= 0).length;
-        content[finalIdx].m8bfWR = Math.round(wins / signalDays.length * 100);
-      }
-    }
-  }
-
   // 3. Push back
   const putResp = await fetch(apiUrl, {
     method: 'PUT',
@@ -877,6 +876,129 @@ async function upsertHistoryGitHub(env, dateStr, fields, computeWR = false) {
     const err = await putResp.text();
     throw new Error(`GitHub PUT failed: ${putResp.status} — ${err}`);
   }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// BACKFILL MISSING m8bfWR
+// ════════════════════════════════════════════════════════════════════
+
+async function fetchDiscordMessagesForDate(token, channelId, dateISO) {
+  // Convert date 13:00 ET → UTC snowflake (start of trading window)
+  const [y, m, d] = dateISO.split('-').map(Number);
+  const startMs = Date.UTC(y, m - 1, d, 17, 0, 0); // 13:00 ET = 17:00 UTC (EST) or 18:00 UTC (EDT)
+  const endMs   = Date.UTC(y, m - 1, d, 22, 0, 0); // 16:00 ET ≈ 21:00 UTC
+  const discordEpoch = 1420070400000n;
+  const afterSnowflake = ((BigInt(startMs) - discordEpoch) << 22n).toString();
+  const beforeSnowflake = ((BigInt(endMs) - discordEpoch) << 22n).toString();
+
+  const resp = await fetch(
+    `https://discord.com/api/v9/channels/${channelId}/messages?limit=100&after=${afterSnowflake}&before=${beforeSnowflake}`,
+    { headers: { 'Authorization': token, 'User-Agent': 'Mozilla/5.0' } }
+  );
+  if (!resp.ok) throw new Error(`Discord API ${resp.status} for ${dateISO}`);
+  return await resp.json();
+}
+
+async function getSpxCloseForDate(dateISO) {
+  // Use Stooq CSV API (works from Cloudflare Workers)
+  const [y, m, d] = dateISO.split('-');
+  const dateCompact = `${y}${m}${d}`;
+  const url = `https://stooq.com/q/d/l/?s=^spx&d1=${dateCompact}&d2=${dateCompact}&i=d`;
+  const resp = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+  if (!resp.ok) throw new Error(`Stooq fetch failed: ${resp.status}`);
+  const text = await resp.text();
+  // CSV: Date,Open,High,Low,Close,Volume
+  const lines = text.trim().split('\n');
+  if (lines.length < 2) throw new Error('No data from Stooq');
+  const parts = lines[1].split(',');
+  const close = parseFloat(parts[4]);
+  if (isNaN(close)) throw new Error('Invalid close from Stooq');
+  return parseFloat(close.toFixed(2));
+}
+
+async function backfillMissingWR(env) {
+  const token = env.DISCORD_USER_TOKEN;
+  const channelId = '1048242197029458040';
+  if (!token) throw new Error('DISCORD_USER_TOKEN not set');
+
+  // 1. Fetch history_data.json from GitHub
+  const apiUrl = 'https://api.github.com/repos/rava8989/brave/contents/history_data.json';
+  const ghHeaders = {
+    'Authorization': `Bearer ${env.GITHUB_TOKEN}`,
+    'Accept': 'application/vnd.github+json',
+    'User-Agent': 'schwab-proxy-worker/1.0',
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
+  const getResp = await fetch(apiUrl, { headers: ghHeaders });
+  if (!getResp.ok) throw new Error(`GitHub GET failed: ${getResp.status}`);
+  const meta = await getResp.json();
+  const sha = meta.sha;
+  const content = JSON.parse(atob(meta.content.replace(/\n/g, '')));
+
+  // 2. Find entries with null m8bfWR (skip future dates)
+  const today = new Date().toISOString().slice(0, 10);
+  const missing = content.filter(r => r.m8bfWR == null && r.date <= today);
+
+  const filled = [];
+  const failed = [];
+
+  for (const entry of missing) {
+    try {
+      // Get SPX close
+      const spxClose = await getSpxCloseForDate(entry.date);
+      if (spxClose == null) { failed.push({ date: entry.date, reason: 'no SPX close' }); continue; }
+
+      // Fetch Discord messages for that day's trading window
+      const messages = await fetchDiscordMessagesForDate(token, channelId, entry.date);
+      if (!Array.isArray(messages) || messages.length === 0) {
+        failed.push({ date: entry.date, reason: 'no Discord messages' }); continue;
+      }
+
+      // Find the last valid BUY butterfly signal for that day
+      const sorted = messages.slice().sort((a, b) => a.id.localeCompare(b.id));
+      let trade = null;
+      for (const msg of sorted) {
+        const parsed = parseDiscordSignal(msg.content || '');
+        if (parsed) trade = parsed;
+      }
+      if (!trade) { failed.push({ date: entry.date, reason: 'no signal found in Discord' }); continue; }
+
+      const bf_lower = trade.lower;
+      const bf_upper = trade.upper;
+      const wing = (bf_upper - bf_lower) / 2;
+      const intrinsic = Math.max(0, Math.min(spxClose - bf_lower, bf_upper - spxClose));
+      const m8bfWR = Math.round(Math.min(intrinsic, wing) / wing * 100);
+
+      // Update in-memory content
+      const idx = content.findIndex(r => r.date === entry.date);
+      if (idx >= 0) {
+        content[idx].m8bfWR = m8bfWR;
+        if (content[idx].spxClose == null) content[idx].spxClose = spxClose;
+      }
+      filled.push({ date: entry.date, spxClose, bf_lower, bf_upper, m8bfWR });
+    } catch (e) {
+      failed.push({ date: entry.date, reason: e.message });
+    }
+  }
+
+  // 3. Push back to GitHub if anything changed
+  if (filled.length > 0) {
+    const putResp = await fetch(apiUrl, {
+      method: 'PUT',
+      headers: { ...ghHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: `auto: backfill m8bfWR for ${filled.map(f => f.date).join(', ')}`,
+        content: btoa(JSON.stringify(content, null, 0)),
+        sha,
+      }),
+    });
+    if (!putResp.ok) {
+      const err = await putResp.text();
+      throw new Error(`GitHub PUT failed: ${putResp.status} — ${err}`);
+    }
+  }
+
+  return { filled, failed, total_missing: missing.length };
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -914,6 +1036,19 @@ export default {
       try {
         const lastRun = await env.SIGNAL_KV.get('last_run');
         return jsonResp(lastRun ? JSON.parse(lastRun) : { status: 'never_run' }, 200, {});
+      } catch (e) {
+        return jsonResp({ error: e.message }, 500, {});
+      }
+    }
+
+    // ── GET /backfill-wr ── Fill missing m8bfWR from Discord history + Yahoo SPX
+    if (url.pathname === '/backfill-wr' && request.method === 'GET') {
+      if (request.headers.get('X-Sync-Secret') !== env.SYNC_SECRET) {
+        return jsonResp({ error: 'Unauthorized' }, 401, {});
+      }
+      try {
+        const results = await backfillMissingWR(env);
+        return jsonResp(results, 200, {});
       } catch (e) {
         return jsonResp({ error: e.message }, 500, {});
       }
