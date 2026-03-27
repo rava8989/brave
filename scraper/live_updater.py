@@ -1,0 +1,207 @@
+"""
+Main orchestrator — runs continuously on the Windows machine.
+
+What it does:
+  • Polls SPX price from Schwab every 60s during market hours
+  • Writes spx_live.json → pushed to GitHub → live.html reads it
+  • Monitors Discord via discord_scraper.py for M8BF signals
+  • When signal hits window → writes today_trade.json → pushed to GitHub
+  • At market close → computes final P&L, updates today_trade.json
+  • At start of each day → resets today_trade.json to no-trade state
+
+Usage:
+    python live_updater.py
+"""
+
+import os
+import json
+import asyncio
+import time
+from datetime import datetime, date, timedelta
+from pathlib import Path
+from zoneinfo import ZoneInfo
+from dotenv import load_dotenv
+
+import schwab_client
+from github_push import push_json
+from discord_scraper import run_scraper, make_trade_json, window_name
+
+load_dotenv()
+
+ET = ZoneInfo("America/New_York")
+
+# Local cache paths (not committed)
+DATA_DIR    = Path(__file__).parent / "data"
+DATA_DIR.mkdir(exist_ok=True)
+TRADE_CACHE = DATA_DIR / "today_trade.json"
+SPX_CACHE   = DATA_DIR / "spx_live.json"
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def now_et() -> datetime:
+    return datetime.now(tz=ET)
+
+def is_market_open(dt: datetime = None) -> bool:
+    dt = dt or now_et()
+    if dt.weekday() >= 5:
+        return False
+    mins = dt.hour * 60 + dt.minute
+    return 9*60+30 <= mins <= 16*60
+
+def is_new_day(trade: dict) -> bool:
+    return trade.get("date") != date.today().strftime("%Y-%m-%d")
+
+def compute_pl(trade: dict, spx: float) -> int:
+    lo, hi, prem = trade["bf_lower"], trade["bf_upper"], trade["premium"]
+    wing      = (hi - lo) / 2
+    intrinsic = max(0, min(spx - lo, hi - spx))
+    clipped   = min(intrinsic, wing)
+    return round((clipped - prem) * 100)
+
+def load_cache(path: Path, default: dict) -> dict:
+    try:
+        return json.loads(path.read_text()) if path.exists() else default
+    except Exception:
+        return default
+
+def save_cache(path: Path, data: dict):
+    path.write_text(json.dumps(data, indent=2))
+
+
+# ── Daily reset ───────────────────────────────────────────────────────────────
+
+def reset_trade():
+    empty = {
+        "date":        date.today().strftime("%Y-%m-%d"),
+        "triggered":   False,
+        "signal_time": None,
+        "window":      None,
+        "center":      None,
+        "t1":          None,
+        "bf_lower":    None,
+        "bf_upper":    None,
+        "premium":     None,
+        "status":      "waiting",
+        "spx_close":   None,
+        "final_pl":    None,
+    }
+    save_cache(TRADE_CACHE, empty)
+    push_json("today_trade.json", empty, f"reset: new trading day {empty['date']}")
+    print(f"[Updater] New day reset for {empty['date']}")
+    return empty
+
+
+# ── EOD close ────────────────────────────────────────────────────────────────
+
+def close_trade(trade: dict, spx_close: float):
+    final_pl = compute_pl(trade, spx_close) if trade.get("triggered") else None
+    trade.update({
+        "status":    "closed",
+        "spx_close": spx_close,
+        "final_pl":  final_pl,
+    })
+    save_cache(TRADE_CACHE, trade)
+    push_json("today_trade.json", trade, f"eod: close trade {trade['date']} pl={final_pl}")
+    print(f"[Updater] Trade closed. SPX={spx_close} Final P&L=${final_pl}")
+    return trade
+
+
+# ── SPX live update ───────────────────────────────────────────────────────────
+
+def update_spx_live(price: float, prev_close: float):
+    dt = now_et()
+    data = {
+        "timestamp":     dt.isoformat(),
+        "price":         price,
+        "prev_close":    prev_close,
+        "market_status": "open" if is_market_open(dt) else "closed",
+    }
+    save_cache(SPX_CACHE, data)
+    push_json("spx_live.json", data, f"live: SPX {price:.2f}")
+    return data
+
+
+# ── Signal callback (from discord scraper) ───────────────────────────────────
+
+async def on_signal(center: int, t1: int, premium: float, dt: datetime):
+    trade = load_cache(TRADE_CACHE, {})
+    if trade.get("triggered"):
+        print(f"[Updater] Already have a trade today, ignoring new signal.")
+        return
+
+    win_name = window_name(dt)
+    trade    = make_trade_json(center, t1, premium, dt.strftime("%H:%M"), win_name)
+    save_cache(TRADE_CACHE, trade)
+    push_json("today_trade.json", trade, f"signal: M8BF center={center} t1={t1}")
+    print(f"[Updater] Trade written to GitHub: {trade}")
+
+
+# ── SPX polling loop (runs in background thread-like task) ───────────────────
+
+async def spx_poll_loop():
+    last_price    = None
+    prev_close    = None
+    eod_triggered = False
+    last_day      = None
+
+    while True:
+        dt = now_et()
+
+        # Daily reset at 9:00 ET
+        if last_day != dt.date() and dt.hour >= 9:
+            trade = load_cache(TRADE_CACHE, {})
+            if is_new_day(trade):
+                reset_trade()
+                eod_triggered = False
+            last_day = dt.date()
+
+        if is_market_open(dt):
+            quote = schwab_client.get_spx_price()
+            if quote and quote.get("price"):
+                last_price = quote["price"]
+                prev_close = quote.get("prev_close") or prev_close
+                update_spx_live(last_price, prev_close)
+
+                # Update live P&L display (spx_live.json already has price,
+                # live.html computes the P&L itself from today_trade.json)
+                print(f"[SPX] {dt.strftime('%H:%M:%S ET')} → {last_price:.2f}")
+            else:
+                print(f"[SPX] {dt.strftime('%H:%M:%S ET')} → fetch failed")
+
+        # EOD close at 16:01 ET
+        elif not eod_triggered and dt.hour == 16 and dt.minute >= 1:
+            trade = load_cache(TRADE_CACHE, {})
+            if trade.get("triggered") and trade.get("status") == "open" and last_price:
+                close_trade(trade, last_price)
+                eod_triggered = True
+            elif last_price:
+                # Still push final spx_live even if no trade
+                update_spx_live(last_price, prev_close)
+                eod_triggered = True
+
+        await asyncio.sleep(60)
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+async def main():
+    print("[Updater] Starting Σ3 Live Updater")
+    print(f"[Updater] Time: {now_et().strftime('%Y-%m-%d %H:%M ET')}")
+
+    # Verify Schwab tokens exist
+    try:
+        tok = schwab_client.get_access_token()
+        print(f"[Schwab] Token OK: {tok[:20]}...")
+    except RuntimeError as e:
+        print(f"[Schwab] ❌ {e}")
+        print("[Schwab] Run: python schwab_auth.py")
+        return
+
+    # Run SPX polling + Discord scraper concurrently
+    await asyncio.gather(
+        spx_poll_loop(),
+        run_scraper(on_signal, poll_interval=30),
+    )
+
+if __name__ == "__main__":
+    asyncio.run(main())
