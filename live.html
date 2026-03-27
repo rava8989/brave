@@ -487,17 +487,31 @@ const M8BF_WINDOWS = {
   5: { label: 'Friday',    start: '13:00', end: '13:30' },
 };
 
-function getTodayWindow() {
+function getNextWindow() {
   const now = getNowET();
-  const dow = now.getDay(); // 0=Sun, 6=Sat
-  return M8BF_WINDOWS[dow] || null;
+  // Try up to 7 days ahead to find the next upcoming window
+  for (let offset = 0; offset < 7; offset++) {
+    const d = new Date(now);
+    d.setDate(d.getDate() + offset);
+    const dow = d.getDay();
+    const win = M8BF_WINDOWS[dow];
+    if (!win) continue;
+    // Parse window end time
+    const [endH, endM] = win.end.split(':').map(Number);
+    const winEndMins = endH * 60 + endM;
+    const nowMins = now.getHours() * 60 + now.getMinutes();
+    // If same day, only show if window hasn't ended yet
+    if (offset === 0 && nowMins >= winEndMins) continue;
+    return win;
+  }
+  return null;
 }
 
 // ─── RENDER ──────────────────────────────────────────────────────────────────
 function render() {
   const main = document.getElementById('mainContent');
   if (!trade || !trade.triggered) {
-    const win = getTodayWindow();
+    const win = getNextWindow();
     const winHtml = win
       ? `<div class="no-trade-window">
            <span class="win-day">${win.label}</span>
