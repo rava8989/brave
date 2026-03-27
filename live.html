@@ -243,7 +243,10 @@ async function loadSignals() {
     if (!r.ok) return;
     const d = await r.json();
     if (d.date !== todayET()) return;
-    signalsToday = d.signals || [];
+    // Deduplicate by time — keep last entry if duplicates exist
+    const sigMap = {};
+    for (const s of (d.signals || [])) sigMap[s.time] = s;
+    signalsToday = Object.values(sigMap).sort((a, b) => a.time.localeCompare(b.time));
   } catch { /* file not yet created by scraper */ }
 }
 
