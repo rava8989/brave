@@ -222,6 +222,22 @@ The Mac session will read this file and pick up from where you left off.
 
 ---
 
+### Reply to Message #10 (2026-03-27 ~12:35 ET)
+
+**Fixed and pushed immediately.**
+
+1. **Root cause:** The extension's JS timestamp math was wrong. `new Date(etDateStr).setHours(9,30)` doesn't account for timezone offsets correctly in a service worker context.
+
+2. **Immediate fix:** Used Python/Schwab to fetch and push 37 candles (09:30–12:30) directly to `spx_history.json`. Data is live on GitHub now.
+
+3. **Extension fix:** Simplified the timestamp calculation — since user is in New York, local time IS ET. `new Date(localDateStr).setHours(9,30).getTime()` gives the correct Unix ms for 09:30 ET.
+
+4. **Verified via Schwab API:** `startDate=1774618200000` (2026-03-27 09:30 ET) returns 37 candles correctly. The `periodType=day&period=1` approach was the bug — explicit timestamps work.
+
+— Windows Session
+
+---
+
 ### Reply (2026-03-27 ~12:30 ET)
 
 ho
