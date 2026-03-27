@@ -871,11 +871,6 @@ function render() {
 
     <div class="stats-row">
       <div class="stat-card">
-        <div class="stat-label">Current P&L</div>
-        <div class="stat-value ${plClass(currentPL)}" id="statPL">${fmt$(currentPL)}</div>
-        <div class="stat-sub" id="statPLSub">${currentPL !== null ? (currentPL >= 0 ? 'Profit' : 'Loss') : '—'}</div>
-      </div>
-      <div class="stat-card">
         <div class="stat-label">SPX Now</div>
         <div class="stat-value" id="statSPX">${fmtSpx(spxPrice)}</div>
         <div class="stat-sub">Entry window: ${trade.window || '—'}</div>
@@ -885,11 +880,7 @@ function render() {
         <div class="stat-value">$${(trade.premium * 100).toFixed(0)}</div>
         <div class="stat-sub">${trade.premium.toFixed(2)} per share × 100</div>
       </div>
-      <div class="stat-card">
-        <div class="stat-label">Intrinsic Value</div>
-        <div class="stat-value" id="statIntrinsic">${currentIntrinsic !== null ? '$' + (currentIntrinsic * 100).toFixed(0) : '—'}</div>
-        <div class="stat-sub" id="statIntrinsicSub">${currentIntrinsic !== null ? currentIntrinsic.toFixed(2) + ' per share' : '—'}</div>
-      </div>
+
       <div class="stat-card">
         <div class="stat-label">Signal Time</div>
         <div class="stat-value" style="font-size:16px">${trade.signal_time || '—'}</div>
