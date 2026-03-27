@@ -393,10 +393,10 @@ function updateSPXChartTheme() {
 async function loadTrade() {
   try {
     const r = await fetch(RAW + 'today_trade.json', { cache: 'no-store' });
-    if (!r.ok) { trade = null; return; }
+    if (!r.ok) return;           // keep last known trade on error
     trade = await r.json();
   } catch {
-    trade = null;
+    // keep last known trade on network failure
   }
 }
 
@@ -462,10 +462,18 @@ async function refreshSPX() {
     // Always keep last known price — stale data disconnects Schwab badge but still shows price
     spxPrice = data.price;
     spxPrevClose = data.prev_close;
-    lastSpxTimestamp = data.timestamp;
 
-    const age = (Date.now() - new Date(data.timestamp).getTime()) / 1000;
-    if (age > 300) {
+    // Compute age from time+date fields (Windows extension doesn't send ISO timestamp)
+    let ageSecs = 0;
+    if (data.time && data.date) {
+      const nowET = getNowET();
+      const [dh, dm] = data.time.split(':').map(Number);
+      const [dy, dmo, dd] = data.date.split('-').map(Number);
+      const sameDay = (nowET.getFullYear() === dy && (nowET.getMonth()+1) === dmo && nowET.getDate() === dd);
+      if (!sameDay) { schwabConnected = false; return false; }
+      ageSecs = (nowET.getHours() * 60 + nowET.getMinutes() - dh * 60 - dm) * 60;
+    }
+    if (ageSecs > 300) {
       schwabConnected = false;
       return false;
     }
@@ -993,6 +1001,8 @@ async function tick() {
       statPL.textContent = fmt$(pl);
       statPL.className = 'stat-value ' + plClass(pl);
     }
+    const statPLSub = document.getElementById('statPLSub');
+    if (statPLSub) statPLSub.textContent = pl >= 0 ? 'Profit' : 'Loss';
     const statSPX = document.getElementById('statSPX');
     if (statSPX) statSPX.textContent = fmtSpx(spxPrice);
     const intrinsic = Math.min(Math.max(0, Math.min(spxPrice - trade.bf_lower, trade.bf_upper - spxPrice)), (trade.bf_upper - trade.bf_lower) / 2);
