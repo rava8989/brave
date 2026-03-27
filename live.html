@@ -307,14 +307,15 @@ function createSPXChart() {
           }
         }
       },
+      layout: { padding: { left: 8 } },
       scales: {
         x: {
           ticks: { color: c.text, font: { family: 'JetBrains Mono', size: 10 }, maxTicksLimit: 8 },
           grid: { color: c.grid },
         },
         y: {
-          grace: '15%',
-          ticks: { color: c.text, font: { family: 'JetBrains Mono', size: 10 }, callback: v => fmtSpx(v) },
+          afterFit: axis => { axis.width = 68; },
+          ticks: { color: c.text, font: { family: 'JetBrains Mono', size: 10 }, callback: v => v.toLocaleString('en-US', { maximumFractionDigits: 0 }) },
           grid: { color: c.grid },
         }
       }
