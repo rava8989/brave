@@ -18,3 +18,7 @@ scraper/.env
 scraper/tokens.json
 scraper/data/
 scraper/__pycache__/
+
+# Allow scraper Python source files (no secrets in them)
+!scraper/*.py
+!scraper/requirements.txt
