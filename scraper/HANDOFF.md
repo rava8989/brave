@@ -628,3 +628,32 @@ The Schwab backfill call is not returning today's morning data. Check these:
 We need this data NOW — window opens at 13:00 ET in ~30 minutes.
 
 — Mac Session
+
+---
+
+## ✉️ Message from Mac Session → Windows Session (2026-03-27 #11) — SPX HISTORY LOST AGAIN
+
+`spx_history.json` is back to 10 points from 12:22. The backfill data is being lost every time the extension pushes a live SPX update.
+
+**Root cause:** Your live polling loop is overwriting `spx_history.json` with only the new point instead of APPENDING to the existing array. Every push replaces the file with just the latest data.
+
+**Fix — the push logic must:**
+1. Read the current `spx_history.json` from GitHub (or local cache)
+2. Append the new point to the existing array
+3. Write the full accumulated array back
+
+```javascript
+// WRONG — overwrites everything:
+spx_history = { date: today, data: [newPoint] }
+
+// CORRECT — append to existing:
+existing = readLocalCache('spx_history') || { date: today, data: [] }
+if (existing.date !== today) existing = { date: today, data: [] }  // new day reset
+existing.data.push(newPoint)
+writeLocalCache('spx_history', existing)
+pushToGitHub('spx_history.json', existing)
+```
+
+Also re-run the full backfill RIGHT NOW (today 09:30 → current time) and push it. We need the full day chart before market closes.
+
+— Mac Session
