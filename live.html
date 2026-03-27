@@ -54,6 +54,9 @@
     .no-trade-icon{font-size:48px;opacity:.3;}
     .no-trade-title{font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700;color:var(--text2);}
     .no-trade-sub{font-size:13px;color:var(--text3);max-width:380px;line-height:1.6;}
+    .no-trade-window{display:flex;align-items:center;gap:12px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px 20px;}
+    .win-day{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:var(--accent);}
+    .win-time{font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--text2);}
 
     /* STATS ROW */
     .stats-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:20px;}
@@ -450,15 +453,38 @@ function updateLiveBadge() {
   }
 }
 
+// ─── M8BF Windows ────────────────────────────────────────────────────────────
+const M8BF_WINDOWS = {
+  1: { label: 'Monday',    start: '11:00', end: '11:30' },
+  2: { label: 'Tuesday',   start: '13:30', end: '14:00' },
+  3: { label: 'Wednesday', start: '12:00', end: '12:30' },
+  4: { label: 'Thursday',  start: '11:00', end: '11:30' },
+  5: { label: 'Friday',    start: '13:00', end: '13:30' },
+};
+
+function getTodayWindow() {
+  const now = getNowET();
+  const dow = now.getDay(); // 0=Sun, 6=Sat
+  return M8BF_WINDOWS[dow] || null;
+}
+
 // ─── RENDER ──────────────────────────────────────────────────────────────────
 function render() {
   const main = document.getElementById('mainContent');
   if (!trade || !trade.triggered) {
+    const win = getTodayWindow();
+    const winHtml = win
+      ? `<div class="no-trade-window">
+           <span class="win-day">${win.label}</span>
+           <span class="win-time">Window: ${win.start} – ${win.end} ET</span>
+         </div>`
+      : `<div class="no-trade-window"><span class="win-day" style="color:var(--text3)">No window today (weekend)</span></div>`;
     main.innerHTML = `
       <div class="no-trade">
         <div class="no-trade-icon">📡</div>
-        <div class="no-trade-title">No Signal Today</div>
-        <div class="no-trade-sub">The M8BF scraper is monitoring Discord for signals. A trade will appear here automatically once a valid signal hits the window.</div>
+        <div class="no-trade-title">Waiting for M8BF Signal</div>
+        ${winHtml}
+        <div class="no-trade-sub">Scraper is live, monitoring Discord. A trade will appear here automatically once a valid signal hits the window.</div>
       </div>
     `;
     return;
