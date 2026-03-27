@@ -19,7 +19,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 DISCORD_CHANNEL_ID = os.getenv("DISCORD_CHANNEL_ID", "")
-CHANNEL_URL = f"https://discord.com/channels/@me/{DISCORD_CHANNEL_ID}" if DISCORD_CHANNEL_ID else ""
+DISCORD_SERVER_ID  = os.getenv("DISCORD_SERVER_ID", "")
+CHANNEL_URL = f"https://discord.com/channels/{DISCORD_SERVER_ID}/{DISCORD_CHANNEL_ID}" if DISCORD_CHANNEL_ID and DISCORD_SERVER_ID else ""
 
 ET = ZoneInfo("America/New_York")
 
@@ -79,38 +80,32 @@ def window_name(dt: datetime) -> str:
 
 def parse_signal(text: str):
     """
-    Parse M8BF signal from Discord message text.
-    Adjust the patterns below to match your actual Discord message format.
+    Parse M8BF butterfly signal from Discord message text.
 
-    Expected formats (any of):
-      center=5625 t1=5630 premium=8.50
-      Center: 5625 | T1: 5630 | Premium: $8.50
-      5625C / 5630T1 / 8.50p
+    Looks for the butterfly trade line, e.g.:
+      BUY +1 Butterfly SPX 100 27 Mar 26 6455/6405/6355 PUT @14.25 LMT
+
+    Extracts: center (middle strike), T1 (from "Target 1:" field), premium (from @price).
     """
     text_lower = text.lower()
 
-    # Must mention m8bf or butterfly
-    if "m8bf" not in text_lower and "butterfly" not in text_lower:
-        return None
-
-    # Extract center
-    m = re.search(r"center[=:\s]+(\d{4,5})", text_lower)
+    # Look for butterfly trade line with three strikes and premium
+    # Format: Butterfly SPX ... UPPER/CENTER/LOWER PUT|CALL @PREMIUM LMT
+    m = re.search(
+        r'butterfly\s+spx\s+.+?(\d{4,5})/(\d{4,5})/(\d{4,5})\s+(?:put|call)\s+@(\d+\.?\d*)',
+        text_lower
+    )
     if not m:
         return None
-    center = int(m.group(1))
 
-    # Extract T1
-    m = re.search(r"t1[=:\s]+(\d{4,5})", text_lower)
-    t1 = int(m.group(1)) if m else center + 5   # default: center + 5
+    upper   = int(m.group(1))
+    center  = int(m.group(2))
+    lower   = int(m.group(3))
+    premium = float(m.group(4))
 
-    # Extract premium
-    m = re.search(r"premium[=:\s\$]+(\d+\.?\d*)", text_lower)
-    if not m:
-        m = re.search(r"\$(\d+\.?\d+)", text)
-    premium = float(m.group(1)) if m else None
-
-    if premium is None:
-        return None
+    # Extract T1 from "Target 1: 6400.0"
+    t1_match = re.search(r'target\s*1[:\s]+(\d+\.?\d*)', text_lower)
+    t1 = int(float(t1_match.group(1))) if t1_match else center + 5
 
     return center, t1, premium
 
@@ -128,13 +123,12 @@ async def scrape_once(page, on_signal):
             if result:
                 center, t1, premium = result
                 now_et = datetime.now(tz=ET)
-                if in_window(now_et):
-                    if not is_banned(center, t1):
-                        await on_signal(center, t1, premium, now_et)
-                    else:
-                        print(f"[Scraper] Signal BANNED: center={center} t1={t1}")
-                else:
+                if not in_window(now_et):
                     print(f"[Scraper] Signal outside window: center={center} at {now_et.strftime('%H:%M ET')}")
+                elif is_banned(center, t1):
+                    print(f"[Scraper] Signal BANNED: center={center} t1={t1}")
+                else:
+                    await on_signal(center, t1, premium, now_et)
     except Exception as e:
         print(f"[Scraper] scrape_once error: {e}")
 
@@ -229,8 +223,13 @@ async def run_scraper(on_signal_callback, poll_interval: int = 30,
 
         print("[Scraper] Opening Discord...")
         await page.goto("https://discord.com/login")
-        print("[Scraper] Log in to Discord in the browser window, then press Enter here.")
-        input()
+        print("[Scraper] Waiting for Discord login (log in in the browser window)...")
+        # Wait up to 5 minutes for user to log in — detect by URL change away from /login
+        for _ in range(300):
+            if "/login" not in page.url:
+                break
+            await asyncio.sleep(1)
+        print("[Scraper] Discord login detected, continuing...")
 
         await page.goto(CHANNEL_URL)
         await page.wait_for_load_state("networkidle")

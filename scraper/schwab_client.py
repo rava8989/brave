@@ -107,10 +107,10 @@ def get_spx_price() -> dict | None:
         resp  = requests.get(QUOTES_URL, headers={
             "Authorization": f"Bearer {token}",
             "Accept":        "application/json",
-        }, params={"symbols": "$SPX.X", "fields": "quote,reference"}, timeout=10)
+        }, params={"symbols": "$SPX", "fields": "quote,reference"}, timeout=10)
         resp.raise_for_status()
         data = resp.json()
-        q = data.get("$SPX.X", {}).get("quote", {})
+        q = data.get("$SPX", {}).get("quote", {})
         return {
             "price":      q.get("lastPrice") or q.get("mark"),
             "prev_close": q.get("closePrice"),
