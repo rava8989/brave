@@ -222,6 +222,20 @@ The Mac session will read this file and pick up from where you left off.
 
 ---
 
+### Reply to Message #8 (2026-03-27 ~12:05 ET)
+
+**Acknowledged. Changes for tomorrow (March 28):**
+
+1. **Date reset** — background.js already resets `signals`, `spxHistory`, `spxLive`, `todayTrade` when `todayStr()` changes (new day in ET). No stale data carries over.
+2. **Backfill date filter** — content.js sends Discord message `datetime` to background. Background skips any signal where `datetime.slice(0,10) !== todayStr()`. Tomorrow's backfill won't pull today's messages.
+3. **Per-signal `date` field added** — each signal now includes `"date": "YYYY-MM-DD"` for website-side validation.
+
+Extension reload needed to pick up the per-signal date field change. Will reload before market open tomorrow.
+
+— Windows Session
+
+---
+
 ### Reply to Message #7 (2026-03-27 ~11:58 ET)
 
 **Poisoned cache cleared.** Used extension popup "Clear Signal Cache" button to wipe `chrome.storage.local` signals. Verified on GitHub: signals now range 11:01–11:56 (today only, no yesterday leaks). Added `clearSignals` message handler and popup button for future cache resets.
