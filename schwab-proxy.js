@@ -523,7 +523,18 @@ async function handleEOD(env, etNow) {
     await upsertHistoryGitHub(env, todayISO, fields);
   }
 
-  return { status: 'eod', date: todayISO, vixClose, spxClose, m8bfPL };
+  // Append today's signals to TRADES database in backtester.html
+  let appendResult = { appended: 0 };
+  if (spxClose != null && env.DISCORD_USER_TOKEN) {
+    try {
+      const todaySignals = await fetchAllDiscordSignalsForDate(env.DISCORD_USER_TOKEN, '1048242197029458040', todayISO);
+      appendResult = await appendTradesToBacktester(env, todayISO, etNow, todaySignals, spxClose);
+    } catch (e) {
+      appendResult = { appended: 0, error: e.message };
+    }
+  }
+
+  return { status: 'eod', date: todayISO, vixClose, spxClose, m8bfPL, trades: appendResult };
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -531,18 +542,20 @@ async function handleEOD(env, etNow) {
 // ════════════════════════════════════════════════════════════════════
 
 function parseDiscordSignal(content) {
-  // Format: BUY +1 Butterfly SPX 100 ... 6455/6405/6355 PUT @14.25 LMT
-  const strikeMatch = content.match(/BUY \+1 Butterfly SPX[^/]*(\d{4,5})\/(\d{4,5})\/(\d{4,5})[^@]*@([\d.]+)/i);
+  // Format: BUY +1 Butterfly SPX 100 ... 6455/6405/6355 CALL @14.25 LMT
+  const strikeMatch = content.match(/BUY \+1 Butterfly SPX[^/]*(\d{4,5})\/(\d{4,5})\/(\d{4,5})\s*(CALL|PUT)\s*@([\d.]+)/i);
   if (!strikeMatch) return null;
   const upper = parseInt(strikeMatch[1]);
   const center = parseInt(strikeMatch[2]);
   const lower = parseInt(strikeMatch[3]);
-  const premium = parseFloat(strikeMatch[4]);
+  const cpStr = (strikeMatch[4] || 'CALL').toUpperCase();
+  const cp = cpStr === 'PUT' ? 1 : 0; // 0=CALL, 1=PUT
+  const premium = parseFloat(strikeMatch[5]);
   if (isNaN(center) || isNaN(premium)) return null;
   // T1 from "Target 1: XXXX"
   const t1Match = content.match(/Target\s*1[:\s]+(\d{4,5})/i);
   const t1 = t1Match ? parseInt(t1Match[1]) : center + 5;
-  return { center, upper, lower, t1, premium };
+  return { center, upper, lower, t1, premium, cp };
 }
 
 function isBanned(center, t1) {
@@ -624,6 +637,7 @@ async function pollDiscordSignals(env) {
       upper: sig.upper,
       t1: sig.t1,
       premium: sig.premium,
+      cp: sig.cp ?? 0,
       banned: isBanned(sig.center, sig.t1),
     });
     newCount++;
@@ -920,6 +934,8 @@ async function fetchAllDiscordSignalsForDate(token, channelId, dateISO) {
 
       const sig = parseDiscordSignal(msg.content || '');
       if (!sig) continue;
+      // Attach posting time (ET) for TRADES TIME column
+      sig.time = `${String(msgET.getHours()).padStart(2,'0')}:${String(msgET.getMinutes()).padStart(2,'0')}`;
       allSignals.push(sig); // no dedup — each post counts
     }
     if (batch.length < 100) break;
@@ -1037,6 +1053,143 @@ async function backfillMissingWR(env, force = false, targetDates = null) {
 }
 
 // ════════════════════════════════════════════════════════════════════
+// APPEND DAILY SIGNALS TO TRADES DATABASE (backtester.html)
+// ════════════════════════════════════════════════════════════════════
+
+async function appendTradesToBacktester(env, todayISO, etNow, signals, spxClose) {
+  if (!signals || signals.length === 0) return { appended: 0, reason: 'no signals' };
+  if (spxClose == null) return { appended: 0, reason: 'no spxClose' };
+
+  const token = env.GITHUB_TOKEN;
+  if (!token) return { appended: 0, reason: 'no GITHUB_TOKEN' };
+
+  const owner = 'rava8989';
+  const repo = 'brave';
+  const path = 'backtester.html';
+  const ghHeaders = {
+    'Authorization': `Bearer ${token}`,
+    'Accept': 'application/vnd.github+json',
+    'User-Agent': 'schwab-proxy-worker/1.0',
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
+
+  // 1. Fetch raw file content
+  const rawResp = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/main/${path}?t=${Date.now()}`, {
+    headers: { 'Cache-Control': 'no-cache' },
+  });
+  if (!rawResp.ok) throw new Error(`Raw fetch failed: ${rawResp.status}`);
+  let html = await rawResp.text();
+
+  // 2. Dedup check — skip if today's date already in TRADES
+  if (html.includes(`["${todayISO}",`)) {
+    return { appended: 0, reason: `already exists: ${todayISO}` };
+  }
+
+  // 3. Build new TRADES rows
+  // DAY index: 0=Mon,1=Tue,2=Wed,3=Thu,4=Fri (JS getDay: 0=Sun,1=Mon...5=Fri)
+  const dayIdx = etNow.getDay() - 1;
+
+  const newRows = [];
+  for (const sig of signals) {
+    const spr = sig.upper - sig.lower;
+    const maxp = Math.round((spr / 2 - sig.premium) * 100);
+    if (maxp <= 0) continue; // skip degenerate (premium >= wing width)
+    const intrinsic = Math.max(0, Math.min(spxClose - sig.lower, sig.upper - spxClose));
+    const prof = Math.round((intrinsic - sig.premium) * 100);
+    const cp = sig.cp ?? 0;
+    const time = sig.time || '10:00';
+    // [date, DAY, CP, PREM, SPR, PROF, MAXP, CTR, TIME, PEAK, TROUGH, PKFIRST]
+    newRows.push([todayISO, dayIdx, cp, sig.premium, spr, prof, maxp, sig.center, time, 0, 0, false]);
+  }
+
+  if (newRows.length === 0) return { appended: 0, reason: 'all rows filtered out' };
+
+  // 4. Find injection point — right before ];\nconst META
+  const injectionMarker = '];\nconst META';
+  const injIdx = html.indexOf(injectionMarker);
+  if (injIdx === -1) throw new Error('Cannot find TRADES injection point in backtester.html');
+
+  const rowsStr = newRows.map(r => JSON.stringify(r)).join(',');
+  html = html.slice(0, injIdx) + ',' + rowsStr + html.slice(injIdx);
+
+  // 5. Update META: maxDate and count
+  html = html.replace(/("maxDate"\s*:\s*)"[^"]*"/, `$1"${todayISO}"`);
+  const countMatch = html.match(/"count"\s*:\s*(\d+)/);
+  if (countMatch) {
+    const newCount = parseInt(countMatch[1]) + newRows.length;
+    html = html.replace(/"count"\s*:\s*\d+/, `"count": ${newCount}`);
+  }
+
+  // 6. Push via Git Data API (handles files >1MB — GitHub Contents API has 1MB limit)
+
+  // 6a. Create blob
+  const blobResp = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/blobs`, {
+    method: 'POST',
+    headers: { ...ghHeaders, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content: html, encoding: 'utf-8' }),
+  });
+  if (!blobResp.ok) {
+    const err = await blobResp.text();
+    throw new Error(`Blob create failed: ${blobResp.status} — ${err.slice(0, 200)}`);
+  }
+  const { sha: blobSha } = await blobResp.json();
+
+  // 6b. Get current HEAD commit SHA
+  const refResp = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/ref/heads/main`, { headers: ghHeaders });
+  if (!refResp.ok) throw new Error(`Ref fetch failed: ${refResp.status}`);
+  const { object: { sha: headSha } } = await refResp.json();
+
+  // 6c. Get tree SHA from HEAD commit
+  const commitResp = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/commits/${headSha}`, { headers: ghHeaders });
+  if (!commitResp.ok) throw new Error(`Commit fetch failed: ${commitResp.status}`);
+  const { tree: { sha: treeSha } } = await commitResp.json();
+
+  // 6d. Create new tree
+  const treeResp = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees`, {
+    method: 'POST',
+    headers: { ...ghHeaders, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      base_tree: treeSha,
+      tree: [{ path, mode: '100644', type: 'blob', sha: blobSha }],
+    }),
+  });
+  if (!treeResp.ok) {
+    const err = await treeResp.text();
+    throw new Error(`Tree create failed: ${treeResp.status} — ${err.slice(0, 200)}`);
+  }
+  const { sha: newTreeSha } = await treeResp.json();
+
+  // 6e. Create new commit
+  const newCommitResp = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/commits`, {
+    method: 'POST',
+    headers: { ...ghHeaders, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      message: `auto: append ${newRows.length} trades for ${todayISO}`,
+      tree: newTreeSha,
+      parents: [headSha],
+    }),
+  });
+  if (!newCommitResp.ok) {
+    const err = await newCommitResp.text();
+    throw new Error(`Commit create failed: ${newCommitResp.status} — ${err.slice(0, 200)}`);
+  }
+  const { sha: newCommitSha } = await newCommitResp.json();
+
+  // 6f. Update ref to point at new commit
+  const updateRefResp = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/refs/heads/main`, {
+    method: 'PATCH',
+    headers: { ...ghHeaders, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sha: newCommitSha }),
+  });
+  if (!updateRefResp.ok) {
+    const err = await updateRefResp.text();
+    throw new Error(`Ref update failed: ${updateRefResp.status} — ${err.slice(0, 200)}`);
+  }
+
+  return { appended: newRows.length, date: todayISO, signals: signals.length };
+}
+
+// ════════════════════════════════════════════════════════════════════
 // WORKER EXPORT
 // ════════════════════════════════════════════════════════════════════
 
@@ -1099,6 +1252,43 @@ export default {
           embeds: (m.embeds||[]).map(e => ({ title: e.title, desc: (e.description||'').slice(0,200) }))
         }));
         return jsonResp({ date: dateISO, count: Array.isArray(msgs) ? msgs.length : msgs, sample }, 200, {});
+      } catch(e) {
+        return jsonResp({ error: e.message }, 500, {});
+      }
+    }
+
+    // ── GET /check-wr?from=YYYY-MM-DD&to=YYYY-MM-DD ── Compare stored vs recalculated m8bfWR
+    if (url.pathname === '/check-wr' && request.method === 'GET') {
+      if (request.headers.get('X-Sync-Secret') !== env.SYNC_SECRET) {
+        return jsonResp({ error: 'Unauthorized' }, 401, {});
+      }
+      try {
+        const from = url.searchParams.get('from');
+        const to   = url.searchParams.get('to');
+        if (!from || !to) return jsonResp({ error: 'missing from/to params' }, 400, {});
+
+        const ghResp = await fetch('https://api.github.com/repos/rava8989/brave/contents/history_data.json', {
+          headers: { 'Authorization': `Bearer ${env.GITHUB_TOKEN}`, 'Accept': 'application/vnd.github+json', 'User-Agent': 'schwab-proxy-worker/1.0', 'X-GitHub-Api-Version': '2022-11-28' }
+        });
+        const meta = await ghResp.json();
+        const content = JSON.parse(atob(meta.content.replace(/\n/g, '')));
+        const rows = content.filter(r => r.m8bfWR != null && r.date >= from && r.date <= to);
+
+        const results = [];
+        for (const row of rows) {
+          try {
+            const spxClose = row.spxClose ?? await getSpxCloseForDate(row.date);
+            const signals = await fetchAllDiscordSignalsForDate(env.DISCORD_USER_TOKEN, '1048242197029458040', row.date);
+            const calc = signals.length > 0 ? computeWinRateFromSignals(signals, spxClose) : null;
+            const diff = calc != null ? Math.abs(calc - row.m8bfWR) : null;
+            results.push({ date: row.date, stored: row.m8bfWR, calc, signals: signals.length, diff, match: diff != null && diff <= 2 });
+          } catch(e) {
+            results.push({ date: row.date, stored: row.m8bfWR, calc: null, error: e.message });
+          }
+        }
+        const matched = results.filter(r => r.match).length;
+        const mismatched = results.filter(r => r.calc != null && !r.match);
+        return jsonResp({ from, to, total: results.length, matched, mismatched_count: mismatched.length, mismatched, all: results }, 200, {});
       } catch(e) {
         return jsonResp({ error: e.message }, 500, {});
       }
