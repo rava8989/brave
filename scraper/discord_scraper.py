@@ -112,7 +112,7 @@ def parse_signal(text: str):
 
 # ── Playwright scraper ────────────────────────────────────────────────────────
 
-async def scrape_once(page, on_signal):
+async def scrape_once(page, on_signal, on_any_signal=None):
     """Check the most recent messages in the Discord channel."""
     try:
         # Get visible messages
@@ -123,9 +123,13 @@ async def scrape_once(page, on_signal):
             if result:
                 center, t1, premium = result
                 now_et = datetime.now(tz=ET)
+                banned = is_banned(center, t1)
+                # Log every signal (for signals_today.json)
+                if on_any_signal:
+                    await on_any_signal(center, t1, premium, now_et, banned)
                 if not in_window(now_et):
                     print(f"[Scraper] Signal outside window: center={center} at {now_et.strftime('%H:%M ET')}")
-                elif is_banned(center, t1):
+                elif banned:
                     print(f"[Scraper] Signal BANNED: center={center} t1={t1}")
                 else:
                     await on_signal(center, t1, premium, now_et)
@@ -198,12 +202,13 @@ async def fetch_signal_for_date(page, channel_id: str, target_date) -> tuple | N
 
 
 async def run_scraper(on_signal_callback, poll_interval: int = 30,
-                      on_startup=None):
+                      on_startup=None, on_any_signal_callback=None):
     """
     Main scraper loop. Opens Chrome, navigates to Discord, polls every N seconds.
 
     on_signal_callback(center, t1, premium, dt) — called when a valid live signal is found.
     on_startup(page)                             — optional async coroutine called once after login.
+    on_any_signal_callback(center, t1, premium, dt, banned) — called for ALL signals (logging).
     """
     from playwright.async_api import async_playwright
 
@@ -252,7 +257,7 @@ async def run_scraper(on_signal_callback, poll_interval: int = 30,
                 await on_signal_callback(center, t1, premium, dt)
 
             try:
-                await scrape_once(page, on_signal)
+                await scrape_once(page, on_signal, on_any_signal=on_any_signal_callback)
                 scrape_fail_count = 0
             except Exception as e:
                 scrape_fail_count += 1
