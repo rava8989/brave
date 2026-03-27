@@ -496,16 +496,22 @@ async function handleEOD(env, etNow) {
       const trade = await tradeResp.json();
       if (trade.date === todayISO && trade.status === 'closed' && typeof trade.final_pl === 'number') {
         m8bfPL = trade.final_pl;
-        // Compute m8bfWR: % of butterfly wing width captured by SPX close
-        if (spxClose != null && trade.bf_lower != null && trade.bf_upper != null) {
-          const wing = (trade.bf_upper - trade.bf_lower) / 2;
-          const intrinsic = Math.max(0, Math.min(spxClose - trade.bf_lower, trade.bf_upper - spxClose));
-          const clipped = Math.min(intrinsic, wing);
-          m8bfWR = Math.round(clipped / wing * 100);
-        }
       }
     }
   } catch (e) { /* non-fatal */ }
+
+  // Compute m8bfWR = win rate across ALL signals posted today (from KV)
+  if (spxClose != null) {
+    try {
+      const kvRaw = await env.SIGNAL_KV.get('signals_today');
+      if (kvRaw) {
+        const kv = JSON.parse(kvRaw);
+        if (kv.date === todayISO && Array.isArray(kv.signals) && kv.signals.length > 0) {
+          m8bfWR = computeWinRateFromSignals(kv.signals, spxClose);
+        }
+      }
+    } catch (e) { /* non-fatal */ }
+  }
 
   const fields = {};
   if (vixClose != null) fields.vixClose = vixClose;
@@ -882,21 +888,46 @@ async function upsertHistoryGitHub(env, dateStr, fields) {
 // BACKFILL MISSING m8bfWR
 // ════════════════════════════════════════════════════════════════════
 
-async function fetchDiscordMessagesForDate(token, channelId, dateISO) {
-  // Convert date 13:00 ET → UTC snowflake (start of trading window)
+async function fetchAllDiscordSignalsForDate(token, channelId, dateISO) {
+  // Fetch ALL butterfly signals posted on dateISO (paginated, up to 500 messages)
   const [y, m, d] = dateISO.split('-').map(Number);
-  const startMs = Date.UTC(y, m - 1, d, 17, 0, 0); // 13:00 ET = 17:00 UTC (EST) or 18:00 UTC (EDT)
-  const endMs   = Date.UTC(y, m - 1, d, 22, 0, 0); // 16:00 ET ≈ 21:00 UTC
+  // Full calendar day in UTC — signals can be posted any time (pre-market through evening)
+  const startMs = Date.UTC(y, m - 1, d, 0, 0, 0);
+  const endMs   = Date.UTC(y, m - 1, d + 1, 0, 0, 0);
   const discordEpoch = 1420070400000n;
-  const afterSnowflake = ((BigInt(startMs) - discordEpoch) << 22n).toString();
+  let afterSnowflake = ((BigInt(startMs) - discordEpoch) << 22n).toString();
   const beforeSnowflake = ((BigInt(endMs) - discordEpoch) << 22n).toString();
 
-  const resp = await fetch(
-    `https://discord.com/api/v9/channels/${channelId}/messages?limit=100&after=${afterSnowflake}&before=${beforeSnowflake}`,
-    { headers: { 'Authorization': token, 'User-Agent': 'Mozilla/5.0' } }
-  );
-  if (!resp.ok) throw new Error(`Discord API ${resp.status} for ${dateISO}`);
-  return await resp.json();
+  const allSignals = [];
+  for (let page = 0; page < 5; page++) { // max 5 pages = 500 messages
+    const resp = await fetch(
+      `https://discord.com/api/v9/channels/${channelId}/messages?limit=100&after=${afterSnowflake}&before=${beforeSnowflake}`,
+      { headers: { 'Authorization': token, 'User-Agent': 'Mozilla/5.0' } }
+    );
+    if (!resp.ok) throw new Error(`Discord API ${resp.status} for ${dateISO}`);
+    const batch = await resp.json();
+    if (!Array.isArray(batch) || batch.length === 0) break;
+
+    // Sort ascending by snowflake ID
+    batch.sort((a, b) => a.id.localeCompare(b.id));
+    for (const msg of batch) {
+      const sig = parseDiscordSignal(msg.content || '');
+      if (sig) allSignals.push(sig);
+    }
+    if (batch.length < 100) break;
+    afterSnowflake = batch[batch.length - 1].id;
+  }
+  return allSignals;
+}
+
+function computeWinRateFromSignals(signals, spxClose) {
+  if (!signals || signals.length === 0) return null;
+  let wins = 0;
+  for (const sig of signals) {
+    const intrinsic = Math.max(0, Math.min(spxClose - sig.lower, sig.upper - spxClose));
+    if (intrinsic > sig.premium) wins++;
+  }
+  return Math.round(wins / signals.length * 100);
 }
 
 async function getSpxCloseForDate(dateISO) {
@@ -948,26 +979,14 @@ async function backfillMissingWR(env) {
       const spxClose = await getSpxCloseForDate(entry.date);
       if (spxClose == null) { failed.push({ date: entry.date, reason: 'no SPX close' }); continue; }
 
-      // Fetch Discord messages for that day's trading window
-      const messages = await fetchDiscordMessagesForDate(token, channelId, entry.date);
-      if (!Array.isArray(messages) || messages.length === 0) {
-        failed.push({ date: entry.date, reason: 'no Discord messages' }); continue;
+      // Fetch ALL butterfly signals for that day from Discord
+      const signals = await fetchAllDiscordSignalsForDate(token, channelId, entry.date);
+      if (signals.length === 0) {
+        failed.push({ date: entry.date, reason: 'no signals found in Discord' }); continue;
       }
 
-      // Find the last valid BUY butterfly signal for that day
-      const sorted = messages.slice().sort((a, b) => a.id.localeCompare(b.id));
-      let trade = null;
-      for (const msg of sorted) {
-        const parsed = parseDiscordSignal(msg.content || '');
-        if (parsed) trade = parsed;
-      }
-      if (!trade) { failed.push({ date: entry.date, reason: 'no signal found in Discord' }); continue; }
-
-      const bf_lower = trade.lower;
-      const bf_upper = trade.upper;
-      const wing = (bf_upper - bf_lower) / 2;
-      const intrinsic = Math.max(0, Math.min(spxClose - bf_lower, bf_upper - spxClose));
-      const m8bfWR = Math.round(Math.min(intrinsic, wing) / wing * 100);
+      // Win rate = % of signals where intrinsic > premium
+      const m8bfWR = computeWinRateFromSignals(signals, spxClose);
 
       // Update in-memory content
       const idx = content.findIndex(r => r.date === entry.date);
@@ -975,7 +994,7 @@ async function backfillMissingWR(env) {
         content[idx].m8bfWR = m8bfWR;
         if (content[idx].spxClose == null) content[idx].spxClose = spxClose;
       }
-      filled.push({ date: entry.date, spxClose, bf_lower, bf_upper, m8bfWR });
+      filled.push({ date: entry.date, spxClose, signals: signals.length, m8bfWR });
     } catch (e) {
       failed.push({ date: entry.date, reason: e.message });
     }
