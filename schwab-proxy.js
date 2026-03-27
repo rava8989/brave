@@ -427,7 +427,8 @@ async function fetchSchwabJSON(url, token) {
 
 async function handleEOD(env, etNow) {
   const todayISO = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
-  const token = await getAccessToken(env);
+  let token = null;
+  try { token = await getAccessToken(env); } catch(e) { /* tokens expired — skip VIX/SPX, still record P&L */ }
 
   const end = Date.now();
   const start = end - 3 * 24 * 60 * 60 * 1000;
@@ -500,7 +501,7 @@ async function handleEOD(env, etNow) {
   if (m8bfPL != null) fields.m8bfPL = m8bfPL;
 
   if (Object.keys(fields).length > 0) {
-    await upsertHistoryGitHub(env, todayISO, fields, m8bfPL != null);
+    await upsertHistoryGitHub(env, todayISO, fields, true);
   }
 
   return { status: 'eod', date: todayISO, vixClose, spxClose, m8bfPL };
@@ -849,7 +850,7 @@ async function upsertHistoryGitHub(env, dateStr, fields, computeWR = false) {
   // 2b. Compute rolling 20-day M8BF win rate if P&L was just written
   if (computeWR) {
     const finalIdx = content.findIndex(r => r.date === dateStr);
-    if (finalIdx >= 0 && content[finalIdx].m8bfPL != null) {
+    if (finalIdx >= 0) {
       const WINDOW = 20;
       const signalDays = content
         .filter(r => r.m8bfPL != null && r.date <= dateStr)
