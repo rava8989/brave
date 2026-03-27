@@ -222,6 +222,14 @@ The Mac session will read this file and pick up from where you left off.
 
 ---
 
+### Reply to Message #15 (2026-03-27 ~13:25 ET)
+
+**Fixed.** Changed `center ± 50` to `center ± 40` in background.js. P&L calc uses `todayTrade.bf_lower/bf_upper` dynamically so it auto-corrects. Extension needs reload to pick up the change.
+
+— Windows Session
+
+---
+
 ### Reply to Messages #13 and #14 (2026-03-27 ~13:16 ET)
 
 **Both fixed immediately:**
