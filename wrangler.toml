@@ -3,10 +3,14 @@ main = "schwab-proxy.js"
 compatibility_date = "2026-03-17"
 
 [triggers]
-# DST-safe pairs: morning open ~9:31 ET, EOD close ~16:05 ET
-# Morning: 13:31 UTC (EDT) / 14:31 UTC (EST)
-# EOD:     20:05 UTC (EDT) / 21:05 UTC (EST)
-crons = ["31 13 * * 1-5", "31 14 * * 1-5", "5 20 * * 1-5", "5 21 * * 1-5"]
+# Morning open ~9:31 ET (DST pair), then Discord poll every 30min 11:00-15:30 ET, EOD ~16:05 ET (DST pair)
+crons = [
+  "31 13 * * 1-5",
+  "31 14 * * 1-5",
+  "0,30 15,16,17,18,19 * * 1-5",
+  "5 20 * * 1-5",
+  "5 21 * * 1-5"
+]
 
 [[kv_namespaces]]
 binding = "SIGNAL_KV"

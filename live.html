@@ -241,7 +241,7 @@ async function loadSPXHistory() {
 }
 async function loadSignals() {
   try {
-    const r = await fetch(RAW + 'signals_today.json?v=' + Date.now(), { cache: 'no-store' });
+    const r = await fetch('https://schwab-proxy.ravamt4.workers.dev/signals', { cache: 'no-store' });
     if (!r.ok) return;
     const d = await r.json();
     if (d.date !== todayET()) return;

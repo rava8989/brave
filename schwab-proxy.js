@@ -506,6 +506,111 @@ async function handleEOD(env, etNow) {
   return { status: 'eod', date: todayISO, vixClose, spxClose, m8bfPL };
 }
 
+// ════════════════════════════════════════════════════════════════════
+// DISCORD SIGNAL POLLING
+// ════════════════════════════════════════════════════════════════════
+
+function parseDiscordSignal(content) {
+  // Format: BUY +1 Butterfly SPX 100 ... 6455/6405/6355 PUT @14.25 LMT
+  const strikeMatch = content.match(/BUY \+1 Butterfly SPX[^/]*(\d{4,5})\/(\d{4,5})\/(\d{4,5})[^@]*@([\d.]+)/i);
+  if (!strikeMatch) return null;
+  const upper = parseInt(strikeMatch[1]);
+  const center = parseInt(strikeMatch[2]);
+  const lower = parseInt(strikeMatch[3]);
+  const premium = parseFloat(strikeMatch[4]);
+  if (isNaN(center) || isNaN(premium)) return null;
+  // T1 from "Target 1: XXXX"
+  const t1Match = content.match(/Target\s*1[:\s]+(\d{4,5})/i);
+  const t1 = t1Match ? parseInt(t1Match[1]) : center + 5;
+  return { center, upper, lower, t1, premium };
+}
+
+function isBanned(center, t1) {
+  const FULL_BANS = new Set([10, 25, 35, 40, 65, 80]);
+  const COMBO_BANS = { 0: 95, 20: 15, 55: 50, 65: 60, 85: 90 };
+  if (FULL_BANS.has(center % 100)) return true;
+  const t1Mod = t1 % 100;
+  if (COMBO_BANS[t1Mod] !== undefined && center % 100 === COMBO_BANS[t1Mod]) return true;
+  return false;
+}
+
+async function pollDiscordSignals(env) {
+  const token = env.DISCORD_USER_TOKEN;
+  const channelId = '1048242197029458040';
+  if (!token) return { polled: false, reason: 'no token' };
+
+  const etNow = toET(new Date());
+  const todayISO = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
+
+  // Load existing signals from KV
+  const existingRaw = await env.SIGNAL_KV.get('signals_today');
+  const existing = existingRaw ? JSON.parse(existingRaw) : { date: '', signals: [] };
+
+  let signals = [];
+  let afterId = null;
+
+  if (existing.date === todayISO) {
+    signals = existing.signals || [];
+    afterId = await env.SIGNAL_KV.get('discord_last_msg_id');
+  }
+
+  // First poll of the day — start from midnight UTC today
+  if (!afterId) {
+    const midnight = new Date(); midnight.setUTCHours(0, 0, 0, 0);
+    const discordEpoch = 1420070400000n;
+    afterId = ((BigInt(midnight.getTime()) - discordEpoch) << 22n).toString();
+  }
+
+  const apiUrl = `https://discord.com/api/v9/channels/${channelId}/messages?limit=100&after=${afterId}`;
+  let messages;
+  try {
+    const resp = await fetch(apiUrl, {
+      headers: {
+        'Authorization': token,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      },
+    });
+    if (!resp.ok) return { polled: false, status: resp.status };
+    messages = await resp.json();
+    if (!Array.isArray(messages)) return { polled: false, reason: 'bad response' };
+  } catch (e) {
+    return { polled: false, error: e.message };
+  }
+
+  if (!messages.length) return { polled: true, newSignals: 0, total: signals.length };
+
+  // Sort oldest → newest
+  messages.sort((a, b) => a.id.localeCompare(b.id));
+
+  // Save latest message ID
+  await env.SIGNAL_KV.put('discord_last_msg_id', messages[messages.length - 1].id);
+
+  const seenCenters = new Set(signals.map(s => s.center));
+  let newCount = 0;
+
+  for (const msg of messages) {
+    const msgET = toET(new Date(msg.timestamp));
+    const msgISO = `${msgET.getFullYear()}-${String(msgET.getMonth()+1).padStart(2,'0')}-${String(msgET.getDate()).padStart(2,'0')}`;
+    if (msgISO !== todayISO) continue;
+
+    const sig = parseDiscordSignal(msg.content || '');
+    if (!sig || seenCenters.has(sig.center)) continue;
+
+    seenCenters.add(sig.center);
+    signals.push({
+      time: `${String(msgET.getHours()).padStart(2,'0')}:${String(msgET.getMinutes()).padStart(2,'0')}`,
+      center: sig.center,
+      t1: sig.t1,
+      premium: sig.premium,
+      banned: isBanned(sig.center, sig.t1),
+    });
+    newCount++;
+  }
+
+  await env.SIGNAL_KV.put('signals_today', JSON.stringify({ date: todayISO, signals }));
+  return { polled: true, newSignals: newCount, total: signals.length };
+}
+
 async function handleScheduled(env) {
   const etNow = toET();
   const dow = etNow.getDay();
@@ -516,17 +621,27 @@ async function handleScheduled(env) {
   // Not a trading day (holiday) → skip
   if (!isTrade(etNow)) return { status: 'skipped', reason: 'holiday' };
 
-  // DST-safe: we fire at both UTC times. Check if ET time is 9:30-9:40 (open) or 16:00-16:15 (close).
   const etHour = etNow.getHours();
   const etMin = etNow.getMinutes();
   const isMorning = etHour === 9  && etMin >= 30 && etMin <= 40;
   const isEOD     = etHour === 16 && etMin >= 0  && etMin <= 15;
-  if (!isMorning && !isEOD) {
-    return { status: 'skipped', reason: `not 9:30 or 16:05 ET (currently ${etHour}:${String(etMin).padStart(2, '0')} ET)` };
+  const isMarket  = (etHour > 9 || (etHour === 9 && etMin >= 30)) && etHour < 16;
+
+  // Always poll Discord during market hours
+  let discordResult = {};
+  if (isMarket && env.DISCORD_USER_TOKEN) {
+    discordResult = await pollDiscordSignals(env);
   }
 
-  // EOD cron: just capture vixClose + spxClose then return
-  if (isEOD) return handleEOD(env, etNow);
+  // EOD cron: capture vixClose + spxClose + m8bfPL
+  if (isEOD) {
+    const eodResult = await handleEOD(env, etNow);
+    return { ...eodResult, discord: discordResult };
+  }
+
+  if (!isMorning) {
+    return { status: 'discord_poll', discord: discordResult, time: `${etHour}:${String(etMin).padStart(2,'0')} ET` };
+  }
 
   // 1. Get access token
   const token = await getAccessToken(env);
@@ -1005,6 +1120,12 @@ export default {
 
         rows.reverse(); // most recent first
         return jsonResp(rows, 200, corsHeaders);
+      }
+
+      // ── GET /signals ── Today's Discord signals from KV
+      if (url.pathname === '/signals' && request.method === 'GET') {
+        const data = await env.SIGNAL_KV.get('signals_today');
+        return jsonResp(data ? JSON.parse(data) : { date: '', signals: [] }, 200, corsHeaders);
       }
 
       return jsonResp({ error: 'Not found' }, 404, corsHeaders);
