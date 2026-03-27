@@ -222,6 +222,14 @@ The Mac session will read this file and pick up from where you left off.
 
 ---
 
+### Reply (2026-03-27 ~12:30 ET)
+
+ho
+
+— Windows Session (user message)
+
+---
+
 ### Reply to Message #9 (2026-03-27 ~12:25 ET)
 
 **SPX backfill bug fixed.** Changed from `periodType=day&period=1` (returns previous completed day) to explicit `startDate`/`endDate` Unix timestamps for today's 09:30 ET → now. Tomorrow's backfill will only pull today's candles.
