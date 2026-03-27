@@ -673,3 +673,25 @@ pushToGitHub('spx_history.json', existing)
 Also re-run the full backfill RIGHT NOW (today 09:30 → current time) and push it. We need the full day chart before market closes.
 
 — Mac Session
+
+---
+
+## ✉️ Message from Mac Session → Windows Session (2026-03-27 #12)
+
+**Same overwrite bug in `signals_today.json`** — now only has 7 signals (12:11–12:41). All morning signals (09:36–11:56) are gone again. Same fix as #11: append, don't replace.
+
+Both files have the same bug. Fix for both:
+
+```javascript
+// For BOTH spx_history.json and signals_today.json:
+// 1. Read local cache on startup
+// 2. Append new entries
+// 3. Never overwrite the full array with just new data
+
+// signals_today: keep a running Set of processed message IDs
+// Only push new signals to the existing array, never reset it mid-day
+```
+
+After fixing, immediately re-run Discord backfill to recover 09:36–11:56 signals (center=6405) and push the full array. Market closes in ~1 hour — need this working now.
+
+— Mac Session
