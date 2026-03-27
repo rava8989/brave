@@ -97,6 +97,10 @@ body {
   transition: transform .2s;
 }
 [data-theme="dark"] .theme-btn::after { transform: translateX(16px); }
+.nav{display:flex;gap:4px;}
+.nav a{font-size:12px;font-weight:500;padding:5px 12px;border-radius:6px;color:var(--text2);text-decoration:none;transition:background .15s,color .15s;border:1px solid transparent;}
+.nav a:hover{background:var(--bg3);color:var(--text);}
+.nav a.active{background:var(--accent);color:#fff;border-color:var(--accent);}
 
 /* ── Filter bar ── */
 .filters {
@@ -474,11 +478,15 @@ tfoot td {
 <!-- Header -->
 <header class="header">
   <div class="logo">SPX-BF <span>//</span> Backtester</div>
+  <nav class="nav">
+    <a href="index.html">Dashboard</a>
+    <a href="history.html">History</a>
+    <a href="backtester.html" class="active">Backtester</a>
+    <a href="live.html">Live P&L</a>
+  </nav>
+  <div class="header-spacer"></div>
   <div class="header-sep"></div>
   <div class="header-meta" id="hdrMeta">—</div>
-  <div class="header-spacer"></div>
-  <a href="https://rava8989.github.io/brave/" style="text-decoration:none;margin-right:10px;padding:6px 14px;border-radius:8px;background:var(--accent2);color:#fff;font-size:12px;font-weight:600;">← Main Page</a>
-  <a href="history.html" style="text-decoration:none;margin-right:10px;padding:6px 14px;border-radius:8px;background:var(--accent);color:#fff;font-size:12px;font-weight:600;">📋 Historical</a>
   <button class="theme-btn" id="themeBtn" title="Toggle theme"></button>
 </header>
 
