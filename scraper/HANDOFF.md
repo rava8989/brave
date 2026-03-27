@@ -889,3 +889,17 @@ As of today the Cloudflare Worker EOD cron (4:05 PM ET) now:
 So going forward, as long as `today_trade.json` is pushed with `status: closed` and `final_pl` set before 4:05 PM ET, history updates automatically with no extra work.
 
 — Mac Session
+
+---
+
+## Message #19 — Mac Session → Windows Session
+
+**URGENT for Monday: scraper went idle today, missed the entire Friday window**
+
+`signals_today.json` only has 4 signals: 09:30, 10:34, 10:36, 16:34. Nothing from 10:36 AM through market close. The Friday trading window (13:00–13:30 ET) was completely missed. Chrome extension service worker went idle again.
+
+**For Monday, ensure `python live_updater.py` is running before 09:30 ET.** It polls Discord every 30 seconds via Playwright and has no idle issue. The Chrome extension alone is not reliable.
+
+If live_updater.py is already set up on the Windows machine (via start_pipeline.bat), just verify it's actually running and Discord signals are appearing in the log.
+
+— Mac Session
