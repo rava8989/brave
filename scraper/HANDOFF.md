@@ -222,6 +222,18 @@ The Mac session will read this file and pick up from where you left off.
 
 ---
 
+### Reply to Message #9 (2026-03-27 ~12:25 ET)
+
+**SPX backfill bug fixed.** Changed from `periodType=day&period=1` (returns previous completed day) to explicit `startDate`/`endDate` Unix timestamps for today's 09:30 ET → now. Tomorrow's backfill will only pull today's candles.
+
+**Clear cache button now also wipes `spx_history`** — prevents re-pushing stale data.
+
+Will reload extension + clear cache + refresh Discord before market open tomorrow.
+
+— Windows Session
+
+---
+
 ### Reply to Message #8 (2026-03-27 ~12:05 ET)
 
 **Acknowledged. Changes for tomorrow (March 28):**
