@@ -672,9 +672,10 @@ async function handleScheduled(env) {
   // EOD cron: capture vixClose + spxClose + m8bfPL + backfill any missing m8bfWR
   if (isEOD) {
     const eodResult = await handleEOD(env, etNow);
-    let backfillResult = {};
-    try { backfillResult = await backfillMissingWR(env); } catch(e) { backfillResult = { error: e.message }; }
-    return { ...eodResult, discord: discordResult, backfill: backfillResult };
+    let backfillWR = {}, backfillPL = {};
+    try { backfillWR = await backfillMissingWR(env); } catch(e) { backfillWR = { error: e.message }; }
+    try { backfillPL = await backfillMissingPL(env); } catch(e) { backfillPL = { error: e.message }; }
+    return { ...eodResult, discord: discordResult, backfill_wr: backfillWR, backfill_pl: backfillPL };
   }
 
   if (!isMorning) {
@@ -1053,6 +1054,116 @@ async function backfillMissingWR(env, force = false, targetDates = null) {
 }
 
 // ════════════════════════════════════════════════════════════════════
+// BACKFILL MISSING m8bfPL
+// ════════════════════════════════════════════════════════════════════
+
+// Trade entry windows per JS getDay() (0=Sun,1=Mon...6=Sat) — from discord_scraper.py
+const M8BF_WINDOWS = {
+  1: [11*60,     11*60+30],  // Mon 11:00–11:30
+  2: [13*60+30,  14*60],     // Tue 13:30–14:00
+  3: [12*60,     12*60+30],  // Wed 12:00–12:30
+  4: [11*60,     11*60+30],  // Thu 11:00–11:30
+  5: [13*60,     13*60+30],  // Fri 13:00–13:30
+};
+
+async function backfillMissingPL(env, targetDates = null) {
+  const token = env.DISCORD_USER_TOKEN;
+  const channelId = '1048242197029458040';
+  if (!token) throw new Error('DISCORD_USER_TOKEN not set');
+
+  const apiUrl = 'https://api.github.com/repos/rava8989/brave/contents/history_data.json';
+  const ghHeaders = {
+    'Authorization': `Bearer ${env.GITHUB_TOKEN}`,
+    'Accept': 'application/vnd.github+json',
+    'User-Agent': 'schwab-proxy-worker/1.0',
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
+
+  const getResp = await fetch(apiUrl, { headers: ghHeaders });
+  if (!getResp.ok) throw new Error(`GitHub GET failed: ${getResp.status}`);
+  const meta = await getResp.json();
+  const sha = meta.sha;
+  const content = JSON.parse(atob(meta.content.replace(/\n/g, '')));
+
+  const etNow = toET(new Date());
+  const todayISO = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
+
+  let missing;
+  if (targetDates) {
+    missing = content.filter(r => targetDates.includes(r.date));
+  } else {
+    missing = content.filter(r => r.date < todayISO && r.m8bfPL == null && r.spxClose != null);
+  }
+
+  const filled = [], failed = [];
+
+  for (const row of missing) {
+    try {
+      // Get day of week in ET
+      const etDate = toET(new Date(row.date + 'T20:00:00Z'));
+      const dow = etDate.getDay(); // 0=Sun,1=Mon...6=Sat
+      const win = M8BF_WINDOWS[dow];
+      if (!win) {
+        failed.push({ date: row.date, reason: 'no window for dow=' + dow });
+        continue;
+      }
+      const [winLo, winHi] = win;
+
+      // Fetch all signals for this date in chronological order
+      const signals = await fetchAllDiscordSignalsForDate(token, channelId, row.date);
+
+      // First qualifying signal: in window + not banned
+      let qualifying = null;
+      for (const sig of signals) {
+        if (!sig.time) continue;
+        const [h, m] = sig.time.split(':').map(Number);
+        const mins = h * 60 + m;
+        if (mins >= winLo && mins < winHi && !isBanned(sig.center, sig.t1)) {
+          qualifying = sig;
+          break;
+        }
+      }
+
+      if (!qualifying) {
+        failed.push({ date: row.date, reason: 'no qualifying signal in window' });
+        continue;
+      }
+
+      // PL = round((min(intrinsic, wing) - premium) * 100)
+      const lo = qualifying.lower;
+      const hi = qualifying.upper;
+      const wing = (hi - lo) / 2;
+      const intrinsic = Math.max(0, Math.min(row.spxClose - lo, hi - row.spxClose));
+      const clipped = Math.min(intrinsic, wing);
+      const pl = Math.round((clipped - qualifying.premium) * 100);
+
+      row.m8bfPL = pl;
+      filled.push({ date: row.date, pl, center: qualifying.center, lower: lo, upper: hi, premium: qualifying.premium, spxClose: row.spxClose });
+    } catch (e) {
+      failed.push({ date: row.date, error: e.message });
+    }
+  }
+
+  if (filled.length > 0) {
+    const putResp = await fetch(apiUrl, {
+      method: 'PUT',
+      headers: { ...ghHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: `auto: backfill m8bfPL for ${filled.map(f => f.date).join(', ')}`,
+        content: btoa(JSON.stringify(content, null, 0)),
+        sha,
+      }),
+    });
+    if (!putResp.ok) {
+      const err = await putResp.text();
+      throw new Error(`GitHub PUT failed: ${putResp.status} — ${err}`);
+    }
+  }
+
+  return { filled, failed, total_missing: missing.length };
+}
+
+// ════════════════════════════════════════════════════════════════════
 // APPEND DAILY SIGNALS TO TRADES DATABASE (backtester.html)
 // ════════════════════════════════════════════════════════════════════
 
@@ -1304,6 +1415,20 @@ export default {
         const force = url.searchParams.get('force') === 'true';
         const datesParam = url.searchParams.get('dates'); // e.g. 2026-03-24,2026-03-25
         const results = await backfillMissingWR(env, force, datesParam ? datesParam.split(',') : null);
+        return jsonResp(results, 200, {});
+      } catch (e) {
+        return jsonResp({ error: e.message }, 500, {});
+      }
+    }
+
+    // ── GET /backfill-pl ── Fill missing m8bfPL from Discord history
+    if (url.pathname === '/backfill-pl' && request.method === 'GET') {
+      if (request.headers.get('X-Sync-Secret') !== env.SYNC_SECRET) {
+        return jsonResp({ error: 'Unauthorized' }, 401, {});
+      }
+      try {
+        const datesParam = url.searchParams.get('dates');
+        const results = await backfillMissingPL(env, datesParam ? datesParam.split(',') : null);
         return jsonResp(results, 200, {});
       } catch (e) {
         return jsonResp({ error: e.message }, 500, {});
