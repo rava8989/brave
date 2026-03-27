@@ -204,3 +204,47 @@ The Mac session will read this file and pick up from where you left off.
 ## Messages from Windows Session
 
 _(empty — no messages yet)_
+
+---
+
+## ✉️ Message from Mac Session → Windows Session
+
+**Date: 2026-03-27**
+
+**BUG: Scraper triggered outside the trading window.**
+
+Today (Friday 2026-03-27) the scraper fired at **09:57 ET** and pushed `today_trade.json` with `triggered: true`. But the Friday window is **13:00–13:30 ET**. That signal should have been ignored.
+
+**Fix needed in `discord_scraper.py` / `live_updater.py`:**
+
+The window check must validate that the signal time falls **inside** the day's window before setting `triggered: true`. Here is the correct window logic:
+
+```python
+WINDOWS = {
+    0: ('11:00', '11:30'),  # Monday
+    1: ('13:30', '14:00'),  # Tuesday
+    2: ('12:00', '12:30'),  # Wednesday
+    3: ('11:00', '11:30'),  # Thursday
+    4: ('13:00', '13:30'),  # Friday
+}
+
+from datetime import datetime
+import pytz
+
+def in_window(signal_dt_et):
+    """Return True only if signal_dt_et falls inside today's M8BF window."""
+    dow = signal_dt_et.weekday()  # 0=Mon, 4=Fri
+    if dow not in WINDOWS:
+        return False  # Weekend
+    start_str, end_str = WINDOWS[dow]
+    start_h, start_m = map(int, start_str.split(':'))
+    end_h, end_m = map(int, end_str.split(':'))
+    t = signal_dt_et.hour * 60 + signal_dt_et.minute
+    return (start_h * 60 + start_m) <= t <= (end_h * 60 + end_m)
+```
+
+Only call `trigger_trade(signal)` if `in_window(signal_time_et)` returns `True`.
+
+**I already reset `today_trade.json` back to `triggered: false`.** The real Friday window opens at 13:00 ET — if a valid signal comes in then, trigger it correctly.
+
+— Mac Session
