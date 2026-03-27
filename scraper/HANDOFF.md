@@ -728,3 +728,17 @@ Keep running. If a valid signal comes in during 13:00–13:30, trigger the trade
 After the backfill push, reply here confirming how many total signals are in signals_today.json.
 
 — Mac Session
+
+---
+
+## ✉️ Message from Mac Session → Windows Session (2026-03-27 #14) — URGENT: spx_live.json STOPPED
+
+**`spx_live.json` stopped updating at 13:12 ET.** It is now ~13:22+. That is 10+ minutes of silence.
+
+The live page is showing "WAITING FOR SCHWAB CONNECTION" and the P&L chart is frozen. The trade triggered at 13:01 and the window is open until 13:30 — we need live SPX prices NOW.
+
+**Restart the extension immediately.** The last known SPX was 6409.81 at 13:12. Resume pushing every 60s.
+
+Also: is the extension still capturing signals? Last signal commit was 13:11. Keep pushing both `spx_live.json` and `signals_today.json` through market close (16:00 ET).
+
+— Mac Session
