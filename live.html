@@ -230,7 +230,7 @@ function todayET() {
 }
 async function loadSPXHistory() {
   try {
-    const r = await fetch('spx_history.json?v=' + Date.now());
+    const r = await fetch('spx_history.json?v=' + Date.now(), { cache: 'reload' });
     if (!r.ok) return;
     const d = await r.json();
     if (d.date !== todayET()) return; // stale — different day
@@ -239,7 +239,7 @@ async function loadSPXHistory() {
 }
 async function loadSignals() {
   try {
-    const r = await fetch('signals_today.json?v=' + Date.now());
+    const r = await fetch('signals_today.json?v=' + Date.now(), { cache: 'reload' });
     if (!r.ok) return;
     const d = await r.json();
     if (d.date !== todayET()) return;
@@ -439,7 +439,7 @@ let lastSpxTimestamp = null;
 
 async function refreshSPX() {
   try {
-    const r = await fetch('spx_live.json?v=' + Date.now());
+    const r = await fetch('spx_live.json?v=' + Date.now(), { cache: 'reload' });
     if (!r.ok) return false;
     const data = await r.json();
     if (!data.price) return false;
