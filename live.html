@@ -340,11 +340,19 @@ function rebuildSPXChart() {
   spxChart.data.datasets[0].data = times.map(t => spxMap[t] ?? null);
   spxChart.data.datasets[1].data = times.map(t => {
     const s = sigMap[t];
-    if (!s) return null;
-    const pt = s.center;
-    pt._banned = s.banned;
-    return pt;
+    return s ? s.center : null;
   });
+
+  // Fixed ±60 point buffer so the chart never feels claustrophobic
+  const allPrices = [
+    ...spxHistory.map(p => p.price),
+    ...signalsToday.map(s => s.center),
+  ].filter(Boolean);
+  if (allPrices.length) {
+    spxChart.options.scales.y.min = Math.min(...allPrices) - 60;
+    spxChart.options.scales.y.max = Math.max(...allPrices) + 60;
+    delete spxChart.options.scales.y.grace;
+  }
 
   const last = spxHistory[spxHistory.length - 1];
   const lu = document.getElementById('spxChartUpdate');
