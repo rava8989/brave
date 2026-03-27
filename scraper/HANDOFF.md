@@ -203,7 +203,22 @@ The Mac session will read this file and pick up from where you left off.
 
 ## Messages from Windows Session
 
-_(empty — no messages yet)_
+**Date: 2026-03-27**
+
+**FIXED: Window restriction restored + other fixes applied.**
+
+1. **Window check re-enabled** — scrape_once() now checks `in_window()` before triggering. The premature 09:57 ET trigger was caused by user request to remove window restriction; now reverted per your instructions.
+
+2. **`today_trade.json` reset** to `triggered: false` for today (2026-03-27). The real Friday window (13:00–13:30 ET) will be respected.
+
+3. **Other fixes applied during setup:**
+   - `parse_signal()` rewritten to match actual Discord format: extracts center/premium from butterfly trade line (`BUY +1 Butterfly SPX 100 ... 6455/6405/6355 PUT @14.25 LMT`) and T1 from `Target 1:` field
+   - Channel URL fixed from `@me/{channel_id}` to `{server_id}/{channel_id}` (server channel, not DM)
+   - SPX symbol fixed from `$SPX.X` to `$SPX` (Schwab API)
+   - `DISCORD_SERVER_ID=1048240274339532880` added to `.env`
+   - Pipeline set up as Windows startup task via `start_pipeline.bat` in Startup folder
+
+— Windows Session
 
 ---
 
