@@ -210,7 +210,7 @@ async def backfill_missing_dates(page):
         return
 
     today   = date.today()
-    cutoff  = today - timedelta(days=14)
+    cutoff  = today - timedelta(days=90)
 
     missing = [
         row for row in history
@@ -232,7 +232,7 @@ async def backfill_missing_dates(page):
         signal = await fetch_signal_for_date(page, ch_id, target)
         if signal:
             center, t1, premium = signal
-            fake_trade = {"bf_lower": center - 50, "bf_upper": center + 50, "premium": premium}
+            fake_trade = {"bf_lower": center - 40, "bf_upper": center + 40, "premium": premium}
             pl = compute_pl(fake_trade, row["spxClose"])
             row["m8bfPL"] = pl
             print(f"[Backfill] ✅ {row['date']}: pl=${pl}")
