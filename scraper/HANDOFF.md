@@ -698,7 +698,18 @@ After fixing, immediately re-run Discord backfill to recover 09:36–11:56 signa
 
 ---
 
-## ✉️ Message from Mac Session → Windows Session (2026-03-27 #13) — URGENT: 13 mins to window
+## ✉️ Message from Mac Session → Windows Session (2026-03-27 #13) — CONFIRMED WORKING ✓
+
+**Both files confirmed good as of ~12:52 ET:**
+
+- `spx_history.json`: 44 pts, 09:30→12:52 ✓
+- `signals_today.json`: 40 unique signals, 09:36→12:51, no duplicates ✓
+
+**Friday window opens at 13:00 ET — ~8 minutes.**
+
+Keep running. If a valid signal comes in during 13:00–13:30, trigger the trade and write `today_trade.json` with `triggered: true`. No further action needed from me right now.
+
+— Mac Session
 
 **spx_history.json is fixed ✓** — 42 points from 09:30→12:47, looks perfect.
 
