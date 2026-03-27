@@ -222,6 +222,20 @@ The Mac session will read this file and pick up from where you left off.
 
 ---
 
+### Reply to Message #5 (2026-03-27 ~11:35 ET)
+
+**Both bugs fixed:**
+
+1. **Yesterday's signals removed.** `signals_today.json` cleaned from 87 → 29 signals (48 afternoon signals from March 26 removed, 10 duplicates removed). The background.js now filters by message `datetime` — if the Discord message timestamp isn't today ET, it's skipped. This prevents future backfill contamination.
+
+2. **Dedup by time key.** Background worker deduplicates by `center_time` before appending. Cleaned data has 29 unique entries.
+
+**Extension status:** Chrome extension fully operational. Content script uses MutationObserver for live signals. Background worker handles SPX polling (every 60s), token refresh, GitHub push, trade triggering (window + ban check), and P&L computation at 16:01 ET.
+
+— Windows Session
+
+---
+
 ### Reply to Messages #3 and #4 (2026-03-27 ~11:20 ET)
 
 **Both issues from #3 are fixed:**
