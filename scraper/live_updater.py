@@ -22,9 +22,10 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
+import requests
 import schwab_client
 from github_push import push_json
-from discord_scraper import run_scraper, make_trade_json, window_name
+from discord_scraper import run_scraper, make_trade_json, window_name, fetch_signal_for_date
 
 load_dotenv()
 
@@ -136,6 +137,61 @@ async def on_signal(center: int, t1: int, premium: float, dt: datetime):
     print(f"[Updater] Trade written to GitHub: {trade}")
 
 
+# ── Backfill missing dates on startup ────────────────────────────────────────
+
+async def backfill_missing_dates(page):
+    """
+    Runs once on startup. Finds dates in history_data.json that have spxClose
+    but no m8bfPL (machine was down), searches Discord history for the signal,
+    computes P&L, and pushes updated history_data.json to GitHub.
+    """
+    repo  = os.getenv("GITHUB_REPO", "rava8989/brave")
+    url   = f"https://raw.githubusercontent.com/{repo}/main/history_data.json"
+    ch_id = os.getenv("DISCORD_CHANNEL_ID", "")
+
+    try:
+        resp    = requests.get(url, timeout=10)
+        history = resp.json()
+    except Exception as e:
+        print(f"[Backfill] Could not fetch history_data.json: {e}")
+        return
+
+    today   = date.today()
+    cutoff  = today - timedelta(days=14)
+
+    missing = [
+        row for row in history
+        if row.get("spxClose")
+        and row.get("m8bfPL") is None
+        and datetime.strptime(row["date"], "%Y-%m-%d").date() >= cutoff
+        and datetime.strptime(row["date"], "%Y-%m-%d").date() < today
+    ]
+
+    if not missing:
+        print("[Backfill] No gaps found — history up to date.")
+        return
+
+    print(f"[Backfill] {len(missing)} date(s) to fill: {[r['date'] for r in missing]}")
+
+    updated = False
+    for row in missing:
+        target = datetime.strptime(row["date"], "%Y-%m-%d").date()
+        signal = await fetch_signal_for_date(page, ch_id, target)
+        if signal:
+            center, t1, premium = signal
+            fake_trade = {"bf_lower": center - 50, "bf_upper": center + 50, "premium": premium}
+            pl = compute_pl(fake_trade, row["spxClose"])
+            row["m8bfPL"] = pl
+            print(f"[Backfill] ✅ {row['date']}: pl=${pl}")
+            updated = True
+        else:
+            print(f"[Backfill] ⏭  {row['date']}: no valid signal found (no-trade day)")
+
+    if updated:
+        push_json("history_data.json", history, "backfill: fill missing m8bfPL dates")
+        print("[Backfill] history_data.json pushed to GitHub.")
+
+
 # ── Push schedule: xx:02, xx:07, xx:12, xx:17, xx:22... (every 5 min, offset +2)
 def should_push(dt: datetime) -> bool:
     return dt.minute % 5 == 2
@@ -214,9 +270,10 @@ async def main():
         return
 
     # Run SPX polling + Discord scraper concurrently
+    # backfill_missing_dates runs once after Discord login before the main loop
     await asyncio.gather(
         spx_poll_loop(),
-        run_scraper(on_signal, poll_interval=30),
+        run_scraper(on_signal, poll_interval=30, on_startup=backfill_missing_dates),
     )
 
 if __name__ == "__main__":
