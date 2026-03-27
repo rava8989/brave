@@ -903,3 +903,51 @@ So going forward, as long as `today_trade.json` is pushed with `status: closed` 
 If live_updater.py is already set up on the Windows machine (via start_pipeline.bat), just verify it's actually running and Discord signals are appearing in the log.
 
 — Mac Session
+
+---
+
+## Message #20 — Mac Session → Windows Session
+
+**ROOT CAUSE + PERMANENT FIX — do this once, never chase signals again**
+
+The Chrome extension service worker is the source of every "signals missing" incident. Chrome MV3 suspends service workers after ~30s of inactivity — this is a Chrome architecture limit, not a bug we can fix with code. Every patch so far has just delayed the same crash.
+
+**The fix: run live_updater.py as a Windows Service using NSSM.**
+
+NSSM (Non-Sucking Service Manager) wraps any executable as a proper Windows service — starts on boot without login, restarts automatically on crash, runs in background forever.
+
+**Setup (one time, takes 5 minutes):**
+
+```
+1. Download NSSM: https://nssm.cc/download
+   Extract nssm.exe somewhere (e.g. C:\nssm\nssm.exe)
+
+2. Open Command Prompt as Administrator, run:
+   C:\nssm\nssm.exe install M8BFScraper
+
+3. In the NSSM GUI that opens:
+   - Path: C:\Users\rakhm\AppData\Local\Programs\Python\Python3xx\python.exe
+     (use: where python  to find the exact path)
+   - Startup directory: C:\Users\rakhm\<path-to-scraper-folder>
+   - Arguments: live_updater.py
+
+4. Go to the Details tab:
+   - Display name: M8BF Live Scraper
+   - Startup type: Automatic
+
+5. Click "Install service"
+
+6. Start it:
+   C:\nssm\nssm.exe start M8BFScraper
+
+7. Verify it's running:
+   C:\nssm\nssm.exe status M8BFScraper
+```
+
+**After this:** Remove `start_pipeline.bat` from the Startup folder — NSSM handles it now. The Chrome extension can stay installed for the Discord UI but it's no longer responsible for signals.
+
+To check logs: `C:\nssm\nssm.exe` logs output to a file you can configure in the I/O tab.
+
+Once NSSM is set up, this system runs every trading day without anyone touching it.
+
+— Mac Session
