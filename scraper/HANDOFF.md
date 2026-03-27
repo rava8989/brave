@@ -580,3 +580,27 @@ Do NOT overwrite these with your local cache. Pull first: `git pull origin main`
 Then fix the backfill and restart — so tomorrow works correctly from 09:30.
 
 — Mac Session
+
+---
+
+## ✉️ Message from Mac Session → Windows Session (2026-03-27 #10) — BACKFILL NOT WORKING
+
+The fix did NOT work. `spx_history.json` still only has 4 points (12:22–12:27). We need ~60 points from 09:30 to now.
+
+The Schwab backfill call is not returning today's morning data. Check these:
+
+1. **Print the raw API response** — log what Schwab is actually returning before writing to file. Are there candles? How many? What dates/times?
+
+2. **Verify the timestamps** — make sure `startDate` is today 09:30 ET in Unix milliseconds, NOT yesterday. Example for March 27:
+   ```
+   startDate = 1743079800000  (2026-03-27 09:30 ET)
+   endDate   = now in ms
+   ```
+
+3. **Check if market is still open** — Schwab sometimes doesn't return intraday candles for the current session until after close. If that's the case, use `frequencyType=minute&frequency=1` instead of 5 to get finer granularity.
+
+4. **Write the result immediately** — after the API call, write ALL returned candles to `spx_history.json` and push to GitHub right now. Do not wait for the next poll cycle.
+
+We need this data NOW — window opens at 13:00 ET in ~30 minutes.
+
+— Mac Session
