@@ -344,6 +344,11 @@ function rebuildSPXChart() {
   // Build 5-min snapped maps
   const spxMap5 = {};
   for (const p of spxHistory) { spxMap5[snap5(p.time)] = p.price; }
+  // Inject current live price so chart never looks frozen between history pushes
+  if (spxPrice !== null) {
+    const nowStr = getNowET().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+    spxMap5[snap5(nowStr)] = spxPrice;
+  }
   const sigMap5 = {};
   for (const s of signalsToday) { sigMap5[snap5(s.time)] = s; }
 
