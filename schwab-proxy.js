@@ -620,6 +620,8 @@ async function pollDiscordSignals(env) {
     signals.push({
       time: `${String(msgET.getHours()).padStart(2,'0')}:${String(msgET.getMinutes()).padStart(2,'0')}`,
       center: sig.center,
+      lower: sig.lower,
+      upper: sig.upper,
       t1: sig.t1,
       premium: sig.premium,
       banned: isBanned(sig.center, sig.t1),
@@ -917,7 +919,14 @@ async function fetchAllDiscordSignalsForDate(token, channelId, dateISO) {
     if (batch.length < 100) break;
     afterSnowflake = batch[batch.length - 1].id;
   }
-  return allSignals;
+
+  // Deduplicate by center (keep first occurrence, matching live polling behavior)
+  const seen = new Set();
+  return allSignals.filter(s => {
+    if (seen.has(s.center)) return false;
+    seen.add(s.center);
+    return true;
+  });
 }
 
 function computeWinRateFromSignals(signals, spxClose) {
