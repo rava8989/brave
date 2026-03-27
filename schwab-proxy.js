@@ -891,17 +891,18 @@ async function upsertHistoryGitHub(env, dateStr, fields) {
 // ════════════════════════════════════════════════════════════════════
 
 async function fetchAllDiscordSignalsForDate(token, channelId, dateISO) {
-  // Fetch ALL butterfly signals posted on dateISO (paginated, up to 500 messages)
+  // Fetch all butterfly signals posted on dateISO ET, paginated
   const [y, m, d] = dateISO.split('-').map(Number);
-  // Full calendar day in UTC — signals can be posted any time (pre-market through evening)
-  const startMs = Date.UTC(y, m - 1, d, 0, 0, 0);
-  const endMs   = Date.UTC(y, m - 1, d + 1, 0, 0, 0);
+  // 13:00 UTC = 9:00 AM ET (EDT), 21:00 UTC = 5:00 PM ET — covers full trading day
+  const startMs = Date.UTC(y, m - 1, d, 13, 0, 0);
+  const endMs   = Date.UTC(y, m - 1, d, 21, 0, 0);
   const discordEpoch = 1420070400000n;
   let afterSnowflake = ((BigInt(startMs) - discordEpoch) << 22n).toString();
   const beforeSnowflake = ((BigInt(endMs) - discordEpoch) << 22n).toString();
 
   const allSignals = [];
-  for (let page = 0; page < 5; page++) { // max 5 pages = 500 messages
+
+  for (let page = 0; page < 5; page++) {
     const resp = await fetch(
       `https://discord.com/api/v9/channels/${channelId}/messages?limit=100&after=${afterSnowflake}&before=${beforeSnowflake}`,
       { headers: { 'Authorization': token, 'User-Agent': 'Mozilla/5.0' } }
@@ -910,23 +911,21 @@ async function fetchAllDiscordSignalsForDate(token, channelId, dateISO) {
     const batch = await resp.json();
     if (!Array.isArray(batch) || batch.length === 0) break;
 
-    // Sort ascending by snowflake ID
     batch.sort((a, b) => a.id.localeCompare(b.id));
     for (const msg of batch) {
+      // Verify message is from the correct ET date
+      const msgET = toET(new Date(msg.timestamp));
+      const msgDate = `${msgET.getFullYear()}-${String(msgET.getMonth()+1).padStart(2,'0')}-${String(msgET.getDate()).padStart(2,'0')}`;
+      if (msgDate !== dateISO) continue;
+
       const sig = parseDiscordSignal(msg.content || '');
-      if (sig) allSignals.push(sig);
+      if (!sig) continue;
+      allSignals.push(sig); // no dedup — each post counts
     }
     if (batch.length < 100) break;
     afterSnowflake = batch[batch.length - 1].id;
   }
-
-  // Deduplicate by center (keep first occurrence, matching live polling behavior)
-  const seen = new Set();
-  return allSignals.filter(s => {
-    if (seen.has(s.center)) return false;
-    seen.add(s.center);
-    return true;
-  });
+  return allSignals;
 }
 
 function computeWinRateFromSignals(signals, spxClose) {
@@ -956,7 +955,7 @@ async function getSpxCloseForDate(dateISO) {
   return parseFloat(close.toFixed(2));
 }
 
-async function backfillMissingWR(env) {
+async function backfillMissingWR(env, force = false, targetDates = null) {
   const token = env.DISCORD_USER_TOKEN;
   const channelId = '1048242197029458040';
   if (!token) throw new Error('DISCORD_USER_TOKEN not set');
@@ -975,9 +974,14 @@ async function backfillMissingWR(env) {
   const sha = meta.sha;
   const content = JSON.parse(atob(meta.content.replace(/\n/g, '')));
 
-  // 2. Find entries with null m8bfWR (skip future dates)
+  // 2. Find entries to process
   const today = new Date().toISOString().slice(0, 10);
-  const missing = content.filter(r => r.m8bfWR == null && r.date <= today);
+  const missing = content.filter(r => {
+    if (r.date > today) return false;
+    if (targetDates) return targetDates.includes(r.date); // specific dates
+    if (force) return true; // all past dates
+    return r.m8bfWR == null; // default: only missing
+  });
 
   const filled = [];
   const failed = [];
@@ -997,11 +1001,14 @@ async function backfillMissingWR(env) {
       // Win rate = % of signals where intrinsic > premium
       const m8bfWR = computeWinRateFromSignals(signals, spxClose);
 
-      // Update in-memory content
+      // Update in-memory content (always overwrite m8bfWR)
       const idx = content.findIndex(r => r.date === entry.date);
       if (idx >= 0) {
         content[idx].m8bfWR = m8bfWR;
         if (content[idx].spxClose == null) content[idx].spxClose = spxClose;
+      } else {
+        content.push({ date: entry.date, spxClose, m8bfWR });
+        content.sort((a, b) => a.date.localeCompare(b.date));
       }
       filled.push({ date: entry.date, spxClose, signals: signals.length, m8bfWR });
     } catch (e) {
@@ -1069,13 +1076,44 @@ export default {
       }
     }
 
-    // ── GET /backfill-wr ── Fill missing m8bfWR from Discord history + Yahoo SPX
+    // ── GET /raw-discord?date=YYYY-MM-DD ── Show raw Discord messages for debugging
+    if (url.pathname === '/raw-discord' && request.method === 'GET') {
+      if (request.headers.get('X-Sync-Secret') !== env.SYNC_SECRET) {
+        return jsonResp({ error: 'Unauthorized' }, 401, {});
+      }
+      try {
+        const dateISO = url.searchParams.get('date') || new Date().toISOString().slice(0,10);
+        const [y, m, d] = dateISO.split('-').map(Number);
+        const startMs = Date.UTC(y, m-1, d, 13, 0, 0);
+        const endMs   = Date.UTC(y, m-1, d, 21, 0, 0);
+        const discordEpoch = 1420070400000n;
+        const afterSnowflake = ((BigInt(startMs) - discordEpoch) << 22n).toString();
+        const beforeSnowflake = ((BigInt(endMs) - discordEpoch) << 22n).toString();
+        const resp = await fetch(
+          `https://discord.com/api/v9/channels/1048242197029458040/messages?limit=10&after=${afterSnowflake}&before=${beforeSnowflake}`,
+          { headers: { 'Authorization': env.DISCORD_USER_TOKEN, 'User-Agent': 'Mozilla/5.0' } }
+        );
+        const msgs = await resp.json();
+        const sample = (Array.isArray(msgs) ? msgs : []).map(m => ({
+          id: m.id, ts: m.timestamp, content: (m.content||'').slice(0,200),
+          embeds: (m.embeds||[]).map(e => ({ title: e.title, desc: (e.description||'').slice(0,200) }))
+        }));
+        return jsonResp({ date: dateISO, count: Array.isArray(msgs) ? msgs.length : msgs, sample }, 200, {});
+      } catch(e) {
+        return jsonResp({ error: e.message }, 500, {});
+      }
+    }
+
+    // ── GET /backfill-wr ── Fill missing m8bfWR from Discord history + Stooq SPX
+    // ?force=true recalculates last 60 days regardless of existing values
     if (url.pathname === '/backfill-wr' && request.method === 'GET') {
       if (request.headers.get('X-Sync-Secret') !== env.SYNC_SECRET) {
         return jsonResp({ error: 'Unauthorized' }, 401, {});
       }
       try {
-        const results = await backfillMissingWR(env);
+        const force = url.searchParams.get('force') === 'true';
+        const datesParam = url.searchParams.get('dates'); // e.g. 2026-03-24,2026-03-25
+        const results = await backfillMissingWR(env, force, datesParam ? datesParam.split(',') : null);
         return jsonResp(results, 200, {});
       } catch (e) {
         return jsonResp({ error: e.message }, 500, {});
