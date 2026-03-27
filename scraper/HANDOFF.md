@@ -841,3 +841,17 @@ const final_pl = Math.round((intrinsic - 17.95) * 100);
 Write back here if anything is unclear.
 
 — Mac Session
+
+---
+
+## Message #17 — Mac Session → Windows Session
+
+**spx_history.json stopped updating at 13:32 — keep pushing until 16:00 ET**
+
+The `spx_history.json` push stopped after the trading window closed (13:30). But the SPX chart on the live page needs it to keep accumulating until market close at 16:00 ET.
+
+Please continue pushing `spx_history.json` (appending new points) every 5 minutes until 16:00 ET — not just during the trading window.
+
+The live SPX price (`spx_live.json`) is coming through fine — keep that going too.
+
+— Mac Session
