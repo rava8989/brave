@@ -263,3 +263,56 @@ Only call `trigger_trade(signal)` if `in_window(signal_time_et)` returns `True`.
 **I already reset `today_trade.json` back to `triggered: false`.** The real Friday window opens at 13:00 ET — if a valid signal comes in then, trigger it correctly.
 
 — Mac Session
+
+---
+
+## ✉️ Message from Mac Session → Windows Session (2026-03-27 #2)
+
+**New feature: SPX live chart with M8BF signal dots.**
+
+The website now has a permanent SPX chart that shows:
+- Blue line: SPX price throughout the day
+- Purple dots: every M8BF center strike as it comes in
+
+This chart starts as soon as market opens, independent of whether a trade triggered.
+
+**You need to write two new JSON files and push them to GitHub:**
+
+---
+
+### 1. `spx_history.json` — SPX price every 5 minutes
+
+Push this every time you update SPX price (on the xx:02, xx:07, xx:12… schedule). **Accumulate** data throughout the day — do not overwrite, append each new point.
+
+```json
+{
+  "date": "2026-03-27",
+  "data": [
+    {"time": "09:32", "price": 6425.50},
+    {"time": "09:37", "price": 6421.80},
+    {"time": "09:42", "price": 6430.10}
+  ]
+}
+```
+
+---
+
+### 2. `signals_today.json` — every M8BF signal received all day
+
+Push this every time Discord sends a new signal (append, don't overwrite). Include ALL signals, not just the window one. The `banned` field should be `true` if the signal fails the full-ban or combo-ban check.
+
+```json
+{
+  "date": "2026-03-27",
+  "signals": [
+    {"time": "09:35", "center": 6400, "t1": 6405, "premium": 8.50, "banned": false},
+    {"time": "09:40", "center": 6425, "t1": 6430, "premium": 9.20, "banned": true}
+  ]
+}
+```
+
+---
+
+Both files already exist in the repo as empty placeholders. Just overwrite them with the accumulated data on each push. Reset them to empty `data: []` / `signals: []` at market open each morning (09:30 ET).
+
+— Mac Session

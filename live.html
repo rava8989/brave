@@ -115,6 +115,11 @@
     .footer{text-align:center;padding:24px;font-size:11px;color:var(--text3);}
     .footer a{color:var(--accent);text-decoration:none;}
 
+    /* SPX LIVE CHART SECTION */
+    .spx-chart-section{max-width:1100px;margin:20px auto 0;padding:0 24px;}
+    .legend-dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;}
+    .legend-item{display:flex;align-items:center;font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;}
+
     /* SPX price ticker */
     .spx-ticker{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text2);display:flex;align-items:center;gap:6px;}
     .spx-price{font-weight:700;color:var(--text);}
@@ -145,6 +150,24 @@
   <button class="theme-toggle" id="themeToggle" title="Toggle theme"></button>
 </div>
 
+<!-- SPX + SIGNALS CHART (always visible during market hours) -->
+<div class="spx-chart-section" id="spxChartSection">
+  <div class="chart-card">
+    <div class="chart-header">
+      <span class="chart-title">SPX Live · M8BF Signals</span>
+      <div style="display:flex;gap:16px;margin-left:12px;">
+        <span class="legend-item"><span class="legend-dot" style="background:#818cf8"></span>SPX</span>
+        <span class="legend-item"><span class="legend-dot" style="background:#a78bfa"></span>M8BF Center</span>
+      </div>
+      <div class="chart-header-spacer"></div>
+      <span class="last-update" id="spxChartUpdate">Waiting for data…</span>
+    </div>
+    <div class="chart-wrap" style="height:240px;">
+      <canvas id="spxCanvas"></canvas>
+    </div>
+  </div>
+</div>
+
 <div class="main" id="mainContent">
   <!-- Dynamically rendered -->
 </div>
@@ -161,12 +184,16 @@ document.getElementById('themeToggle').addEventListener('click', () => {
   html.setAttribute('data-theme', next);
   localStorage.setItem('theme', next);
   if (plChart) updateChartTheme();
+  if (spxChart) updateSPXChartTheme();
 });
 
 // ─── State ───────────────────────────────────────────────────────────────────
 let trade = null;         // today_trade.json data
 let plHistory = [];       // [{time, spx, pl}]
 let plChart = null;
+let spxHistory = [];      // [{time, price}] from spx_history.json
+let signalsToday = [];    // [{time, center, t1, premium, banned}] from signals_today.json
+let spxChart = null;
 let schwabConnected = false;
 let marketStatus = 'unknown'; // pre-market | open | closed
 let spxPrice = null;
@@ -195,6 +222,143 @@ function computePL(trade, spxNow) {
   const intrinsic = Math.max(0, Math.min(spxNow - bf_lower, bf_upper - spxNow));
   const clipped = Math.min(intrinsic, wing);
   return Math.round((clipped - premium) * 100);
+}
+
+// ─── SPX History + Signals fetch ─────────────────────────────────────────────
+function todayET() {
+  return getNowET().toISOString().slice(0, 10);
+}
+async function loadSPXHistory() {
+  try {
+    const r = await fetch('spx_history.json?v=' + Date.now());
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d.date !== todayET()) return; // stale — different day
+    spxHistory = d.data || [];
+  } catch { /* file not yet created by scraper */ }
+}
+async function loadSignals() {
+  try {
+    const r = await fetch('signals_today.json?v=' + Date.now());
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d.date !== todayET()) return;
+    signalsToday = d.signals || [];
+  } catch { /* file not yet created by scraper */ }
+}
+
+// ─── SPX Chart ────────────────────────────────────────────────────────────────
+function createSPXChart() {
+  const ctx = document.getElementById('spxCanvas');
+  if (!ctx || spxChart) return;
+  const c = chartColors();
+  spxChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [
+        {
+          label: 'SPX',
+          data: [],
+          borderColor: '#818cf8',
+          backgroundColor: 'rgba(129,140,248,.06)',
+          borderWidth: 2,
+          pointRadius: 0,
+          fill: true,
+          tension: 0.2,
+          spanGaps: true,
+        },
+        {
+          label: 'M8BF Center',
+          data: [],
+          borderColor: 'transparent',
+          backgroundColor: '#a78bfa',
+          pointBackgroundColor: (ctx) => {
+            const raw = ctx.raw;
+            if (raw && raw._banned) return '#f87171';
+            return '#a78bfa';
+          },
+          pointRadius: 6,
+          pointHoverRadius: 8,
+          showLine: false,
+          spanGaps: false,
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: isDark() ? '#1e293b' : '#fff',
+          borderColor: isDark() ? '#2d3f55' : '#e2e8f0',
+          borderWidth: 1,
+          titleColor: isDark() ? '#e2e8f0' : '#1e293b',
+          bodyColor: isDark() ? '#94a3b8' : '#475569',
+          filter: item => item.parsed.y !== null,
+          callbacks: {
+            label: ctx => {
+              if (ctx.datasetIndex === 0) return 'SPX: ' + fmtSpx(ctx.parsed.y);
+              if (ctx.parsed.y !== null) return 'Center: ' + ctx.parsed.y + (ctx.raw._banned ? ' (BANNED)' : '');
+              return null;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          ticks: { color: c.text, font: { family: 'JetBrains Mono', size: 10 }, maxTicksLimit: 8 },
+          grid: { color: c.grid },
+        },
+        y: {
+          ticks: { color: c.text, font: { family: 'JetBrains Mono', size: 10 }, callback: v => fmtSpx(v) },
+          grid: { color: c.grid },
+        }
+      }
+    }
+  });
+}
+function rebuildSPXChart() {
+  if (!spxChart) createSPXChart();
+  if (!spxChart) return;
+
+  // Merge time points from both sources, sorted
+  const timeSet = new Set([
+    ...spxHistory.map(p => p.time),
+    ...signalsToday.map(s => s.time),
+  ]);
+  const times = Array.from(timeSet).sort();
+  if (!times.length) return;
+
+  const spxMap = Object.fromEntries(spxHistory.map(p => [p.time, p.price]));
+  const sigMap = Object.fromEntries(signalsToday.map(s => [s.time, s]));
+
+  spxChart.data.labels = times;
+  spxChart.data.datasets[0].data = times.map(t => spxMap[t] ?? null);
+  spxChart.data.datasets[1].data = times.map(t => {
+    const s = sigMap[t];
+    if (!s) return null;
+    const pt = s.center;
+    pt._banned = s.banned;
+    return pt;
+  });
+
+  const last = spxHistory[spxHistory.length - 1];
+  const lu = document.getElementById('spxChartUpdate');
+  if (lu && last) lu.textContent = 'Updated ' + last.time;
+
+  spxChart.update('none');
+}
+function updateSPXChartTheme() {
+  if (!spxChart) return;
+  const c = chartColors();
+  spxChart.options.scales.x.ticks.color = c.text;
+  spxChart.options.scales.x.grid.color = c.grid;
+  spxChart.options.scales.y.ticks.color = c.text;
+  spxChart.options.scales.y.grid.color = c.grid;
+  spxChart.update();
 }
 
 // ─── Load today_trade.json ────────────────────────────────────────────────────
@@ -635,6 +799,10 @@ function render() {
 async function tick() {
   updateLiveBadge();
 
+  await loadSPXHistory();
+  await loadSignals();
+  rebuildSPXChart();
+
   const fetched = await refreshSPX();
 
   if (fetched && trade && trade.triggered && trade.status !== 'closed') {
@@ -670,8 +838,10 @@ async function tick() {
 async function init() {
   try {
     checkOAuthCallback();
-    await loadTrade();
+    await Promise.all([loadTrade(), loadSPXHistory(), loadSignals()]);
     updateLiveBadge();
+    createSPXChart();
+    rebuildSPXChart();
     render();
     await tick();
     pollTimer = setInterval(tick, 30_000);
