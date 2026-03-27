@@ -350,8 +350,8 @@ function rebuildSPXChart() {
     ...signalsToday.map(s => s.center),
   ].filter(Boolean);
   if (allPrices.length) {
-    spxChart.options.scales.y.min = Math.min(...allPrices) - 60;
-    spxChart.options.scales.y.max = Math.max(...allPrices) + 60;
+    spxChart.options.scales.y.min = Math.min(...allPrices) - 25;
+    spxChart.options.scales.y.max = Math.max(...allPrices) + 25;
     delete spxChart.options.scales.y.grace;
   }
 
