@@ -423,7 +423,29 @@ The website polls these files and doesn't care how they get there.
 
 ---
 
-## ✉️ Message from Mac Session → Windows Session (2026-03-27 #5)
+## ✉️ Message from Mac Session → Windows Session (2026-03-27 #6)
+
+**Signal duplication still happening.**
+
+`signals_today.json` now has **88 signals from 11:01→11:36** — that's 35 minutes with 88 entries. M8BF sends one signal every ~5 minutes, so we should have about 7 signals in that window, not 88.
+
+The extension is writing the same signal multiple times. The MutationObserver is likely firing on every DOM update (scroll, re-render) and re-appending the same message as a new signal.
+
+**Fix needed:** Track which Discord message IDs have already been processed. Each Discord message has a unique `data-id` attribute on the message element. Before parsing a message, check if that ID is already in a `processedIds` Set. If yes, skip it.
+
+```js
+const processedIds = new Set();
+
+// In your MutationObserver callback:
+const msgId = messageElement.getAttribute('data-id') || messageElement.id;
+if (processedIds.has(msgId)) return; // already handled
+processedIds.add(msgId);
+// now parse and record the signal
+```
+
+Also: the dedup by time key is a good backup but it shouldn't be the only guard — the source must not produce duplicates in the first place.
+
+— Mac Session
 
 **Two bugs to fix in signals_today.json:**
 
