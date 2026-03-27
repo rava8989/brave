@@ -228,9 +228,10 @@ function computePL(trade, spxNow) {
 function todayET() {
   return getNowET().toISOString().slice(0, 10);
 }
+const RAW = 'https://raw.githubusercontent.com/rava8989/brave/main/';
 async function loadSPXHistory() {
   try {
-    const r = await fetch('spx_history.json?v=' + Date.now(), { cache: 'reload' });
+    const r = await fetch(RAW + 'spx_history.json?v=' + Date.now(), { cache: 'no-store' });
     if (!r.ok) return;
     const d = await r.json();
     if (d.date !== todayET()) return; // stale — different day
@@ -239,7 +240,7 @@ async function loadSPXHistory() {
 }
 async function loadSignals() {
   try {
-    const r = await fetch('signals_today.json?v=' + Date.now(), { cache: 'reload' });
+    const r = await fetch(RAW + 'signals_today.json?v=' + Date.now(), { cache: 'no-store' });
     if (!r.ok) return;
     const d = await r.json();
     if (d.date !== todayET()) return;
@@ -435,7 +436,7 @@ let lastSpxTimestamp = null;
 
 async function refreshSPX() {
   try {
-    const r = await fetch('spx_live.json?v=' + Date.now(), { cache: 'reload' });
+    const r = await fetch(RAW + 'spx_live.json?v=' + Date.now(), { cache: 'no-store' });
     if (!r.ok) return false;
     const data = await r.json();
     if (!data.price) return false;
