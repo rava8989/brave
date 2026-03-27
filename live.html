@@ -431,17 +431,17 @@ async function refreshSPX() {
     const data = await r.json();
     if (!data.price) return false;
 
-    // Check staleness — if > 5 min old, treat as disconnected
+    // Always keep last known price — stale data disconnects Schwab badge but still shows price
+    spxPrice = data.price;
+    spxPrevClose = data.prev_close;
+    lastSpxTimestamp = data.timestamp;
+
     const age = (Date.now() - new Date(data.timestamp).getTime()) / 1000;
     if (age > 300) {
       schwabConnected = false;
       return false;
     }
-
-    spxPrice = data.price;
-    spxPrevClose = data.prev_close;
     schwabConnected = true;
-    lastSpxTimestamp = data.timestamp;
     return true;
   } catch {
     schwabConnected = false;
