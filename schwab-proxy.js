@@ -475,15 +475,35 @@ async function handleEOD(env, etNow) {
     }
   } catch (e) { /* non-fatal */ }
 
+  // Read today_trade.json from GitHub — written by live_updater.py at EOD
+  let m8bfPL = null;
+  try {
+    const tradeResp = await fetch(
+      `https://raw.githubusercontent.com/rava8989/brave/main/today_trade.json?t=${Date.now()}`,
+      { headers: { 'Cache-Control': 'no-cache' } }
+    );
+    if (tradeResp.ok) {
+      const trade = await tradeResp.json();
+      if (
+        trade.date === todayISO &&
+        trade.status === 'closed' &&
+        typeof trade.final_pl === 'number'
+      ) {
+        m8bfPL = trade.final_pl;
+      }
+    }
+  } catch (e) { /* non-fatal */ }
+
   const fields = {};
   if (vixClose != null) fields.vixClose = vixClose;
   if (spxClose != null) fields.spxClose = spxClose;
+  if (m8bfPL != null) fields.m8bfPL = m8bfPL;
 
   if (Object.keys(fields).length > 0) {
-    await upsertHistoryGitHub(env, todayISO, fields);
+    await upsertHistoryGitHub(env, todayISO, fields, m8bfPL != null);
   }
 
-  return { status: 'eod', date: todayISO, vixClose, spxClose };
+  return { status: 'eod', date: todayISO, vixClose, spxClose, m8bfPL };
 }
 
 async function handleScheduled(env) {
@@ -680,7 +700,7 @@ async function handleScheduled(env) {
 // commits back. Requires GITHUB_TOKEN env var (repo: rava8989/brave).
 // ════════════════════════════════════════════════════════════════════
 
-async function upsertHistoryGitHub(env, dateStr, fields) {
+async function upsertHistoryGitHub(env, dateStr, fields, computeWR = false) {
   const token = env.GITHUB_TOKEN;
   if (!token) throw new Error('GITHUB_TOKEN not set');
 
@@ -711,12 +731,28 @@ async function upsertHistoryGitHub(env, dateStr, fields) {
     content.sort((a, b) => a.date.localeCompare(b.date));
   }
 
+  // 2b. Compute rolling 20-day M8BF win rate if P&L was just written
+  if (computeWR) {
+    const finalIdx = content.findIndex(r => r.date === dateStr);
+    if (finalIdx >= 0 && content[finalIdx].m8bfPL != null) {
+      const WINDOW = 20;
+      const signalDays = content
+        .filter(r => r.m8bfPL != null && r.date <= dateStr)
+        .sort((a, b) => a.date.localeCompare(b.date))
+        .slice(-WINDOW);
+      if (signalDays.length > 0) {
+        const wins = signalDays.filter(r => r.m8bfPL >= 0).length;
+        content[finalIdx].m8bfWR = Math.round(wins / signalDays.length * 100);
+      }
+    }
+  }
+
   // 3. Push back
   const putResp = await fetch(apiUrl, {
     method: 'PUT',
     headers: { ...headers, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      message: `auto: vixOpen/spxOpen for ${dateStr}`,
+      message: `auto: history update for ${dateStr} (${Object.keys(fields).join(', ')})`,
       content: btoa(JSON.stringify(content, null, 0)),
       sha,
     }),
