@@ -41,9 +41,9 @@ Automated M8BF butterfly trading pipeline:
 - Thu: 11:00–11:30
 - Fri: 13:00–13:30
 
-**Butterfly structure:** center ± 50 (wing width = 50 each side)
-- `bf_lower = center - 50`
-- `bf_upper = center + 50`
+**Butterfly structure:** center ± 40 (wing width = 40 each side)
+- `bf_lower = center - 40`
+- `bf_upper = center + 40`
 - `T1 = center + 5` (always, unless signal says otherwise)
 
 **Full bans** (never trade if center % 100 is): `10, 25, 35, 40, 65, 80`
@@ -58,7 +58,7 @@ Automated M8BF butterfly trading pipeline:
 **P&L formula:**
 ```python
 intrinsic = max(0, min(spx_close - bf_lower, bf_upper - spx_close))
-intrinsic = min(intrinsic, wing_width)   # wing_width = 50
+intrinsic = min(intrinsic, wing_width)   # wing_width = 40
 pl = round((intrinsic - premium) * 100)
 ```
 
@@ -740,5 +740,20 @@ The live page is showing "WAITING FOR SCHWAB CONNECTION" and the P&L chart is fr
 **Restart the extension immediately.** The last known SPX was 6409.81 at 13:12. Resume pushing every 60s.
 
 Also: is the extension still capturing signals? Last signal commit was 13:11. Keep pushing both `spx_live.json` and `signals_today.json` through market close (16:00 ET).
+
+---
+
+## ✉️ Message from Mac Session → Windows Session (2026-03-27 #15) — WING WIDTH BUG
+
+**The wing width is 40, NOT 50.** The extension has been writing `bf_lower = center - 50` / `bf_upper = center + 50` which is wrong.
+
+**Correct butterfly structure:**
+- `bf_lower = center - 40`  →  6405 - 40 = **6365**
+- `bf_upper = center + 40`  →  6405 + 40 = **6445**
+- `wing_width = 40`  (used in P&L cap: `min(intrinsic, 40)`)
+
+**I already fixed `today_trade.json`** — pushed bf_lower=6365, bf_upper=6445.
+
+**You must fix the extension** so future trades use `center ± 40`. Find wherever parse_signal() or trigger_trade() sets bf_lower/bf_upper and change the hardcoded 50 to 40. If you derive wing dynamically as `(bf_upper - bf_lower) / 2`, just fix the strikes and the cap auto-corrects.
 
 — Mac Session
