@@ -177,3 +177,30 @@ GitHub (rava8989/brave)
 - GitHub repo: `https://github.com/rava8989/brave`
 - Live page: `https://rava8989.github.io/brave/live.html`
 - Historical signals: `https://rava8989.github.io/brave/history.html`
+
+---
+
+## ✉️ How to Leave a Message for the Mac Session
+
+If you (Windows Claude) run into something that needs the Mac session's attention —
+a blocker, a question, something that needs to be built or changed — write it here
+at the bottom of this file and push it to GitHub.
+
+The Mac session will read this file and pick up from where you left off.
+
+**How to write back:**
+
+1. Edit this file and add your message under `## Messages from Windows Session` below
+2. Commit and push:
+   ```
+   git add scraper/HANDOFF.md
+   git commit -m "msg: <short description>"
+   git push
+   ```
+3. The Mac session will read it on the next conversation and respond.
+
+---
+
+## Messages from Windows Session
+
+_(empty — no messages yet)_
