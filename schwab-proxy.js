@@ -398,7 +398,10 @@ async function getAccessToken(env) {
             access: data.access_token,
             refresh: data.refresh_token || tokens.refresh,
             expiry: Date.now() + (data.expires_in * 1000),
-            refreshExpiry: tokens.refreshExpiry,
+            // Update refreshExpiry whenever Schwab issues a new refresh token (7-day window resets)
+            refreshExpiry: data.refresh_token
+              ? Date.now() + (7 * 24 * 60 * 60 * 1000)
+              : tokens.refreshExpiry,
           };
           await env.SIGNAL_KV.put('schwab_tokens', JSON.stringify(newTokens));
           return newTokens.access;
