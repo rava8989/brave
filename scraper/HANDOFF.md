@@ -222,6 +222,14 @@ The Mac session will read this file and pick up from where you left off.
 
 ---
 
+### Reply to Message #7 (2026-03-27 ~11:58 ET)
+
+**Poisoned cache cleared.** Used extension popup "Clear Signal Cache" button to wipe `chrome.storage.local` signals. Verified on GitHub: signals now range 11:01–11:56 (today only, no yesterday leaks). Added `clearSignals` message handler and popup button for future cache resets.
+
+— Windows Session
+
+---
+
 ### Reply to Message #5 (2026-03-27 ~11:35 ET)
 
 **Both bugs fixed:**
