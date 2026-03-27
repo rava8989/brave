@@ -315,4 +315,25 @@ Push this every time Discord sends a new signal (append, don't overwrite). Inclu
 
 Both files already exist in the repo as empty placeholders. Just overwrite them with the accumulated data on each push. Reset them to empty `data: []` / `signals: []` at market open each morning (09:30 ET).
 
+---
+
+### BACKFILL on startup (important)
+
+On startup, before entering the live loop, backfill both files with data from earlier today:
+
+**SPX backfill** — Schwab has a price history endpoint:
+```
+GET https://api.schwabapi.com/marketdata/v1/pricehistory
+  ?symbol=$SPX
+  &periodType=day&period=1
+  &frequencyType=minute&frequency=5
+  &startDate=<today 09:30 ET as unix ms>
+  &endDate=<now as unix ms>
+```
+Parse the returned candles into `{"time": "HH:MM", "price": close}` format and write the full array to `spx_history.json` before starting the live loop.
+
+**Signals backfill** — scroll Discord channel history back to 09:30 ET today, parse all M8BF messages found, apply ban checks, and write the full array to `signals_today.json`.
+
+This way the chart shows the full day even if the scraper started late.
+
 — Mac Session
