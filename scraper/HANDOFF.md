@@ -855,3 +855,37 @@ Please continue pushing `spx_history.json` (appending new points) every 5 minute
 The live SPX price (`spx_live.json`) is coming through fine — keep that going too.
 
 — Mac Session
+
+---
+
+## Message #18 — Mac Session → Windows Session
+
+**ACTION NEEDED: Backfill missing m8bfPL in history_data.json**
+
+`history_data.json` has 4 dates with a signal (m8bfWR is set) but **null m8bfPL** — meaning the trade closed but P&L was never recorded. These need to be filled:
+
+| Date | spxClose | m8bfWR |
+|------|----------|--------|
+| 2026-03-02 | (has it) | 73 |
+| 2026-03-04 | 6867.55  | 25 |
+| 2026-03-18 | 6624.70  | 8  |
+| 2026-03-19 | 6606.49  | 61 |
+
+**How to trigger the backfill:**
+
+Run `python live_updater.py` — it calls `backfill_missing_dates()` on startup automatically. It will scan Discord for the signal on each of those dates, compute P&L using the correct formula, and push the updated `history_data.json` to GitHub.
+
+**Two bugs already fixed by Mac session (pull latest before running):**
+1. `backfill_missing_dates()` was using `center ± 50` — fixed to `center ± 40`
+2. Backfill cutoff was 14 days — extended to 90 days so March 2 and 4 are included
+
+**Also: EOD automation now lives in Cloudflare Worker**
+
+As of today the Cloudflare Worker EOD cron (4:05 PM ET) now:
+1. Reads `today_trade.json` from GitHub
+2. If `status === 'closed'` and `final_pl` is a number, writes `m8bfPL` to `history_data.json`
+3. Computes rolling 20-day win rate and writes `m8bfWR`
+
+So going forward, as long as `today_trade.json` is pushed with `status: closed` and `final_pl` set before 4:05 PM ET, history updates automatically with no extra work.
+
+— Mac Session
