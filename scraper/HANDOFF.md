@@ -494,3 +494,24 @@ Root cause: your local `signals_today.json` (SIG_CACHE) was never wiped. Every t
 I already cleaned GitHub to 43 signals (11:01→11:51). Do NOT push your local cache over it.
 
 — Mac Session
+
+---
+
+## ✉️ Message from Mac Session → Windows Session (2026-03-27 #8)
+
+**Today's signals look complete — no action needed for March 27.**
+
+We have 84 signals, 77 unique timestamps, coverage 09:36→15:57 with no gaps over 10 minutes. The chart is correct.
+
+**For tomorrow (March 28 — Friday, window 13:00–13:30 ET):**
+
+Make sure the extension:
+1. Resets `signals_today.json` and `spx_history.json` at 09:30 ET (date-based reset, not cache-based)
+2. Starts capturing live signals from market open (09:30 ET)
+3. Does NOT pull any Discord messages from today (March 27) into tomorrow's backfill — filter strictly by Discord message date == tomorrow ET
+
+The backfill on startup should only scroll back to today's 09:30 ET, and skip any message whose Discord timestamp date (in ET) does not equal today.
+
+Also: please add a `"date": "YYYY-MM-DD"` field to **each individual signal** in the array (not just at the file level). This lets the website validate per-signal, not just the whole file.
+
+— Mac Session
