@@ -191,6 +191,7 @@ document.getElementById('themeToggle').addEventListener('click', () => {
 let trade = null;         // today_trade.json data
 let plHistory = [];       // [{time, spx, pl}]
 let plChart = null;
+let payoffChart = null;
 let spxHistory = [];      // [{time, price}] from spx_history.json
 let signalsToday = [];    // [{time, center, t1, premium, banned}] from signals_today.json
 let spxChart = null;
@@ -698,6 +699,127 @@ function getNextWindow() {
   return null;
 }
 
+// ─── Payoff / Risk Profile Chart ─────────────────────────────────────────────
+function createPayoffChart(trade, spxNow) {
+  const ctx = document.getElementById('payoffCanvas');
+  if (!ctx) return;
+  if (payoffChart) { payoffChart.destroy(); payoffChart = null; }
+
+  const { bf_lower, bf_upper, premium } = trade;
+  const wing = (bf_upper - bf_lower) / 2;
+  const pad  = 70;
+  const lo   = Math.floor(bf_lower - pad);
+  const hi   = Math.ceil(bf_upper  + pad);
+
+  const beLow  = +(bf_lower + premium).toFixed(1);
+  const beHigh = +(bf_upper - premium).toFixed(1);
+
+  const labels = [], payoffData = [];
+  for (let v = lo; v <= hi; v++) {
+    labels.push(v);
+    const intr = Math.max(0, Math.min(v - bf_lower, bf_upper - v));
+    payoffData.push(Math.round((Math.min(intr, wing) - premium) * 100));
+  }
+
+  // Custom plugin — draws SPX vertical line + breakeven markers
+  const overlayPlugin = {
+    id: 'payoffOverlay',
+    afterDraw(chart) {
+      const { spxNow, beLow, beHigh } = chart._opts || {};
+      const { ctx: cx, chartArea: ca, scales } = chart;
+
+      // Breakeven lines
+      for (const be of [beLow, beHigh]) {
+        if (be == null) continue;
+        const idx = Math.round(be - lo);
+        if (idx < 0 || idx >= labels.length) continue;
+        const x = scales.x.getPixelForValue(idx);
+        cx.save();
+        cx.beginPath(); cx.moveTo(x, ca.top); cx.lineTo(x, ca.bottom);
+        cx.strokeStyle = 'rgba(74,222,128,.55)'; cx.lineWidth = 1;
+        cx.setLineDash([3, 4]); cx.stroke();
+        cx.font = '600 9px Inter'; cx.fillStyle = '#4ade80';
+        cx.textAlign = 'center';
+        cx.fillText('BE ' + be.toFixed(0), x, ca.top + 11);
+        cx.restore();
+      }
+
+      // SPX current price line
+      if (spxNow != null) {
+        const idx = Math.round(spxNow - lo);
+        if (idx >= 0 && idx < labels.length) {
+          const x = scales.x.getPixelForValue(idx);
+          cx.save();
+          cx.beginPath(); cx.moveTo(x, ca.top); cx.lineTo(x, ca.bottom);
+          cx.strokeStyle = '#fbbf24'; cx.lineWidth = 2;
+          cx.setLineDash([6, 3]); cx.stroke();
+          cx.font = 'bold 10px JetBrains Mono'; cx.fillStyle = '#fbbf24';
+          cx.textAlign = 'center';
+          cx.fillText(spxNow.toFixed(0), x, ca.bottom + 14);
+          cx.restore();
+        }
+      }
+    }
+  };
+
+  const c = chartColors();
+  payoffChart = new Chart(ctx, {
+    type: 'line',
+    plugins: [overlayPlugin],
+    data: {
+      labels,
+      datasets: [
+        {
+          data: payoffData,
+          borderColor: '#818cf8',
+          borderWidth: 2.5,
+          pointRadius: 0,
+          fill: false,
+          tension: 0,
+        },
+        {
+          data: labels.map(() => 0),
+          borderColor: c.zero,
+          borderWidth: 1,
+          borderDash: [4, 4],
+          pointRadius: 0,
+          fill: false,
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: items => 'SPX: ' + items[0].label,
+            label: item => item.datasetIndex === 0 ? 'P&L: ' + fmt$(item.parsed.y) : null,
+          }
+        }
+      },
+      scales: {
+        x: {
+          ticks: { color: c.text, font: { family: 'JetBrains Mono', size: 10 }, maxTicksLimit: 8, callback(v) { return this.getLabelForValue(v); } },
+          grid: { color: c.grid },
+        },
+        y: {
+          afterFit: axis => { axis.width = 68; },
+          ticks: { color: c.text, font: { family: 'JetBrains Mono', size: 10 }, callback: v => fmt$(v) },
+          grid: { color: c.grid },
+        }
+      }
+    }
+  });
+  payoffChart._opts = { spxNow, beLow, beHigh };
+}
+function updatePayoffChart(spxNow) {
+  if (!payoffChart) return;
+  payoffChart._opts = { ...payoffChart._opts, spxNow };
+  payoffChart.update('none');
+}
+
 // ─── RENDER ──────────────────────────────────────────────────────────────────
 function render() {
   const main = document.getElementById('mainContent');
@@ -798,6 +920,21 @@ function render() {
       <div class="bf-viz" id="bfViz"></div>
     </div>
 
+    <div class="chart-card">
+      <div class="chart-header">
+        <span class="chart-title">Risk Profile · Payoff at Expiry</span>
+        <div class="chart-header-spacer"></div>
+        <span class="last-update">
+          Max +$${Math.round(((trade.bf_upper-trade.bf_lower)/2 - trade.premium)*100)} &nbsp;·&nbsp;
+          Max -$${Math.round(trade.premium*100)} &nbsp;·&nbsp;
+          BE ${(trade.bf_lower+trade.premium).toFixed(0)} – ${(trade.bf_upper-trade.premium).toFixed(0)}
+        </span>
+      </div>
+      <div class="chart-wrap" style="height:220px;">
+        <canvas id="payoffCanvas"></canvas>
+      </div>
+    </div>
+
     <div class="details-card">
       <div class="details-title">Trade Details</div>
       <div class="details-grid">
@@ -813,11 +950,15 @@ function render() {
         <div class="detail-row"><span class="detail-label">Max Profit</span><span class="detail-val" style="color:var(--green)">+$${Math.round(((trade.bf_upper - trade.bf_lower) / 2 - trade.premium) * 100)}</span></div>
         <div class="detail-row"><span class="detail-label">Status</span><span class="detail-val">${(trade.status || 'open').toUpperCase()}</span></div>
         <div class="detail-row"><span class="detail-label">T1 (M8BF)</span><span class="detail-val">${trade.t1 !== undefined ? trade.t1 : trade.center + 5}</span></div>
+        <div class="detail-row"><span class="detail-label">Breakeven Low</span><span class="detail-val">${(trade.bf_lower + trade.premium).toFixed(1)}</span></div>
+        <div class="detail-row"><span class="detail-label">Breakeven High</span><span class="detail-val">${(trade.bf_upper - trade.premium).toFixed(1)}</span></div>
+        <div class="detail-row"><span class="detail-label">Profit Zone</span><span class="detail-val">${(trade.bf_lower+trade.premium).toFixed(0)} – ${(trade.bf_upper-trade.premium).toFixed(0)}</span></div>
       </div>
     </div>
   `;
 
   createChart();
+  createPayoffChart(trade, spxPrice);
   renderBFViz(trade, spxPrice);
   rebuildChart();
 }
@@ -856,6 +997,7 @@ async function tick() {
     if (lu) lu.textContent = 'Updated ' + t;
     pushChartPoint(t, pl);
     renderBFViz(trade, spxPrice);
+    updatePayoffChart(spxPrice);
   }
 
   updateSPXTicker();
