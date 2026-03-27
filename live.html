@@ -215,19 +215,44 @@ function checkOAuthCallback() {
   const code = params.get('code');
   if (!code) return;
 
-  // Show overlay with the code
+  // Show overlay with the code — no inline onclick, no URL interpolation into HTML
+  const fullUrl = window.location.href;
   const overlay = document.createElement('div');
   overlay.style.cssText = `position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:999;display:flex;align-items:center;justify-content:center;`;
-  overlay.innerHTML = `
-    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:32px;max-width:600px;width:90%;text-align:center;">
-      <div style="font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:700;color:var(--accent);margin-bottom:8px;">✅ Schwab Auth Code Received</div>
-      <div style="font-size:12px;color:var(--text2);margin-bottom:16px;">Copy this full URL and paste it into schwab_auth.py on your Windows machine:</div>
-      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px;font-family:'JetBrains Mono',monospace;font-size:11px;word-break:break-all;color:var(--text);text-align:left;">${window.location.href}</div>
-      <button onclick="navigator.clipboard.writeText('${window.location.href}').then(()=>this.textContent='Copied!')" style="margin-top:16px;padding:8px 24px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;cursor:pointer;">Copy URL</button>
-      <div style="margin-top:12px;font-size:11px;color:var(--text3);">Then close this and dismiss this overlay.</div>
-      <button onclick="this.closest('div[style]').remove()" style="margin-top:8px;padding:6px 16px;background:transparent;color:var(--text3);border:1px solid var(--border);border-radius:6px;font-size:11px;cursor:pointer;">Dismiss</button>
-    </div>
-  `;
+
+  const box = document.createElement('div');
+  box.style.cssText = `background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:32px;max-width:600px;width:90%;text-align:center;`;
+
+  const title = document.createElement('div');
+  title.style.cssText = `font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:700;color:var(--accent);margin-bottom:8px;`;
+  title.textContent = '✅ Schwab Auth Code Received';
+
+  const sub = document.createElement('div');
+  sub.style.cssText = `font-size:12px;color:var(--text2);margin-bottom:16px;`;
+  sub.textContent = 'Copy this full URL and paste it into schwab_auth.py on your Windows machine:';
+
+  const urlBox = document.createElement('div');
+  urlBox.style.cssText = `background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px;font-family:'JetBrains Mono',monospace;font-size:11px;word-break:break-all;color:var(--text);text-align:left;`;
+  urlBox.textContent = fullUrl;  // textContent — no XSS risk
+
+  const copyBtn = document.createElement('button');
+  copyBtn.style.cssText = `margin-top:16px;padding:8px 24px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;cursor:pointer;display:block;margin-left:auto;margin-right:auto;`;
+  copyBtn.textContent = 'Copy URL';
+  copyBtn.addEventListener('click', () => {
+    navigator.clipboard.writeText(fullUrl).then(() => { copyBtn.textContent = 'Copied!'; });
+  });
+
+  const hint = document.createElement('div');
+  hint.style.cssText = `margin-top:12px;font-size:11px;color:var(--text3);`;
+  hint.textContent = 'Then close this tab and dismiss this overlay.';
+
+  const dismissBtn = document.createElement('button');
+  dismissBtn.style.cssText = `margin-top:8px;padding:6px 16px;background:transparent;color:var(--text3);border:1px solid var(--border);border-radius:6px;font-size:11px;cursor:pointer;`;
+  dismissBtn.textContent = 'Dismiss';
+  dismissBtn.addEventListener('click', () => overlay.remove());
+
+  box.append(title, sub, urlBox, copyBtn, hint, dismissBtn);
+  overlay.appendChild(box);
   document.body.appendChild(overlay);
 }
 
@@ -629,12 +654,20 @@ async function tick() {
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 async function init() {
-  checkOAuthCallback();
-  await loadTrade();
-  updateLiveBadge();
-  render();
-  await tick();
-  pollTimer = setInterval(tick, 30_000);
+  try {
+    checkOAuthCallback();
+    await loadTrade();
+    updateLiveBadge();
+    render();
+    await tick();
+    pollTimer = setInterval(tick, 30_000);
+  } catch (err) {
+    console.error('[Σ3] init failed:', err);
+    const main = document.getElementById('mainContent');
+    if (main) {
+      main.innerHTML = `<div class="no-trade"><div class="no-trade-icon">⚠️</div><div class="no-trade-title">Failed to load</div><div class="no-trade-sub">${err.message || 'Unknown error'} — try refreshing.</div></div>`;
+    }
+  }
 }
 
 init();
