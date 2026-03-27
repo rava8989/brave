@@ -139,11 +139,72 @@ async def scrape_once(page, on_signal):
         print(f"[Scraper] scrape_once error: {e}")
 
 
-async def run_scraper(on_signal_callback, poll_interval: int = 30):
+async def fetch_signal_for_date(page, channel_id: str, target_date) -> tuple | None:
+    """
+    Search Discord message history for a valid M8BF signal on target_date.
+    Uses Discord's REST API via the authenticated browser session — no stored token needed.
+    Returns (center, t1, premium) or None if no valid signal found.
+    """
+    dow = target_date.weekday()
+    if dow not in WINDOWS:
+        return None
+
+    win_lo, win_hi = WINDOWS[dow]
+
+    # Build snowflakes bracketing 9:00–17:00 ET on target_date
+    discord_epoch = 1420070400000
+    start_et = datetime(target_date.year, target_date.month, target_date.day, 9, 0, tzinfo=ET)
+    end_et   = datetime(target_date.year, target_date.month, target_date.day, 17, 0, tzinfo=ET)
+    after_snow  = str(int(start_et.timestamp() * 1000 - discord_epoch) << 22)
+    before_snow = str(int(end_et.timestamp()   * 1000 - discord_epoch) << 22)
+
+    try:
+        messages = await page.evaluate(f"""
+            async () => {{
+                const r = await fetch('/api/v9/channels/{channel_id}/messages?limit=100&after={after_snow}&before={before_snow}');
+                if (!r.ok) return [];
+                return await r.json();
+            }}
+        """)
+    except Exception as e:
+        print(f"[Backfill] Discord API error for {target_date}: {e}")
+        return None
+
+    if not isinstance(messages, list):
+        return None
+
+    # messages come newest-first from Discord, reverse to chronological
+    for msg in reversed(messages):
+        text = msg.get("content", "")
+        result = parse_signal(text)
+        if not result:
+            continue
+
+        center, t1, premium = result
+
+        ts_str = msg.get("timestamp", "")
+        if not ts_str:
+            continue
+        msg_dt   = datetime.fromisoformat(ts_str.replace("Z", "+00:00")).astimezone(ET)
+        msg_mins = msg_dt.hour * 60 + msg_dt.minute
+
+        if win_lo <= msg_mins < win_hi:
+            if not is_banned(center, t1):
+                print(f"[Backfill] {target_date}: center={center} t1={t1} premium={premium} at {msg_dt.strftime('%H:%M ET')}")
+                return center, t1, premium
+            else:
+                print(f"[Backfill] {target_date}: signal BANNED center={center} t1={t1}")
+
+    return None
+
+
+async def run_scraper(on_signal_callback, poll_interval: int = 30,
+                      on_startup=None):
     """
     Main scraper loop. Opens Chrome, navigates to Discord, polls every N seconds.
 
-    on_signal_callback(center, t1, premium, dt) is called when a valid signal is found.
+    on_signal_callback(center, t1, premium, dt) — called when a valid live signal is found.
+    on_startup(page)                             — optional async coroutine called once after login.
     """
     from playwright.async_api import async_playwright
 
@@ -169,6 +230,10 @@ async def run_scraper(on_signal_callback, poll_interval: int = 30):
         await page.goto(CHANNEL_URL)
         await page.wait_for_load_state("networkidle")
         print(f"[Scraper] Monitoring channel. Polling every {poll_interval}s.")
+
+        # Run startup hook (backfill etc.) before the main loop
+        if on_startup:
+            await on_startup(page)
 
         triggered_today = set()   # avoid double-triggering same center
 
