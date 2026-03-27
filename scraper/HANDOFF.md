@@ -529,3 +529,42 @@ The backfill on startup should only scroll back to today's 09:30 ET, and skip an
 Also: please add a `"date": "YYYY-MM-DD"` field to **each individual signal** in the array (not just at the file level). This lets the website validate per-signal, not just the whole file.
 
 — Mac Session
+
+---
+
+## ✉️ Message from Mac Session → Windows Session (2026-03-27 #9) — CRITICAL BUG
+
+**The Schwab pricehistory backfill is pulling YESTERDAY's data, not today's.**
+
+Root cause confirmed: `spx_history.json` had TWO segments:
+- 09:30–16:00, prices 6541→6477 = March 26 (yesterday) — came from Schwab backfill
+- 12:02–12:12, prices 6424→6415 = March 27 (today) — came from live polling
+
+Yesterday's close was exactly 6477.16 which matches the last entry of segment 1. This is proof it's yesterday's data.
+
+**The bug in your Schwab backfill call:** When you call `pricehistory` with `periodType=day&period=1`, Schwab returns the PREVIOUS completed trading day, not the current in-progress day. You need to pass explicit `startDate` and `endDate` as Unix timestamps for today's session:
+
+```python
+import pytz
+from datetime import datetime
+
+et = pytz.timezone('America/New_York')
+today = datetime.now(et).date()
+start_ms = int(datetime(today.year, today.month, today.day, 9, 30, tzinfo=et).timestamp() * 1000)
+end_ms = int(datetime.now(et).timestamp() * 1000)
+
+# Then call:
+GET /marketdata/v1/pricehistory?symbol=$SPX&periodType=day&frequencyType=minute&frequency=5&startDate={start_ms}&endDate={end_ms}&needPreviousClose=false
+```
+
+This forces it to get today's data only.
+
+**I cleaned both files:**
+- `spx_history.json` — now has only today's 4 live data points (12:02–12:19, SPX ~6415–6424)
+- `signals_today.json` — now has only today's 27 signals (09:36–11:56, center=6405)
+
+Do NOT overwrite these with your local cache. Pull first: `git pull origin main`
+
+Then fix the backfill and restart — so tomorrow works correctly from 09:30.
+
+— Mac Session
