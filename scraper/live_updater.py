@@ -245,6 +245,89 @@ async def backfill_missing_dates(page):
         print("[Backfill] history_data.json pushed to GitHub.")
 
 
+# ── Startup backfill ─────────────────────────────────────────────────────────
+
+def backfill_spx_history():
+    """On startup, fetch today's SPX price history from Schwab and populate spx_history.json."""
+    candles = schwab_client.get_spx_history_today()
+    if not candles:
+        print("[Backfill] No SPX history candles returned.")
+        return
+    hist = {"date": date.today().strftime("%Y-%m-%d"), "data": candles}
+    save_cache(SPX_HIST_CACHE, hist)
+    push_json("spx_history.json", hist, f"backfill: {len(candles)} SPX candles")
+    print(f"[Backfill] SPX history: {len(candles)} data points loaded.")
+
+
+async def backfill_signals_today(page):
+    """On startup, search Discord for today's signals and populate signals_today.json."""
+    from discord_scraper import parse_signal, is_banned, DISCORD_CHANNEL_ID, ET
+    today = date.today()
+
+    # Build snowflakes for 09:30 ET - now
+    discord_epoch = 1420070400000
+    start_et = datetime(today.year, today.month, today.day, 9, 30, tzinfo=ET)
+    end_et   = datetime.now(tz=ET)
+    after_snow  = str(int(start_et.timestamp() * 1000 - discord_epoch) << 22)
+    before_snow = str(int(end_et.timestamp()   * 1000 - discord_epoch) << 22)
+
+    if not str(DISCORD_CHANNEL_ID).isdigit():
+        print("[Backfill] Invalid channel ID — skipping signals backfill")
+        return
+
+    try:
+        messages = await page.evaluate("""
+            async ([ch, after, before]) => {
+                const r = await fetch(`/api/v9/channels/${ch}/messages?limit=100&after=${after}&before=${before}`);
+                if (!r.ok) return [];
+                return await r.json();
+            }
+        """, [str(DISCORD_CHANNEL_ID), after_snow, before_snow])
+    except Exception as e:
+        print(f"[Backfill] Discord API error for signals: {e}")
+        return
+
+    if not isinstance(messages, list):
+        return
+
+    sigs = {"date": today.strftime("%Y-%m-%d"), "signals": []}
+    seen_centers = set()
+
+    for msg in reversed(messages):
+        text = msg.get("content", "")
+        result = parse_signal(text)
+        if not result:
+            continue
+        center, t1, premium = result
+        if center in seen_centers:
+            continue
+        seen_centers.add(center)
+
+        ts_str = msg.get("timestamp", "")
+        if ts_str:
+            msg_dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00")).astimezone(ET)
+            time_str = msg_dt.strftime("%H:%M")
+        else:
+            time_str = "??:??"
+
+        banned = is_banned(center, t1)
+        sigs["signals"].append({
+            "time": time_str,
+            "center": center,
+            "t1": t1,
+            "premium": premium,
+            "banned": banned,
+        })
+        print(f"[Backfill] Signal: center={center} t1={t1} premium={premium} banned={banned} at {time_str}")
+
+    if sigs["signals"]:
+        save_cache(SIG_CACHE, sigs)
+        push_json("signals_today.json", sigs, f"backfill: {len(sigs['signals'])} signals today")
+        print(f"[Backfill] Signals: {len(sigs['signals'])} signals loaded.")
+    else:
+        print("[Backfill] No signals found in today's Discord history.")
+
+
 # ── Push schedule: xx:02, xx:07, xx:12, xx:17, xx:22... (every 5 min, offset +2)
 def should_push(dt: datetime) -> bool:
     return dt.minute % 5 == 2
@@ -336,11 +419,18 @@ async def main():
         print("[Schwab] Run: python schwab_auth.py")
         return
 
+    # Backfill SPX history from Schwab before starting live loop
+    backfill_spx_history()
+
+    # Combined startup hook: backfill missing history dates + today's signals
+    async def on_startup(page):
+        await backfill_missing_dates(page)
+        await backfill_signals_today(page)
+
     # Run SPX polling + Discord scraper concurrently
-    # backfill_missing_dates runs once after Discord login before the main loop
     await asyncio.gather(
         spx_poll_loop(),
-        run_scraper(on_signal, poll_interval=30, on_startup=backfill_missing_dates,
+        run_scraper(on_signal, poll_interval=30, on_startup=on_startup,
                     on_any_signal_callback=on_any_signal),
     )
 

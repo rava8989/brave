@@ -120,6 +120,47 @@ def get_spx_price() -> dict | None:
         return None
 
 
+PRICE_HISTORY_URL = "https://api.schwabapi.com/marketdata/v1/pricehistory"
+
+def get_spx_history_today() -> list:
+    """
+    Fetch today's intraday SPX prices (5-min candles) from Schwab.
+    Returns list of {"time": "HH:MM", "price": float} or empty list on error.
+    """
+    from zoneinfo import ZoneInfo
+    ET = ZoneInfo("America/New_York")
+    today = datetime.now(tz=ET)
+    market_open = today.replace(hour=9, minute=30, second=0, microsecond=0)
+    start_ms = int(market_open.timestamp() * 1000)
+    end_ms = int(today.timestamp() * 1000)
+
+    try:
+        token = get_access_token()
+        resp = requests.get(PRICE_HISTORY_URL, headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+        }, params={
+            "symbol": "$SPX",
+            "periodType": "day",
+            "period": 1,
+            "frequencyType": "minute",
+            "frequency": 5,
+            "startDate": start_ms,
+            "endDate": end_ms,
+        }, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+        candles = data.get("candles", [])
+        result = []
+        for c in candles:
+            ts = datetime.fromtimestamp(c["datetime"] / 1000, tz=ET)
+            result.append({"time": ts.strftime("%H:%M"), "price": round(c["close"], 2)})
+        return result
+    except Exception as e:
+        print(f"[Schwab] Price history error: {e}")
+        return []
+
+
 # ── Auth URL builder ───────────────────────────────────────────────────────────
 
 def get_auth_url() -> str:
