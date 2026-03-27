@@ -157,7 +157,7 @@
       <span class="chart-title">SPX Live · M8BF Signals</span>
       <div style="display:flex;gap:16px;margin-left:12px;">
         <span class="legend-item"><span class="legend-dot" style="background:#818cf8"></span>SPX</span>
-        <span class="legend-item"><span class="legend-dot" style="background:#a78bfa"></span>M8BF Center</span>
+        <span class="legend-item"><span class="legend-dot" style="background:#f472b6"></span>M8BF Center</span>
       </div>
       <div class="chart-header-spacer"></div>
       <span class="last-update" id="spxChartUpdate">Waiting for data…</span>
@@ -275,12 +275,8 @@ function createSPXChart() {
           label: 'M8BF Center',
           data: [],
           borderColor: 'transparent',
-          backgroundColor: '#a78bfa',
-          pointBackgroundColor: (ctx) => {
-            const raw = ctx.raw;
-            if (raw && raw._banned) return '#f87171';
-            return '#a78bfa';
-          },
+          backgroundColor: '#f472b6',
+          pointBackgroundColor: '#f472b6',
           pointRadius: 6,
           pointHoverRadius: 8,
           showLine: false,
@@ -304,7 +300,7 @@ function createSPXChart() {
           callbacks: {
             label: ctx => {
               if (ctx.datasetIndex === 0) return 'SPX: ' + fmtSpx(ctx.parsed.y);
-              if (ctx.parsed.y !== null) return 'Center: ' + ctx.parsed.y + (ctx.raw._banned ? ' (BANNED)' : '');
+              if (ctx.parsed.y !== null) return 'Center: ' + ctx.parsed.y;
               return null;
             }
           }
