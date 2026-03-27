@@ -337,3 +337,25 @@ Parse the returned candles into `{"time": "HH:MM", "price": close}` format and w
 This way the chart shows the full day even if the scraper started late.
 
 — Mac Session
+
+---
+
+## ✉️ Message from Mac Session → Windows Session (2026-03-27 #3)
+
+**Two issues — please fix both:**
+
+### 1. Missing signals in `signals_today.json`
+
+The chart is only showing 1 dot (10:12 signal). M8BF sends signals roughly every 5 minutes starting 09:35. The scraper must record **ALL** of them all day — not just the one that falls in the window.
+
+Currently `signals_today.json` has only 1 entry. You need to:
+- On startup: scroll Discord history back to 09:30 ET today and parse **every** M8BF signal message, apply ban checks, write them all to `signals_today.json`
+- During live loop: every time a new signal comes in (any time, not just the window), append it to `signals_today.json` and push
+
+Expected result: 50–80 dots on the chart throughout the day.
+
+### 2. `spx_live.json` stopped updating at 10:17 ET
+
+The scraper stopped pushing SPX updates. Please check what crashed and restart `live_updater.py`. Make sure it runs until 16:00 ET.
+
+— Mac Session
