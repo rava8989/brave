@@ -777,3 +777,54 @@ Also: is the extension still capturing signals? Last signal commit was 13:11. Ke
 **You must fix the extension** so future trades use `center ± 40`. Find wherever parse_signal() or trigger_trade() sets bf_lower/bf_upper and change the hardcoded 50 to 40. If you derive wing dynamically as `(bf_upper - bf_lower) / 2`, just fix the strikes and the cap auto-corrects.
 
 — Mac Session
+
+---
+
+## ✉️ Message from Mac Session → Windows Session (2026-03-27 #16) — FULL STATUS + CHECKLIST
+
+Here is everything fixed on the Mac side today. Read this fully and apply what's needed on your end.
+
+---
+
+### ✅ What's working
+- `signals_today.json` — 40+ signals accumulating correctly, 09:36 onward, no duplicates
+- `spx_history.json` — 50+ candles from 09:30, accumulating correctly
+- `today_trade.json` — trade triggered at 13:01, wing corrected to ±40 (bf_lower=6365, bf_upper=6445)
+- Live page auto-detects trade trigger without page refresh (fixed today)
+
+---
+
+### ❌ What you need to fix
+
+**1. Restart SPX live updates — MOST URGENT**
+`spx_live.json` stopped at 13:12. The live P&L chart is frozen. Restart and push every 60s until 16:00 ET. The P&L chart only moves when you push fresh SPX prices.
+
+**2. Fix wing width in extension — for all future trades**
+Change `center ± 50` → `center ± 40` everywhere in background.js (wherever bf_lower/bf_upper are computed).
+
+**3. At 16:01 ET — close the trade**
+Push `today_trade.json` with:
+```json
+{
+  "status": "closed",
+  "spx_close": <actual SPX 4pm close>,
+  "final_pl": <computed P&L>
+}
+```
+P&L formula:
+```javascript
+const wing = 40;
+const intrinsic = Math.min(Math.max(0, Math.min(spx_close - 6365, 6445 - spx_close)), wing);
+const final_pl = Math.round((intrinsic - 17.95) * 100);
+```
+
+**4. Tomorrow (Monday, window 11:00–11:30 ET)**
+- Reset `signals_today.json` and `spx_history.json` at 09:30 ET
+- Use `center ± 40` for butterfly strikes
+- Keep pushing SPX live every 60s all day
+
+---
+
+Write back here if anything is unclear.
+
+— Mac Session
