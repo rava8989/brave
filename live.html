@@ -858,32 +858,17 @@ function render() {
     ? Math.min(Math.max(0, Math.min(spxPrice - trade.bf_lower, trade.bf_upper - spxPrice)), (trade.bf_upper - trade.bf_lower) / 2)
     : null;
 
-  const statusDot = trade.status === 'closed' ? 'red' : (schwabConnected ? 'green' : 'yellow');
-  const statusText = trade.status === 'closed'
-    ? `CLOSED · SPX ${fmtSpx(trade.spx_close)}`
-    : (schwabConnected ? `LIVE · Last update ${document.getElementById('lastUpdate')?.textContent || '—'}` : 'WAITING FOR SCHWAB CONNECTION');
-
   main.innerHTML = `
-    ${!schwabConnected && trade.status !== 'closed' ? `
-    <div class="connect-banner">
-      <span>⚡ Waiting for live data from Windows machine — make sure the Chrome extension is running on Discord</span>
-    </div>` : ''}
-
     ${trade.status === 'closed' ? `
     <div class="closed-banner ${currentPL >= 0 ? 'win' : 'loss'}">
       TRADE CLOSED · Final P&L: ${fmt$(currentPL)} · SPX Close: ${fmtSpx(trade.spx_close)}
     </div>` : ''}
 
-    <div class="status-bar">
-      <div class="dot" style="background:var(--${statusDot})"></div>
-      <span>${statusText}</span>
-    </div>
-
     <div class="stats-row">
       <div class="stat-card">
         <div class="stat-label">Current P&L</div>
         <div class="stat-value ${plClass(currentPL)}" id="statPL">${fmt$(currentPL)}</div>
-        <div class="stat-sub" id="statPLSub">${currentPL !== null ? (currentPL >= 0 ? 'Profit' : 'Loss') : 'Waiting…'}</div>
+        <div class="stat-sub" id="statPLSub">${currentPL !== null ? (currentPL >= 0 ? 'Profit' : 'Loss') : '—'}</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">SPX Now</div>
@@ -898,7 +883,7 @@ function render() {
       <div class="stat-card">
         <div class="stat-label">Intrinsic Value</div>
         <div class="stat-value" id="statIntrinsic">${currentIntrinsic !== null ? '$' + (currentIntrinsic * 100).toFixed(0) : '—'}</div>
-        <div class="stat-sub" id="statIntrinsicSub">${currentIntrinsic !== null ? currentIntrinsic.toFixed(2) + ' per share' : 'Waiting…'}</div>
+        <div class="stat-sub" id="statIntrinsicSub">${currentIntrinsic !== null ? currentIntrinsic.toFixed(2) + ' per share' : '—'}</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">Signal Time</div>
@@ -909,17 +894,6 @@ function render() {
         <div class="stat-label">Max Profit</div>
         <div class="stat-value green">$${Math.round(((trade.bf_upper - trade.bf_lower) / 2 - trade.premium) * 100)}</div>
         <div class="stat-sub">At SPX = ${trade.center}</div>
-      </div>
-    </div>
-
-    <div class="chart-card">
-      <div class="chart-header">
-        <span class="chart-title">P&L Chart (Intraday)</span>
-        <div class="chart-header-spacer"></div>
-        <span class="last-update" id="lastUpdate">—</span>
-      </div>
-      <div class="chart-wrap">
-        <canvas id="plCanvas"></canvas>
       </div>
     </div>
 
@@ -965,10 +939,8 @@ function render() {
     </div>
   `;
 
-  createChart();
   createPayoffChart(trade, spxPrice);
   renderBFViz(trade, spxPrice);
-  rebuildChart();
 }
 
 // ─── Ticker (live updates every 30s) ─────────────────────────────────────────
@@ -988,20 +960,11 @@ async function tick() {
 
   await refreshSPX();
 
-  // Update chart with last known price even when data is stale — chart never freezes
-  if (spxPrice !== null && trade && trade.triggered && trade.status !== 'closed') {
+  // Update stat cards and charts in-place with latest SPX price
+  if (spxPrice !== null && trade && trade.triggered) {
     const pl = computePL(trade, spxPrice);
-    const t = timeLabel();
-    plHistory.push({ time: t, spx: spxPrice, pl });
-    // Keep last 390 points (full trading day at 1/min)
-    if (plHistory.length > 390) plHistory.shift();
-
-    // Update stats in-place if chart already rendered
     const statPL = document.getElementById('statPL');
-    if (statPL) {
-      statPL.textContent = fmt$(pl);
-      statPL.className = 'stat-value ' + plClass(pl);
-    }
+    if (statPL) { statPL.textContent = fmt$(pl); statPL.className = 'stat-value ' + plClass(pl); }
     const statPLSub = document.getElementById('statPLSub');
     if (statPLSub) statPLSub.textContent = pl >= 0 ? 'Profit' : 'Loss';
     const statSPX = document.getElementById('statSPX');
@@ -1011,9 +974,6 @@ async function tick() {
     if (statI) statI.textContent = '$' + (intrinsic * 100).toFixed(0);
     const statISub = document.getElementById('statIntrinsicSub');
     if (statISub) statISub.textContent = intrinsic.toFixed(2) + ' per share';
-    const lu = document.getElementById('lastUpdate');
-    if (lu) lu.textContent = 'Updated ' + t;
-    pushChartPoint(t, pl);
     renderBFViz(trade, spxPrice);
     updatePayoffChart(spxPrice);
   }
