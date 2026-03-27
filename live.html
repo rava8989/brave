@@ -858,7 +858,7 @@ function render() {
   main.innerHTML = `
     ${!schwabConnected && trade.status !== 'closed' ? `
     <div class="connect-banner">
-      <span>⚡ Waiting for Windows machine to connect Schwab API — start live_updater.py</span>
+      <span>⚡ Waiting for live data from Windows machine — make sure the Chrome extension is running on Discord</span>
     </div>` : ''}
 
     ${trade.status === 'closed' ? `
