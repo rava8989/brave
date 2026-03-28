@@ -837,9 +837,12 @@ async function init() {
 
       // M8BF runs whenever it's not hard-blocked (theme=strad/gxbf = runs alongside; blockT=0%rule = user override off)
       // VIX-blocked GXBF (blockT='vix') does NOT block M8BF — they are independent strategies
-      signal.m8bfRan = (signal.theme === 'm8bf') ||
-                       ((signal.theme === 'strad' || signal.theme === 'gxbf') && signal.blockT !== '0%rule') ||
-                       (signal.theme === 'block' && signal.blockT === 'vix');
+      // EOM day: Straddle runs but M8BF does NOT (eomDay overrides theme to 'strad', so check explicitly)
+      signal.m8bfRan = !signal.eomDay && (
+        (signal.theme === 'm8bf') ||
+        ((signal.theme === 'strad' || signal.theme === 'gxbf') && signal.blockT !== '0%rule') ||
+        (signal.theme === 'block' && signal.blockT === 'vix')
+      );
 
       allRows.push({
         date: cur.date,
