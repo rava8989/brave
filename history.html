@@ -828,7 +828,7 @@ async function init() {
         if (prevWR === 0 && signal.rec.startsWith("M8BF")) {
           signal.rec = "Straddle @ 9:32 AM"; signal.theme = "strad"; signal.crossed = false;
           signal.blockT = "0%rule"; signal.entryT = "9:32 AM"; signal.badge = "STRADDLE"; signal.strikeInfo = null;
-        } else if (prevWR >= 90 && (signal.rec === "Straddle @ 9:32 AM" || signal.rec === "Straddle @ 9:32 AM (EOM)")) {
+        } else if (prevWR >= 90 && (signal.rec === "Straddle @ 9:32 AM" || signal.rec === "Straddle @ 9:32 AM (EOM)" || signal.rec === "NM Straddle @ 9:32 AM")) {
           const sc = m8Sched(dow);
           signal.rec = m8Msg(etDate); signal.theme = "m8bf"; signal.badge = "M8BF";
           signal.strikeInfo = sc; signal.entryT = sc?.window || ""; signal.blockT = "90%rule";
