@@ -661,7 +661,7 @@ async function handleScheduled(env) {
   const etMin = etNow.getMinutes();
   const isMorning = etHour === 9  && etMin >= 30 && etMin <= 40;
   const isEOD     = etHour === 16 && etMin >= 0  && etMin <= 15;
-  const isMarket  = (etHour > 9 || (etHour === 9 && etMin >= 30)) && etHour < 16;
+  const isMarket  = (etHour > 9 || (etHour === 9 && etMin >= 35)) && etHour < 16;
 
   // Always poll Discord during market hours
   let discordResult = {};
