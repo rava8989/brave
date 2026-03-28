@@ -846,8 +846,8 @@ async function init() {
           (signal.theme === 'block' && signal.blockT === 'vix')
         ))
       );
-      // Straddle runs only when theme='strad'; WR>=90 override switches theme to 'm8bf', blocking straddle
-      signal.stradRan = signal.theme === 'strad';
+      // Straddle is blocked only when WR>=90 override fired (blockT='90%rule'); runs on all other days
+      signal.stradRan = signal.blockT !== '90%rule';
 
       allRows.push({
         date: cur.date,
