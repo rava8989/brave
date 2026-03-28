@@ -828,20 +828,23 @@ async function init() {
         if (prevWR === 0 && signal.rec.startsWith("M8BF")) {
           signal.rec = "Straddle @ 9:32 AM"; signal.theme = "strad"; signal.crossed = false;
           signal.blockT = "0%rule"; signal.entryT = "9:32 AM"; signal.badge = "STRADDLE"; signal.strikeInfo = null;
-        } else if (prevWR >= 90 && signal.rec === "Straddle @ 9:32 AM") {
+        } else if (prevWR >= 90 && (signal.rec === "Straddle @ 9:32 AM" || signal.rec === "Straddle @ 9:32 AM (EOM)")) {
           const sc = m8Sched(dow);
           signal.rec = m8Msg(etDate); signal.theme = "m8bf"; signal.badge = "M8BF";
           signal.strikeInfo = sc; signal.entryT = sc?.window || ""; signal.blockT = "90%rule";
         }
       }
 
-      // M8BF runs whenever it's not hard-blocked (theme=strad/gxbf = runs alongside; blockT=0%rule = user override off)
-      // VIX-blocked GXBF (blockT='vix') does NOT block M8BF — they are independent strategies
-      // EOM day: Straddle runs but M8BF does NOT (eomDay overrides theme to 'strad', so check explicitly)
-      signal.m8bfRan = !signal.eomDay && (
+      // M8BF runs when theme='m8bf' (includes WR>=90 override, even on EOM)
+      // On EOM without WR>=90 override, theme stays 'strad' — M8BF does NOT run
+      // On strad/gxbf days M8BF runs alongside unless blocked by 0%rule
+      // VIX-blocked GXBF (blockT='vix') does NOT block M8BF
+      signal.m8bfRan = (
         (signal.theme === 'm8bf') ||
-        ((signal.theme === 'strad' || signal.theme === 'gxbf') && signal.blockT !== '0%rule') ||
-        (signal.theme === 'block' && signal.blockT === 'vix')
+        (!signal.eomDay && (
+          ((signal.theme === 'strad' || signal.theme === 'gxbf') && signal.blockT !== '0%rule') ||
+          (signal.theme === 'block' && signal.blockT === 'vix')
+        ))
       );
 
       allRows.push({
