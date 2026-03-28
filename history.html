@@ -971,7 +971,7 @@ function renderTable() {
     h += `<td class="${valClass(row.spxGapPct)}">${row.spxGapPct!=null?row.spxGapPct.toFixed(2)+'%':'—'}</td>`;
     h += `<td style="font-weight:700;${row.m8bfWR!=null?(row.m8bfWR>=90?'color:#22c55e':row.m8bfWR<25?'color:#ef4444':'color:var(--text)'):'color:var(--text3)'}">${row.m8bfWR!=null?row.m8bfWR+'%':'—'}</td>`;
     h += stratCell(s.m8bfRan, row.m8bfPL);
-    h += stratCell(s.stradRan, row.stradPL);
+    h += stratCell(s.stradRan && row.stradPL != null, row.stradPL);
     h += stratCell(activeStrats.gxbf && row.gxbfPL != null, row.gxbfPL);
     h += stratCell(activeStrats.bobf && s.bobfBadge !== 'BLOCKED', row.bobfPL);
 
