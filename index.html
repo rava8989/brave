@@ -636,6 +636,20 @@
 </div><!-- /main -->
 
 <script>
+  /* ====== fetchWithRetry — resilient fetch for local/remote resources ====== */
+  async function fetchWithRetry(url, opts = {}, retries = 3, baseDelay = 1000) {
+    for (let i = 0; i <= retries; i++) {
+      try {
+        const resp = await fetch(url, opts);
+        if (resp.ok || resp.status < 500) return resp;
+        if (i < retries) await new Promise(r => setTimeout(r, baseDelay * 2 ** i));
+      } catch (e) {
+        if (i === retries) throw e;
+        await new Promise(r => setTimeout(r, baseDelay * 2 ** i));
+      }
+    }
+  }
+
   /* ====== CONSTANTS ====== */
   const T = {
     DROP_GXBF: 0.65, DROP_STRAD_MIN: 0,
@@ -959,7 +973,7 @@
       if(v.yesterdayClose){markAutoFilled('yesterdayClose',v.yesterdayClose);}
       if(v.winrate90)     document.getElementById('winrate90').checked=true;
       if(v.winrate0)      document.getElementById('winrate0').checked=true;
-    } catch(e){}
+    } catch(e){ console.warn('[S3] loadInputs:', e); }
   }
 
   /* ====== #8: PRINT SIGNAL ====== */
@@ -1084,8 +1098,11 @@
 
     let err=false;
     if(isNaN(vToday))        {document.getElementById('err-todayOpen').textContent='Required';err=true;}
+    if(!isNaN(vToday)&&(vToday<8||vToday>90)){document.getElementById('err-todayOpen').textContent='VIX must be 8\u201390';err=true;}
     if(isNaN(vYClose))       {document.getElementById('err-yesterdayClose').textContent='Required';err=true;}
+    if(!isNaN(vYClose)&&(vYClose<8||vYClose>90)){document.getElementById('err-yesterdayClose').textContent='VIX must be 8\u201390';err=true;}
     if(!cpiDay&&isNaN(vYOpen)){document.getElementById('err-yesterdayOpen').textContent='Required (non-CPI day)';err=true;}
+    if(!cpiDay&&!isNaN(vYOpen)&&(vYOpen<8||vYOpen>90)){document.getElementById('err-yesterdayOpen').textContent='VIX must be 8\u201390';err=true;}
     if(err) return;
 
     const now=new Date(), dow=now.getDay();
@@ -1439,7 +1456,7 @@
 
   const SCHWAB = {
     AUTH_URL:  'https://api.schwabapi.com/v1/oauth/authorize',
-    REDIRECT:  window.location.href.split('?')[0].split('#')[0],
+    REDIRECT:  'https://rava8989.github.io/brave/',
     proxy:     () => (localStorage.getItem('sc_proxyUrl') || '').replace(/\/+$/, ''),
   };
 
@@ -1545,9 +1562,10 @@
     if(!c || !proxy){ schwabSetStatus('error', 'Credentials or proxy URL missing — reconnect'); return true; }
 
     try{
+      const secret = localStorage.getItem('sc_syncSecret');
       const resp = await fetch(`${proxy}/token`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Sync-Secret': secret },
         body: JSON.stringify({
           app_key:      c.appKey,
           grant_type:   'authorization_code',
@@ -1555,6 +1573,7 @@
           redirect_uri: SCHWAB.REDIRECT,
         }),
       });
+      if(!resp.ok) throw new Error('HTTP ' + resp.status);
       const data = await resp.json();
       if(!data.access_token) throw new Error(data.error_description || 'Token exchange failed');
 
@@ -1581,15 +1600,17 @@
     const proxy = SCHWAB.proxy();
     if(!c||!t?.refresh||!proxy) return false;
     try{
+      const secret = localStorage.getItem('sc_syncSecret');
       const resp = await fetch(`${proxy}/token`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Sync-Secret': secret },
         body: JSON.stringify({
           app_key:       c.appKey,
           grant_type:    'refresh_token',
           refresh_token: t.refresh,
         }),
       });
+      if(!resp.ok) throw new Error('HTTP ' + resp.status);
       const data = await resp.json();
       if(!data.access_token) throw new Error('Refresh failed');
       SC.set('tokens', {
@@ -1601,6 +1622,7 @@
       syncToWorker(); // push refreshed tokens to Worker KV
       return true;
     } catch(e){
+      console.warn('[S3] schwabRefreshToken:', e);
       return false;
     }
   }
@@ -1621,7 +1643,7 @@
         headers:{'Content-Type':'application/json','X-Sync-Secret':secret},
         body:JSON.stringify(payload),
       });
-    }catch(e){/* silent */}
+    }catch(e){ console.warn('[S3] syncToWorker:', e); }
   }
 
   async function schwabGetToken(){
@@ -1648,6 +1670,7 @@
       const start = new Date(end); start.setDate(start.getDate() - 5);
       const url = `${SCHWAB.proxy()}/market/pricehistory?symbol=%24VIX&periodType=day&period=5&frequencyType=minute&frequency=1&startDate=${start.getTime()}&endDate=${end.getTime()}&needExtendedHoursData=true`;
       const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if(!resp.ok) throw new Error('HTTP ' + resp.status);
       const data = await resp.json();
       if(!data.candles || !data.candles.length) throw new Error('No VIX data returned');
 
@@ -1693,10 +1716,11 @@
       try{
         const qUrl = `${SCHWAB.proxy()}/market/quotes?symbols=%24VIX&fields=quote`;
         const qResp = await fetch(qUrl, { headers: { Authorization: `Bearer ${token}` } });
+        if(!qResp.ok) throw new Error('HTTP ' + qResp.status);
         const qData = await qResp.json();
         const qClose = qData?.['$VIX']?.quote?.closePrice;
         if(qClose) yClose = qClose.toFixed(2);
-      }catch(e){/* fall back to candle close */}
+      }catch(e){ console.warn('[S3] VIX quote fallback:', e); }
 
       // Fill fields using markAutoFilled so values are tracked as auto
       if(yOpen) markAutoFilled('yesterdayOpen', yOpen);
@@ -1721,6 +1745,7 @@
       try{
         const spxUrl = `${SCHWAB.proxy()}/market/pricehistory?symbol=%24SPX&periodType=day&period=5&frequencyType=minute&frequency=1&startDate=${start.getTime()}&endDate=${end.getTime()}&needExtendedHoursData=true`;
         const spxResp = await fetch(spxUrl, { headers: { Authorization: `Bearer ${token}` } });
+        if(!spxResp.ok) throw new Error('HTTP ' + spxResp.status);
         const spxData = await spxResp.json();
         if(spxData.candles && spxData.candles.length){
           const spxCandles = spxData.candles;
@@ -1745,7 +1770,7 @@
           // Store for gap check, then re-run to show colored gap
           if(spxYClose){ SC.set('spx', { yClose: spxYClose, todayOpen: spxTodayOpen }); calculateStrategy(); }
         }
-      } catch(e){ /* SPX fetch failed silently — gap check just won't fire */ }
+      } catch(e){ console.warn('[S3] SPX gap fetch:', e); }
 
     } catch(e){
       console.error('schwabFetchHistorical error:', e);
@@ -1809,6 +1834,7 @@
         const toET_poll = ts => new Date(new Date(ts).toLocaleString('en-US', { timeZone: 'America/New_York' }));
         const url = `${SCHWAB.proxy()}/market/pricehistory?symbol=%24VIX&periodType=day&period=1&frequencyType=minute&frequency=1&startDate=${pollStart.getTime()}&endDate=${pollNow.getTime()}&needExtendedHoursData=false`;
         const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+        if(!resp.ok) throw new Error('HTTP ' + resp.status);
         const data = await resp.json();
         const candles = data?.candles;
         if(!candles?.length) return;
@@ -1831,6 +1857,7 @@
           const spxPollStart = new Date(pollNow.getTime() - 2 * 60 * 60 * 1000);
           const spxUrl = `${SCHWAB.proxy()}/market/pricehistory?symbol=%24SPX&periodType=day&period=1&frequencyType=minute&frequency=1&startDate=${spxPollStart.getTime()}&endDate=${pollNow.getTime()}&needExtendedHoursData=false`;
           const spxR = await fetch(spxUrl, { headers: { Authorization: `Bearer ${token}` } });
+          if(!spxR.ok) throw new Error('HTTP ' + spxR.status);
           const spxD = await spxR.json();
           const spxCandles = spxD?.candles;
           if(spxCandles?.length){
@@ -1842,7 +1869,7 @@
               SC.set('spx', { yClose: existing.yClose, todayOpen: spxOpenCandle.open });
             }
           }
-        } catch(e){ /* silent */ }
+        } catch(e){ console.warn('[S3] SPX stream:', e); }
 
         const timeStr = etNow.toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
         document.getElementById('schwabAutoLabel').style.display = 'inline';
@@ -1852,7 +1879,7 @@
         calculateStrategy();
         // Auto-post to Discord if configured
         setTimeout(discordAutoPost, 500); // small delay to let cards render first
-      } catch(e){ /* silent — try again next interval */ }
+      } catch(e){ console.warn('[S3] VIX stream:', e); }
     }, 10000); // every 10 seconds
   }
 
@@ -2053,6 +2080,7 @@
           message: message,
         }),
       });
+      if(!resp.ok) throw new Error('HTTP ' + resp.status);
       const data = await resp.json();
       if(!data.ok) throw new Error(data.error || 'Unknown error');
       return true;
@@ -2084,7 +2112,8 @@
     if (_wrFetchInProgress) return;
     _wrFetchInProgress = true;
     try {
-      const resp = await fetch('./history_data.json');
+      const resp = await fetchWithRetry('./history_data.json');
+      if(!resp.ok) throw new Error('HTTP ' + resp.status);
       const data = await resp.json();
       const rows = data.filter(r => r.m8bfWR != null)
                        .sort((a, b) => a.date.localeCompare(b.date));
@@ -2263,6 +2292,7 @@
         el.style.display = 'none';
       }
     } catch(e) {
+      console.warn('[S3] loadM8BFPatternNotes:', e);
     } finally {
       _wrFetchInProgress = false;
     }
