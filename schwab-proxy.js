@@ -371,44 +371,51 @@ async function getAccessToken(env) {
     // Mutex: if a refresh is already in-flight, all concurrent callers share the same promise
     // so only ONE actual Schwab refresh call is made (Schwab refresh tokens are single-use)
     if (!_tokenRefreshPromise) {
-      _tokenRefreshPromise = (async () => {
-        try {
-          const credsRaw = await env.SIGNAL_KV.get('schwab_creds');
-          if (!credsRaw) throw new Error('No Schwab creds in KV');
-          const creds = JSON.parse(credsRaw);
+      _tokenRefreshPromise = Promise.race([
+        (async () => {
+          try {
+            const credsRaw = await env.SIGNAL_KV.get('schwab_creds');
+            if (!credsRaw) throw new Error('No Schwab creds in KV');
+            const creds = JSON.parse(credsRaw);
 
-          const body = new URLSearchParams({
-            grant_type: 'refresh_token',
-            refresh_token: tokens.refresh,
-          });
+            const body = new URLSearchParams({
+              grant_type: 'refresh_token',
+              refresh_token: tokens.refresh,
+            });
 
-          const resp = await fetch('https://api.schwabapi.com/v1/oauth/token', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/x-www-form-urlencoded',
-              'Authorization': 'Basic ' + btoa(`${creds.appKey}:${env.SCHWAB_APP_SECRET}`),
-            },
-            body,
-          });
+            const resp = await fetch('https://api.schwabapi.com/v1/oauth/token', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Authorization': 'Basic ' + btoa(`${creds.appKey}:${env.SCHWAB_APP_SECRET}`),
+              },
+              body,
+            });
 
-          const data = await resp.json();
-          if (!data.access_token) throw new Error('Token refresh failed: ' + (data.error_description || JSON.stringify(data)));
+            if (!resp.ok) throw new Error('Token refresh HTTP ' + resp.status);
+            const data = await resp.json();
+            if (!data.access_token) throw new Error('Token refresh failed: ' + (data.error_description || JSON.stringify(data)));
 
-          const newTokens = {
-            access: data.access_token,
-            refresh: data.refresh_token || tokens.refresh,
-            expiry: Date.now() + (data.expires_in * 1000),
-            // Update refreshExpiry whenever Schwab issues a new refresh token (7-day window resets)
-            refreshExpiry: data.refresh_token
-              ? Date.now() + (7 * 24 * 60 * 60 * 1000)
-              : tokens.refreshExpiry,
-          };
-          await env.SIGNAL_KV.put('schwab_tokens', JSON.stringify(newTokens));
-          return newTokens.access;
-        } finally {
+            const newTokens = {
+              access: data.access_token,
+              refresh: data.refresh_token || tokens.refresh,
+              expiry: Date.now() + (data.expires_in * 1000),
+              // Update refreshExpiry whenever Schwab issues a new refresh token (7-day window resets)
+              refreshExpiry: data.refresh_token
+                ? Date.now() + (7 * 24 * 60 * 60 * 1000)
+                : tokens.refreshExpiry,
+            };
+            await env.SIGNAL_KV.put('schwab_tokens', JSON.stringify(newTokens));
+            return newTokens.access;
+          } finally {
+            _tokenRefreshPromise = null;
+          }
+        })(),
+        new Promise((_, reject) => setTimeout(() => {
           _tokenRefreshPromise = null;
-        }
-      })();
+          reject(new Error('Token refresh timeout (30s)'));
+        }, 30000))
+      ]);
     }
     return await _tokenRefreshPromise;
   }
@@ -418,6 +425,7 @@ async function getAccessToken(env) {
 
 async function fetchSchwabJSON(url, token) {
   const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!resp.ok) throw new Error(`Schwab API ${resp.status}: ${url.split('?')[0]}`);
   return resp.json();
 }
 
@@ -428,7 +436,7 @@ async function fetchSchwabJSON(url, token) {
 async function handleEOD(env, etNow) {
   const todayISO = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
   let token = null;
-  try { token = await getAccessToken(env); } catch(e) { /* tokens expired — skip VIX/SPX, still record P&L */ }
+  try { token = await getAccessToken(env); } catch(e) { console.warn('[proxy]', e.message || e); }
 
   const end = Date.now();
   const start = end - 3 * 24 * 60 * 60 * 1000;
@@ -454,7 +462,7 @@ async function handleEOD(env, etNow) {
       const cp = q?.['$VIX']?.quote?.closePrice;
       if (cp) vixClose = parseFloat(cp.toFixed(2));
     }
-  } catch (e) { /* non-fatal */ }
+  } catch (e) { console.warn('[proxy]', e.message || e); }
 
   // Fetch SPX close
   let spxClose = null;
@@ -474,14 +482,14 @@ async function handleEOD(env, etNow) {
       const cp = q?.['$SPX']?.quote?.closePrice;
       if (cp) spxClose = parseFloat(cp.toFixed(2));
     }
-  } catch (e) { /* non-fatal */ }
+  } catch (e) { console.warn('[proxy]', e.message || e); }
 
   // Stooq fallback for SPX close when Schwab tokens are expired
   if (spxClose === null) {
     try {
       const todayISO2 = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
       spxClose = await getSpxCloseForDate(todayISO2);
-    } catch (e) { /* non-fatal */ }
+    } catch (e) { console.warn('[proxy]', e.message || e); }
   }
 
   // Read today_trade.json from GitHub — written by live_updater.py at EOD
@@ -498,7 +506,7 @@ async function handleEOD(env, etNow) {
         m8bfPL = trade.final_pl;
       }
     }
-  } catch (e) { /* non-fatal */ }
+  } catch (e) { console.warn('[proxy]', e.message || e); }
 
   // Compute m8bfWR = win rate across ALL signals posted today (from KV)
   if (spxClose != null) {
@@ -510,7 +518,7 @@ async function handleEOD(env, etNow) {
           m8bfWR = computeWinRateFromSignals(kv.signals, spxClose);
         }
       }
-    } catch (e) { /* non-fatal */ }
+    } catch (e) { console.warn('[proxy]', e.message || e); }
   }
 
   const fields = {};
@@ -619,9 +627,12 @@ async function pollDiscordSignals(env) {
   await env.SIGNAL_KV.put('discord_last_msg_id', messages[messages.length - 1].id);
 
   const seenCenters = new Set(signals.map(s => s.center));
+  const seenMsgIds = new Set(signals.map(s => s.msgId).filter(Boolean));
   let newCount = 0;
 
   for (const msg of messages) {
+    if (seenMsgIds.has(msg.id)) continue;
+
     const msgET = toET(new Date(msg.timestamp));
     const msgISO = `${msgET.getFullYear()}-${String(msgET.getMonth()+1).padStart(2,'0')}-${String(msgET.getDate()).padStart(2,'0')}`;
     if (msgISO !== todayISO) continue;
@@ -639,7 +650,9 @@ async function pollDiscordSignals(env) {
       premium: sig.premium,
       cp: sig.cp ?? 0,
       banned: isBanned(sig.center, sig.t1),
+      msgId: msg.id,
     });
+    seenMsgIds.add(msg.id);
     newCount++;
   }
 
@@ -725,7 +738,7 @@ async function handleScheduled(env) {
     const qData = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`, token);
     const qClose = qData?.['$VIX']?.quote?.closePrice;
     if (qClose) vixYClose = parseFloat(qClose.toFixed(2));
-  } catch (e) { /* fall back to candle close */ }
+  } catch (e) { console.warn('[proxy]', e.message || e); }
 
   if (vixYClose === null) throw new Error('Could not determine yesterday VIX close');
 
@@ -793,7 +806,7 @@ async function handleScheduled(env) {
     if (spxYClose && spxTodayOpen) {
       spxGapPct = ((spxTodayOpen - spxYClose) / spxYClose) * 100;
     }
-  } catch (e) { /* SPX gap is optional */ }
+  } catch (e) { console.warn('[proxy]', e.message || e); }
 
   // 4b. Write vixOpen + spxOpen to history_data.json via GitHub API
   const todayISO = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
@@ -802,7 +815,7 @@ async function handleScheduled(env) {
       vixOpen: vixToday,
       ...(spxTodayOpen != null ? { spxOpen: spxTodayOpen } : {}),
     });
-  } catch (e) { /* non-fatal — Discord still fires */ }
+  } catch (e) { console.warn('[proxy]', e.message || e); }
 
   // 5. Calculate signal
   const signal = calculateSignal({
@@ -1245,54 +1258,60 @@ async function appendTradesToBacktester(env, todayISO, etNow, signals, spxClose)
   }
   const { sha: blobSha } = await blobResp.json();
 
-  // 6b. Get current HEAD commit SHA
-  const refResp = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/ref/heads/main`, { headers: ghHeaders });
-  if (!refResp.ok) throw new Error(`Ref fetch failed: ${refResp.status}`);
-  const { object: { sha: headSha } } = await refResp.json();
+  // 6b–6f. Get HEAD, create tree+commit, update ref (retry on 422 race condition)
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    // 6b. Get current HEAD commit SHA
+    const refResp = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/ref/heads/main`, { headers: ghHeaders });
+    if (!refResp.ok) throw new Error(`Ref fetch failed: ${refResp.status}`);
+    const { object: { sha: headSha } } = await refResp.json();
 
-  // 6c. Get tree SHA from HEAD commit
-  const commitResp = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/commits/${headSha}`, { headers: ghHeaders });
-  if (!commitResp.ok) throw new Error(`Commit fetch failed: ${commitResp.status}`);
-  const { tree: { sha: treeSha } } = await commitResp.json();
+    // 6c. Get tree SHA from HEAD commit
+    const commitResp = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/commits/${headSha}`, { headers: ghHeaders });
+    if (!commitResp.ok) throw new Error(`Commit fetch failed: ${commitResp.status}`);
+    const { tree: { sha: treeSha } } = await commitResp.json();
 
-  // 6d. Create new tree
-  const treeResp = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees`, {
-    method: 'POST',
-    headers: { ...ghHeaders, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      base_tree: treeSha,
-      tree: [{ path, mode: '100644', type: 'blob', sha: blobSha }],
-    }),
-  });
-  if (!treeResp.ok) {
-    const err = await treeResp.text();
-    throw new Error(`Tree create failed: ${treeResp.status} — ${err.slice(0, 200)}`);
-  }
-  const { sha: newTreeSha } = await treeResp.json();
+    // 6d. Create new tree
+    const treeResp = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees`, {
+      method: 'POST',
+      headers: { ...ghHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        base_tree: treeSha,
+        tree: [{ path, mode: '100644', type: 'blob', sha: blobSha }],
+      }),
+    });
+    if (!treeResp.ok) {
+      const err = await treeResp.text();
+      throw new Error(`Tree create failed: ${treeResp.status} — ${err.slice(0, 200)}`);
+    }
+    const { sha: newTreeSha } = await treeResp.json();
 
-  // 6e. Create new commit
-  const newCommitResp = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/commits`, {
-    method: 'POST',
-    headers: { ...ghHeaders, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      message: `auto: append ${newRows.length} trades for ${todayISO}`,
-      tree: newTreeSha,
-      parents: [headSha],
-    }),
-  });
-  if (!newCommitResp.ok) {
-    const err = await newCommitResp.text();
-    throw new Error(`Commit create failed: ${newCommitResp.status} — ${err.slice(0, 200)}`);
-  }
-  const { sha: newCommitSha } = await newCommitResp.json();
+    // 6e. Create new commit
+    const newCommitResp = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/commits`, {
+      method: 'POST',
+      headers: { ...ghHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: `auto: append ${newRows.length} trades for ${todayISO}`,
+        tree: newTreeSha,
+        parents: [headSha],
+      }),
+    });
+    if (!newCommitResp.ok) {
+      const err = await newCommitResp.text();
+      throw new Error(`Commit create failed: ${newCommitResp.status} — ${err.slice(0, 200)}`);
+    }
+    const { sha: newCommitSha } = await newCommitResp.json();
 
-  // 6f. Update ref to point at new commit
-  const updateRefResp = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/refs/heads/main`, {
-    method: 'PATCH',
-    headers: { ...ghHeaders, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sha: newCommitSha }),
-  });
-  if (!updateRefResp.ok) {
+    // 6f. Update ref to point at new commit
+    const updateRefResp = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/refs/heads/main`, {
+      method: 'PATCH',
+      headers: { ...ghHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sha: newCommitSha }),
+    });
+    if (updateRefResp.ok) break; // success
+    if (updateRefResp.status === 422 && attempt < 3) {
+      console.warn(`[proxy] Ref update 422 race condition, retry ${attempt}/3`);
+      continue;
+    }
     const err = await updateRefResp.text();
     throw new Error(`Ref update failed: ${updateRefResp.status} — ${err.slice(0, 200)}`);
   }
@@ -1357,6 +1376,7 @@ export default {
           `https://discord.com/api/v9/channels/1048242197029458040/messages?limit=10&after=${afterSnowflake}&before=${beforeSnowflake}`,
           { headers: { 'Authorization': env.DISCORD_USER_TOKEN, 'User-Agent': 'Mozilla/5.0' } }
         );
+        if (!resp.ok) throw new Error(`Discord API ${resp.status}`);
         const msgs = await resp.json();
         const sample = (Array.isArray(msgs) ? msgs : []).map(m => ({
           id: m.id, ts: m.timestamp, content: (m.content||'').slice(0,200),
@@ -1381,6 +1401,7 @@ export default {
         const ghResp = await fetch('https://api.github.com/repos/rava8989/brave/contents/history_data.json', {
           headers: { 'Authorization': `Bearer ${env.GITHUB_TOKEN}`, 'Accept': 'application/vnd.github+json', 'User-Agent': 'schwab-proxy-worker/1.0', 'X-GitHub-Api-Version': '2022-11-28' }
         });
+        if (!ghResp.ok) throw new Error(`GitHub GET failed: ${ghResp.status}`);
         const meta = await ghResp.json();
         const content = JSON.parse(atob(meta.content.replace(/\n/g, '')));
         const rows = content.filter(r => r.m8bfWR != null && r.date >= from && r.date <= to);

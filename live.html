@@ -131,6 +131,16 @@
     .connect-banner a{color:var(--accent);font-weight:600;margin-left:auto;text-decoration:none;padding:4px 10px;border:1px solid var(--accent);border-radius:6px;font-family:'JetBrains Mono',monospace;}
     .connect-banner a:hover{background:var(--accent);color:#fff;}
     .hidden{display:none!important;}
+
+    @media(max-width:768px) {
+      .header { padding:10px 14px; gap:8px; }
+      .main { padding:12px; }
+      .stats-row { grid-template-columns:1fr 1fr; gap:8px; }
+      .stat-card { padding:10px 12px; }
+      .stat-value { font-size:16px; }
+      .chart-wrap { height:180px; }
+      .details-grid { grid-template-columns:1fr 1fr; }
+    }
   </style>
 </head>
 <body>
@@ -145,7 +155,7 @@
     <a href="live.html" class="active">M8BF Today</a>
   </nav>
   <div class="header-spacer"></div>
-  <div class="spx-ticker" id="spxTicker"><span>SPX</span><span class="spx-price" id="spxPrice">—</span><span class="spx-chg" id="spxChg"></span></div>
+  <div class="spx-ticker" id="spxTicker"><span>SPX</span><span class="spx-price" id="spxPrice">—</span><span class="spx-chg" id="spxChg"></span><span class="spx-age" id="spxAge" style="font-size:10px;color:var(--text3);margin-left:6px;"></span></div>
   <div class="live-badge"><div class="live-dot" id="liveDot"></div><span id="liveLabel">CONNECTING</span></div>
   <button class="theme-toggle" id="themeToggle" title="Toggle theme"></button>
 </div>
@@ -201,6 +211,20 @@ let spxPrice = null;
 let spxPrevClose = null;
 let pollTimer = null;
 
+// ─── Fetch with Retry ───────────────────────────────────────────────────────
+async function fetchWithRetry(url, opts = {}, retries = 3, baseDelay = 1000) {
+  for (let i = 0; i <= retries; i++) {
+    try {
+      const resp = await fetch(url, opts);
+      if (resp.ok || resp.status < 500) return resp;
+      if (i < retries) await new Promise(r => setTimeout(r, baseDelay * 2 ** i));
+    } catch (e) {
+      if (i === retries) throw e;
+      await new Promise(r => setTimeout(r, baseDelay * 2 ** i));
+    }
+  }
+}
+
 // ─── Market Hours (ET) ───────────────────────────────────────────────────────
 function getNowET() {
   return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
@@ -232,7 +256,7 @@ function todayET() {
 const RAW = 'https://raw.githubusercontent.com/rava8989/brave/main/';
 async function loadSPXHistory() {
   try {
-    const r = await fetch(RAW + 'spx_history.json?v=' + Date.now(), { cache: 'no-store' });
+    const r = await fetchWithRetry(RAW + 'spx_history.json?v=' + Date.now(), { cache: 'no-store' });
     if (!r.ok) return;
     const d = await r.json();
     if (d.date !== todayET()) return; // stale — different day
@@ -241,7 +265,7 @@ async function loadSPXHistory() {
 }
 async function loadSignals() {
   try {
-    const r = await fetch('https://schwab-proxy.ravamt4.workers.dev/signals', { cache: 'no-store' });
+    const r = await fetchWithRetry('https://schwab-proxy.ravamt4.workers.dev/signals', { cache: 'no-store' });
     if (!r.ok) return;
     const d = await r.json();
     if (d.date !== todayET()) return;
@@ -255,7 +279,8 @@ async function loadSignals() {
 // ─── SPX Chart ────────────────────────────────────────────────────────────────
 function createSPXChart() {
   const ctx = document.getElementById('spxCanvas');
-  if (!ctx || spxChart) return;
+  if (!ctx) return;
+  if (spxChart) { spxChart.destroy(); spxChart = null; }
   const c = chartColors();
   spxChart = new Chart(ctx, {
     type: 'line',
@@ -397,7 +422,7 @@ function updateSPXChartTheme() {
 // ─── Load today_trade.json ────────────────────────────────────────────────────
 async function loadTrade() {
   try {
-    const r = await fetch(RAW + 'today_trade.json', { cache: 'no-store' });
+    const r = await fetchWithRetry(RAW + 'today_trade.json', { cache: 'no-store' });
     if (!r.ok) return;           // keep last known trade on error
     trade = await r.json();
   } catch {
@@ -459,7 +484,7 @@ let lastSpxTimestamp = null;
 
 async function refreshSPX() {
   try {
-    const r = await fetch(RAW + 'spx_live.json?v=' + Date.now(), { cache: 'no-store' });
+    const r = await fetchWithRetry(RAW + 'spx_live.json?v=' + Date.now(), { cache: 'no-store' });
     if (!r.ok) return false;
     const data = await r.json();
     if (!data.price) return false;
@@ -467,6 +492,7 @@ async function refreshSPX() {
     // Always keep last known price — stale data disconnects Schwab badge but still shows price
     spxPrice = data.price;
     spxPrevClose = data.prev_close;
+    lastSpxTimestamp = Date.now();
 
     // Compute age from time+date fields (Windows extension doesn't send ISO timestamp)
     let ageSecs = 0;
@@ -520,6 +546,7 @@ function chartColors() {
 function createChart() {
   const ctx = document.getElementById('plCanvas');
   if (!ctx) return;
+  if (plChart) { plChart.destroy(); plChart = null; }
   const c = chartColors();
   plChart = new Chart(ctx, {
     type: 'line',
@@ -668,9 +695,13 @@ function updateLiveBadge() {
   const dot = document.getElementById('liveDot');
   const lbl = document.getElementById('liveLabel');
   marketStatus = getMarketStatus();
-  if (schwabConnected && marketStatus === 'open') {
+  const dataAge = lastSpxTimestamp ? (Date.now() - lastSpxTimestamp) / 1000 : Infinity;
+  if (schwabConnected && marketStatus === 'open' && dataAge < 120) {
     dot.className = 'live-dot green';
     lbl.textContent = 'LIVE';
+  } else if (schwabConnected && marketStatus === 'open' && dataAge >= 120) {
+    dot.className = 'live-dot yellow';
+    lbl.textContent = 'STALE';
   } else if (marketStatus === 'open') {
     dot.className = 'live-dot yellow';
     lbl.textContent = 'MARKET OPEN';
@@ -975,6 +1006,15 @@ async function tick() {
   }
 
   updateSPXTicker();
+
+  // Update SPX data age indicator
+  const ageEl = document.getElementById('spxAge');
+  if (ageEl && lastSpxTimestamp) {
+    const ageSecs = Math.round((Date.now() - lastSpxTimestamp) / 1000);
+    if (ageSecs < 60) ageEl.textContent = ageSecs + 's ago';
+    else ageEl.textContent = Math.round(ageSecs / 60) + 'm ago';
+    ageEl.style.color = ageSecs > 120 ? 'var(--red)' : 'var(--text3)';
+  }
 }
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
@@ -988,6 +1028,15 @@ async function init() {
     render();
     await tick();
     pollTimer = setInterval(tick, 30_000);
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      } else {
+        tick();
+        pollTimer = setInterval(tick, 30_000);
+      }
+    });
   } catch (err) {
     console.error('[Σ3] init failed:', err);
     const main = document.getElementById('mainContent');

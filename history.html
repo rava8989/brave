@@ -164,12 +164,13 @@
 
     @media(max-width:768px){
       .header{padding:10px 14px;gap:10px;}
-      .table-wrap{padding:8px;}
-      .stats-grid{padding:8px;}
+      .table-wrap{padding:8px;overflow-x:auto;}
+      .stats-grid{padding:8px;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));}
       .strat-toggles{padding:8px 8px 0;}
       .filter-bar{padding:8px 8px 0;gap:8px;}
       .heatmap-section{margin:8px;}
       .chart-card{margin:8px;}
+      .chart-card canvas{max-height:200px;}
     }
 
     /* Print */
@@ -524,7 +525,7 @@ document.getElementById('themeToggle').addEventListener('click', () => {
   const n = c === 'dark' ? 'light' : 'dark';
   document.documentElement.setAttribute('data-theme', n);
   localStorage.setItem('s3theme', n);
-  renderAll();
+  scheduleRenderAll();
 });
 
 // ══════════════════════════════════════════════════════════════
@@ -535,7 +536,7 @@ function toggleStrat(key) {
   if (soloKey) return; // ignore single clicks in solo mode
   activeStrats[key] = !activeStrats[key];
   updatePillStates();
-  renderAll();
+  scheduleRenderAll();
 }
 
 function soloStrat(key) {
@@ -548,7 +549,7 @@ function soloStrat(key) {
     for (const k in activeStrats) activeStrats[k] = (k === key);
   }
   updatePillStates();
-  renderAll();
+  scheduleRenderAll();
 }
 
 function updatePillStates() {
@@ -682,8 +683,8 @@ function computeStats(visibleRows) {
   const losses = pls.filter(v => v < 0);
   const totalPL = pls.reduce((a,b) => a+b, 0);
   const totalTrades = pls.length;
-  const winPct = (wins.length / totalTrades) * 100;
-  const avgPerTrade = totalPL / totalTrades;
+  const winPct = totalTrades > 0 ? (wins.length / totalTrades) * 100 : 0;
+  const avgPerTrade = totalTrades > 0 ? totalPL / totalTrades : 0;
   const avgWinner = wins.length ? wins.reduce((a,b) => a+b, 0) / wins.length : 0;
   const avgLoser = losses.length ? losses.reduce((a,b) => a+b, 0) / losses.length : 0;
   const maxWinner = wins.length ? Math.max(...wins) : 0;
@@ -693,8 +694,8 @@ function computeStats(visibleRows) {
   const profitFactor = sumLosses > 0 ? sumWins / sumLosses : sumWins > 0 ? Infinity : 0;
 
   // Sharpe
-  const mean = totalPL / totalTrades;
-  const variance = pls.reduce((s,v) => s + (v - mean) ** 2, 0) / totalTrades;
+  const mean = totalTrades > 0 ? totalPL / totalTrades : 0;
+  const variance = totalTrades > 0 ? pls.reduce((s,v) => s + (v - mean) ** 2, 0) / totalTrades : 0;
   const sharpe = variance > 0 ? mean / Math.sqrt(variance) : 0;
 
   // Sortino: mean / downside stddev
@@ -1004,6 +1005,12 @@ function renderTable() {
   h += '</tr></tfoot></table></div>';
   document.getElementById('content').innerHTML = h;
   renderAll();
+}
+
+let _renderAllTimer = null;
+function scheduleRenderAll() {
+  if (_renderAllTimer) clearTimeout(_renderAllTimer);
+  _renderAllTimer = setTimeout(renderAll, 50);
 }
 
 function renderAll() {
