@@ -658,7 +658,7 @@ function getClosedJoke() {
 function showMarketClosed() {
   const overlay = document.getElementById('loadingOverlay');
   overlay.querySelector('.spinner').style.display = 'none';
-  overlay.querySelector('.loading-text').innerHTML = '<div style="font-size:18px;font-weight:700;margin-bottom:10px;">Market Closed</div><div style="font-size:13px;color:var(--text3);max-width:300px;text-align:center;line-height:1.5;">' + getClosedJoke() + '</div>';
+  overlay.querySelector('.loading-text').innerHTML = '<div style="font-size:32px;font-weight:700;margin-bottom:14px;">Market Closed</div><div style="font-size:18px;color:var(--text2);max-width:500px;text-align:center;line-height:1.6;">' + getClosedJoke() + '</div>';
   overlay.style.opacity = '1';
   overlay.style.pointerEvents = 'auto';
   overlay.classList.remove('hidden');
