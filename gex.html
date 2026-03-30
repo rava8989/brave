@@ -596,11 +596,39 @@ function renderCommentary(data) {
   }
 }
 
+// ── Market closed jokes ──
+const closedJokes = [
+  "Market's closed. Go touch grass.",
+  "Nothing to see here. SPX is sleeping.",
+  "The bell rang. Go home.",
+  "Sir, this is a closed market.",
+  "Gamma can't hurt you right now. Relax.",
+  "Even dealers take breaks. You should too.",
+  "No GEX for you. Come back 9:30 AM ET.",
+  "The market is closed. Your P&L can't get worse... for now.",
+  "Why are you here? Go call your mom.",
+  "Futures don't count. Close the tab.",
+  "SPX said goodnight. You should too.",
+  "Market hours: 9:30-4. This ain't it.",
+  "The options expired. So did your reason to be here.",
+  "Dealers went home. What's your excuse?",
+  "No gamma, no drama. See you tomorrow.",
+  "Plot twist: the market is closed.",
+  "Your portfolio isn't moving. Neither should you be refreshing.",
+  "GEX levels at this hour? Bro, get a hobby.",
+  "The S&P 500 is taking a nap. Let it rest.",
+  "Come back when the bell rings. Not the doorbell.",
+];
+
+function getClosedJoke() {
+  return closedJokes[Math.floor(Math.random() * closedJokes.length)];
+}
+
 // ── Show market closed state ──
 function showMarketClosed() {
   const overlay = document.getElementById('loadingOverlay');
   overlay.querySelector('.spinner').style.display = 'none';
-  overlay.querySelector('.loading-text').textContent = 'Market Closed';
+  overlay.querySelector('.loading-text').innerHTML = '<div style="font-size:18px;font-weight:700;margin-bottom:10px;">Market Closed</div><div style="font-size:13px;color:var(--text3);max-width:300px;text-align:center;line-height:1.5;">' + getClosedJoke() + '</div>';
   overlay.style.opacity = '1';
   overlay.style.pointerEvents = 'auto';
   overlay.classList.remove('hidden');
