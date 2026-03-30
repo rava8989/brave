@@ -21,20 +21,19 @@
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
     body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;}
 
-    /* Top bar */
-    .topbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:16px 24px;background:var(--bg2);border-bottom:1px solid var(--border);position:relative;z-index:1000;}
-    .gex-nav{display:flex;gap:4px;}
-    .gex-nav a{font-size:12px;font-weight:500;padding:5px 12px;border-radius:6px;color:var(--text2);text-decoration:none;transition:background .15s,color .15s;border:1px solid transparent;}
-    .gex-nav a:hover{background:var(--bg3);color:var(--text);}
-    .gex-nav a.active{background:var(--accent);color:#fff;border-color:var(--accent);}
-    .topbar-left{display:flex;align-items:center;gap:18px;flex-wrap:wrap;}
-    .logo{font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:var(--accent);}
-    .logo span{color:var(--text2);font-size:12px;font-family:'Inter',sans-serif;font-weight:400;margin-left:4px;}
+    /* Top bar — matches live.html/history.html header pattern */
+    .header{display:flex;align-items:center;gap:16px;padding:12px 24px;background:var(--bg2);border-bottom:1px solid var(--border);position:relative;z-index:1000;flex-wrap:wrap;}
+    .logo{font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:var(--accent);text-decoration:none;}
+    .nav{display:flex;gap:4px;}
+    .nav a{font-size:12px;font-weight:500;padding:5px 12px;border-radius:6px;color:var(--text2);text-decoration:none;transition:background .15s,color .15s;border:1px solid transparent;}
+    .nav a:hover{background:var(--bg3);color:var(--text);}
+    .nav a.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+    .header-spacer{flex:1;}
     .spx-price{font-family:'JetBrains Mono',monospace;font-size:28px;font-weight:700;color:var(--cyan);}
     .regime-badge{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;padding:4px 14px;border-radius:20px;text-transform:uppercase;letter-spacing:.08em;}
     .regime-badge.pin{background:rgba(34,197,94,.15);color:var(--green);border:1px solid rgba(34,197,94,.4);}
     .regime-badge.breakout{background:rgba(239,68,68,.15);color:var(--red);border:1px solid rgba(239,68,68,.4);}
-    .topbar-right{display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
+    .gex-data{display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
     .total-gex{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:600;color:var(--text);}
     .total-gex .label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);display:block;}
     .pct-change{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;}
@@ -129,7 +128,9 @@
     .stale-banner.visible{display:block;}
 
     @media(max-width:768px){
-      .topbar{padding:12px 16px;}
+      .header{padding:10px 14px;gap:8px;}
+      .nav{flex-wrap:wrap;}
+      .nav a{padding:8px 10px;}
       .spx-price{font-size:22px;}
       .container{padding:14px 12px 30px;}
       .cards-row{grid-template-columns:1fr;gap:10px;}
@@ -137,16 +138,13 @@
       .chart-wrap{height:300px;}
       .gex-table{font-size:11px;}
       .gex-table th,.gex-table td{padding:6px 6px;}
-      .gex-nav{flex-wrap:wrap;}
-      .gex-nav a{padding:8px 10px;}
-      .topbar-left{gap:10px;}
-      .topbar-right{gap:8px;}
+      .gex-data{gap:8px;}
       .total-gex{font-size:12px;}
     }
     @media(max-width:480px){
       .spx-price{font-size:18px;}
-      .topbar{padding:10px 12px;gap:8px;}
-      .gex-nav a{padding:7px 8px;font-size:11px;}
+      .header{padding:8px 12px;gap:6px;}
+      .nav a{padding:7px 8px;font-size:11px;}
       .regime-badge{font-size:11px;padding:3px 10px;}
       .container{padding:10px 8px 24px;}
       .level-card .lc-strike{font-size:20px;}
@@ -162,21 +160,20 @@
   <div class="loading-text">Loading GEX data...</div>
 </div>
 
-<!-- TOP BAR -->
-<div class="topbar">
-  <div class="topbar-left">
-    <a class="logo" href="index.html" style="text-decoration:none;">Σ3</a>
-    <nav class="gex-nav">
-      <a href="index.html">Dashboard</a>
-      <a href="history.html">History</a>
-      <a href="backtester.html">Backtester</a>
-      <a href="live.html">M8BF Today</a>
-      <a href="gex.html" class="active">GEX</a>
-    </nav>
+<!-- HEADER -->
+<div class="header">
+  <a class="logo" href="index.html">Σ3</a>
+  <nav class="nav">
+    <a href="index.html">Dashboard</a>
+    <a href="history.html">History</a>
+    <a href="backtester.html">Backtester</a>
+    <a href="live.html">M8BF Today</a>
+    <a href="gex.html" class="active">GEX</a>
+  </nav>
+  <div class="header-spacer"></div>
+  <div class="gex-data" id="gexDataBar">
     <span class="spx-price" id="spxPrice">--</span>
     <span class="regime-badge pin" id="regimeBadge" style="display:none;">--</span>
-  </div>
-  <div class="topbar-right">
     <div class="total-gex" id="totalGex"><span class="label">Total GEX</span>--</div>
     <span class="pct-change" id="pctChange1m"></span>
     <span class="pct-change" id="pctChange5m"></span>
@@ -685,10 +682,8 @@ function showMarketClosed() {
   overlay.style.opacity = '1';
   overlay.style.pointerEvents = 'auto';
   overlay.classList.remove('hidden');
-  // Hide data elements in topbar, keep nav visible
-  document.querySelector('.topbar-right').style.display = 'none';
-  document.getElementById('spxPrice').style.display = 'none';
-  document.getElementById('regimeBadge').style.display = 'none';
+  // Hide data elements in header, keep nav visible
+  document.getElementById('gexDataBar').style.display = 'none';
 }
 
 // ── Try loading cached data (last session) ──
