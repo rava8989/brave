@@ -876,6 +876,7 @@ function isTradeToday() {
 function render() {
   const main = document.getElementById('mainContent');
   if (!trade || !trade.triggered || !isTradeToday()) {
+    document.getElementById('spxChartSection').style.display = 'none';
     const win = getNextWindow();
     const winHtml = win
       ? `<div class="no-trade-window">
@@ -894,6 +895,7 @@ function render() {
     return;
   }
 
+  document.getElementById('spxChartSection').style.display = '';
   const currentPL = (trade.status === 'closed' && trade.final_pl !== null)
     ? trade.final_pl
     : (spxPrice !== null ? computePL(trade, spxPrice) : null);
