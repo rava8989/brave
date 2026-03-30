@@ -23,6 +23,10 @@
 
     /* Top bar */
     .topbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:16px 24px;background:var(--bg2);border-bottom:1px solid var(--border);}
+    .gex-nav{display:flex;gap:4px;}
+    .gex-nav a{font-size:12px;font-weight:500;padding:5px 12px;border-radius:6px;color:var(--text2);text-decoration:none;transition:background .15s,color .15s;border:1px solid transparent;}
+    .gex-nav a:hover{background:var(--bg3);color:var(--text);}
+    .gex-nav a.active{background:var(--accent);color:#fff;border-color:var(--accent);}
     .topbar-left{display:flex;align-items:center;gap:18px;flex-wrap:wrap;}
     .logo{font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:var(--accent);}
     .logo span{color:var(--text2);font-size:12px;font-family:'Inter',sans-serif;font-weight:400;margin-left:4px;}
@@ -146,7 +150,14 @@
 <!-- TOP BAR -->
 <div class="topbar">
   <div class="topbar-left">
-    <div class="logo">GEX <span>Gamma Exposure</span></div>
+    <a class="logo" href="index.html" style="text-decoration:none;">Σ3</a>
+    <nav class="gex-nav">
+      <a href="index.html">Dashboard</a>
+      <a href="history.html">History</a>
+      <a href="backtester.html">Backtester</a>
+      <a href="live.html">M8BF Today</a>
+      <a href="gex.html" class="active">GEX</a>
+    </nav>
     <span class="spx-price" id="spxPrice">--</span>
     <span class="regime-badge pin" id="regimeBadge" style="display:none;">--</span>
   </div>
@@ -237,7 +248,7 @@
   <div class="bottom-info">
     GEX data refreshes every 30s during market hours (9:30 AM - 4:00 PM ET). Server calculates every 2 min.<br>
     OI = previous day settlement (standard across all brokers). For 0DTE with OI=0, volume is used as fallback.<br>
-    <a href="index.html">&larr; Back to Strategy Helper</a>
+    <a href="index.html">Dashboard</a> · <a href="live.html">M8BF Today</a> · <a href="history.html">History</a> · <a href="backtester.html">Backtester</a>
   </div>
 </div>
 
