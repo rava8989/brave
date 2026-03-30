@@ -27,14 +27,14 @@
     .logo{font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:var(--accent);}
     .logo span{color:var(--text2);font-size:12px;font-family:'Inter',sans-serif;font-weight:400;margin-left:4px;}
     .spx-price{font-family:'JetBrains Mono',monospace;font-size:28px;font-weight:700;color:var(--cyan);}
-    .spx-change{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;margin-left:4px;}
-    .spx-change.up{color:var(--green);} .spx-change.dn{color:var(--red);}
     .regime-badge{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;padding:4px 14px;border-radius:20px;text-transform:uppercase;letter-spacing:.08em;}
     .regime-badge.pin{background:rgba(34,197,94,.15);color:var(--green);border:1px solid rgba(34,197,94,.4);}
     .regime-badge.breakout{background:rgba(239,68,68,.15);color:var(--red);border:1px solid rgba(239,68,68,.4);}
     .topbar-right{display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
     .total-gex{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:600;color:var(--text);}
     .total-gex .label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);display:block;}
+    .pct-change{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;}
+    .pct-change.up{color:var(--green);} .pct-change.dn{color:var(--red);}
     .timestamp{font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;}
     .status-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;background:#64748b;display:inline-block;}
     .status-dot.live{background:var(--green);box-shadow:0 0 6px var(--green);animation:pulse-dot 2s infinite;}
@@ -82,6 +82,32 @@
     .dir-badge.stab{background:rgba(34,197,94,.12);color:var(--green);border:1px solid rgba(34,197,94,.3);}
     .dir-badge.amp{background:rgba(239,68,68,.12);color:var(--red);border:1px solid rgba(239,68,68,.3);}
 
+    /* Events panel */
+    .events-section{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;box-shadow:var(--shadow);margin-bottom:18px;}
+    .events-section h2{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:var(--text);margin-bottom:14px;}
+    .events-section h2 span{color:var(--accent);}
+    .events-list{list-style:none;padding:0;margin:0;}
+    .events-list li{padding:8px 12px;border-bottom:1px solid var(--border);font-size:12px;display:flex;align-items:center;gap:10px;}
+    .events-list li:last-child{border-bottom:none;}
+    .event-icon{width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;}
+    .event-icon.flip{background:rgba(129,140,248,.15);color:var(--accent);}
+    .event-icon.wall{background:rgba(239,68,68,.15);color:var(--red);}
+    .event-icon.surge{background:rgba(251,191,36,.15);color:var(--yellow);}
+    .event-time{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text3);margin-left:auto;}
+    .no-events{color:var(--text3);font-size:12px;font-style:italic;padding:12px 0;}
+
+    /* Commentary panel */
+    .commentary-section{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;box-shadow:var(--shadow);margin-bottom:18px;}
+    .commentary-section h2{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:var(--text);margin-bottom:14px;}
+    .commentary-section h2 span{color:var(--accent);}
+    .commentary-placeholder{color:var(--text3);font-size:13px;font-style:italic;padding:16px 0;text-align:center;}
+    .commentary-body .commentary-text{font-size:13px;line-height:1.7;color:var(--text);padding:4px 0 8px;}
+    .commentary-meta{font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);display:flex;align-items:center;gap:8px;}
+    .commentary-meta .ai-badge{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:2px 8px;border-radius:10px;background:rgba(129,140,248,.15);color:var(--accent);border:1px solid rgba(129,140,248,.3);}
+
+    /* Two-col layout for events + commentary */
+    .bottom-row{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px;}
+
     /* Bottom info */
     .bottom-info{text-align:center;padding:16px;font-size:11px;color:var(--text3);line-height:1.6;}
     .bottom-info a{color:var(--accent);text-decoration:none;font-weight:600;}
@@ -94,24 +120,16 @@
     @keyframes spin{to{transform:rotate(360deg);}}
     .loading-text{margin-top:14px;font-size:13px;color:var(--text2);font-family:'JetBrains Mono',monospace;}
 
-    /* Auth prompt */
-    .auth-prompt{text-align:center;padding:60px 20px;}
-    .auth-prompt h2{font-family:'JetBrains Mono',monospace;font-size:18px;color:var(--accent);margin-bottom:10px;}
-    .auth-prompt p{font-size:13px;color:var(--text2);margin-bottom:20px;line-height:1.6;}
-    .auth-prompt a{display:inline-block;background:var(--accent);color:#fff;font-weight:600;font-size:14px;padding:10px 24px;border-radius:var(--radius-sm);text-decoration:none;transition:opacity .15s;}
-    .auth-prompt a:hover{opacity:.85;}
-
-    /* Expiration selector */
-    .expiry-row{display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;}
-    .expiry-row label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);}
-    .expiry-select{background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:'JetBrains Mono',monospace;font-size:12px;padding:6px 10px;outline:none;cursor:pointer;}
-    .expiry-select:focus{border-color:var(--accent);}
+    /* Market closed banner */
+    .stale-banner{display:none;background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.3);border-radius:var(--radius-sm);padding:12px 18px;margin-bottom:18px;text-align:center;font-size:13px;color:var(--yellow);font-family:'JetBrains Mono',monospace;}
+    .stale-banner.visible{display:block;}
 
     @media(max-width:768px){
       .topbar{padding:12px 16px;}
       .spx-price{font-size:22px;}
       .container{padding:14px 12px 30px;}
       .cards-row{grid-template-columns:1fr;gap:10px;}
+      .bottom-row{grid-template-columns:1fr;gap:10px;}
       .chart-wrap{height:300px;}
       .gex-table{font-size:11px;}
       .gex-table th,.gex-table td{padding:6px 6px;}
@@ -130,11 +148,12 @@
   <div class="topbar-left">
     <div class="logo">GEX <span>Gamma Exposure</span></div>
     <span class="spx-price" id="spxPrice">--</span>
-    <span class="spx-change" id="spxChange"></span>
     <span class="regime-badge pin" id="regimeBadge" style="display:none;">--</span>
   </div>
   <div class="topbar-right">
     <div class="total-gex" id="totalGex"><span class="label">Total GEX</span>--</div>
+    <span class="pct-change" id="pctChange1m"></span>
+    <span class="pct-change" id="pctChange5m"></span>
     <span class="market-badge closed" id="marketBadge">Market Closed</span>
     <span class="status-dot off" id="statusDot" title="Connection status"></span>
     <span class="timestamp" id="lastUpdated">--</span>
@@ -143,11 +162,8 @@
 
 <div class="container" id="mainContent" style="display:none;">
 
-  <!-- Expiration selector -->
-  <div class="expiry-row">
-    <label>Expiration:</label>
-    <select class="expiry-select" id="expirySelect"></select>
-  </div>
+  <!-- Stale data banner -->
+  <div class="stale-banner" id="staleBanner">Market Closed -- Data may be stale. Last update: <span id="staleTime">--</span></div>
 
   <!-- Key Level Cards -->
   <div class="cards-row">
@@ -181,7 +197,7 @@
 
   <!-- GEX Walls Table -->
   <div class="table-section">
-    <h2><span>GEX</span> Walls — Top 10 Strikes</h2>
+    <h2><span>GEX</span> Walls -- Top 10 Strikes</h2>
     <div style="overflow-x:auto;">
       <table class="gex-table">
         <thead>
@@ -200,60 +216,45 @@
     </div>
   </div>
 
+  <!-- Events + Commentary -->
+  <div class="bottom-row">
+    <div class="events-section">
+      <h2><span>Events</span> Today</h2>
+      <ul class="events-list" id="eventsList">
+        <li class="no-events">No events yet</li>
+      </ul>
+    </div>
+    <div class="commentary-section">
+      <h2><span>AI</span> Dealer Commentary</h2>
+      <div class="commentary-body" id="commentaryBody">
+        <div class="commentary-placeholder">Waiting for commentary...</div>
+      </div>
+      <div class="commentary-meta" id="commentaryMeta" style="display:none;"></div>
+    </div>
+  </div>
+
   <!-- Bottom Info -->
   <div class="bottom-info">
-    GEX data refreshes every 30s during market hours (9:30 AM - 4:00 PM ET)<br>
+    GEX data refreshes every 30s during market hours (9:30 AM - 4:00 PM ET). Server calculates every 2 min.<br>
     OI = previous day settlement (standard across all brokers). For 0DTE with OI=0, volume is used as fallback.<br>
     <a href="index.html">&larr; Back to Strategy Helper</a>
   </div>
 </div>
 
-<!-- Auth prompt (shown when no tokens) -->
-<div class="container" id="authPrompt" style="display:none;">
-  <div class="auth-prompt">
-    <h2>Schwab Not Connected</h2>
-    <p>GEX dashboard requires a live Schwab API connection for options chain data.<br>Connect Schwab on the main page first, then come back here.</p>
-    <a href="index.html">Go to Main Page</a>
-  </div>
-</div>
-
 <script>
 /* ================================================================
-   GEX Dashboard — SPX Gamma Exposure
+   GEX Dashboard — SPX Gamma Exposure (Server-Side)
+   Fetches pre-computed GEX data from Cloudflare Worker.
+   No Schwab tokens needed.
    ================================================================ */
 
-// ── Constants ──
-const R = 0.043;
-const Q = 0.013;
-const MULTIPLIER = 100;
-const PROXY = (localStorage.getItem('sc_proxyUrl') || 'https://schwab-proxy.ravamt4.workers.dev').replace(/\/+$/, '');
+const GEX_ENDPOINT = 'https://schwab-proxy.ravamt4.workers.dev/gex';
 const POLL_MS = 30000;
+const STALE_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
 
-// ── Storage helpers (mirrors index.html) ──
-const SC = {
-  get:  k => { try { return JSON.parse(localStorage.getItem('sc_' + k)); } catch(e){ return null; } },
-  set:  (k, v) => localStorage.setItem('sc_' + k, JSON.stringify(v)),
-  del:  k => localStorage.removeItem('sc_' + k),
-  creds:  () => SC.get('creds'),
-  tokens: () => SC.get('tokens'),
-};
-
-// ── State ──
 let gexChart = null;
 let pollTimer = null;
-let lastData = null;
-let selectedExpiry = null;
-
-// ── Math helpers ──
-function normPdf(x) {
-  return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
-}
-
-function bsGamma(S, K, T, sigma) {
-  if (T <= 0 || sigma <= 0 || S <= 0) return 0;
-  const d1 = (Math.log(S / K) + (R - Q + 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));
-  return normPdf(d1) * Math.exp(-Q * T) / (S * sigma * Math.sqrt(T));
-}
+let eventLog = []; // accumulated events for today
 
 // ── Format helpers ──
 function fmtGex(val) {
@@ -268,7 +269,8 @@ function fmtNum(n) {
   return n.toLocaleString('en-US');
 }
 
-function fmtTime(d) {
+function fmtTime(isoStr) {
+  const d = new Date(isoStr);
   return d.toLocaleString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
 }
 
@@ -279,256 +281,85 @@ function isMarketOpen() {
   const day = et.getDay();
   if (day === 0 || day === 6) return false;
   const mins = et.getHours() * 60 + et.getMinutes();
-  return mins >= 570 && mins <= 960; // 9:30 AM - 4:00 PM
+  return mins >= 570 && mins <= 960;
 }
 
-// ── Token management ──
-async function getToken() {
-  let t = SC.tokens();
-  if (!t) return null;
-  if (Date.now() > t.expiry - 120000) {
-    const ok = await refreshToken();
-    if (!ok) return null;
-    t = SC.tokens();
-  }
-  return t?.access || null;
-}
+// ── Render functions ──
+function renderTopBar(data) {
+  document.getElementById('spxPrice').textContent = data.spot.toFixed(2);
 
-async function refreshToken() {
-  const c = SC.creds(), t = SC.tokens();
-  if (!c || !t?.refresh) return false;
-  try {
-    const secret = localStorage.getItem('sc_syncSecret');
-    const headers = { 'Content-Type': 'application/json' };
-    if (secret) headers['X-Sync-Secret'] = secret;
-    const resp = await fetch(`${PROXY}/token`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        app_key: c.appKey,
-        grant_type: 'refresh_token',
-        refresh_token: t.refresh,
-      }),
-    });
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
-    const data = await resp.json();
-    if (!data.access_token) throw new Error('Refresh failed');
-    SC.set('tokens', {
-      access:        data.access_token,
-      refresh:       data.refresh_token || t.refresh,
-      expiry:        Date.now() + (data.expires_in * 1000),
-      refreshExpiry: t.refreshExpiry,
-    });
-    return true;
-  } catch (e) {
-    console.warn('[GEX] refreshToken:', e);
-    return false;
-  }
-}
-
-// ── Fetch data ──
-async function fetchOptionsChain(token) {
-  const url = `${PROXY}/market/chains?symbol=%24SPX&contractType=ALL&strikeCount=80&includeUnderlyingQuote=true&strategy=SINGLE`;
-  const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-  if (!resp.ok) throw new Error('Chain HTTP ' + resp.status);
-  return resp.json();
-}
-
-async function fetchSpxQuote(token) {
-  const url = `${PROXY}/market/quotes?symbols=%24SPX&fields=quote`;
-  const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-  if (!resp.ok) throw new Error('Quote HTTP ' + resp.status);
-  return resp.json();
-}
-
-// ── Parse chain into per-strike GEX ──
-function computeGex(chainData, expiryKey) {
-  const callMap = chainData.callExpDateMap || {};
-  const putMap  = chainData.putExpDateMap || {};
-  const underlying = chainData.underlyingPrice || chainData.underlying?.last || 0;
-  const S = underlying;
-
-  // Get expiration keys
-  const allExpiries = [...new Set([...Object.keys(callMap), ...Object.keys(putMap)])].sort();
-
-  // Use selected expiry or nearest
-  let expKey = expiryKey;
-  if (!expKey && allExpiries.length > 0) {
-    expKey = allExpiries[0];
-  }
-  if (!expKey) return { strikes: [], spx: S, expiries: allExpiries, selectedExpiry: null };
-
-  const calls = callMap[expKey] || {};
-  const puts  = putMap[expKey]  || {};
-
-  // Parse days to expiration from key (format: "2026-03-30:0")
-  const dteParts = expKey.split(':');
-  const dte = parseInt(dteParts[1]) || 0;
-  const T = Math.max(dte / 365, 1 / (365 * 24)); // minimum ~1 hour
-
-  const strikeSet = new Set([...Object.keys(calls), ...Object.keys(puts)]);
-  const results = [];
-
-  for (const strikeStr of strikeSet) {
-    const K = parseFloat(strikeStr);
-    if (isNaN(K)) continue;
-
-    const callContracts = calls[strikeStr] || [];
-    const putContracts  = puts[strikeStr]  || [];
-
-    let callOI = 0, callVol = 0, callIV = 0, callGex = 0;
-    let putOI = 0, putVol = 0, putIV = 0, putGex = 0;
-
-    for (const c of callContracts) {
-      const oi  = c.openInterest || 0;
-      const vol = c.totalVolume || 0;
-      const iv  = (c.volatility || 0) / 100;
-      const effectiveOI = oi > 0 ? oi : (dte === 0 ? vol : 0);
-      if (effectiveOI === 0 && vol === 0) continue;
-      callOI  += effectiveOI;
-      callVol += vol;
-      if (iv > 0) callIV = iv;
-      const gamma = bsGamma(S, K, T, iv > 0 ? iv : 0.2);
-      callGex += gamma * effectiveOI * S * S * MULTIPLIER * 0.01;
-    }
-
-    for (const p of putContracts) {
-      const oi  = p.openInterest || 0;
-      const vol = p.totalVolume || 0;
-      const iv  = (p.volatility || 0) / 100;
-      const effectiveOI = oi > 0 ? oi : (dte === 0 ? vol : 0);
-      if (effectiveOI === 0 && vol === 0) continue;
-      putOI  += effectiveOI;
-      putVol += vol;
-      if (iv > 0) putIV = iv;
-      const gamma = bsGamma(S, K, T, iv > 0 ? iv : 0.2);
-      putGex -= gamma * effectiveOI * S * S * MULTIPLIER * 0.01; // puts negative
-    }
-
-    const netGex = callGex + putGex;
-    if (callOI === 0 && putOI === 0 && callVol === 0 && putVol === 0) continue;
-
-    results.push({ strike: K, callGex, putGex, netGex, callOI, putOI, callVol, putVol });
-  }
-
-  results.sort((a, b) => a.strike - b.strike);
-
-  // Total GEX
-  const totalGex = results.reduce((s, r) => s + r.netGex, 0);
-
-  // Max positive gamma wall
-  let maxPos = { strike: 0, gex: 0 };
-  let maxNeg = { strike: 0, gex: 0 };
-  for (const r of results) {
-    if (r.netGex > maxPos.gex) { maxPos = { strike: r.strike, gex: r.netGex }; }
-    if (r.netGex < maxNeg.gex) { maxNeg = { strike: r.strike, gex: r.netGex }; }
-  }
-
-  // GEX flip: walk ascending, find zero crossing of cumulative net GEX
-  let flipStrike = null;
-  let cumGex = 0;
-  for (let i = 0; i < results.length; i++) {
-    const prevCum = cumGex;
-    cumGex += results[i].netGex;
-    if (prevCum < 0 && cumGex >= 0 && i > 0) {
-      // Linear interpolation between strikes
-      const s0 = results[i-1].strike;
-      const s1 = results[i].strike;
-      const ratio = Math.abs(prevCum) / (Math.abs(prevCum) + Math.abs(cumGex));
-      flipStrike = s0 + ratio * (s1 - s0);
-      break;
-    }
-  }
-  // If no crossing found, try the other direction
-  if (flipStrike === null) {
-    cumGex = 0;
-    for (let i = 0; i < results.length; i++) {
-      const prevCum = cumGex;
-      cumGex += results[i].netGex;
-      if (prevCum > 0 && cumGex <= 0 && i > 0) {
-        const s0 = results[i-1].strike;
-        const s1 = results[i].strike;
-        const ratio = Math.abs(prevCum) / (Math.abs(prevCum) + Math.abs(cumGex));
-        flipStrike = s0 + ratio * (s1 - s0);
-        break;
-      }
-    }
-  }
-
-  const regime = totalGex > 0 ? 'PIN' : 'BREAKOUT';
-
-  return {
-    strikes: results,
-    spx: S,
-    totalGex,
-    maxPos,
-    maxNeg,
-    flipStrike,
-    regime,
-    expiries: allExpiries,
-    selectedExpiry: expKey,
-    dte,
-  };
-}
-
-// ── Render UI ──
-function renderTopBar(gex, quoteData) {
-  const spxEl = document.getElementById('spxPrice');
-  const changeEl = document.getElementById('spxChange');
   const regimeEl = document.getElementById('regimeBadge');
-  const totalEl = document.getElementById('totalGex');
-  const tsEl = document.getElementById('lastUpdated');
-  const dotEl = document.getElementById('statusDot');
-  const mktEl = document.getElementById('marketBadge');
-
-  spxEl.textContent = gex.spx.toFixed(2);
-
-  // Try to get change from quote data
-  if (quoteData) {
-    const q = Object.values(quoteData)[0]?.quote;
-    if (q) {
-      const change = q.netChange || 0;
-      const pct = q.netPercentChange || 0;
-      changeEl.textContent = `${change >= 0 ? '+' : ''}${change.toFixed(2)} (${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%)`;
-      changeEl.className = 'spx-change ' + (change >= 0 ? 'up' : 'dn');
-    }
-  }
-
-  regimeEl.textContent = gex.regime;
-  regimeEl.className = 'regime-badge ' + (gex.regime === 'PIN' ? 'pin' : 'breakout');
+  regimeEl.textContent = data.regime;
+  regimeEl.className = 'regime-badge ' + (data.regime === 'PIN' ? 'pin' : 'breakout');
   regimeEl.style.display = 'inline-block';
 
-  totalEl.innerHTML = `<span class="label">Total GEX</span>${fmtGex(gex.totalGex)}`;
+  document.getElementById('totalGex').innerHTML = '<span class="label">Total GEX</span>' + fmtGex(data.totalGex);
 
-  const now = new Date();
-  tsEl.textContent = fmtTime(now);
+  // % changes
+  const pct1m = document.getElementById('pctChange1m');
+  const pct5m = document.getElementById('pctChange5m');
+  if (data.pctChange1m != null) {
+    pct1m.textContent = '1m: ' + (data.pctChange1m >= 0 ? '+' : '') + data.pctChange1m + '%';
+    pct1m.className = 'pct-change ' + (data.pctChange1m >= 0 ? 'up' : 'dn');
+  } else {
+    pct1m.textContent = '';
+  }
+  if (data.pctChange5m != null) {
+    pct5m.textContent = '5m: ' + (data.pctChange5m >= 0 ? '+' : '') + data.pctChange5m + '%';
+    pct5m.className = 'pct-change ' + (data.pctChange5m >= 0 ? 'up' : 'dn');
+  } else {
+    pct5m.textContent = '';
+  }
 
-  const open = isMarketOpen();
-  dotEl.className = 'status-dot ' + (open ? 'live' : 'stale');
-  mktEl.textContent = open ? 'Market Open' : 'Market Closed';
-  mktEl.className = 'market-badge ' + (open ? 'open' : 'closed');
+  document.getElementById('lastUpdated').textContent = fmtTime(data.updatedAt);
+
+  // Stale check
+  const age = Date.now() - new Date(data.updatedAt).getTime();
+  const isStale = age > STALE_THRESHOLD_MS;
+  const dotEl = document.getElementById('statusDot');
+  const mktEl = document.getElementById('marketBadge');
+  const staleBanner = document.getElementById('staleBanner');
+
+  if (isStale) {
+    dotEl.className = 'status-dot stale';
+    mktEl.textContent = 'Market Closed';
+    mktEl.className = 'market-badge closed';
+    staleBanner.classList.add('visible');
+    document.getElementById('staleTime').textContent = fmtTime(data.updatedAt);
+  } else if (isMarketOpen()) {
+    dotEl.className = 'status-dot live';
+    mktEl.textContent = 'Market Open';
+    mktEl.className = 'market-badge open';
+    staleBanner.classList.remove('visible');
+  } else {
+    dotEl.className = 'status-dot stale';
+    mktEl.textContent = 'Market Closed';
+    mktEl.className = 'market-badge closed';
+    staleBanner.classList.add('visible');
+    document.getElementById('staleTime').textContent = fmtTime(data.updatedAt);
+  }
 }
 
-function renderCards(gex) {
-  document.getElementById('maxPosStrike').textContent = gex.maxPos.strike ? gex.maxPos.strike.toFixed(0) : '--';
-  document.getElementById('maxPosValue').textContent = gex.maxPos.gex ? fmtGex(gex.maxPos.gex) : '--';
-  document.getElementById('flipStrike').textContent = gex.flipStrike ? gex.flipStrike.toFixed(1) : 'N/A';
-  document.getElementById('maxNegStrike').textContent = gex.maxNeg.strike ? gex.maxNeg.strike.toFixed(0) : '--';
-  document.getElementById('maxNegValue').textContent = gex.maxNeg.gex ? fmtGex(gex.maxNeg.gex) : '--';
+function renderCards(data) {
+  document.getElementById('maxPosStrike').textContent = data.maxPosStrike ? data.maxPosStrike.toFixed(0) : '--';
+  document.getElementById('maxPosValue').textContent = data.maxPosGex ? fmtGex(data.maxPosGex) : '--';
+  document.getElementById('flipStrike').textContent = data.flipStrike != null ? data.flipStrike.toFixed(0) : 'N/A';
+  document.getElementById('maxNegStrike').textContent = data.maxNegStrike ? data.maxNegStrike.toFixed(0) : '--';
+  document.getElementById('maxNegValue').textContent = data.maxNegGex ? fmtGex(data.maxNegGex) : '--';
 }
 
-function renderChart(gex) {
+function renderChart(data) {
   const ctx = document.getElementById('gexChart').getContext('2d');
-  const labels = gex.strikes.map(s => s.strike.toFixed(0));
-  const data = gex.strikes.map(s => s.netGex);
-  const colors = data.map(v => v >= 0 ? 'rgba(34,197,94,0.75)' : 'rgba(239,68,68,0.75)');
-  const borderColors = data.map(v => v >= 0 ? 'rgba(34,197,94,1)' : 'rgba(239,68,68,1)');
+  const strikes = data.strikes || [];
+  const labels = strikes.map(s => s.strike.toFixed(0));
+  const values = strikes.map(s => s.netGex);
+  const colors = values.map(v => v >= 0 ? 'rgba(34,197,94,0.75)' : 'rgba(239,68,68,0.75)');
+  const borderColors = values.map(v => v >= 0 ? 'rgba(34,197,94,1)' : 'rgba(239,68,68,1)');
 
-  // Build annotations
   const annotations = {};
 
   // SPX price line
-  const spxIdx = labels.findIndex(l => parseFloat(l) >= gex.spx);
+  const spxIdx = labels.findIndex(l => parseFloat(l) >= data.spot);
   if (spxIdx >= 0) {
     annotations.spxLine = {
       type: 'line',
@@ -538,7 +369,7 @@ function renderChart(gex) {
       borderWidth: 2,
       label: {
         display: true,
-        content: 'SPX ' + gex.spx.toFixed(0),
+        content: 'SPX ' + data.spot.toFixed(0),
         position: 'start',
         backgroundColor: 'rgba(34,211,238,0.9)',
         color: '#0f172a',
@@ -550,8 +381,8 @@ function renderChart(gex) {
   }
 
   // Flip line
-  if (gex.flipStrike) {
-    const flipIdx = labels.findIndex(l => parseFloat(l) >= gex.flipStrike);
+  if (data.flipStrike != null) {
+    const flipIdx = labels.findIndex(l => parseFloat(l) >= data.flipStrike);
     if (flipIdx >= 0) {
       annotations.flipLine = {
         type: 'line',
@@ -562,7 +393,7 @@ function renderChart(gex) {
         borderDash: [6, 4],
         label: {
           display: true,
-          content: 'FLIP ' + gex.flipStrike.toFixed(0),
+          content: 'FLIP ' + data.flipStrike.toFixed(0),
           position: 'end',
           backgroundColor: 'rgba(129,140,248,0.9)',
           color: '#0f172a',
@@ -575,13 +406,13 @@ function renderChart(gex) {
   }
 
   // Max positive highlight
-  if (gex.maxPos.strike) {
-    const maxPIdx = labels.indexOf(gex.maxPos.strike.toFixed(0));
+  if (data.maxPosStrike) {
+    const maxPIdx = labels.indexOf(data.maxPosStrike.toFixed(0));
     if (maxPIdx >= 0) {
       annotations.maxPosBox = {
         type: 'point',
         xValue: maxPIdx,
-        yValue: gex.maxPos.gex,
+        yValue: data.maxPosGex,
         radius: 6,
         backgroundColor: '#22c55e',
         borderColor: '#fff',
@@ -591,13 +422,13 @@ function renderChart(gex) {
   }
 
   // Max negative highlight
-  if (gex.maxNeg.strike) {
-    const maxNIdx = labels.indexOf(gex.maxNeg.strike.toFixed(0));
+  if (data.maxNegStrike) {
+    const maxNIdx = labels.indexOf(data.maxNegStrike.toFixed(0));
     if (maxNIdx >= 0) {
       annotations.maxNegBox = {
         type: 'point',
         xValue: maxNIdx,
-        yValue: gex.maxNeg.gex,
+        yValue: data.maxNegGex,
         radius: 6,
         backgroundColor: '#ef4444',
         borderColor: '#fff',
@@ -608,7 +439,7 @@ function renderChart(gex) {
 
   if (gexChart) {
     gexChart.data.labels = labels;
-    gexChart.data.datasets[0].data = data;
+    gexChart.data.datasets[0].data = values;
     gexChart.data.datasets[0].backgroundColor = colors;
     gexChart.data.datasets[0].borderColor = borderColors;
     gexChart.options.plugins.annotation.annotations = annotations;
@@ -621,7 +452,7 @@ function renderChart(gex) {
     data: {
       labels,
       datasets: [{
-        data,
+        data: values,
         backgroundColor: colors,
         borderColor: borderColors,
         borderWidth: 1,
@@ -677,108 +508,119 @@ function renderChart(gex) {
   });
 }
 
-function renderTable(gex) {
+function renderTable(data) {
   const body = document.getElementById('wallsBody');
-  const sorted = [...gex.strikes].sort((a, b) => Math.abs(b.netGex) - Math.abs(a.netGex)).slice(0, 10);
+  const walls = data.walls || [];
 
-  body.innerHTML = sorted.map(s => {
-    const dir = s.netGex >= 0;
-    return `<tr>
-      <td style="font-weight:700;">${s.strike.toFixed(0)}</td>
-      <td class="pos">${fmtGex(s.callGex)}</td>
-      <td class="neg">${fmtGex(s.putGex)}</td>
-      <td class="${dir ? 'pos' : 'neg'}" style="font-weight:700;">${fmtGex(s.netGex)}</td>
-      <td>${fmtNum(s.callOI)}</td>
-      <td>${fmtNum(s.putOI)}</td>
-      <td><span class="dir-badge ${dir ? 'stab' : 'amp'}">${dir ? 'Stabilizing' : 'Amplifying'}</span></td>
-    </tr>`;
+  body.innerHTML = walls.map(w => {
+    const dir = w.netGex >= 0;
+    return '<tr>' +
+      '<td style="font-weight:700;">' + w.strike.toFixed(0) + '</td>' +
+      '<td class="pos">' + fmtGex(w.callGex) + '</td>' +
+      '<td class="neg">' + fmtGex(w.putGex) + '</td>' +
+      '<td class="' + (dir ? 'pos' : 'neg') + '" style="font-weight:700;">' + fmtGex(w.netGex) + '</td>' +
+      '<td>' + fmtNum(w.callOI) + '</td>' +
+      '<td>' + fmtNum(w.putOI) + '</td>' +
+      '<td><span class="dir-badge ' + (dir ? 'stab' : 'amp') + '">' + (dir ? 'Stabilizing' : 'Amplifying') + '</span></td>' +
+      '</tr>';
   }).join('');
 }
 
-function renderExpirySelect(expiries, selected) {
-  const sel = document.getElementById('expirySelect');
-  const prev = sel.value;
-  sel.innerHTML = expiries.map(e => {
-    const parts = e.split(':');
-    const dte = parseInt(parts[1]) || 0;
-    const label = parts[0] + (dte === 0 ? ' (0DTE)' : ` (${dte}d)`);
-    return `<option value="${e}" ${e === selected ? 'selected' : ''}>${label}</option>`;
-  }).join('');
-}
-
-// ── Main fetch + render cycle ──
-async function fetchAndRender() {
-  const token = await getToken();
-  if (!token) {
-    showAuth();
-    return;
-  }
-
-  try {
-    document.getElementById('statusDot').className = 'status-dot live';
-    const [chain, quote] = await Promise.all([fetchOptionsChain(token), fetchSpxQuote(token)]);
-
-    lastData = { chain, quote };
-    const gex = computeGex(chain, selectedExpiry);
-
-    // Update expiry selector
-    renderExpirySelect(gex.expiries, gex.selectedExpiry);
-    selectedExpiry = gex.selectedExpiry;
-
-    renderTopBar(gex, quote);
-    renderCards(gex);
-    renderChart(gex);
-    renderTable(gex);
-
-    document.getElementById('mainContent').style.display = 'block';
-    document.getElementById('authPrompt').style.display = 'none';
-    hideLoading();
-  } catch (e) {
-    console.error('[GEX] fetch error:', e);
-    document.getElementById('statusDot').className = 'status-dot off';
-    // If we had previous data, keep showing it
-    if (!lastData) {
-      hideLoading();
-      // Check if it's an auth error
-      if (e.message.includes('401') || e.message.includes('403')) {
-        showAuth();
+function renderEvents(data) {
+  // Accumulate new events
+  if (data.events && data.events.length > 0) {
+    const ts = data.updatedAt;
+    for (const evt of data.events) {
+      // Avoid duplicates (same event + same timestamp)
+      const exists = eventLog.some(e => e.type === evt && e.ts === ts);
+      if (!exists) {
+        eventLog.push({ type: evt, ts, spot: data.spot, regime: data.regime });
       }
     }
   }
+
+  const list = document.getElementById('eventsList');
+  if (eventLog.length === 0) {
+    list.innerHTML = '<li class="no-events">No events yet today</li>';
+    return;
+  }
+
+  // Show most recent first, max 20
+  const recent = eventLog.slice(-20).reverse();
+  list.innerHTML = recent.map(e => {
+    let icon = '', cls = '', label = '';
+    switch (e.type) {
+      case 'regime_flip':
+        icon = 'R'; cls = 'flip'; label = 'Regime flipped to ' + e.regime + ' at SPX ' + e.spot.toFixed(0);
+        break;
+      case 'wall_break':
+        icon = 'W'; cls = 'wall'; label = 'Wall break detected at SPX ' + e.spot.toFixed(0);
+        break;
+      case 'gex_surge':
+        icon = 'S'; cls = 'surge'; label = 'GEX surge (>20% change) at SPX ' + e.spot.toFixed(0);
+        break;
+      default:
+        icon = '?'; cls = 'flip'; label = e.type;
+    }
+    return '<li>' +
+      '<span class="event-icon ' + cls + '">' + icon + '</span>' +
+      '<span>' + label + '</span>' +
+      '<span class="event-time">' + fmtTime(e.ts) + '</span>' +
+      '</li>';
+  }).join('');
 }
 
-// ── Expiry change handler ──
-document.getElementById('expirySelect').addEventListener('change', function() {
-  selectedExpiry = this.value;
-  if (lastData) {
-    const gex = computeGex(lastData.chain, selectedExpiry);
-    renderTopBar(gex, lastData.quote);
-    renderCards(gex);
-    renderChart(gex);
-    renderTable(gex);
+function renderCommentary(data) {
+  const body = document.getElementById('commentaryBody');
+  const meta = document.getElementById('commentaryMeta');
+
+  if (data.commentary) {
+    body.innerHTML = '<div class="commentary-text">' + data.commentary.replace(/\n/g, '<br>') + '</div>';
+    meta.style.display = 'flex';
+    const timeStr = data.commentaryAt ? fmtTime(data.commentaryAt) : fmtTime(data.updatedAt);
+    meta.innerHTML = '<span class="ai-badge">AI</span> Updated ' + timeStr;
+  } else {
+    body.innerHTML = '<div class="commentary-placeholder">Waiting for commentary...</div>';
+    meta.style.display = 'none';
   }
-});
+}
+
+// ── Main fetch + render ──
+async function fetchAndRender() {
+  try {
+    const resp = await fetch(GEX_ENDPOINT);
+    if (!resp.ok) {
+      if (resp.status === 404) {
+        document.getElementById('loadingOverlay').querySelector('.loading-text').textContent = 'Waiting for GEX data (market may be closed)...';
+        return;
+      }
+      throw new Error('HTTP ' + resp.status);
+    }
+    const data = await resp.json();
+
+    renderTopBar(data);
+    renderCards(data);
+    renderChart(data);
+    renderTable(data);
+    renderEvents(data);
+    renderCommentary(data);
+
+    document.getElementById('mainContent').style.display = 'block';
+    hideLoading();
+
+    document.getElementById('statusDot').className = 'status-dot ' + (isMarketOpen() ? 'live' : 'stale');
+  } catch (e) {
+    console.error('[GEX] fetch error:', e);
+    document.getElementById('statusDot').className = 'status-dot off';
+  }
+}
 
 // ── Polling ──
 function startPolling() {
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(() => {
-    if (isMarketOpen()) {
-      fetchAndRender();
-    } else {
-      document.getElementById('statusDot').className = 'status-dot stale';
-      const mktEl = document.getElementById('marketBadge');
-      mktEl.textContent = 'Market Closed';
-      mktEl.className = 'market-badge closed';
-    }
+    fetchAndRender();
   }, POLL_MS);
-}
-
-// ── Show/hide helpers ──
-function showAuth() {
-  hideLoading();
-  document.getElementById('mainContent').style.display = 'none';
-  document.getElementById('authPrompt').style.display = 'block';
 }
 
 function hideLoading() {
@@ -787,11 +629,6 @@ function hideLoading() {
 
 // ── Init ──
 (async function init() {
-  const t = SC.tokens();
-  if (!t || !t.access) {
-    showAuth();
-    return;
-  }
   await fetchAndRender();
   startPolling();
 })();

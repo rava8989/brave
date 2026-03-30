@@ -691,8 +691,20 @@ async function handleScheduled(env) {
     return { ...eodResult, discord: discordResult, backfill_wr: backfillWR, backfill_pl: backfillPL };
   }
 
+  // ── GEX update during market hours (every 2-min cron tick) ──
+  let gexResult = {};
+  if (isMarket) {
+    try {
+      const schwabToken = await getAccessToken(env);
+      gexResult = await handleGEXUpdate(env, schwabToken);
+    } catch (e) {
+      gexResult = { gex: 'error', error: e.message };
+      console.warn('[proxy] GEX update failed:', e.message || e);
+    }
+  }
+
   if (!isMorning) {
-    return { status: 'discord_poll', discord: discordResult, time: `${etHour}:${String(etMin).padStart(2,'0')} ET` };
+    return { status: 'discord_poll', discord: discordResult, gex: gexResult, time: `${etHour}:${String(etMin).padStart(2,'0')} ET` };
   }
 
   // 1. Get access token
@@ -859,6 +871,430 @@ async function handleScheduled(env) {
     githubDate: todayISO,
     postedAt: new Date().toISOString(),
   };
+}
+
+// ════════════════════════════════════════════════════════════════════
+// GEX (GAMMA EXPOSURE) CALCULATION
+// ════════════════════════════════════════════════════════════════════
+
+function calculateGEX(chainData, spot) {
+  const R = 0.043, Q = 0.013, MULT = 100;
+
+  function normPdf(x) { return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI); }
+
+  function bsGamma(S, K, T, sigma) {
+    if (T <= 0 || sigma <= 0 || S <= 0) return 0;
+    const d1 = (Math.log(S / K) + (R - Q + 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));
+    return normPdf(d1) * Math.exp(-Q * T) / (S * sigma * Math.sqrt(T));
+  }
+
+  const callMap = chainData.callExpDateMap || {};
+  const putMap = chainData.putExpDateMap || {};
+  const S = spot;
+
+  // Find nearest expiration only
+  const allExpiries = [...new Set([...Object.keys(callMap), ...Object.keys(putMap)])].sort();
+  if (allExpiries.length === 0) return null;
+  const expKey = allExpiries[0];
+
+  const calls = callMap[expKey] || {};
+  const puts = putMap[expKey] || {};
+
+  // Parse DTE from key format "YYYY-MM-DD:N"
+  const dteParts = expKey.split(':');
+  const dte = parseInt(dteParts[1]) || 0;
+  const T_years = Math.max(dte / 365, 1 / (365 * 24)); // minimum ~1 hour
+
+  const strikeSet = new Set([...Object.keys(calls), ...Object.keys(puts)]);
+  const strikeResults = [];
+  let totalCallGex = 0, totalPutGex = 0;
+
+  for (const strikeStr of strikeSet) {
+    const K = parseFloat(strikeStr);
+    if (isNaN(K)) continue;
+
+    const callContracts = calls[strikeStr] || [];
+    const putContracts = puts[strikeStr] || [];
+
+    let callOI = 0, callGex = 0;
+    let putOI = 0, putGex = 0;
+
+    for (const c of callContracts) {
+      const oi = c.openInterest || 0;
+      const vol = c.totalVolume || 0;
+      const iv = (c.volatility || 0) / 100;
+      const effectiveOI = oi > 0 ? oi : (dte === 0 ? vol : 0);
+      if (effectiveOI === 0 && vol === 0) continue;
+      callOI += effectiveOI;
+      const gamma = bsGamma(S, K, T_years, iv > 0 ? iv : 0.2);
+      callGex += gamma * effectiveOI * S * S * MULT * 0.01;
+    }
+
+    for (const p of putContracts) {
+      const oi = p.openInterest || 0;
+      const vol = p.totalVolume || 0;
+      const iv = (p.volatility || 0) / 100;
+      const effectiveOI = oi > 0 ? oi : (dte === 0 ? vol : 0);
+      if (effectiveOI === 0 && vol === 0) continue;
+      putOI += effectiveOI;
+      const gamma = bsGamma(S, K, T_years, iv > 0 ? iv : 0.2);
+      putGex -= gamma * effectiveOI * S * S * MULT * 0.01; // puts negative
+    }
+
+    const netGex = callGex + putGex;
+    if (callOI === 0 && putOI === 0) continue;
+
+    totalCallGex += callGex;
+    totalPutGex += putGex;
+    strikeResults.push({ strike: K, callGex, putGex, netGex, callOI, putOI });
+  }
+
+  strikeResults.sort((a, b) => a.strike - b.strike);
+  const totalGex = totalCallGex + totalPutGex;
+
+  // Max positive gamma strike
+  let maxPosStrike = 0, maxPosGex = 0;
+  let maxNegStrike = 0, maxNegGex = 0;
+  for (const r of strikeResults) {
+    if (r.netGex > maxPosGex) { maxPosStrike = r.strike; maxPosGex = r.netGex; }
+    if (r.netGex < maxNegGex) { maxNegStrike = r.strike; maxNegGex = r.netGex; }
+  }
+
+  // GEX flip: cumulative net_gex zero crossing
+  let flipStrike = null;
+  let cumGex = 0;
+  for (let i = 0; i < strikeResults.length; i++) {
+    const prevCum = cumGex;
+    cumGex += strikeResults[i].netGex;
+    if (prevCum < 0 && cumGex >= 0 && i > 0) {
+      const s0 = strikeResults[i - 1].strike;
+      const s1 = strikeResults[i].strike;
+      const ratio = Math.abs(prevCum) / (Math.abs(prevCum) + Math.abs(cumGex));
+      flipStrike = Math.round(s0 + ratio * (s1 - s0));
+      break;
+    }
+  }
+  if (flipStrike === null) {
+    cumGex = 0;
+    for (let i = 0; i < strikeResults.length; i++) {
+      const prevCum = cumGex;
+      cumGex += strikeResults[i].netGex;
+      if (prevCum > 0 && cumGex <= 0 && i > 0) {
+        const s0 = strikeResults[i - 1].strike;
+        const s1 = strikeResults[i].strike;
+        const ratio = Math.abs(prevCum) / (Math.abs(prevCum) + Math.abs(cumGex));
+        flipStrike = Math.round(s0 + ratio * (s1 - s0));
+        break;
+      }
+    }
+  }
+
+  // Top 10 walls by absolute net GEX
+  const walls = [...strikeResults]
+    .sort((a, b) => Math.abs(b.netGex) - Math.abs(a.netGex))
+    .slice(0, 10)
+    .map(w => ({
+      strike: w.strike,
+      callGex: Math.round(w.callGex),
+      putGex: Math.round(w.putGex),
+      netGex: Math.round(w.netGex),
+      callOI: w.callOI,
+      putOI: w.putOI,
+      direction: w.netGex >= 0 ? 'stabilizing' : 'amplifying',
+    }));
+
+  const regime = totalGex > 0 ? 'PIN' : 'BREAKOUT';
+
+  return {
+    timestamp: Math.floor(Date.now() / 1000),
+    spot: parseFloat(S.toFixed(2)),
+    regime,
+    totalGex: Math.round(totalGex),
+    totalCallGex: Math.round(totalCallGex),
+    totalPutGex: Math.round(totalPutGex),
+    flipStrike,
+    maxPosStrike,
+    maxPosGex: Math.round(maxPosGex),
+    maxNegStrike,
+    maxNegGex: Math.round(maxNegGex),
+    pctChange1m: null, // filled in by history comparison
+    pctChange5m: null,
+    walls,
+    strikes: strikeResults.map(s => ({
+      strike: s.strike,
+      netGex: Math.round(s.netGex),
+      callGex: Math.round(s.callGex),
+      putGex: Math.round(s.putGex),
+    })),
+    events: [],
+    commentary: null,
+    updatedAt: new Date().toISOString(),
+    expiry: expKey,
+    dte,
+  };
+}
+
+async function handleGEXUpdate(env, token) {
+  // 1. Fetch SPX options chain (nearest expiry, 80 strikes around ATM)
+  const chainUrl = 'https://api.schwabapi.com/marketdata/v1/chains?symbol=%24SPX&contractType=ALL&strikeCount=80&includeUnderlyingQuote=true&strategy=SINGLE';
+  const chainData = await fetchSchwabJSON(chainUrl, token);
+
+  // 2. Get spot from underlying quote
+  const spot = chainData.underlyingPrice || chainData.underlying?.last || chainData.underlying?.mark;
+  if (!spot) throw new Error('No SPX spot price in chain response');
+
+  // 3. Calculate GEX
+  const gexData = calculateGEX(chainData, spot);
+  if (!gexData) throw new Error('GEX calculation returned null (no expirations)');
+
+  // 4. Load history from KV for % change tracking
+  const historyRaw = await env.SIGNAL_KV.get('gex_history');
+  let history = historyRaw ? JSON.parse(historyRaw) : [];
+
+  // Calculate % changes
+  const now = Date.now();
+  if (history.length > 0) {
+    // 1-min change: find snapshot closest to 1 min ago
+    const target1m = now - 60_000;
+    const snap1m = history.reduce((best, s) => {
+      return Math.abs(s.ts - target1m) < Math.abs(best.ts - target1m) ? s : best;
+    }, history[0]);
+    if (snap1m.totalGex !== 0 && Math.abs(snap1m.ts - target1m) < 180_000) {
+      gexData.pctChange1m = parseFloat(((gexData.totalGex - snap1m.totalGex) / Math.abs(snap1m.totalGex) * 100).toFixed(1));
+    }
+
+    // 5-min change
+    const target5m = now - 300_000;
+    const snap5m = history.reduce((best, s) => {
+      return Math.abs(s.ts - target5m) < Math.abs(best.ts - target5m) ? s : best;
+    }, history[0]);
+    if (snap5m.totalGex !== 0 && Math.abs(snap5m.ts - target5m) < 600_000) {
+      gexData.pctChange5m = parseFloat(((gexData.totalGex - snap5m.totalGex) / Math.abs(snap5m.totalGex) * 100).toFixed(1));
+    }
+  }
+
+  // 5. Detect events by comparing with previous snapshot
+  const events = [];
+  const prevRaw = await env.SIGNAL_KV.get('gex_current');
+  if (prevRaw) {
+    const prev = JSON.parse(prevRaw);
+    // Regime flip
+    if (prev.regime && prev.regime !== gexData.regime) {
+      events.push('regime_flip');
+    }
+    // Wall break: spot crossed a top-5 wall
+    if (prev.walls && prev.spot) {
+      const top5 = prev.walls.slice(0, 5);
+      for (const wall of top5) {
+        const crossed = (prev.spot < wall.strike && gexData.spot >= wall.strike) ||
+                        (prev.spot > wall.strike && gexData.spot <= wall.strike);
+        if (crossed) {
+          events.push('wall_break');
+          break;
+        }
+      }
+    }
+    // GEX surge: >20% change in total_gex
+    if (prev.totalGex && prev.totalGex !== 0) {
+      const pctChange = Math.abs((gexData.totalGex - prev.totalGex) / prev.totalGex * 100);
+      if (pctChange > 20) events.push('gex_surge');
+    }
+  }
+  gexData.events = events;
+
+  // 5b. Generate AI commentary (every 15 min + on big events, 100/day hard limit)
+  // Reuse prevRaw from step 5 to carry forward existing commentary
+  const prevParsed = prevRaw ? JSON.parse(prevRaw) : null;
+  try {
+    const commentary = await generateGEXCommentary(env, gexData, events);
+    if (commentary) {
+      gexData.commentary = commentary;
+      gexData.commentaryAt = new Date().toISOString();
+    } else if (prevParsed?.commentary) {
+      // Carry forward previous commentary
+      gexData.commentary = prevParsed.commentary;
+      gexData.commentaryAt = prevParsed.commentaryAt || null;
+    }
+  } catch (e) {
+    console.warn('[proxy] Commentary generation failed:', e.message || e);
+    if (prevParsed?.commentary) {
+      gexData.commentary = prevParsed.commentary;
+      gexData.commentaryAt = prevParsed.commentaryAt || null;
+    }
+  }
+
+  // 6. Store current snapshot in KV
+  await env.SIGNAL_KV.put('gex_current', JSON.stringify(gexData));
+
+  // 7. Append to history (keep last 60 snapshots for % change tracking)
+  history.push({ ts: now, totalGex: gexData.totalGex, regime: gexData.regime });
+  if (history.length > 60) history = history.slice(-60);
+  await env.SIGNAL_KV.put('gex_history', JSON.stringify(history));
+
+  // 8. Commit to GitHub every 10 min OR on big events
+  const lastCommitRaw = await env.SIGNAL_KV.get('gex_last_github_commit');
+  const lastCommitTs = lastCommitRaw ? parseInt(lastCommitRaw) : 0;
+  const timeSinceCommit = now - lastCommitTs;
+  const hasBigEvent = events.includes('regime_flip') || events.includes('gex_surge');
+
+  if (timeSinceCommit >= 600_000 || hasBigEvent) {
+    try {
+      await commitGexToGitHub(env, gexData);
+      await env.SIGNAL_KV.put('gex_last_github_commit', String(now));
+    } catch (e) {
+      console.warn('[proxy] GEX GitHub commit failed:', e.message || e);
+    }
+  }
+
+  return { gex: 'updated', regime: gexData.regime, totalGex: gexData.totalGex, events };
+}
+
+// ════════════════════════════════════════════════════════════════════
+// CLAUDE API COMMENTARY — 100 calls/day hard limit
+// Generates dealer hedging commentary from GEX data.
+// Runs every 15 min + immediately on big events (regime_flip, gex_surge, wall_break).
+// ════════════════════════════════════════════════════════════════════
+
+const ANTHROPIC_DAILY_LIMIT = 100;
+
+async function getAnthropicCallCount(env) {
+  const etNow = toET(new Date());
+  const dateKey = `anthropic_calls_${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
+  const raw = await env.SIGNAL_KV.get(dateKey);
+  return { count: raw ? parseInt(raw) : 0, dateKey };
+}
+
+async function incrementAnthropicCallCount(env, dateKey, currentCount) {
+  await env.SIGNAL_KV.put(dateKey, String(currentCount + 1), { expirationTtl: 172800 }); // auto-expire after 48h
+}
+
+async function generateGEXCommentary(env, gexData, events) {
+  const apiKey = env.ANTHROPIC_API_KEY;
+  if (!apiKey) return null;
+
+  // ── Hard daily limit check ──
+  const { count, dateKey } = await getAnthropicCallCount(env);
+  if (count >= ANTHROPIC_DAILY_LIMIT) {
+    console.warn(`[proxy] Anthropic daily limit reached (${count}/${ANTHROPIC_DAILY_LIMIT})`);
+    return null;
+  }
+
+  // ── Should we generate? Every 15 min OR on big events ──
+  const hasBigEvent = events.includes('regime_flip') || events.includes('wall_break') || events.includes('gex_surge');
+  const lastCommentaryRaw = await env.SIGNAL_KV.get('gex_last_commentary_ts');
+  const lastCommentaryTs = lastCommentaryRaw ? parseInt(lastCommentaryRaw) : 0;
+  const timeSinceCommentary = Date.now() - lastCommentaryTs;
+
+  if (!hasBigEvent && timeSinceCommentary < 900_000) { // 15 min = 900,000 ms
+    return null; // not time yet, no big event
+  }
+
+  // ── Build prompt ──
+  const top5Walls = (gexData.walls || []).slice(0, 5).map(w =>
+    `  ${w.strike}: net ${w.netGex > 0 ? '+' : ''}${(w.netGex/1e6).toFixed(1)}M (${w.direction})`
+  ).join('\n');
+
+  const eventDesc = events.length > 0
+    ? `EVENTS JUST DETECTED: ${events.join(', ')}`
+    : 'No new events';
+
+  const prompt = `You are a professional options market analyst. Analyze this real-time SPX Gamma Exposure (GEX) data and provide a concise dealer hedging commentary.
+
+CURRENT GEX SNAPSHOT:
+- SPX Spot: ${gexData.spot}
+- Regime: ${gexData.regime} (${gexData.regime === 'PIN' ? 'dealers are long gamma → they sell rallies/buy dips → stabilizing, expect mean reversion' : 'dealers are short gamma → they buy rallies/sell dips → amplifying, expect trending/volatile moves'})
+- Total GEX: ${(gexData.totalGex/1e6).toFixed(1)}M
+- GEX Flip Strike: ${gexData.flipStrike || 'N/A'}
+- Max Positive Gamma: ${gexData.maxPosStrike} (${(gexData.maxPosGex/1e6).toFixed(1)}M) — dealers sell here
+- Max Negative Gamma: ${gexData.maxNegStrike} (${(gexData.maxNegGex/1e6).toFixed(1)}M) — dealers buy here
+- 1-min % change: ${gexData.pctChange1m != null ? gexData.pctChange1m + '%' : 'N/A'}
+- 5-min % change: ${gexData.pctChange5m != null ? gexData.pctChange5m + '%' : 'N/A'}
+
+TOP 5 GEX WALLS:
+${top5Walls}
+
+${eventDesc}
+
+Provide exactly 2-3 sentences of actionable dealer hedging commentary. Focus on:
+1. What dealers are likely doing RIGHT NOW based on spot vs key levels
+2. Expected price behavior given the regime and GEX profile
+3. Key strikes to watch
+
+Be direct and technical. No disclaimers. Use trader language.`;
+
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 200,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      console.warn(`[proxy] Anthropic API error ${resp.status}: ${errText.slice(0, 200)}`);
+      return null;
+    }
+
+    const result = await resp.json();
+    const text = result.content?.[0]?.text || null;
+
+    // ── Increment call count AFTER successful call ──
+    await incrementAnthropicCallCount(env, dateKey, count);
+    await env.SIGNAL_KV.put('gex_last_commentary_ts', String(Date.now()));
+
+    console.log(`[proxy] Anthropic call ${count + 1}/${ANTHROPIC_DAILY_LIMIT} — commentary generated`);
+    return text;
+  } catch (e) {
+    console.warn('[proxy] Anthropic API call failed:', e.message || e);
+    return null;
+  }
+}
+
+async function commitGexToGitHub(env, gexData) {
+  const ghToken = env.GITHUB_TOKEN;
+  if (!ghToken) return;
+
+  const apiUrl = 'https://api.github.com/repos/rava8989/brave/contents/gex_data.json';
+  const headers = {
+    'Authorization': `Bearer ${ghToken}`,
+    'Accept': 'application/vnd.github+json',
+    'User-Agent': 'schwab-proxy-worker/1.0',
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
+
+  // Get current file SHA (may not exist yet)
+  let sha = null;
+  try {
+    const getResp = await fetch(apiUrl, { headers });
+    if (getResp.ok) {
+      const meta = await getResp.json();
+      sha = meta.sha;
+    }
+  } catch (e) { /* file may not exist yet */ }
+
+  const body = {
+    message: `auto: GEX update ${gexData.regime} ${new Date().toISOString().slice(0, 16)}`,
+    content: btoa(JSON.stringify(gexData, null, 2)),
+  };
+  if (sha) body.sha = sha;
+
+  const putResp = await fetch(apiUrl, {
+    method: 'PUT',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!putResp.ok) {
+    const err = await putResp.text();
+    throw new Error(`GitHub PUT gex_data.json failed: ${putResp.status} — ${err.slice(0, 200)}`);
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -1491,8 +1927,40 @@ export default {
       }
     }
 
+    // ── GET /gex ── Public endpoint, returns current GEX data from KV
+    if (url.pathname === '/gex' && request.method === 'GET') {
+      const publicCors = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Max-Age': '86400',
+      };
+      try {
+        const data = await env.SIGNAL_KV.get('gex_current');
+        if (!data) return jsonResp({ error: 'No GEX data available yet' }, 404, publicCors);
+        return new Response(data, {
+          status: 200,
+          headers: { 'Content-Type': 'application/json', ...publicCors },
+        });
+      } catch (e) {
+        return jsonResp({ error: e.message }, 500, publicCors);
+      }
+    }
+
     // Preflight
     if (request.method === 'OPTIONS') {
+      // Allow CORS preflight for /gex from any origin
+      if (url.pathname === '/gex') {
+        return new Response(null, {
+          status: 204,
+          headers: {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type',
+            'Access-Control-Max-Age': '86400',
+          },
+        });
+      }
       return new Response(null, { status: 204, headers: corsHeaders });
     }
 
