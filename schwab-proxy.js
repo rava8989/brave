@@ -674,7 +674,7 @@ async function handleScheduled(env) {
   const etMin = etNow.getMinutes();
   const isMorning = etHour === 9  && etMin >= 30 && etMin <= 40;
   const isEOD     = etHour === 16 && etMin >= 0  && etMin <= 15;
-  const isMarket  = (etHour > 9 || (etHour === 9 && etMin >= 35)) && etHour < 16;
+  const isMarket  = (etHour > 9 || (etHour === 9 && etMin >= 30)) && etHour < 16;
 
   // Always poll Discord during market hours
   let discordResult = {};
@@ -953,8 +953,8 @@ function calculateGEX(chainData, spot) {
   const totalGex = totalCallGex + totalPutGex;
 
   // Max positive gamma strike
-  let maxPosStrike = 0, maxPosGex = 0;
-  let maxNegStrike = 0, maxNegGex = 0;
+  let maxPosStrike = null, maxPosGex = 0;
+  let maxNegStrike = null, maxNegGex = 0;
   for (const r of strikeResults) {
     if (r.netGex > maxPosGex) { maxPosStrike = r.strike; maxPosGex = r.netGex; }
     if (r.netGex < maxNegGex) { maxNegStrike = r.strike; maxNegGex = r.netGex; }
@@ -1102,7 +1102,7 @@ async function handleGEXUpdate(env, token) {
   }
   gexData.events = events;
 
-  // 5b. Generate AI commentary (every 15 min + on big events, 100/day hard limit)
+  // 5b. Generate AI commentary (every 15 min + on big events, 200/day hard limit)
   // Reuse prevRaw from step 5 to carry forward existing commentary
   const prevParsed = prevRaw ? JSON.parse(prevRaw) : null;
   try {
@@ -1150,12 +1150,12 @@ async function handleGEXUpdate(env, token) {
 }
 
 // ════════════════════════════════════════════════════════════════════
-// CLAUDE API COMMENTARY — 100 calls/day hard limit
+// CLAUDE API COMMENTARY — 200 calls/day hard limit
 // Generates dealer hedging commentary from GEX data.
 // Runs every 15 min + immediately on big events (regime_flip, gex_surge, wall_break).
 // ════════════════════════════════════════════════════════════════════
 
-const ANTHROPIC_DAILY_LIMIT = 100;
+const ANTHROPIC_DAILY_LIMIT = 200;
 
 async function getAnthropicCallCount(env) {
   const etNow = toET(new Date());
@@ -1185,7 +1185,7 @@ async function generateGEXCommentary(env, gexData, events) {
   const lastCommentaryTs = lastCommentaryRaw ? parseInt(lastCommentaryRaw) : 0;
   const timeSinceCommentary = Date.now() - lastCommentaryTs;
 
-  if (!hasBigEvent && timeSinceCommentary < 900_000) { // 15 min = 900,000 ms
+  if (!hasBigEvent && timeSinceCommentary < 300_000) { // 5 min = 300,000 ms
     return null; // not time yet, no big event
   }
 
@@ -1223,19 +1223,26 @@ Provide exactly 2-3 sentences of actionable dealer hedging commentary. Focus on:
 Be direct and technical. No disclaimers. Use trader language.`;
 
   try {
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 200,
-        messages: [{ role: 'user', content: prompt }],
-      }),
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    let resp;
+    try {
+      resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 300,
+          messages: [{ role: 'user', content: prompt }],
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+    } catch (e) { clearTimeout(timeout); throw e; }
 
     if (!resp.ok) {
       const errText = await resp.text();
@@ -1282,7 +1289,7 @@ async function commitGexToGitHub(env, gexData) {
 
   const body = {
     message: `auto: GEX update ${gexData.regime} ${new Date().toISOString().slice(0, 16)}`,
-    content: btoa(JSON.stringify(gexData, null, 2)),
+    content: btoa(unescape(encodeURIComponent(JSON.stringify(gexData, null, 2)))),
   };
   if (sha) body.sha = sha;
 
