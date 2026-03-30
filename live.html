@@ -865,9 +865,17 @@ function updatePayoffChart(spxNow) {
 }
 
 // ─── RENDER ──────────────────────────────────────────────────────────────────
+function isTradeToday() {
+  if (!trade || !trade.date) return false;
+  const now = new Date();
+  const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const todayStr = et.getFullYear() + '-' + String(et.getMonth()+1).padStart(2,'0') + '-' + String(et.getDate()).padStart(2,'0');
+  return trade.date === todayStr;
+}
+
 function render() {
   const main = document.getElementById('mainContent');
-  if (!trade || !trade.triggered) {
+  if (!trade || !trade.triggered || !isTradeToday()) {
     const win = getNextWindow();
     const winHtml = win
       ? `<div class="no-trade-window">
