@@ -137,6 +137,21 @@
       .chart-wrap{height:300px;}
       .gex-table{font-size:11px;}
       .gex-table th,.gex-table td{padding:6px 6px;}
+      .gex-nav{flex-wrap:wrap;}
+      .gex-nav a{padding:8px 10px;}
+      .topbar-left{gap:10px;}
+      .topbar-right{gap:8px;}
+      .total-gex{font-size:12px;}
+    }
+    @media(max-width:480px){
+      .spx-price{font-size:18px;}
+      .topbar{padding:10px 12px;gap:8px;}
+      .gex-nav a{padding:7px 8px;font-size:11px;}
+      .regime-badge{font-size:11px;padding:3px 10px;}
+      .container{padding:10px 8px 24px;}
+      .level-card .lc-strike{font-size:20px;}
+      .chart-wrap{height:250px;}
+      .commentary-body .commentary-text{font-size:12px;}
     }
   </style>
 </head>
@@ -297,14 +312,19 @@ function isMarketOpen() {
 
 // ── Render functions ──
 function renderTopBar(data) {
-  document.getElementById('spxPrice').textContent = data.spot.toFixed(2);
+  const spot = data.spot != null ? data.spot : null;
+  const regime = data.regime || '--';
+  const totalGex = data.totalGex != null ? data.totalGex : null;
+  const updatedAt = data.updatedAt || null;
+
+  document.getElementById('spxPrice').textContent = spot != null ? spot.toFixed(2) : '--';
 
   const regimeEl = document.getElementById('regimeBadge');
-  regimeEl.textContent = data.regime;
-  regimeEl.className = 'regime-badge ' + (data.regime === 'PIN' ? 'pin' : 'breakout');
-  regimeEl.style.display = 'inline-block';
+  regimeEl.textContent = regime;
+  regimeEl.className = 'regime-badge ' + (regime === 'PIN' ? 'pin' : 'breakout');
+  regimeEl.style.display = regime !== '--' ? 'inline-block' : 'none';
 
-  document.getElementById('totalGex').innerHTML = '<span class="label">Total GEX</span>' + fmtGex(data.totalGex);
+  document.getElementById('totalGex').innerHTML = '<span class="label">Total GEX</span>' + (totalGex != null ? fmtGex(totalGex) : '--');
 
   // % changes
   const pct1m = document.getElementById('pctChange1m');
@@ -322,10 +342,10 @@ function renderTopBar(data) {
     pct5m.textContent = '';
   }
 
-  document.getElementById('lastUpdated').textContent = fmtTime(data.updatedAt);
+  document.getElementById('lastUpdated').textContent = updatedAt ? fmtTime(updatedAt) : '--';
 
   // Stale check
-  const age = Date.now() - new Date(data.updatedAt).getTime();
+  const age = updatedAt ? Date.now() - new Date(updatedAt).getTime() : Infinity;
   const isStale = age > STALE_THRESHOLD_MS;
   const dotEl = document.getElementById('statusDot');
   const mktEl = document.getElementById('marketBadge');
@@ -360,8 +380,9 @@ function renderCards(data) {
 }
 
 function renderChart(data) {
+  if (!data.strikes || data.strikes.length === 0) return;
   const ctx = document.getElementById('gexChart').getContext('2d');
-  const strikes = data.strikes || [];
+  const strikes = data.strikes;
   const labels = strikes.map(s => s.strike.toFixed(0));
   const values = strikes.map(s => s.netGex);
   const colors = values.map(v => v >= 0 ? 'rgba(34,197,94,0.75)' : 'rgba(239,68,68,0.75)');
@@ -520,8 +541,9 @@ function renderChart(data) {
 }
 
 function renderTable(data) {
+  if (!data.walls) return;
   const body = document.getElementById('wallsBody');
-  const walls = data.walls || [];
+  const walls = data.walls;
 
   body.innerHTML = walls.map(w => {
     const dir = w.netGex >= 0;
@@ -562,13 +584,13 @@ function renderEvents(data) {
     let icon = '', cls = '', label = '';
     switch (e.type) {
       case 'regime_flip':
-        icon = 'R'; cls = 'flip'; label = 'Regime flipped to ' + e.regime + ' at SPX ' + e.spot.toFixed(0);
+        icon = 'R'; cls = 'flip'; label = 'Regime flipped to ' + e.regime + ' at SPX ' + (e.spot?.toFixed(0) ?? '--');
         break;
       case 'wall_break':
-        icon = 'W'; cls = 'wall'; label = 'Wall break detected at SPX ' + e.spot.toFixed(0);
+        icon = 'W'; cls = 'wall'; label = 'Wall break detected at SPX ' + (e.spot?.toFixed(0) ?? '--');
         break;
       case 'gex_surge':
-        icon = 'S'; cls = 'surge'; label = 'GEX surge (>20% change) at SPX ' + e.spot.toFixed(0);
+        icon = 'S'; cls = 'surge'; label = 'GEX surge (>20% change) at SPX ' + (e.spot?.toFixed(0) ?? '--');
         break;
       default:
         icon = '?'; cls = 'flip'; label = e.type;
@@ -586,7 +608,8 @@ function renderCommentary(data) {
   const meta = document.getElementById('commentaryMeta');
 
   if (data.commentary) {
-    body.innerHTML = '<div class="commentary-text">' + data.commentary.replace(/\n/g, '<br>') + '</div>';
+    const safe = data.commentary.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+    body.innerHTML = '<div class="commentary-text">' + safe + '</div>';
     meta.style.display = 'flex';
     const timeStr = data.commentaryAt ? fmtTime(data.commentaryAt) : fmtTime(data.updatedAt);
     meta.innerHTML = '<span class="ai-badge">AI</span> Updated ' + timeStr;
@@ -755,6 +778,22 @@ function startPolling() {
     // No polling — market is closed
   }
 })();
+
+// Restart polling when tab becomes visible again during market hours
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && isMarketOpen() && !pollTimer) {
+    fetchAndRender();
+    startPolling();
+  }
+});
+
+// Check every 60s if market opened and we need to start polling
+setInterval(() => {
+  if (isMarketOpen() && !pollTimer) {
+    fetchAndRender();
+    startPolling();
+  }
+}, 60000);
 </script>
 </body>
 </html>
