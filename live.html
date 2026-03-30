@@ -492,25 +492,20 @@ async function refreshSPX() {
     const data = await r.json();
     if (!data.price) return false;
 
-    // Always keep last known price — stale data disconnects Schwab badge but still shows price
-    spxPrice = data.price;
-    spxPrevClose = data.prev_close;
-    lastSpxTimestamp = Date.now();
-
-    // Compute age from time+date fields (Windows extension doesn't send ISO timestamp)
-    let ageSecs = 0;
+    // Check freshness BEFORE setting price — don't show stale data
     if (data.time && data.date) {
       const nowET = getNowET();
       const [dh, dm] = data.time.split(':').map(Number);
       const [dy, dmo, dd] = data.date.split('-').map(Number);
       const sameDay = (nowET.getFullYear() === dy && (nowET.getMonth()+1) === dmo && nowET.getDate() === dd);
       if (!sameDay) { schwabConnected = false; return false; }
-      ageSecs = (nowET.getHours() * 60 + nowET.getMinutes() - dh * 60 - dm) * 60;
+      const ageSecs = (nowET.getHours() * 60 + nowET.getMinutes() - dh * 60 - dm) * 60;
+      if (ageSecs > 300) { schwabConnected = false; return false; }
     }
-    if (ageSecs > 300) {
-      schwabConnected = false;
-      return false;
-    }
+
+    spxPrice = data.price;
+    spxPrevClose = data.prev_close;
+    lastSpxTimestamp = Date.now();
     schwabConnected = true;
     return true;
   } catch {
