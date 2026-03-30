@@ -1,0 +1,800 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GEX Dashboard — SPX Gamma Exposure</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.1.0/dist/chartjs-plugin-annotation.min.js"></script>
+  <style>
+    :root {
+      --bg:#0f172a; --bg2:#1e293b; --bg3:#162032;
+      --border:#2d3f55; --text:#e2e8f0; --text2:#94a3b8; --text3:#475569;
+      --accent:#818cf8; --accent2:#6366f1;
+      --shadow:0 1px 3px rgba(0,0,0,.3),0 4px 16px rgba(0,0,0,.25);
+      --shadow-lg:0 8px 32px rgba(0,0,0,.4);
+      --radius:12px; --radius-sm:8px;
+      --green:#22c55e; --red:#ef4444; --cyan:#22d3ee; --yellow:#fbbf24;
+    }
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+    body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;}
+
+    /* Top bar */
+    .topbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:16px 24px;background:var(--bg2);border-bottom:1px solid var(--border);}
+    .topbar-left{display:flex;align-items:center;gap:18px;flex-wrap:wrap;}
+    .logo{font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:var(--accent);}
+    .logo span{color:var(--text2);font-size:12px;font-family:'Inter',sans-serif;font-weight:400;margin-left:4px;}
+    .spx-price{font-family:'JetBrains Mono',monospace;font-size:28px;font-weight:700;color:var(--cyan);}
+    .spx-change{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;margin-left:4px;}
+    .spx-change.up{color:var(--green);} .spx-change.dn{color:var(--red);}
+    .regime-badge{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;padding:4px 14px;border-radius:20px;text-transform:uppercase;letter-spacing:.08em;}
+    .regime-badge.pin{background:rgba(34,197,94,.15);color:var(--green);border:1px solid rgba(34,197,94,.4);}
+    .regime-badge.breakout{background:rgba(239,68,68,.15);color:var(--red);border:1px solid rgba(239,68,68,.4);}
+    .topbar-right{display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
+    .total-gex{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:600;color:var(--text);}
+    .total-gex .label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);display:block;}
+    .timestamp{font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;}
+    .status-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;background:#64748b;display:inline-block;}
+    .status-dot.live{background:var(--green);box-shadow:0 0 6px var(--green);animation:pulse-dot 2s infinite;}
+    .status-dot.stale{background:var(--yellow);}
+    .status-dot.off{background:#64748b;}
+    @keyframes pulse-dot{0%,100%{opacity:1;}50%{opacity:.3;}}
+    .market-badge{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;padding:3px 10px;border-radius:20px;border:1px solid;}
+    .market-badge.open{background:rgba(34,197,94,.12);color:var(--green);border-color:rgba(34,197,94,.3);}
+    .market-badge.closed{background:rgba(251,191,36,.12);color:var(--yellow);border-color:rgba(251,191,36,.3);}
+
+    /* Layout */
+    .container{max-width:1280px;margin:0 auto;padding:20px 24px 40px;}
+
+    /* Cards row */
+    .cards-row{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px;}
+    .level-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;box-shadow:var(--shadow);position:relative;overflow:hidden;}
+    .level-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;}
+    .level-card.positive::before{background:var(--green);}
+    .level-card.flip::before{background:var(--accent);}
+    .level-card.negative::before{background:var(--red);}
+    .level-card .lc-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);margin-bottom:8px;}
+    .level-card .lc-strike{font-family:'JetBrains Mono',monospace;font-size:26px;font-weight:700;}
+    .level-card.positive .lc-strike{color:var(--green);}
+    .level-card.flip .lc-strike{color:var(--accent);}
+    .level-card.negative .lc-strike{color:var(--red);}
+    .level-card .lc-value{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;color:var(--text2);margin-top:4px;}
+    .level-card .lc-desc{font-size:11px;color:var(--text3);margin-top:8px;line-height:1.4;font-style:italic;}
+
+    /* Chart container */
+    .chart-section{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;box-shadow:var(--shadow);margin-bottom:18px;}
+    .chart-section h2{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:var(--text);margin-bottom:14px;}
+    .chart-section h2 span{color:var(--accent);}
+    .chart-wrap{position:relative;height:420px;}
+
+    /* Table */
+    .table-section{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;box-shadow:var(--shadow);margin-bottom:18px;}
+    .table-section h2{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:var(--text);margin-bottom:14px;}
+    .table-section h2 span{color:var(--accent);}
+    .gex-table{width:100%;border-collapse:collapse;font-size:12px;}
+    .gex-table th{text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);padding:8px 10px;border-bottom:2px solid var(--border);}
+    .gex-table td{padding:8px 10px;border-bottom:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:12px;}
+    .gex-table tr:hover{background:var(--bg3);}
+    .gex-table .pos{color:var(--green);} .gex-table .neg{color:var(--red);}
+    .dir-badge{font-size:10px;font-weight:600;padding:2px 8px;border-radius:12px;white-space:nowrap;}
+    .dir-badge.stab{background:rgba(34,197,94,.12);color:var(--green);border:1px solid rgba(34,197,94,.3);}
+    .dir-badge.amp{background:rgba(239,68,68,.12);color:var(--red);border:1px solid rgba(239,68,68,.3);}
+
+    /* Bottom info */
+    .bottom-info{text-align:center;padding:16px;font-size:11px;color:var(--text3);line-height:1.6;}
+    .bottom-info a{color:var(--accent);text-decoration:none;font-weight:600;}
+    .bottom-info a:hover{text-decoration:underline;}
+
+    /* Loading */
+    .loading-overlay{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:999;transition:opacity .3s;}
+    .loading-overlay.hidden{opacity:0;pointer-events:none;}
+    .spinner{width:40px;height:40px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;}
+    @keyframes spin{to{transform:rotate(360deg);}}
+    .loading-text{margin-top:14px;font-size:13px;color:var(--text2);font-family:'JetBrains Mono',monospace;}
+
+    /* Auth prompt */
+    .auth-prompt{text-align:center;padding:60px 20px;}
+    .auth-prompt h2{font-family:'JetBrains Mono',monospace;font-size:18px;color:var(--accent);margin-bottom:10px;}
+    .auth-prompt p{font-size:13px;color:var(--text2);margin-bottom:20px;line-height:1.6;}
+    .auth-prompt a{display:inline-block;background:var(--accent);color:#fff;font-weight:600;font-size:14px;padding:10px 24px;border-radius:var(--radius-sm);text-decoration:none;transition:opacity .15s;}
+    .auth-prompt a:hover{opacity:.85;}
+
+    /* Expiration selector */
+    .expiry-row{display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;}
+    .expiry-row label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);}
+    .expiry-select{background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:'JetBrains Mono',monospace;font-size:12px;padding:6px 10px;outline:none;cursor:pointer;}
+    .expiry-select:focus{border-color:var(--accent);}
+
+    @media(max-width:768px){
+      .topbar{padding:12px 16px;}
+      .spx-price{font-size:22px;}
+      .container{padding:14px 12px 30px;}
+      .cards-row{grid-template-columns:1fr;gap:10px;}
+      .chart-wrap{height:300px;}
+      .gex-table{font-size:11px;}
+      .gex-table th,.gex-table td{padding:6px 6px;}
+    }
+  </style>
+</head>
+<body>
+
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="spinner"></div>
+  <div class="loading-text">Loading GEX data...</div>
+</div>
+
+<!-- TOP BAR -->
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="logo">GEX <span>Gamma Exposure</span></div>
+    <span class="spx-price" id="spxPrice">--</span>
+    <span class="spx-change" id="spxChange"></span>
+    <span class="regime-badge pin" id="regimeBadge" style="display:none;">--</span>
+  </div>
+  <div class="topbar-right">
+    <div class="total-gex" id="totalGex"><span class="label">Total GEX</span>--</div>
+    <span class="market-badge closed" id="marketBadge">Market Closed</span>
+    <span class="status-dot off" id="statusDot" title="Connection status"></span>
+    <span class="timestamp" id="lastUpdated">--</span>
+  </div>
+</div>
+
+<div class="container" id="mainContent" style="display:none;">
+
+  <!-- Expiration selector -->
+  <div class="expiry-row">
+    <label>Expiration:</label>
+    <select class="expiry-select" id="expirySelect"></select>
+  </div>
+
+  <!-- Key Level Cards -->
+  <div class="cards-row">
+    <div class="level-card positive">
+      <div class="lc-title">Max Positive Gamma</div>
+      <div class="lc-strike" id="maxPosStrike">--</div>
+      <div class="lc-value" id="maxPosValue">--</div>
+      <div class="lc-desc">Dealers sell here (stabilizing)</div>
+    </div>
+    <div class="level-card flip">
+      <div class="lc-title">GEX Flip</div>
+      <div class="lc-strike" id="flipStrike">--</div>
+      <div class="lc-value" id="flipDesc">Above = long gamma, Below = short gamma</div>
+      <div class="lc-desc">Directional regime boundary</div>
+    </div>
+    <div class="level-card negative">
+      <div class="lc-title">Max Negative Gamma</div>
+      <div class="lc-strike" id="maxNegStrike">--</div>
+      <div class="lc-value" id="maxNegValue">--</div>
+      <div class="lc-desc">Dealers buy here (amplifying)</div>
+    </div>
+  </div>
+
+  <!-- GEX Profile Chart -->
+  <div class="chart-section">
+    <h2><span>GEX</span> Profile by Strike</h2>
+    <div class="chart-wrap">
+      <canvas id="gexChart"></canvas>
+    </div>
+  </div>
+
+  <!-- GEX Walls Table -->
+  <div class="table-section">
+    <h2><span>GEX</span> Walls — Top 10 Strikes</h2>
+    <div style="overflow-x:auto;">
+      <table class="gex-table">
+        <thead>
+          <tr>
+            <th>Strike</th>
+            <th>Call GEX</th>
+            <th>Put GEX</th>
+            <th>Net GEX</th>
+            <th>Call OI</th>
+            <th>Put OI</th>
+            <th>Direction</th>
+          </tr>
+        </thead>
+        <tbody id="wallsBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Bottom Info -->
+  <div class="bottom-info">
+    GEX data refreshes every 30s during market hours (9:30 AM - 4:00 PM ET)<br>
+    OI = previous day settlement (standard across all brokers). For 0DTE with OI=0, volume is used as fallback.<br>
+    <a href="index.html">&larr; Back to Strategy Helper</a>
+  </div>
+</div>
+
+<!-- Auth prompt (shown when no tokens) -->
+<div class="container" id="authPrompt" style="display:none;">
+  <div class="auth-prompt">
+    <h2>Schwab Not Connected</h2>
+    <p>GEX dashboard requires a live Schwab API connection for options chain data.<br>Connect Schwab on the main page first, then come back here.</p>
+    <a href="index.html">Go to Main Page</a>
+  </div>
+</div>
+
+<script>
+/* ================================================================
+   GEX Dashboard — SPX Gamma Exposure
+   ================================================================ */
+
+// ── Constants ──
+const R = 0.043;
+const Q = 0.013;
+const MULTIPLIER = 100;
+const PROXY = (localStorage.getItem('sc_proxyUrl') || 'https://schwab-proxy.ravamt4.workers.dev').replace(/\/+$/, '');
+const POLL_MS = 30000;
+
+// ── Storage helpers (mirrors index.html) ──
+const SC = {
+  get:  k => { try { return JSON.parse(localStorage.getItem('sc_' + k)); } catch(e){ return null; } },
+  set:  (k, v) => localStorage.setItem('sc_' + k, JSON.stringify(v)),
+  del:  k => localStorage.removeItem('sc_' + k),
+  creds:  () => SC.get('creds'),
+  tokens: () => SC.get('tokens'),
+};
+
+// ── State ──
+let gexChart = null;
+let pollTimer = null;
+let lastData = null;
+let selectedExpiry = null;
+
+// ── Math helpers ──
+function normPdf(x) {
+  return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
+}
+
+function bsGamma(S, K, T, sigma) {
+  if (T <= 0 || sigma <= 0 || S <= 0) return 0;
+  const d1 = (Math.log(S / K) + (R - Q + 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));
+  return normPdf(d1) * Math.exp(-Q * T) / (S * sigma * Math.sqrt(T));
+}
+
+// ── Format helpers ──
+function fmtGex(val) {
+  const abs = Math.abs(val);
+  if (abs >= 1e9)  return (val < 0 ? '-' : '') + '$' + (abs / 1e9).toFixed(1) + 'B';
+  if (abs >= 1e6)  return (val < 0 ? '-' : '') + '$' + (abs / 1e6).toFixed(1) + 'M';
+  if (abs >= 1e3)  return (val < 0 ? '-' : '') + '$' + (abs / 1e3).toFixed(1) + 'K';
+  return (val < 0 ? '-' : '') + '$' + abs.toFixed(0);
+}
+
+function fmtNum(n) {
+  return n.toLocaleString('en-US');
+}
+
+function fmtTime(d) {
+  return d.toLocaleString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+}
+
+// ── Market hours check ──
+function isMarketOpen() {
+  const now = new Date();
+  const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const day = et.getDay();
+  if (day === 0 || day === 6) return false;
+  const mins = et.getHours() * 60 + et.getMinutes();
+  return mins >= 570 && mins <= 960; // 9:30 AM - 4:00 PM
+}
+
+// ── Token management ──
+async function getToken() {
+  let t = SC.tokens();
+  if (!t) return null;
+  if (Date.now() > t.expiry - 120000) {
+    const ok = await refreshToken();
+    if (!ok) return null;
+    t = SC.tokens();
+  }
+  return t?.access || null;
+}
+
+async function refreshToken() {
+  const c = SC.creds(), t = SC.tokens();
+  if (!c || !t?.refresh) return false;
+  try {
+    const secret = localStorage.getItem('sc_syncSecret');
+    const headers = { 'Content-Type': 'application/json' };
+    if (secret) headers['X-Sync-Secret'] = secret;
+    const resp = await fetch(`${PROXY}/token`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        app_key: c.appKey,
+        grant_type: 'refresh_token',
+        refresh_token: t.refresh,
+      }),
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    if (!data.access_token) throw new Error('Refresh failed');
+    SC.set('tokens', {
+      access:        data.access_token,
+      refresh:       data.refresh_token || t.refresh,
+      expiry:        Date.now() + (data.expires_in * 1000),
+      refreshExpiry: t.refreshExpiry,
+    });
+    return true;
+  } catch (e) {
+    console.warn('[GEX] refreshToken:', e);
+    return false;
+  }
+}
+
+// ── Fetch data ──
+async function fetchOptionsChain(token) {
+  const url = `${PROXY}/market/chains?symbol=%24SPX&contractType=ALL&strikeCount=80&includeUnderlyingQuote=true&strategy=SINGLE`;
+  const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!resp.ok) throw new Error('Chain HTTP ' + resp.status);
+  return resp.json();
+}
+
+async function fetchSpxQuote(token) {
+  const url = `${PROXY}/market/quotes?symbols=%24SPX&fields=quote`;
+  const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!resp.ok) throw new Error('Quote HTTP ' + resp.status);
+  return resp.json();
+}
+
+// ── Parse chain into per-strike GEX ──
+function computeGex(chainData, expiryKey) {
+  const callMap = chainData.callExpDateMap || {};
+  const putMap  = chainData.putExpDateMap || {};
+  const underlying = chainData.underlyingPrice || chainData.underlying?.last || 0;
+  const S = underlying;
+
+  // Get expiration keys
+  const allExpiries = [...new Set([...Object.keys(callMap), ...Object.keys(putMap)])].sort();
+
+  // Use selected expiry or nearest
+  let expKey = expiryKey;
+  if (!expKey && allExpiries.length > 0) {
+    expKey = allExpiries[0];
+  }
+  if (!expKey) return { strikes: [], spx: S, expiries: allExpiries, selectedExpiry: null };
+
+  const calls = callMap[expKey] || {};
+  const puts  = putMap[expKey]  || {};
+
+  // Parse days to expiration from key (format: "2026-03-30:0")
+  const dteParts = expKey.split(':');
+  const dte = parseInt(dteParts[1]) || 0;
+  const T = Math.max(dte / 365, 1 / (365 * 24)); // minimum ~1 hour
+
+  const strikeSet = new Set([...Object.keys(calls), ...Object.keys(puts)]);
+  const results = [];
+
+  for (const strikeStr of strikeSet) {
+    const K = parseFloat(strikeStr);
+    if (isNaN(K)) continue;
+
+    const callContracts = calls[strikeStr] || [];
+    const putContracts  = puts[strikeStr]  || [];
+
+    let callOI = 0, callVol = 0, callIV = 0, callGex = 0;
+    let putOI = 0, putVol = 0, putIV = 0, putGex = 0;
+
+    for (const c of callContracts) {
+      const oi  = c.openInterest || 0;
+      const vol = c.totalVolume || 0;
+      const iv  = (c.volatility || 0) / 100;
+      const effectiveOI = oi > 0 ? oi : (dte === 0 ? vol : 0);
+      if (effectiveOI === 0 && vol === 0) continue;
+      callOI  += effectiveOI;
+      callVol += vol;
+      if (iv > 0) callIV = iv;
+      const gamma = bsGamma(S, K, T, iv > 0 ? iv : 0.2);
+      callGex += gamma * effectiveOI * S * S * MULTIPLIER * 0.01;
+    }
+
+    for (const p of putContracts) {
+      const oi  = p.openInterest || 0;
+      const vol = p.totalVolume || 0;
+      const iv  = (p.volatility || 0) / 100;
+      const effectiveOI = oi > 0 ? oi : (dte === 0 ? vol : 0);
+      if (effectiveOI === 0 && vol === 0) continue;
+      putOI  += effectiveOI;
+      putVol += vol;
+      if (iv > 0) putIV = iv;
+      const gamma = bsGamma(S, K, T, iv > 0 ? iv : 0.2);
+      putGex -= gamma * effectiveOI * S * S * MULTIPLIER * 0.01; // puts negative
+    }
+
+    const netGex = callGex + putGex;
+    if (callOI === 0 && putOI === 0 && callVol === 0 && putVol === 0) continue;
+
+    results.push({ strike: K, callGex, putGex, netGex, callOI, putOI, callVol, putVol });
+  }
+
+  results.sort((a, b) => a.strike - b.strike);
+
+  // Total GEX
+  const totalGex = results.reduce((s, r) => s + r.netGex, 0);
+
+  // Max positive gamma wall
+  let maxPos = { strike: 0, gex: 0 };
+  let maxNeg = { strike: 0, gex: 0 };
+  for (const r of results) {
+    if (r.netGex > maxPos.gex) { maxPos = { strike: r.strike, gex: r.netGex }; }
+    if (r.netGex < maxNeg.gex) { maxNeg = { strike: r.strike, gex: r.netGex }; }
+  }
+
+  // GEX flip: walk ascending, find zero crossing of cumulative net GEX
+  let flipStrike = null;
+  let cumGex = 0;
+  for (let i = 0; i < results.length; i++) {
+    const prevCum = cumGex;
+    cumGex += results[i].netGex;
+    if (prevCum < 0 && cumGex >= 0 && i > 0) {
+      // Linear interpolation between strikes
+      const s0 = results[i-1].strike;
+      const s1 = results[i].strike;
+      const ratio = Math.abs(prevCum) / (Math.abs(prevCum) + Math.abs(cumGex));
+      flipStrike = s0 + ratio * (s1 - s0);
+      break;
+    }
+  }
+  // If no crossing found, try the other direction
+  if (flipStrike === null) {
+    cumGex = 0;
+    for (let i = 0; i < results.length; i++) {
+      const prevCum = cumGex;
+      cumGex += results[i].netGex;
+      if (prevCum > 0 && cumGex <= 0 && i > 0) {
+        const s0 = results[i-1].strike;
+        const s1 = results[i].strike;
+        const ratio = Math.abs(prevCum) / (Math.abs(prevCum) + Math.abs(cumGex));
+        flipStrike = s0 + ratio * (s1 - s0);
+        break;
+      }
+    }
+  }
+
+  const regime = totalGex > 0 ? 'PIN' : 'BREAKOUT';
+
+  return {
+    strikes: results,
+    spx: S,
+    totalGex,
+    maxPos,
+    maxNeg,
+    flipStrike,
+    regime,
+    expiries: allExpiries,
+    selectedExpiry: expKey,
+    dte,
+  };
+}
+
+// ── Render UI ──
+function renderTopBar(gex, quoteData) {
+  const spxEl = document.getElementById('spxPrice');
+  const changeEl = document.getElementById('spxChange');
+  const regimeEl = document.getElementById('regimeBadge');
+  const totalEl = document.getElementById('totalGex');
+  const tsEl = document.getElementById('lastUpdated');
+  const dotEl = document.getElementById('statusDot');
+  const mktEl = document.getElementById('marketBadge');
+
+  spxEl.textContent = gex.spx.toFixed(2);
+
+  // Try to get change from quote data
+  if (quoteData) {
+    const q = Object.values(quoteData)[0]?.quote;
+    if (q) {
+      const change = q.netChange || 0;
+      const pct = q.netPercentChange || 0;
+      changeEl.textContent = `${change >= 0 ? '+' : ''}${change.toFixed(2)} (${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%)`;
+      changeEl.className = 'spx-change ' + (change >= 0 ? 'up' : 'dn');
+    }
+  }
+
+  regimeEl.textContent = gex.regime;
+  regimeEl.className = 'regime-badge ' + (gex.regime === 'PIN' ? 'pin' : 'breakout');
+  regimeEl.style.display = 'inline-block';
+
+  totalEl.innerHTML = `<span class="label">Total GEX</span>${fmtGex(gex.totalGex)}`;
+
+  const now = new Date();
+  tsEl.textContent = fmtTime(now);
+
+  const open = isMarketOpen();
+  dotEl.className = 'status-dot ' + (open ? 'live' : 'stale');
+  mktEl.textContent = open ? 'Market Open' : 'Market Closed';
+  mktEl.className = 'market-badge ' + (open ? 'open' : 'closed');
+}
+
+function renderCards(gex) {
+  document.getElementById('maxPosStrike').textContent = gex.maxPos.strike ? gex.maxPos.strike.toFixed(0) : '--';
+  document.getElementById('maxPosValue').textContent = gex.maxPos.gex ? fmtGex(gex.maxPos.gex) : '--';
+  document.getElementById('flipStrike').textContent = gex.flipStrike ? gex.flipStrike.toFixed(1) : 'N/A';
+  document.getElementById('maxNegStrike').textContent = gex.maxNeg.strike ? gex.maxNeg.strike.toFixed(0) : '--';
+  document.getElementById('maxNegValue').textContent = gex.maxNeg.gex ? fmtGex(gex.maxNeg.gex) : '--';
+}
+
+function renderChart(gex) {
+  const ctx = document.getElementById('gexChart').getContext('2d');
+  const labels = gex.strikes.map(s => s.strike.toFixed(0));
+  const data = gex.strikes.map(s => s.netGex);
+  const colors = data.map(v => v >= 0 ? 'rgba(34,197,94,0.75)' : 'rgba(239,68,68,0.75)');
+  const borderColors = data.map(v => v >= 0 ? 'rgba(34,197,94,1)' : 'rgba(239,68,68,1)');
+
+  // Build annotations
+  const annotations = {};
+
+  // SPX price line
+  const spxIdx = labels.findIndex(l => parseFloat(l) >= gex.spx);
+  if (spxIdx >= 0) {
+    annotations.spxLine = {
+      type: 'line',
+      xMin: spxIdx - 0.5,
+      xMax: spxIdx - 0.5,
+      borderColor: '#22d3ee',
+      borderWidth: 2,
+      label: {
+        display: true,
+        content: 'SPX ' + gex.spx.toFixed(0),
+        position: 'start',
+        backgroundColor: 'rgba(34,211,238,0.9)',
+        color: '#0f172a',
+        font: { family: 'JetBrains Mono', size: 10, weight: 'bold' },
+        padding: { top: 2, bottom: 2, left: 6, right: 6 },
+        borderRadius: 4,
+      }
+    };
+  }
+
+  // Flip line
+  if (gex.flipStrike) {
+    const flipIdx = labels.findIndex(l => parseFloat(l) >= gex.flipStrike);
+    if (flipIdx >= 0) {
+      annotations.flipLine = {
+        type: 'line',
+        xMin: flipIdx - 0.5,
+        xMax: flipIdx - 0.5,
+        borderColor: '#818cf8',
+        borderWidth: 2,
+        borderDash: [6, 4],
+        label: {
+          display: true,
+          content: 'FLIP ' + gex.flipStrike.toFixed(0),
+          position: 'end',
+          backgroundColor: 'rgba(129,140,248,0.9)',
+          color: '#0f172a',
+          font: { family: 'JetBrains Mono', size: 10, weight: 'bold' },
+          padding: { top: 2, bottom: 2, left: 6, right: 6 },
+          borderRadius: 4,
+        }
+      };
+    }
+  }
+
+  // Max positive highlight
+  if (gex.maxPos.strike) {
+    const maxPIdx = labels.indexOf(gex.maxPos.strike.toFixed(0));
+    if (maxPIdx >= 0) {
+      annotations.maxPosBox = {
+        type: 'point',
+        xValue: maxPIdx,
+        yValue: gex.maxPos.gex,
+        radius: 6,
+        backgroundColor: '#22c55e',
+        borderColor: '#fff',
+        borderWidth: 2,
+      };
+    }
+  }
+
+  // Max negative highlight
+  if (gex.maxNeg.strike) {
+    const maxNIdx = labels.indexOf(gex.maxNeg.strike.toFixed(0));
+    if (maxNIdx >= 0) {
+      annotations.maxNegBox = {
+        type: 'point',
+        xValue: maxNIdx,
+        yValue: gex.maxNeg.gex,
+        radius: 6,
+        backgroundColor: '#ef4444',
+        borderColor: '#fff',
+        borderWidth: 2,
+      };
+    }
+  }
+
+  if (gexChart) {
+    gexChart.data.labels = labels;
+    gexChart.data.datasets[0].data = data;
+    gexChart.data.datasets[0].backgroundColor = colors;
+    gexChart.data.datasets[0].borderColor = borderColors;
+    gexChart.options.plugins.annotation.annotations = annotations;
+    gexChart.update('none');
+    return;
+  }
+
+  gexChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        data,
+        backgroundColor: colors,
+        borderColor: borderColors,
+        borderWidth: 1,
+        borderRadius: 2,
+        barPercentage: 0.9,
+        categoryPercentage: 0.95,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#1e293b',
+          borderColor: '#2d3f55',
+          borderWidth: 1,
+          titleFont: { family: 'JetBrains Mono', size: 12, weight: 'bold' },
+          bodyFont: { family: 'JetBrains Mono', size: 11 },
+          titleColor: '#e2e8f0',
+          bodyColor: '#94a3b8',
+          padding: 10,
+          cornerRadius: 8,
+          callbacks: {
+            title: (items) => 'Strike ' + items[0].label,
+            label: (item) => 'Net GEX: ' + fmtGex(item.raw),
+          }
+        },
+        annotation: { annotations }
+      },
+      scales: {
+        x: {
+          grid: { color: 'rgba(45,63,85,0.3)', drawBorder: false },
+          ticks: {
+            color: '#94a3b8',
+            font: { family: 'JetBrains Mono', size: 10 },
+            maxRotation: 45,
+            autoSkip: true,
+            maxTicksLimit: 30,
+          }
+        },
+        y: {
+          grid: { color: 'rgba(45,63,85,0.3)', drawBorder: false },
+          ticks: {
+            color: '#94a3b8',
+            font: { family: 'JetBrains Mono', size: 10 },
+            callback: v => fmtGex(v),
+          }
+        }
+      },
+      animation: { duration: 300 },
+    }
+  });
+}
+
+function renderTable(gex) {
+  const body = document.getElementById('wallsBody');
+  const sorted = [...gex.strikes].sort((a, b) => Math.abs(b.netGex) - Math.abs(a.netGex)).slice(0, 10);
+
+  body.innerHTML = sorted.map(s => {
+    const dir = s.netGex >= 0;
+    return `<tr>
+      <td style="font-weight:700;">${s.strike.toFixed(0)}</td>
+      <td class="pos">${fmtGex(s.callGex)}</td>
+      <td class="neg">${fmtGex(s.putGex)}</td>
+      <td class="${dir ? 'pos' : 'neg'}" style="font-weight:700;">${fmtGex(s.netGex)}</td>
+      <td>${fmtNum(s.callOI)}</td>
+      <td>${fmtNum(s.putOI)}</td>
+      <td><span class="dir-badge ${dir ? 'stab' : 'amp'}">${dir ? 'Stabilizing' : 'Amplifying'}</span></td>
+    </tr>`;
+  }).join('');
+}
+
+function renderExpirySelect(expiries, selected) {
+  const sel = document.getElementById('expirySelect');
+  const prev = sel.value;
+  sel.innerHTML = expiries.map(e => {
+    const parts = e.split(':');
+    const dte = parseInt(parts[1]) || 0;
+    const label = parts[0] + (dte === 0 ? ' (0DTE)' : ` (${dte}d)`);
+    return `<option value="${e}" ${e === selected ? 'selected' : ''}>${label}</option>`;
+  }).join('');
+}
+
+// ── Main fetch + render cycle ──
+async function fetchAndRender() {
+  const token = await getToken();
+  if (!token) {
+    showAuth();
+    return;
+  }
+
+  try {
+    document.getElementById('statusDot').className = 'status-dot live';
+    const [chain, quote] = await Promise.all([fetchOptionsChain(token), fetchSpxQuote(token)]);
+
+    lastData = { chain, quote };
+    const gex = computeGex(chain, selectedExpiry);
+
+    // Update expiry selector
+    renderExpirySelect(gex.expiries, gex.selectedExpiry);
+    selectedExpiry = gex.selectedExpiry;
+
+    renderTopBar(gex, quote);
+    renderCards(gex);
+    renderChart(gex);
+    renderTable(gex);
+
+    document.getElementById('mainContent').style.display = 'block';
+    document.getElementById('authPrompt').style.display = 'none';
+    hideLoading();
+  } catch (e) {
+    console.error('[GEX] fetch error:', e);
+    document.getElementById('statusDot').className = 'status-dot off';
+    // If we had previous data, keep showing it
+    if (!lastData) {
+      hideLoading();
+      // Check if it's an auth error
+      if (e.message.includes('401') || e.message.includes('403')) {
+        showAuth();
+      }
+    }
+  }
+}
+
+// ── Expiry change handler ──
+document.getElementById('expirySelect').addEventListener('change', function() {
+  selectedExpiry = this.value;
+  if (lastData) {
+    const gex = computeGex(lastData.chain, selectedExpiry);
+    renderTopBar(gex, lastData.quote);
+    renderCards(gex);
+    renderChart(gex);
+    renderTable(gex);
+  }
+});
+
+// ── Polling ──
+function startPolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(() => {
+    if (isMarketOpen()) {
+      fetchAndRender();
+    } else {
+      document.getElementById('statusDot').className = 'status-dot stale';
+      const mktEl = document.getElementById('marketBadge');
+      mktEl.textContent = 'Market Closed';
+      mktEl.className = 'market-badge closed';
+    }
+  }, POLL_MS);
+}
+
+// ── Show/hide helpers ──
+function showAuth() {
+  hideLoading();
+  document.getElementById('mainContent').style.display = 'none';
+  document.getElementById('authPrompt').style.display = 'block';
+}
+
+function hideLoading() {
+  document.getElementById('loadingOverlay').classList.add('hidden');
+}
+
+// ── Init ──
+(async function init() {
+  const t = SC.tokens();
+  if (!t || !t.access) {
+    showAuth();
+    return;
+  }
+  await fetchAndRender();
+  startPolling();
+})();
+</script>
+</body>
+</html>
