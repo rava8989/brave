@@ -596,13 +596,52 @@ function renderCommentary(data) {
   }
 }
 
+// ── Show market closed state ──
+function showMarketClosed() {
+  const overlay = document.getElementById('loadingOverlay');
+  overlay.querySelector('.spinner').style.display = 'none';
+  overlay.querySelector('.loading-text').textContent = 'Market Closed';
+  overlay.style.opacity = '1';
+  overlay.style.pointerEvents = 'auto';
+  overlay.classList.remove('hidden');
+  document.getElementById('statusDot').className = 'status-dot off';
+  document.getElementById('marketBadge').textContent = 'Market Closed';
+  document.getElementById('marketBadge').className = 'market-badge closed';
+}
+
+// ── Try loading cached data (last session) ──
+async function tryLoadCached() {
+  try {
+    const resp = await fetch(GEX_ENDPOINT);
+    if (!resp.ok) return false;
+    const data = await resp.json();
+    renderTopBar(data);
+    renderCards(data);
+    renderChart(data);
+    renderTable(data);
+    renderEvents(data);
+    renderCommentary(data);
+    document.getElementById('mainContent').style.display = 'block';
+    document.getElementById('loadingOverlay').classList.add('hidden');
+    // Force stale appearance
+    document.getElementById('statusDot').className = 'status-dot stale';
+    document.getElementById('marketBadge').textContent = 'Market Closed';
+    document.getElementById('marketBadge').className = 'market-badge closed';
+    document.getElementById('staleBanner').classList.add('visible');
+    document.getElementById('staleTime').textContent = fmtTime(data.updatedAt);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
 // ── Main fetch + render ──
 async function fetchAndRender() {
   try {
     const resp = await fetch(GEX_ENDPOINT);
     if (!resp.ok) {
       if (resp.status === 404) {
-        document.getElementById('loadingOverlay').querySelector('.loading-text').textContent = 'Waiting for GEX data (market may be closed)...';
+        showMarketClosed();
         return;
       }
       throw new Error('HTTP ' + resp.status);
@@ -617,7 +656,7 @@ async function fetchAndRender() {
     renderCommentary(data);
 
     document.getElementById('mainContent').style.display = 'block';
-    hideLoading();
+    document.getElementById('loadingOverlay').classList.add('hidden');
 
     document.getElementById('statusDot').className = 'status-dot ' + (isMarketOpen() ? 'live' : 'stale');
   } catch (e) {
@@ -626,22 +665,37 @@ async function fetchAndRender() {
   }
 }
 
-// ── Polling ──
+// ── Polling (only during market hours) ──
 function startPolling() {
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(() => {
-    fetchAndRender();
+    if (isMarketOpen()) {
+      fetchAndRender();
+    } else {
+      // Market just closed — stop polling
+      clearInterval(pollTimer);
+      pollTimer = null;
+      document.getElementById('statusDot').className = 'status-dot stale';
+      document.getElementById('marketBadge').textContent = 'Market Closed';
+      document.getElementById('marketBadge').className = 'market-badge closed';
+    }
   }, POLL_MS);
-}
-
-function hideLoading() {
-  document.getElementById('loadingOverlay').classList.add('hidden');
 }
 
 // ── Init ──
 (async function init() {
-  await fetchAndRender();
-  startPolling();
+  if (isMarketOpen()) {
+    // Market open — fetch live data and poll
+    await fetchAndRender();
+    startPolling();
+  } else {
+    // Market closed — try showing cached data, otherwise show closed message
+    const hasCached = await tryLoadCached();
+    if (!hasCached) {
+      showMarketClosed();
+    }
+    // No polling — market is closed
+  }
 })();
 </script>
 </body>
