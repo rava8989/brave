@@ -880,19 +880,40 @@ function render() {
   const main = document.getElementById('mainContent');
   if (!trade || !trade.triggered || !isTradeToday()) {
     document.getElementById('spxChartSection').style.display = 'none';
+    const now = getNowET();
+    const dow = now.getDay();
+    const isWeekend = dow === 0 || dow === 6;
+    const mins = now.getHours() * 60 + now.getMinutes();
+    const isMarketHours = !isWeekend && mins >= 570 && mins < 960;
     const win = getNextWindow();
+
+    let icon, title, sub;
+    if (isWeekend) {
+      icon = '😴';
+      title = 'Market Closed';
+      sub = 'Enjoy your weekend. Next window shown below.';
+    } else if (!isMarketHours) {
+      icon = '🌙';
+      title = 'Market Closed';
+      sub = 'Check back during market hours (9:30 AM – 4:00 PM ET).';
+    } else {
+      icon = '📡';
+      title = 'Waiting for Signal';
+      sub = 'Monitoring. Trade appears automatically when triggered.';
+    }
+
     const winHtml = win
       ? `<div class="no-trade-window">
            <span class="win-day">${win.label}</span>
            <span class="win-time">Window: ${win.start} – ${win.end} ET</span>
          </div>`
-      : `<div class="no-trade-window"><span class="win-day" style="color:var(--text3)">No window today (weekend)</span></div>`;
+      : '';
     main.innerHTML = `
       <div class="no-trade">
-        <div class="no-trade-icon">📡</div>
-        <div class="no-trade-title">Waiting for M8BF Signal</div>
+        <div class="no-trade-icon">${icon}</div>
+        <div class="no-trade-title">${title}</div>
         ${winHtml}
-        <div class="no-trade-sub">Monitoring for signals. Trade appears automatically when triggered.</div>
+        <div class="no-trade-sub">${sub}</div>
       </div>
     `;
     return;
