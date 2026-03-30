@@ -22,7 +22,7 @@
     body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;}
 
     /* Top bar */
-    .topbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:16px 24px;background:var(--bg2);border-bottom:1px solid var(--border);}
+    .topbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:16px 24px;background:var(--bg2);border-bottom:1px solid var(--border);position:relative;z-index:1000;}
     .gex-nav{display:flex;gap:4px;}
     .gex-nav a{font-size:12px;font-weight:500;padding:5px 12px;border-radius:6px;color:var(--text2);text-decoration:none;transition:background .15s,color .15s;border:1px solid transparent;}
     .gex-nav a:hover{background:var(--bg3);color:var(--text);}
@@ -118,7 +118,7 @@
     .bottom-info a:hover{text-decoration:underline;}
 
     /* Loading */
-    .loading-overlay{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:999;transition:opacity .3s;}
+    .loading-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:500;transition:opacity .3s;}
     .loading-overlay.hidden{opacity:0;pointer-events:none;}
     .spinner{width:40px;height:40px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;}
     @keyframes spin{to{transform:rotate(360deg);}}
@@ -685,9 +685,10 @@ function showMarketClosed() {
   overlay.style.opacity = '1';
   overlay.style.pointerEvents = 'auto';
   overlay.classList.remove('hidden');
-  document.getElementById('statusDot').className = 'status-dot off';
-  document.getElementById('marketBadge').textContent = 'Market Closed';
-  document.getElementById('marketBadge').className = 'market-badge closed';
+  // Hide data elements in topbar, keep nav visible
+  document.querySelector('.topbar-right').style.display = 'none';
+  document.getElementById('spxPrice').style.display = 'none';
+  document.getElementById('regimeBadge').style.display = 'none';
 }
 
 // ── Try loading cached data (last session) ──
