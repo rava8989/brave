@@ -272,8 +272,10 @@
    ================================================================ */
 
 const GEX_ENDPOINT = 'https://schwab-proxy.ravamt4.workers.dev/gex';
+const TRIGGER_ENDPOINT = 'https://schwab-proxy.ravamt4.workers.dev/trigger';
 const POLL_MS = 30000;
 const STALE_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
+let triggerAttempted = false; // only try once per page load
 
 let gexChart = null;
 let pollTimer = null;
@@ -718,6 +720,31 @@ async function fetchAndRender() {
     const resp = await fetch(GEX_ENDPOINT);
     if (!resp.ok) {
       if (resp.status === 404) {
+        // During market hours, try triggering an update if we haven't already
+        if (isMarketOpen() && !triggerAttempted) {
+          triggerAttempted = true;
+          const secret = localStorage.getItem('sc_syncSecret');
+          if (secret) {
+            console.log('[GEX] No data — triggering worker update…');
+            try {
+              const tr = await fetch(`${TRIGGER_ENDPOINT}?secret=${encodeURIComponent(secret)}`);
+              if (tr.ok) {
+                // Wait a moment then retry fetch
+                await new Promise(r => setTimeout(r, 3000));
+                const retry = await fetch(GEX_ENDPOINT);
+                if (retry.ok) {
+                  const data = await retry.json();
+                  renderTopBar(data); renderCards(data); renderChart(data);
+                  renderTable(data); renderEvents(data); renderCommentary(data);
+                  document.getElementById('mainContent').style.display = 'block';
+                  document.getElementById('loadingOverlay').classList.add('hidden');
+                  document.getElementById('statusDot').className = 'status-dot live';
+                  return;
+                }
+              }
+            } catch(e) { console.warn('[GEX] trigger failed:', e); }
+          }
+        }
         showMarketClosed();
         return;
       }

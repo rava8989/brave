@@ -334,6 +334,7 @@
       <button class="schwab-btn primary" id="schwabConnectBtn" onclick="schwabSetup()">Connect Schwab</button>
       <button class="schwab-btn" id="schwabDisconnectBtn" onclick="schwabDisconnect()" style="display:none;">Disconnect</button>
       <button class="schwab-btn" id="schwabReauthBtn" onclick="schwabReauth()" style="display:none;">Re-authenticate</button>
+      <button class="schwab-btn" id="schwabResyncBtn" onclick="resyncToWorker()" style="display:none;">Re-sync to Worker</button>
     </div>
     <!-- Discord section -->
     <div style="width:100%;height:1px;background:var(--border);margin:6px 0;"></div>
@@ -1479,11 +1480,13 @@
     const conn = document.getElementById('schwabConnectBtn');
     const disc = document.getElementById('schwabDisconnectBtn');
     const reau = document.getElementById('schwabReauthBtn');
+    const rsync = document.getElementById('schwabResyncBtn');
     dot.className  = 'schwab-dot ' + (state==='connected'?'connected':state==='connecting'?'connecting':state==='error'?'error':'');
     txt.textContent = text;
     conn.style.display = (state==='connected'||state==='connecting') ? 'none' : 'inline-block';
     disc.style.display = state==='connected' ? 'inline-block' : 'none';
     reau.style.display = state==='reauth'    ? 'inline-block' : 'none';
+    rsync.style.display = state==='connected' ? 'inline-block' : 'none';
   }
 
   function schwabSetup(){
@@ -1634,19 +1637,72 @@
   async function syncToWorker(){
     const proxy = SCHWAB.proxy();
     const secret = localStorage.getItem('sc_syncSecret');
-    if(!proxy||!secret) return; // not configured — skip silently
+    if(!proxy||!secret){
+      console.warn('[S3] syncToWorker skipped — proxy:', !!proxy, 'secret:', !!secret);
+      return;
+    }
     const payload = {};
     const t = SC.tokens(); if(t) payload.schwab_tokens = t;
     const c = SC.creds();  if(c) payload.schwab_creds = { appKey: c.appKey };
     const dc = DC.get('config'); if(dc) payload.discord_config = dc;
     if(!Object.keys(payload).length) return;
     try{
-      await fetch(`${proxy}/sync`, {
+      const resp = await fetch(`${proxy}/sync`, {
         method:'POST',
         headers:{'Content-Type':'application/json','X-Sync-Secret':secret},
         body:JSON.stringify(payload),
       });
-    }catch(e){ console.warn('[S3] syncToWorker:', e); }
+      if(!resp.ok){
+        const txt = await resp.text().catch(()=>'');
+        console.error('[S3] syncToWorker HTTP', resp.status, txt);
+      } else {
+        console.log('[S3] syncToWorker OK — keys:', Object.keys(payload).join(', '));
+      }
+    }catch(e){ console.error('[S3] syncToWorker failed:', e); }
+  }
+
+  /* ── Manual re-sync with visible feedback ── */
+  async function resyncToWorker(){
+    const btn = document.getElementById('schwabResyncBtn');
+    const origText = btn.textContent;
+    btn.textContent = 'Syncing…';
+    btn.disabled = true;
+    const proxy = SCHWAB.proxy();
+    const secret = localStorage.getItem('sc_syncSecret');
+    if(!proxy||!secret){
+      schwabSetStatus('error', 'Sync failed — proxy URL or sync secret missing. Reconnect Schwab.');
+      btn.textContent = origText; btn.disabled = false;
+      return;
+    }
+    const payload = {};
+    const t = SC.tokens(); if(t) payload.schwab_tokens = t;
+    const c = SC.creds();  if(c) payload.schwab_creds = { appKey: c.appKey };
+    if(!t){
+      schwabSetStatus('error', 'No tokens in browser — re-authenticate first');
+      btn.textContent = origText; btn.disabled = false;
+      return;
+    }
+    try{
+      const resp = await fetch(`${proxy}/sync`, {
+        method:'POST',
+        headers:{'Content-Type':'application/json','X-Sync-Secret':secret},
+        body:JSON.stringify(payload),
+      });
+      if(!resp.ok){
+        const txt = await resp.text().catch(()=>'');
+        schwabSetStatus('error', `Sync failed: HTTP ${resp.status} ${txt.slice(0,100)}`);
+      } else {
+        const data = await resp.json().catch(()=>({}));
+        schwabSetStatus('connected', `Schwab connected ✓ · Synced to worker: ${(data.synced||[]).join(', ')}`);
+        // Also trigger a GEX update
+        try{
+          await fetch(`${proxy}/trigger?secret=${encodeURIComponent(secret)}`);
+        }catch(e){}
+      }
+    }catch(e){
+      schwabSetStatus('error', 'Sync failed: ' + e.message);
+    }
+    btn.textContent = origText; btn.disabled = false;
   }
 
   async function schwabGetToken(){
