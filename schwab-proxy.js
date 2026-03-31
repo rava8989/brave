@@ -1035,8 +1035,8 @@ function calculateGEX(chainData, spot) {
 }
 
 async function handleGEXUpdate(env, token) {
-  // 1. Fetch SPX options chain (nearest expiry, 80 strikes around ATM)
-  const chainUrl = 'https://api.schwabapi.com/marketdata/v1/chains?symbol=%24SPX&contractType=ALL&strikeCount=80&includeUnderlyingQuote=true&strategy=SINGLE';
+  // 1. Fetch SPX options chain (40 strikes around ATM — 80 causes Schwab "TooBigBody" 502)
+  const chainUrl = 'https://api.schwabapi.com/marketdata/v1/chains?symbol=%24SPX&contractType=ALL&strikeCount=40&includeUnderlyingQuote=true&strategy=SINGLE';
   const chainData = await fetchSchwabJSON(chainUrl, token);
 
   // 2. Get spot from underlying quote
