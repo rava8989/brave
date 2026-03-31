@@ -1961,6 +1961,7 @@ export default {
     }
 
     // ── GET /gex ── Public endpoint, returns current GEX data from KV
+    // Auto-refreshes if data is stale (>3 min) during market hours (cron is unreliable on free tier)
     if (url.pathname === '/gex' && request.method === 'GET') {
       const publicCors = {
         'Access-Control-Allow-Origin': '*',
@@ -1969,7 +1970,30 @@ export default {
         'Access-Control-Max-Age': '86400',
       };
       try {
-        const data = await env.SIGNAL_KV.get('gex_current');
+        let data = await env.SIGNAL_KV.get('gex_current');
+
+        // Auto-refresh: if no data or stale during market hours, trigger inline update
+        const etNow = toET();
+        const etH = etNow.getHours(), etM = etNow.getMinutes(), dow = etNow.getDay();
+        const marketOpen = dow >= 1 && dow <= 5 && (etH > 9 || (etH === 9 && etM >= 30)) && etH < 16;
+        if (marketOpen) {
+          let needsRefresh = !data;
+          if (data && !needsRefresh) {
+            const parsed = JSON.parse(data);
+            const age = Date.now() / 1000 - (parsed.timestamp || 0);
+            if (age > 180) needsRefresh = true; // stale if >3 min old
+          }
+          if (needsRefresh) {
+            try {
+              const token = await getAccessToken(env);
+              await handleGEXUpdate(env, token);
+              data = await env.SIGNAL_KV.get('gex_current');
+            } catch (e) {
+              console.warn('[gex] inline refresh failed:', e.message || e);
+            }
+          }
+        }
+
         if (!data) return jsonResp({ error: 'No GEX data available yet' }, 404, publicCors);
         return new Response(data, {
           status: 200,
