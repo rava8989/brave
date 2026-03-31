@@ -1934,6 +1934,32 @@ export default {
       }
     }
 
+    // ── GET /kv-debug ── List KV keys (requires sync secret)
+    if (url.pathname === '/kv-debug' && request.method === 'GET') {
+      const secret = url.searchParams.get('secret');
+      if (!secret || secret !== env.SYNC_SECRET) {
+        return jsonResp({ error: 'Unauthorized' }, 401, { 'Access-Control-Allow-Origin': '*' });
+      }
+      const list = await env.SIGNAL_KV.list();
+      return jsonResp({ keys: list.keys.map(k => k.name) }, 200, { 'Access-Control-Allow-Origin': '*' });
+    }
+
+    // ── GET /trigger ── Manually trigger the scheduled handler (requires sync secret)
+    if (url.pathname === '/trigger' && request.method === 'GET') {
+      const secret = url.searchParams.get('secret');
+      if (!secret || secret !== env.SYNC_SECRET) {
+        return jsonResp({ error: 'Unauthorized' }, 401, { 'Access-Control-Allow-Origin': '*' });
+      }
+      try {
+        const result = await handleScheduled(env);
+        result.date = result.date || new Date().toISOString();
+        await env.SIGNAL_KV.put('last_run', JSON.stringify(result));
+        return jsonResp(result, 200, { 'Access-Control-Allow-Origin': '*' });
+      } catch (e) {
+        return jsonResp({ error: e.message, stack: e.stack }, 500, { 'Access-Control-Allow-Origin': '*' });
+      }
+    }
+
     // ── GET /gex ── Public endpoint, returns current GEX data from KV
     if (url.pathname === '/gex' && request.method === 'GET') {
       const publicCors = {
@@ -2148,10 +2174,13 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
+    console.log('[cron] Triggered at', new Date().toISOString());
     let result;
     try {
       result = await handleScheduled(env);
+      console.log('[cron] Result:', JSON.stringify(result).slice(0, 500));
     } catch (e) {
+      console.error('[cron] Error:', e.message || e);
       result = { status: 'error', error: e.message, date: new Date().toISOString() };
     }
     result.date = result.date || new Date().toISOString();
