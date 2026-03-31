@@ -703,9 +703,22 @@ async function handleScheduled(env) {
     }
   }
 
-  if (!isMorning) {
+  // Check if morning signal was already sent today
+  const todayISO_check = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
+  const morningDoneKey = `morning_signal_${todayISO_check}`;
+  const morningDone = await env.SIGNAL_KV.get(morningDoneKey);
+
+  // Skip morning signal if already sent OR if outside catch-up window (after 10:30 ET)
+  if (!isMorning && (morningDone || etHour >= 11 || (etHour === 10 && etMin > 30))) {
     return { status: 'discord_poll', discord: discordResult, gex: gexResult, time: `${etHour}:${String(etMin).padStart(2,'0')} ET` };
   }
+
+  // If morning signal not sent yet and we're within catch-up window, send it now
+  if (morningDone) {
+    return { status: 'discord_poll', discord: discordResult, gex: gexResult, time: `${etHour}:${String(etMin).padStart(2,'0')} ET` };
+  }
+
+  console.log('[proxy] Sending morning signal (isMorning:', isMorning, ', catch-up:', !isMorning, ')');
 
   // 1. Get access token
   const token = await getAccessToken(env);
@@ -860,6 +873,10 @@ async function handleScheduled(env) {
   });
   const dcData = await dcResp.json();
   if (!dcResp.ok) throw new Error('Discord post failed: ' + JSON.stringify(dcData));
+
+  // Mark morning signal as sent for today (expires at midnight + 1h buffer)
+  const msDoneKey = `morning_signal_${todayISO}`;
+  await env.SIGNAL_KV.put(msDoneKey, 'sent', { expirationTtl: 86400 });
 
   return {
     status: 'success',
