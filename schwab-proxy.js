@@ -508,6 +508,22 @@ async function handleEOD(env, etNow) {
     }
   } catch (e) { console.warn('[proxy]', e.message || e); }
 
+  // Re-scrape all Discord signals for today (full pagination) to ensure completeness
+  // The live KV polling may have missed signals if cron was down
+  if (env.DISCORD_USER_TOKEN) {
+    try {
+      const fullSigs = await fetchAllDiscordSignalsForDate(env.DISCORD_USER_TOKEN, '1048242197029458040', todayISO);
+      if (fullSigs.length > 0) {
+        const signals = fullSigs.map(s => ({
+          time: s.time, center: s.center, lower: s.lower, upper: s.upper,
+          t1: s.t1, premium: s.premium, cp: s.cp ?? 0, banned: isBanned(s.center, s.t1),
+        }));
+        await env.SIGNAL_KV.put('signals_today', JSON.stringify({ date: todayISO, signals }));
+        console.log(`[eod] Re-scraped ${signals.length} signals for ${todayISO}`);
+      }
+    } catch (e) { console.warn('[eod] signal re-scrape:', e.message); }
+  }
+
   // Compute m8bfWR = win rate across ALL signals posted today (from KV)
   if (spxClose != null) {
     try {
@@ -1380,9 +1396,10 @@ async function upsertHistoryGitHub(env, dateStr, fields) {
   // 2. Upsert today's row
   const idx = content.findIndex(r => r.date === dateStr);
   if (idx >= 0) {
-    // Only overwrite fields that are still null/missing (don't clobber m8bfPL etc.)
     for (const [k, v] of Object.entries(fields)) {
-      if (content[idx][k] == null) content[idx][k] = v;
+      // Always overwrite close/WR values (EOD final), only fill nulls for open/PL
+      const alwaysOverwrite = ['vixClose', 'spxClose', 'm8bfWR'].includes(k);
+      if (alwaysOverwrite || content[idx][k] == null) content[idx][k] = v;
     }
   } else {
     content.push({ date: dateStr, ...fields });
