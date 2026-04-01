@@ -969,8 +969,12 @@ function renderTable() {
 
   let totM8=0, totStrad=0, totGxbf=0, totBobf=0;
 
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const dash = '<td style="color:var(--text3);text-align:center">—</td>';
+
   for (const row of rows) {
     const s = row.signal || {};
+    const isFuture = row.date > todayStr;
     h += '<tr>';
     h += `<td class="col-date">${row.date}</td>`;
     h += `<td class="col-day">${row.dayLabel}</td>`;
@@ -981,21 +985,26 @@ function renderTable() {
     h += `<td class="${valClass(row.o2o)}">${fmtNum(row.o2o)}</td>`;
     h += `<td class="${valClass(row.spxGapPct)}">${row.spxGapPct!=null?row.spxGapPct.toFixed(2)+'%':'—'}</td>`;
     h += `<td style="font-weight:700;${row.m8bfWR!=null?(row.m8bfWR>=90?'color:#22c55e':row.m8bfWR<25?'color:#ef4444':'color:var(--text)'):'color:var(--text3)'}">${row.m8bfWR!=null?row.m8bfWR+'%':'—'}</td>`;
-    h += stratCell(s.m8bfRan, row.m8bfPL);
-    h += stratCell(s.stradRan && row.stradPL != null, row.stradPL);
-    h += stratCell(activeStrats.gxbf && row.gxbfPL != null, row.gxbfPL);
-    h += stratCell(activeStrats.bobf && s.bobfBadge !== 'BLOCKED', row.bobfPL);
 
-    let dayTotal = 0, hasDayTrade = false;
-    if (activeStrats.m8bf && s.m8bfRan && row.m8bfPL != null) { dayTotal += row.m8bfPL; hasDayTrade = true; }
-    if (activeStrats.strad && s.stradRan && row.stradPL != null) { dayTotal += row.stradPL; hasDayTrade = true; }
-    if (activeStrats.gxbf && row.gxbfPL != null) { dayTotal += row.gxbfPL; hasDayTrade = true; }
-    if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) { dayTotal += row.bobfPL; hasDayTrade = true; }
-    if (hasDayTrade) {
-      const cls = dayTotal > 0 ? 'val-pos' : dayTotal < 0 ? 'val-neg' : 'val-zero';
-      h += `<td class="${cls}" style="font-weight:700">$${dayTotal.toLocaleString()}</td>`;
+    if (isFuture) {
+      h += dash + dash + dash + dash + dash;
     } else {
-      h += '<td style="color:var(--text3);text-align:center">—</td>';
+      h += stratCell(s.m8bfRan, row.m8bfPL);
+      h += stratCell(s.stradRan && row.stradPL != null, row.stradPL);
+      h += stratCell(activeStrats.gxbf && row.gxbfPL != null, row.gxbfPL);
+      h += stratCell(activeStrats.bobf && s.bobfBadge !== 'BLOCKED', row.bobfPL);
+
+      let dayTotal = 0, hasDayTrade = false;
+      if (activeStrats.m8bf && s.m8bfRan && row.m8bfPL != null) { dayTotal += row.m8bfPL; hasDayTrade = true; }
+      if (activeStrats.strad && s.stradRan && row.stradPL != null) { dayTotal += row.stradPL; hasDayTrade = true; }
+      if (activeStrats.gxbf && row.gxbfPL != null) { dayTotal += row.gxbfPL; hasDayTrade = true; }
+      if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) { dayTotal += row.bobfPL; hasDayTrade = true; }
+      if (hasDayTrade) {
+        const cls = dayTotal > 0 ? 'val-pos' : dayTotal < 0 ? 'val-neg' : 'val-zero';
+        h += `<td class="${cls}" style="font-weight:700">$${dayTotal.toLocaleString()}</td>`;
+      } else {
+        h += dash;
+      }
     }
     h += '</tr>';
 
