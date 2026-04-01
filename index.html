@@ -1212,11 +1212,11 @@
           rec="Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="0%rule";entryT="9:32 AM";badge="STRADDLE";strikeInfo=null;
         }
       } else if(wr90.checked){
-        if(rec==="Straddle @ 9:32 AM"||rec==="Straddle @ 9:32 AM (EOM)"){const sc=m8Sched(dow);rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=sc;entryT=sc?.window||"";blockT="90%rule";}
+        if(rec==="Straddle @ 9:32 AM"||rec==="NM Straddle @ 9:32 AM"||rec==="Straddle @ 9:32 AM (EOM)"){const sc=m8Sched(dow);rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=sc;entryT=sc?.window||"";blockT="90%rule";}
       }
 
-      // o2o cancels non-EOM straddles → M8BF
-      if(!eomDay && (rec.startsWith("Straddle") || rec.startsWith("NM Straddle")) && o2o > T.O2O_M8BF) {
+      // o2o cancels non-EOM, non-NM straddles → M8BF
+      if(!eomDay && !rec.startsWith("NM Straddle") && rec.startsWith("Straddle") && o2o > T.O2O_M8BF) {
         rec = m8Msg(now); theme = "m8bf"; badge = "M8BF";
         strikeInfo = m8Sched(dow); entryT = strikeInfo?.window || "";
         blockT = "o2o"; blockD = `Open-to-open VIX drop ${o2o.toFixed(2)} > ${T.O2O_M8BF} — Straddle cancelled → M8BF`;
