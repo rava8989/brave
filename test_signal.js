@@ -21,6 +21,7 @@ function calcSignal({
   nmDay = false, isMon = false, isWed = false,
   fedDay = false,
   opexDay = false,
+  opex1 = false,
   postOpDay = false,
   spxGapPct = null,
   wr0 = false, wr90 = false,
@@ -28,7 +29,7 @@ function calcSignal({
 }) {
   const oNight = vYClose - vToday;
   const o2o = o2oOverride !== null ? o2oOverride : (vYOpen - vToday);
-  const spxGapForcesM8BF = spxGapPct !== null && Math.abs(spxGapPct) >= T.SPX_GAP_THRESHOLD;
+  const spxGapCancelsStrad = spxGapPct !== null && Math.abs(spxGapPct) >= T.SPX_GAP_THRESHOLD;
 
   let rec = "", theme = "neutral";
   let blockT = "";
@@ -36,8 +37,6 @@ function calcSignal({
   if (cpiDay) {
     if (oNight > 0) { rec = "CPI CALL"; theme = "strad"; }
     else            { rec = "No Trade (CPI)"; theme = "block"; }
-  } else if (spxGapForcesM8BF && !eomDay && !postOpDay) {
-    rec = m8Msg(); theme = "m8bf";
   } else {
     // ── Core VIX overnight branch ──
     if (oNight > T.DROP_GXBF) {
@@ -63,8 +62,9 @@ function calcSignal({
     // EOM always straddle
     if (eomDay) { rec = "Straddle @ 9:32 AM (EOM)"; theme = "strad"; }
 
-    // Wednesday (non-Fed, non-EOM, non-NM): Straddle → M8BF
-    if (isWed && !fedDay && !eomDay && !nmDay && rec.startsWith("Straddle")) {
+    // Wednesday (non-Fed, non-blocked, non-NM): Straddle → M8BF
+    const m8bfBanned = eomDay || eom1 || opex1;
+    if (isWed && !fedDay && !m8bfBanned && !nmDay && rec.startsWith("Straddle")) {
       rec = m8Msg(); theme = "m8bf";
     }
 
@@ -82,9 +82,14 @@ function calcSignal({
       }
     }
 
-    // o2o > 1.4: non-EOM straddles → M8BF
-    if (!eomDay && (rec.startsWith("Straddle") || rec.startsWith("NM Straddle")) && o2o > T.O2O_M8BF) {
-      rec = m8Msg(); theme = "m8bf"; blockT = "o2o";
+    // SPX gap cancels straddle only — no effect on butterfly
+    if (spxGapCancelsStrad && (rec === "Straddle @ 9:32 AM" || rec === "Straddle @ 9:32 AM (EOM)" || rec.startsWith("NM Straddle"))) {
+      rec = "No Straddle (SPX gap)"; theme = "block"; blockT = "gap";
+    }
+
+    // o2o cancels straddle only — no effect on butterfly
+    if (o2o > T.O2O_M8BF && (rec === "Straddle @ 9:32 AM" || rec.startsWith("NM Straddle"))) {
+      rec = "No Straddle (o2o)"; theme = "block"; blockT = "o2o";
     }
 
     // OPEX+1: override to GXBF (or block)
@@ -251,10 +256,10 @@ test("WR=90 + EOM Straddle → M8BF",
   { ...BASE, vYClose: 20.3, vToday: 20, wr90: true, eomDay: true },
   "M8BF", "m8bf");
 
-console.log("\n── o2o override ──");
-test("o2o > 1.4 + Straddle (non-EOM) → M8BF",
+console.log("\n── o2o cancels straddle ──");
+test("o2o > 1.4 + Straddle → No Straddle (not M8BF)",
   { ...BASE, vYClose: 20.3, vToday: 20, o2oOverride: 1.5 },
-  "M8BF", "m8bf");
+  "No Straddle (o2o)", "block");
 
 test("o2o > 1.4 + EOM Straddle → stays EOM Straddle",
   { ...BASE, vYClose: 20.3, vToday: 20, eomDay: true, o2oOverride: 1.5 },
@@ -264,18 +269,22 @@ test("o2o ≤ 1.4 + Straddle → stays Straddle",
   { ...BASE, vYClose: 20.3, vToday: 20, o2oOverride: 1.4 },
   "Straddle @ 9:32 AM", "strad");
 
-console.log("\n── SPX gap ──");
-test("SPX gap ≥ 0.9% + normal day → M8BF forced",
-  { ...BASE, vYClose: 20.3, vToday: 20, spxGapPct: 1.2 },
+test("o2o > 1.4 + M8BF day → stays M8BF (o2o only affects straddle)",
+  { ...BASE, vYClose: 19, vToday: 20, o2oOverride: 1.5 },
   "M8BF", "m8bf");
 
-test("SPX gap ≥ 0.9% + EOM → EOM Straddle (SPX gap doesn't override EOM)",
-  { ...BASE, vYClose: 20.3, vToday: 20, spxGapPct: 1.2, eomDay: true },
-  "Straddle @ 9:32 AM (EOM)", "strad");
+console.log("\n── SPX gap cancels straddle ──");
+test("SPX gap ≥ 0.9% + Straddle → No Straddle (not M8BF)",
+  { ...BASE, vYClose: 20.3, vToday: 20, spxGapPct: 1.2 },
+  "No Straddle (SPX gap)", "block");
 
-test("SPX gap ≥ 0.9% + OPEX+1 → GXBF OPEX+1 (SPX gap skipped on OPEX+1)",
-  { ...BASE, vYClose: 20.3, vToday: 20, spxGapPct: 1.2, postOpDay: true }, // oNight=0.3 → Straddle → OPEX+1
-  "GXBF @ 9:36 AM (OPEX+1)", "gxbf");
+test("SPX gap ≥ 0.9% + M8BF day → stays M8BF (gap only affects straddle)",
+  { ...BASE, vYClose: 19, vToday: 20, spxGapPct: 1.2 },
+  "M8BF", "m8bf");
+
+test("SPX gap ≥ 0.9% + EOM → cancels EOM Straddle",
+  { ...BASE, vYClose: 20.3, vToday: 20, spxGapPct: 1.2, eomDay: true },
+  "No Straddle (SPX gap)", "block");
 
 test("SPX gap < 0.9% → no override",
   { ...BASE, vYClose: 20.3, vToday: 20, spxGapPct: 0.5 },

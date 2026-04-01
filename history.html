@@ -417,8 +417,7 @@ function calculateSignal({vixToday,vixYOpen,vixYClose,spxGapPct,etDate}){
   const o2o=(vixYOpen!=null)?vixYOpen-vixToday:NaN;
   const oNight=(vixYClose!=null)?vixYClose-vixToday:NaN;
 
-  let spxGapForcesM8BF=false;
-  if(spxGapPct!==null&&spxGapPct!==undefined){spxGapForcesM8BF=Math.abs(spxGapPct)>=T.SPX_GAP_THRESHOLD;}
+  const spxGapCancelsStrad=(spxGapPct!==null&&spxGapPct!==undefined&&Math.abs(spxGapPct)>=T.SPX_GAP_THRESHOLD);
 
   let rec="",theme="neutral",crossed=false,pmNote=false;
   let blockT="",blockD="",entryT="",badge="";
@@ -427,10 +426,6 @@ function calculateSignal({vixToday,vixYOpen,vixYClose,spxGapPct,etDate}){
   if(cpiDay){
     if(oNight>0){rec="Long ATM Call @ 9:32 AM (CPI) — Max $13";theme="strad";entryT="9:32 AM";badge="CPI CALL";}
     else{rec="No Trade (CPI, VIX up)";theme="block";crossed=true;blockT="hard";blockD="CPI day, VIX up";badge="BLOCKED";}
-  } else if(spxGapForcesM8BF && !m8bfBanned){
-    const dir=spxGapPct>0?'▲':'▼';
-    rec=m8Msg(etDate);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";
-    blockD=`SPX gap ${dir}${Math.abs(spxGapPct).toFixed(2)}% ≥ ${T.SPX_GAP_THRESHOLD}% → M8BF forced`;
   } else {
     if(oNight>T.DROP_GXBF){
       if(vixToday>=T.VIX_MAX_GXBF){rec=`No GXBF (VIX ${vixToday} ≥ ${T.VIX_MAX_GXBF})`;theme="block";crossed=true;blockT="vix";blockD=`VIX ${vixToday} ≥ ${T.VIX_MAX_GXBF}`;badge="BLOCKED";}
@@ -465,11 +460,15 @@ function calculateSignal({vixToday,vixYOpen,vixYClose,spxGapPct,etDate}){
 
   if(pmNote)rec+=" (afternoon times preferred)";
 
-  // o2o override: if o2o > 1.4 and signal is Straddle (not banned day), force M8BF
-  if (o2o > T.O2O_M8BF && !m8bfBanned && (rec === "Straddle @ 9:32 AM" || rec.startsWith("NM Straddle"))) {
-    rec = m8Msg(etDate); theme = "m8bf"; badge = "M8BF";
-    const sc = m8Sched(etDate.getDay());
-    strikeInfo = sc; entryT = sc?.window || ""; blockT = "o2o>" + T.O2O_M8BF;
+  // SPX gap cancels straddle only — no effect on butterfly
+  if (spxGapCancelsStrad && (rec === "Straddle @ 9:32 AM" || rec === "Straddle @ 9:32 AM (EOM)" || rec.startsWith("NM Straddle"))) {
+    const dir=spxGapPct>0?'▲':'▼';
+    rec=`No Straddle (SPX gap ${dir}${Math.abs(spxGapPct).toFixed(2)}%)`;theme="block";crossed=true;blockT="gap";blockD=`SPX gap ≥ ${T.SPX_GAP_THRESHOLD}%`;badge="BLOCKED";strikeInfo=null;
+  }
+
+  // o2o cancels straddle only — no effect on butterfly
+  if (o2o > T.O2O_M8BF && (rec === "Straddle @ 9:32 AM" || rec.startsWith("NM Straddle"))) {
+    rec=`No Straddle (o2o ${o2o.toFixed(1)} > ${T.O2O_M8BF})`;theme="block";crossed=true;blockT="o2o";blockD=`Open-to-open ${o2o.toFixed(1)} > ${T.O2O_M8BF}`;badge="BLOCKED";strikeInfo=null;
   }
 
   const bobfBlocks=[];
@@ -493,7 +492,7 @@ function calculateSignal({vixToday,vixYOpen,vixYClose,spxGapPct,etDate}){
   else if(theme==='gxbf'){m8bfText="No M8BF (overnight VIX up)";stradText=`No Straddle (overnight VIX drop > ${T.DROP_GXBF})`;}
   else if(theme==='block'){if(rec.includes('M8BF')){stradText=`No Straddle (${_oNUp?'overnight VIX up':'overnight VIX drop > '+T.DROP_GXBF})`;gxbfText=`No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;}else if(rec.includes('Straddle')||rec.includes('CPI')||rec.includes('Trade')){m8bfText="No M8BF";gxbfText="No GXBF";}else if(rec.includes('GXBF')){m8bfText="No M8BF";stradText="No Straddle";}}
 
-  return {rec,theme,crossed,badge,entryT,blockT,blockD,pmNote,strikeInfo,m8bfText,stradText,gxbfText,bobfRec,bobfBadge,bobfBlocks,oNight,o2o,spxGapPct,spxGapForcesM8BF,dayLabel:tradeWdLabel(etDate),dateStr:todayLong(etDate),eomDay,eom1,m8bfBanned};
+  return {rec,theme,crossed,badge,entryT,blockT,blockD,pmNote,strikeInfo,m8bfText,stradText,gxbfText,bobfRec,bobfBadge,bobfBlocks,oNight,o2o,spxGapPct,spxGapCancelsStrad,dayLabel:tradeWdLabel(etDate),dateStr:todayLong(etDate),eomDay,eom1,m8bfBanned};
 }
 
 // ══════════════════════════════════════════════════════════════

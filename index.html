@@ -1152,10 +1152,10 @@
     // ── SPX gap check (populated by Schwab when connected) ──
     const spxData = SC ? SC.get('spx') : null; // { yClose, todayOpen }
     let spxGapPct = null;
-    let spxGapForcesM8BF = false;
+    let spxGapCancelsStrad = false;
     if(spxData && spxData.yClose && spxData.todayOpen){
       spxGapPct = ((spxData.todayOpen - spxData.yClose) / spxData.yClose) * 100;
-      spxGapForcesM8BF = Math.abs(spxGapPct) >= T.SPX_GAP_THRESHOLD;
+      spxGapCancelsStrad = Math.abs(spxGapPct) >= T.SPX_GAP_THRESHOLD;
     }
 
     // Show SPX gap in metrics bar if available
@@ -1181,11 +1181,6 @@
     if(cpiDay){
       if(oNight>0){rec="Long ATM Call @ 9:32 AM (CPI) — Max $13";theme="strad";entryT="9:32 AM";badge="CPI CALL";}
       else{rec="No Trade (CPI, VIX up)";theme="block";crossed=true;blockT="hard";blockD="CPI day, VIX up";badge="BLOCKED";}
-    } else if(spxGapForcesM8BF && !eomDay && !eom1){
-      // SPX gap ≥ 0.9% in either direction → M8BF regardless of VIX (but not on OPEX+1 — GXBF takes priority)
-      const dir = spxGapPct > 0 ? '▲' : '▼';
-      rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";
-      blockD=`SPX gap ${dir}${Math.abs(spxGapPct).toFixed(2)}% ≥ ${T.SPX_GAP_THRESHOLD}% → M8BF forced`;
     } else {
       if(oNight>T.DROP_GXBF){
         if(vToday>=T.VIX_MAX_GXBF){rec=`No GXBF (VIX ${vToday} ≥ ${T.VIX_MAX_GXBF})`;theme="block";crossed=true;blockT="vix";blockD=`VIX ${vToday} ≥ ${T.VIX_MAX_GXBF}`;badge="BLOCKED";}
@@ -1203,7 +1198,7 @@
 
       if(nmDay&&!isMon&&(rec.startsWith("M8BF")||rec.startsWith("No M8BF")||rec.startsWith("Straddle")||rec.startsWith("GXBF")||rec.startsWith("No GXBF"))){rec="NM Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="NM STRADDLE";strikeInfo=null;}
       if(eomDay){rec="Straddle @ 9:32 AM (EOM)";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="EOM STRADDLE";strikeInfo=null;}
-      if(isWed&&!fedDay&&!eomDay&&!nmDay&&rec.startsWith("Straddle")){rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";}
+      if(isWed&&!fedDay&&!m8bfBlocked&&!nmDay&&rec.startsWith("Straddle")){rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";}
       if(opexDay&&rec.startsWith("Straddle")){rec="No Straddle (OPEX day)";theme="block";crossed=true;blockT="hard";blockD="Straddle not on OPEX";badge="BLOCKED";}
       if(postOpMon&&rec.startsWith("M8BF")) pmNote=true;
 
@@ -1217,11 +1212,15 @@
         if(rec.startsWith("Straddle")||rec.startsWith("NM Straddle")||rec.startsWith("GXBF")){const sc=m8Sched(dow);rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=sc;entryT=sc?.window||"";blockT="90%rule";}
       }
 
-      // o2o cancels non-EOM, non-NM straddles → M8BF (skip if WR override active)
-      if(!eomDay && !rec.startsWith("NM Straddle") && rec.startsWith("Straddle") && o2o > T.O2O_M8BF && blockT!=='0%rule') {
-        rec = m8Msg(now); theme = "m8bf"; badge = "M8BF";
-        strikeInfo = m8Sched(dow); entryT = strikeInfo?.window || "";
-        blockT = "o2o"; blockD = `Open-to-open VIX drop ${o2o.toFixed(2)} > ${T.O2O_M8BF} — Straddle cancelled → M8BF`;
+      // SPX gap cancels straddle only — no effect on butterfly
+      if(spxGapCancelsStrad && (rec === "Straddle @ 9:32 AM" || rec === "Straddle @ 9:32 AM (EOM)" || rec.startsWith("NM Straddle"))) {
+        const dir=spxGapPct>0?'▲':'▼';
+        rec=`No Straddle (SPX gap ${dir}${Math.abs(spxGapPct).toFixed(2)}%)`;theme="block";crossed=true;blockT="gap";blockD=`SPX gap ≥ ${T.SPX_GAP_THRESHOLD}%`;badge="BLOCKED";strikeInfo=null;
+      }
+
+      // o2o cancels straddle only — no effect on butterfly
+      if(o2o > T.O2O_M8BF && (rec === "Straddle @ 9:32 AM" || rec.startsWith("NM Straddle"))) {
+        rec=`No Straddle (o2o ${o2o.toFixed(1)} > ${T.O2O_M8BF})`;theme="block";crossed=true;blockT="o2o";blockD=`Open-to-open ${o2o.toFixed(1)} > ${T.O2O_M8BF}`;badge="BLOCKED";strikeInfo=null;
       }
 
       // OPEX+1 GXBF override — but NOT when WR 0% or 90% forced the signal
@@ -1268,9 +1267,7 @@
       m8bfBadge.textContent=dowSched?`🕐 ${dowSched.window}`:'TRADE';
       m8bfRec.textContent=dowSched?`M8BF — Window ${dowSched.window}`:'M8BF';
       strikeInfo=dowSched;
-      if(spxGapForcesM8BF) m8bfReason.innerHTML=`<span style="color:var(--col-gxbf);font-style:italic;">📐 ${blockD}</span>`;
-      else if(blockT==='90%rule') m8bfReason.innerHTML=`<span style="color:var(--accent);font-style:italic;">📈 90% rule — Straddle → M8BF</span>`;
-      else if(blockT==='o2o') m8bfReason.innerHTML=`<span style="color:var(--accent);font-style:italic;">📉 o2o > ${T.O2O_M8BF} — Straddle cancelled → M8BF</span>`;
+      if(blockT==='90%rule') m8bfReason.innerHTML=`<span style="color:var(--accent);font-style:italic;">📈 90% rule — M8BF override</span>`;
       else m8bfReason.textContent='';
     }
 
