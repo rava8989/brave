@@ -89,9 +89,10 @@
     .events-section{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;box-shadow:var(--shadow);margin-bottom:18px;}
     .events-section h2{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:var(--text);margin-bottom:14px;}
     .events-section h2 span{color:var(--accent);}
-    .events-list{list-style:none;padding:0;margin:0;}
+    .events-list{list-style:none;padding:0;margin:0;max-height:320px;overflow-y:auto;}
     .events-list li{padding:8px 12px;border-bottom:1px solid var(--border);font-size:12px;display:flex;align-items:center;gap:10px;}
     .events-list li:last-child{border-bottom:none;}
+    .events-list::-webkit-scrollbar{width:5px;} .events-list::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px;}
     .event-icon{width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;}
     .event-icon.flip{background:rgba(129,140,248,.15);color:var(--accent);}
     .event-icon.wall{background:rgba(239,68,68,.15);color:var(--red);}
@@ -273,13 +274,21 @@
 
 const GEX_ENDPOINT = 'https://schwab-proxy.ravamt4.workers.dev/gex';
 const TRIGGER_ENDPOINT = 'https://schwab-proxy.ravamt4.workers.dev/trigger';
-const POLL_MS = 30000;
+const POLL_MS_NORMAL = 30000;
+const POLL_MS_MORNING = 5000; // 5s polling during 9:30-9:40 ET for fast VIX capture
+function isMorningWindow() {
+  const et = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const h = et.getHours(), m = et.getMinutes();
+  return h === 9 && m >= 30 && m <= 40;
+}
+function getPollMs() { return isMorningWindow() ? POLL_MS_MORNING : POLL_MS_NORMAL; }
 const STALE_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
 let triggerAttempted = false; // only try once per page load
 
 let gexChart = null;
 let pollTimer = null;
-let eventLog = []; // accumulated events for today
+// ── Event log: server-persisted in KV, available on any device ──
+let eventLog = [];
 
 // ── Format helpers ──
 function fmtGex(val) {
@@ -560,15 +569,9 @@ function renderTable(data) {
 
 function renderEvents(data) {
   // Accumulate new events
-  if (data.events && data.events.length > 0) {
-    const ts = data.updatedAt;
-    for (const evt of data.events) {
-      // Avoid duplicates (same event + same timestamp)
-      const exists = eventLog.some(e => e.type === evt && e.ts === ts);
-      if (!exists) {
-        eventLog.push({ type: evt, ts, spot: data.spot, regime: data.regime });
-      }
-    }
+  // Use full daily event log from server (KV-backed, works on any device)
+  if (data.eventLog && data.eventLog.length > 0) {
+    eventLog = data.eventLog;
   }
 
   const list = document.getElementById('eventsList');
@@ -577,22 +580,24 @@ function renderEvents(data) {
     return;
   }
 
-  // Show most recent first, max 20
-  const recent = eventLog.slice(-20).reverse();
+  // Show all events, newest first (scrollable)
+  const recent = [...eventLog].reverse();
+  function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
   list.innerHTML = recent.map(e => {
     let icon = '', cls = '', label = '';
+    const spot = e.spot?.toFixed(0) ?? '--';
     switch (e.type) {
       case 'regime_flip':
-        icon = 'R'; cls = 'flip'; label = 'Regime flipped to ' + e.regime + ' at SPX ' + (e.spot?.toFixed(0) ?? '--');
+        icon = 'R'; cls = 'flip'; label = 'Regime flipped to ' + esc(e.regime) + ' at SPX ' + spot;
         break;
       case 'wall_break':
-        icon = 'W'; cls = 'wall'; label = 'Wall break detected at SPX ' + (e.spot?.toFixed(0) ?? '--');
+        icon = 'W'; cls = 'wall'; label = 'Wall break detected at SPX ' + spot;
         break;
       case 'gex_surge':
-        icon = 'S'; cls = 'surge'; label = 'GEX surge (>20% change) at SPX ' + (e.spot?.toFixed(0) ?? '--');
+        icon = 'S'; cls = 'surge'; label = 'GEX surge (>20% change) at SPX ' + spot;
         break;
       default:
-        icon = '?'; cls = 'flip'; label = e.type;
+        icon = '?'; cls = 'flip'; label = esc(e.type);
     }
     return '<li>' +
       '<span class="event-icon ' + cls + '">' + icon + '</span>' +
@@ -727,7 +732,7 @@ async function fetchAndRender() {
           if (secret) {
             console.log('[GEX] No data — triggering worker update…');
             try {
-              const tr = await fetch(`${TRIGGER_ENDPOINT}?secret=${encodeURIComponent(secret)}`);
+              const tr = await fetch(TRIGGER_ENDPOINT, { headers: { 'X-Sync-Secret': secret } });
               if (tr.ok) {
                 // Wait a moment then retry fetch
                 await new Promise(r => setTimeout(r, 3000));
@@ -770,20 +775,32 @@ async function fetchAndRender() {
 }
 
 // ── Polling (only during market hours) ──
+let currentPollMs = 0;
+let fetchInFlight = false; // prevent concurrent fetch stacking
 function startPolling() {
+  const ms = getPollMs();
+  // Restart interval if speed changed (morning window transition)
+  if (pollTimer && currentPollMs === ms) return;
   if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(() => {
+  currentPollMs = ms;
+  pollTimer = setInterval(async () => {
     if (isMarketOpen()) {
-      fetchAndRender();
+      if (fetchInFlight) return; // skip if previous fetch still running
+      fetchInFlight = true;
+      try { await fetchAndRender(); } finally { fetchInFlight = false; }
+      // Switch speed if morning window started/ended
+      const newMs = getPollMs();
+      if (newMs !== currentPollMs) startPolling();
     } else {
       // Market just closed — stop polling
       clearInterval(pollTimer);
       pollTimer = null;
+      currentPollMs = 0;
       document.getElementById('statusDot').className = 'status-dot stale';
       document.getElementById('marketBadge').textContent = 'Market Closed';
       document.getElementById('marketBadge').className = 'market-badge closed';
     }
-  }, POLL_MS);
+  }, ms);
 }
 
 // ── Init ──
