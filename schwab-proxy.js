@@ -1999,12 +1999,18 @@ export default {
             if (age > 180) needsRefresh = true; // stale if >3 min old
           }
           if (needsRefresh) {
-            try {
-              const token = await getAccessToken(env);
-              await handleGEXUpdate(env, token);
-              data = await env.SIGNAL_KV.get('gex_current');
-            } catch (e) {
-              console.warn('[gex] inline refresh failed:', e.message || e);
+            // Cooldown: only one auto-refresh per 2 min to stay within KV write limits
+            const lastRefresh = await env.SIGNAL_KV.get('gex_last_refresh_ts');
+            const sinceRefresh = lastRefresh ? Date.now() - parseInt(lastRefresh) : Infinity;
+            if (sinceRefresh > 120_000) {
+              try {
+                await env.SIGNAL_KV.put('gex_last_refresh_ts', String(Date.now()));
+                const token = await getAccessToken(env);
+                await handleGEXUpdate(env, token);
+                data = await env.SIGNAL_KV.get('gex_current');
+              } catch (e) {
+                console.warn('[gex] inline refresh failed:', e.message || e);
+              }
             }
           }
         }
