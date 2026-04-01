@@ -105,7 +105,13 @@
     .commentary-section h2{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:var(--text);margin-bottom:14px;}
     .commentary-section h2 span{color:var(--accent);}
     .commentary-placeholder{color:var(--text3);font-size:13px;font-style:italic;padding:16px 0;text-align:center;}
+    .commentary-body{max-height:320px;overflow-y:auto;}
+    .commentary-body::-webkit-scrollbar{width:5px;} .commentary-body::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px;}
     .commentary-body .commentary-text{font-size:13px;line-height:1.7;color:var(--text);padding:4px 0 8px;}
+    .commentary-entry{padding:10px 0;border-bottom:1px solid var(--border);}
+    .commentary-entry:last-child{border-bottom:none;}
+    .commentary-entry .c-time{font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-bottom:4px;}
+    .commentary-entry .c-text{font-size:13px;line-height:1.6;color:var(--text);}
     .commentary-meta{font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);display:flex;align-items:center;gap:8px;}
     .commentary-meta .ai-badge{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:2px 8px;border-radius:10px;background:rgba(129,140,248,.15);color:var(--accent);border:1px solid rgba(129,140,248,.3);}
 
@@ -567,6 +573,8 @@ function renderTable(data) {
   }).join('');
 }
 
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
 function renderEvents(data) {
   // Accumulate new events
   // Use full daily event log from server (KV-backed, works on any device)
@@ -582,7 +590,6 @@ function renderEvents(data) {
 
   // Show all events, newest first (scrollable)
   const recent = [...eventLog].reverse();
-  function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
   list.innerHTML = recent.map(e => {
     let icon = '', cls = '', label = '';
     const spot = e.spot?.toFixed(0) ?? '--';
@@ -611,7 +618,21 @@ function renderCommentary(data) {
   const body = document.getElementById('commentaryBody');
   const meta = document.getElementById('commentaryMeta');
 
-  if (data.commentary) {
+  // Use full daily commentary log from server (newest first)
+  if (data.commentaryLog && data.commentaryLog.length > 0) {
+    const entries = [...data.commentaryLog].reverse();
+    body.innerHTML = entries.map(e => {
+      const safe = e.text.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+      const spot = e.spot ? ' · SPX ' + e.spot.toFixed(0) : '';
+      const regime = e.regime ? ' · ' + esc(e.regime) : '';
+      return '<div class="commentary-entry">' +
+        '<div class="c-time">' + fmtTime(e.ts) + spot + regime + '</div>' +
+        '<div class="c-text">' + safe + '</div>' +
+        '</div>';
+    }).join('');
+    meta.style.display = 'flex';
+    meta.innerHTML = '<span class="ai-badge">AI</span> ' + entries.length + ' updates today';
+  } else if (data.commentary) {
     const safe = data.commentary.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
     body.innerHTML = '<div class="commentary-text">' + safe + '</div>';
     meta.style.display = 'flex';

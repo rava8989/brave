@@ -1194,8 +1194,17 @@ async function handleGEXUpdate(env, token) {
     if (commentary) {
       gexData.commentary = commentary;
       gexData.commentaryAt = new Date().toISOString();
+      // Append to daily commentary log
+      try {
+        const etNow2 = toET();
+        const todayISO2 = `${etNow2.getFullYear()}-${String(etNow2.getMonth()+1).padStart(2,'0')}-${String(etNow2.getDate()).padStart(2,'0')}`;
+        const cLogKey = `gex_commentary_${todayISO2}`;
+        const cLogRaw = await env.SIGNAL_KV.get(cLogKey);
+        const cLog = cLogRaw ? JSON.parse(cLogRaw) : [];
+        cLog.push({ text: commentary, ts: gexData.commentaryAt, spot: gexData.spot, regime: gexData.regime });
+        await env.SIGNAL_KV.put(cLogKey, JSON.stringify(cLog), { expirationTtl: 86400 });
+      } catch (e2) { console.warn('[gex] commentary log save failed:', e2.message); }
     } else if (prevParsed?.commentary) {
-      // Carry forward previous commentary
       gexData.commentary = prevParsed.commentary;
       gexData.commentaryAt = prevParsed.commentaryAt || null;
     }
@@ -2200,17 +2209,17 @@ export default {
 
         if (!data) return jsonResp({ error: 'No GEX data available yet' }, 404, publicCors);
 
-        // Inject full daily event log so all devices see complete history
+        // Inject full daily event + commentary logs so all devices see complete history
         try {
           const etNow2 = toET();
           const todayISO2 = `${etNow2.getFullYear()}-${String(etNow2.getMonth()+1).padStart(2,'0')}-${String(etNow2.getDate()).padStart(2,'0')}`;
+          const parsed = JSON.parse(data);
           const logRaw = await env.SIGNAL_KV.get(`gex_events_${todayISO2}`);
-          if (logRaw) {
-            const parsed = JSON.parse(data);
-            parsed.eventLog = JSON.parse(logRaw);
-            data = JSON.stringify(parsed);
-          }
-        } catch (e) { /* serve without full log if parse fails */ }
+          if (logRaw) parsed.eventLog = JSON.parse(logRaw);
+          const cLogRaw = await env.SIGNAL_KV.get(`gex_commentary_${todayISO2}`);
+          if (cLogRaw) parsed.commentaryLog = JSON.parse(cLogRaw);
+          data = JSON.stringify(parsed);
+        } catch (e) { /* serve without full logs if parse fails */ }
 
         return new Response(data, {
           status: 200,
