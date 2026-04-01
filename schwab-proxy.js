@@ -371,6 +371,7 @@ async function getAccessToken(env) {
     // Mutex: if a refresh is already in-flight, all concurrent callers share the same promise
     // so only ONE actual Schwab refresh call is made (Schwab refresh tokens are single-use)
     if (!_tokenRefreshPromise) {
+      let timedOut = false;
       _tokenRefreshPromise = Promise.race([
         (async () => {
           try {
@@ -396,23 +397,27 @@ async function getAccessToken(env) {
             const data = await resp.json();
             if (!data.access_token) throw new Error('Token refresh failed: ' + (data.error_description || JSON.stringify(data)));
 
-            const newTokens = {
-              access: data.access_token,
-              refresh: data.refresh_token || tokens.refresh,
-              expiry: Date.now() + (data.expires_in * 1000),
-              // Update refreshExpiry whenever Schwab issues a new refresh token (7-day window resets)
-              refreshExpiry: data.refresh_token
-                ? Date.now() + (7 * 24 * 60 * 60 * 1000)
-                : tokens.refreshExpiry,
-            };
-            await env.SIGNAL_KV.put('schwab_tokens', JSON.stringify(newTokens));
-            return newTokens.access;
+            // Only write to KV if timeout hasn't fired (prevents stale token overwrite)
+            if (!timedOut) {
+              const newTokens = {
+                access: data.access_token,
+                refresh: data.refresh_token || tokens.refresh,
+                expiry: Date.now() + (data.expires_in * 1000),
+                refreshExpiry: data.refresh_token
+                  ? Date.now() + (7 * 24 * 60 * 60 * 1000)
+                  : tokens.refreshExpiry,
+              };
+              await env.SIGNAL_KV.put('schwab_tokens', JSON.stringify(newTokens));
+              return newTokens.access;
+            }
+            throw new Error('Token refresh completed but timeout already fired');
           } finally {
             _tokenRefreshPromise = null;
           }
         })(),
         new Promise((_, reject) => setTimeout(() => {
-          _tokenRefreshPromise = null;
+          timedOut = true;
+          // Do NOT null _tokenRefreshPromise here — let the actual refresh's finally block do it
           reject(new Error('Token refresh timeout (30s)'));
         }, 30000))
       ]);
@@ -510,9 +515,10 @@ async function handleEOD(env, etNow) {
 
   // Re-scrape all Discord signals for today (full pagination) to ensure completeness
   // The live KV polling may have missed signals if cron was down
+  let fullSigs = [];
   if (env.DISCORD_USER_TOKEN) {
     try {
-      const fullSigs = await fetchAllDiscordSignalsForDate(env.DISCORD_USER_TOKEN, '1048242197029458040', todayISO);
+      fullSigs = await fetchAllDiscordSignalsForDate(env.DISCORD_USER_TOKEN, '1048242197029458040', todayISO);
       if (fullSigs.length > 0) {
         const signals = fullSigs.map(s => ({
           time: s.time, center: s.center, lower: s.lower, upper: s.upper,
@@ -582,12 +588,11 @@ async function handleEOD(env, etNow) {
     await upsertHistoryGitHub(env, todayISO, fields);
   }
 
-  // Append today's signals to TRADES database in backtester.html
+  // Append today's signals to TRADES database in backtester.html (reuse cached fullSigs)
   let appendResult = { appended: 0 };
-  if (spxClose != null && env.DISCORD_USER_TOKEN) {
+  if (spxClose != null && fullSigs.length > 0) {
     try {
-      const todaySignals = await fetchAllDiscordSignalsForDate(env.DISCORD_USER_TOKEN, '1048242197029458040', todayISO);
-      appendResult = await appendTradesToBacktester(env, todayISO, etNow, todaySignals, spxClose);
+      appendResult = await appendTradesToBacktester(env, todayISO, etNow, fullSigs, spxClose);
     } catch (e) {
       appendResult = { appended: 0, error: e.message };
     }
@@ -828,9 +833,16 @@ async function handleScheduled(env) {
     vixToday = parseFloat(todayCandles[0].open.toFixed(2));
   }
 
-  // Fallback: re-fetch with fresh history if candle not yet in first response
+  // Fallback: quote API if no candle yet (skip 15s sleep — risky for Worker wall time)
   if (vixToday === null) {
-    await new Promise(r => setTimeout(r, 15000)); // wait 15s for candle to appear
+    const vixQuote = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`, token);
+    const quote = vixQuote?.['$VIX']?.quote;
+    if (quote?.openPrice) vixToday = parseFloat(quote.openPrice.toFixed(2));
+    else if (quote?.lastPrice) vixToday = parseFloat(quote.lastPrice.toFixed(2));
+  }
+
+  // Second fallback: re-fetch candle history (market may have just opened)
+  if (vixToday === null) {
     const retry = await fetchSchwabJSON(vixHistUrl, token);
     if (retry.candles) {
       const rc = retry.candles.filter(c => {
@@ -839,14 +851,6 @@ async function handleScheduled(env) {
       }).sort((a, b) => a.datetime - b.datetime);
       if (rc.length > 0) vixToday = parseFloat(rc[0].open.toFixed(2));
     }
-  }
-
-  // Last resort: quote API (less accurate but better than failing)
-  if (vixToday === null) {
-    const vixQuote = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`, token);
-    const quote = vixQuote?.['$VIX']?.quote;
-    if (quote?.openPrice) vixToday = parseFloat(quote.openPrice.toFixed(2));
-    else if (quote?.lastPrice) vixToday = parseFloat(quote.lastPrice.toFixed(2));
   }
 
   if (vixToday === null) throw new Error('Could not get VIX today open');
@@ -1166,6 +1170,22 @@ async function handleGEXUpdate(env, token) {
   }
   gexData.events = events;
 
+  // 5a. Append new events to persistent daily event log in KV
+  if (events.length > 0) {
+    try {
+      const etNow = toET();
+      const todayISO = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
+      const logKey = `gex_events_${todayISO}`;
+      const logRaw = await env.SIGNAL_KV.get(logKey);
+      const log = logRaw ? JSON.parse(logRaw) : [];
+      const ts = gexData.updatedAt;
+      for (const evt of events) {
+        log.push({ type: evt, ts, spot: gexData.spot, regime: gexData.regime });
+      }
+      await env.SIGNAL_KV.put(logKey, JSON.stringify(log), { expirationTtl: 86400 });
+    } catch (e) { console.warn('[gex] event log save failed:', e.message); }
+  }
+
   // 5b. Generate AI commentary (every 15 min + on big events, 200/day hard limit)
   // Reuse prevRaw from step 5 to carry forward existing commentary
   const prevParsed = prevRaw ? JSON.parse(prevRaw) : null;
@@ -1374,49 +1394,81 @@ async function commitGexToGitHub(env, gexData) {
 // commits back. Requires GITHUB_TOKEN env var (repo: rava8989/brave).
 // ════════════════════════════════════════════════════════════════════
 
-async function upsertHistoryGitHub(env, dateStr, fields) {
+async function upsertHistoryGitHub(env, dateStr, fields, _retries = 3) {
   const token = env.GITHUB_TOKEN;
   if (!token) throw new Error('GITHUB_TOKEN not set');
 
   const apiUrl = 'https://api.github.com/repos/rava8989/brave/contents/history_data.json';
-  const headers = {
+  const ghHeaders = {
     'Authorization': `Bearer ${token}`,
     'Accept': 'application/vnd.github+json',
     'User-Agent': 'schwab-proxy-worker/1.0',
     'X-GitHub-Api-Version': '2022-11-28',
   };
 
-  // 1. Fetch current file
-  const getResp = await fetch(apiUrl, { headers });
-  if (!getResp.ok) throw new Error(`GitHub GET failed: ${getResp.status}`);
-  const meta = await getResp.json();
-  const sha = meta.sha;
-  const content = JSON.parse(atob(meta.content.replace(/\n/g, '')));
+  for (let attempt = 0; attempt < _retries; attempt++) {
+    // 1. Fetch current file (fresh SHA each attempt)
+    const getResp = await fetch(apiUrl, { headers: ghHeaders });
+    if (!getResp.ok) throw new Error(`GitHub GET failed: ${getResp.status}`);
+    const meta = await getResp.json();
+    const sha = meta.sha;
+    const content = JSON.parse(atob(meta.content.replace(/\n/g, '')));
 
-  // 2. Upsert today's row
-  const idx = content.findIndex(r => r.date === dateStr);
-  if (idx >= 0) {
-    for (const [k, v] of Object.entries(fields)) {
-      // Always overwrite close/WR values (EOD final), only fill nulls for open/PL
-      const alwaysOverwrite = ['vixClose', 'spxClose', 'm8bfWR'].includes(k);
-      if (alwaysOverwrite || content[idx][k] == null) content[idx][k] = v;
+    // 2. Upsert today's row
+    const idx = content.findIndex(r => r.date === dateStr);
+    if (idx >= 0) {
+      for (const [k, v] of Object.entries(fields)) {
+        const alwaysOverwrite = ['vixClose', 'spxClose', 'm8bfWR'].includes(k);
+        if (alwaysOverwrite || content[idx][k] == null) content[idx][k] = v;
+      }
+    } else {
+      content.push({ date: dateStr, ...fields });
+      content.sort((a, b) => a.date.localeCompare(b.date));
     }
-  } else {
-    content.push({ date: dateStr, ...fields });
-    content.sort((a, b) => a.date.localeCompare(b.date));
-  }
 
-  // 3. Push back
-  const putResp = await fetch(apiUrl, {
-    method: 'PUT',
-    headers: { ...headers, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      message: `auto: history update for ${dateStr} (${Object.keys(fields).join(', ')})`,
-      content: btoa(JSON.stringify(content, null, 0)),
-      sha,
-    }),
-  });
-  if (!putResp.ok) {
+    // 3. Ensure 10 future trading day placeholders always exist (skip weekends + holidays)
+    const today = dateStr;
+    const lastDate = content[content.length - 1]?.date || today;
+    const futureRows = content.filter(r => r.date > today).length;
+    if (futureRows < 10) {
+      const needed = 10 - futureRows;
+      let d = new Date(lastDate + 'T12:00:00Z');
+      let added = 0;
+      const existingDates = new Set(content.map(r => r.date));
+      while (added < needed) {
+        d.setUTCDate(d.getUTCDate() + 1);
+        const dow = d.getUTCDay();
+        if (dow === 0 || dow === 6) continue;
+        if (isHol(d)) continue; // skip market holidays
+        const iso = d.toISOString().slice(0, 10);
+        if (!existingDates.has(iso)) {
+          content.push({ date: iso });
+          existingDates.add(iso);
+          added++;
+        }
+      }
+      content.sort((a, b) => a.date.localeCompare(b.date));
+    }
+
+    // 4. Push back
+    const putResp = await fetch(apiUrl, {
+      method: 'PUT',
+      headers: { ...ghHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: `auto: history update for ${dateStr} (${Object.keys(fields).join(', ')})`,
+        content: btoa(JSON.stringify(content, null, 0)),
+        sha,
+      }),
+    });
+
+    if (putResp.ok) return; // success
+
+    // 409 = SHA conflict — retry with fresh SHA
+    if (putResp.status === 409 && attempt < _retries - 1) {
+      console.warn(`[github] SHA conflict on attempt ${attempt + 1}, retrying…`);
+      continue;
+    }
+
     const err = await putResp.text();
     throw new Error(`GitHub PUT failed: ${putResp.status} — ${err}`);
   }
@@ -1429,9 +1481,9 @@ async function upsertHistoryGitHub(env, dateStr, fields) {
 async function fetchAllDiscordSignalsForDate(token, channelId, dateISO) {
   // Fetch all butterfly signals posted on dateISO ET, paginated
   const [y, m, d] = dateISO.split('-').map(Number);
-  // 13:00 UTC = 9:00 AM ET (EDT), 21:00 UTC = 5:00 PM ET — covers full trading day
-  const startMs = Date.UTC(y, m - 1, d, 13, 0, 0);
-  const endMs   = Date.UTC(y, m - 1, d, 21, 0, 0);
+  // 12:00-22:00 UTC covers both EDT (9:30-4 ET = 13:30-20 UTC) and EST (9:30-4 ET = 14:30-21 UTC)
+  const startMs = Date.UTC(y, m - 1, d, 12, 0, 0);
+  const endMs   = Date.UTC(y, m - 1, d, 22, 0, 0);
   const discordEpoch = 1420070400000n;
   let afterSnowflake = ((BigInt(startMs) - discordEpoch) << 22n).toString();
   const beforeSnowflake = ((BigInt(endMs) - discordEpoch) << 22n).toString();
@@ -1875,8 +1927,8 @@ export default {
       try {
         const dateISO = url.searchParams.get('date') || new Date().toISOString().slice(0,10);
         const [y, m, d] = dateISO.split('-').map(Number);
-        const startMs = Date.UTC(y, m-1, d, 13, 0, 0);
-        const endMs   = Date.UTC(y, m-1, d, 21, 0, 0);
+        const startMs = Date.UTC(y, m-1, d, 12, 0, 0);
+        const endMs   = Date.UTC(y, m-1, d, 22, 0, 0);
         const discordEpoch = 1420070400000n;
         const afterSnowflake = ((BigInt(startMs) - discordEpoch) << 22n).toString();
         const beforeSnowflake = ((BigInt(endMs) - discordEpoch) << 22n).toString();
@@ -1966,7 +2018,7 @@ export default {
 
     // ── GET /rescrape?date=YYYY-MM-DD ── Re-scrape all Discord signals for a date into KV
     if (url.pathname === '/rescrape' && request.method === 'GET') {
-      const secret = url.searchParams.get('secret');
+      const secret = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
       if (!secret || secret !== env.SYNC_SECRET) {
         return jsonResp({ error: 'Unauthorized' }, 401, { 'Access-Control-Allow-Origin': '*' });
       }
@@ -2028,7 +2080,7 @@ export default {
 
     // ── GET /kv-debug ── List KV keys (requires sync secret)
     if (url.pathname === '/kv-debug' && request.method === 'GET') {
-      const secret = url.searchParams.get('secret');
+      const secret = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
       if (!secret || secret !== env.SYNC_SECRET) {
         return jsonResp({ error: 'Unauthorized' }, 401, { 'Access-Control-Allow-Origin': '*' });
       }
@@ -2038,7 +2090,7 @@ export default {
 
     // ── GET /trigger ── Manually trigger the scheduled handler (requires sync secret)
     if (url.pathname === '/trigger' && request.method === 'GET') {
-      const secret = url.searchParams.get('secret');
+      const secret = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
       if (!secret || secret !== env.SYNC_SECRET) {
         return jsonResp({ error: 'Unauthorized' }, 401, { 'Access-Control-Allow-Origin': '*' });
       }
@@ -2048,7 +2100,7 @@ export default {
         await env.SIGNAL_KV.put('last_run', JSON.stringify(result));
         return jsonResp(result, 200, { 'Access-Control-Allow-Origin': '*' });
       } catch (e) {
-        return jsonResp({ error: e.message, stack: e.stack }, 500, { 'Access-Control-Allow-Origin': '*' });
+        return jsonResp({ error: e.message }, 500, { 'Access-Control-Allow-Origin': '*' });
       }
     }
 
@@ -2111,13 +2163,20 @@ export default {
         if (marketOpen && etH === 9 && etM >= 30 && etM <= 40) {
           const todayCheck = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
           const mKey = `morning_signal_${todayCheck}`;
+          const mFailKey = `morning_signal_fail_${todayCheck}`;
           const mDone = await env.SIGNAL_KV.get(mKey);
           if (!mDone) {
-            try {
-              console.log('[gex] Morning signal not sent yet — triggering from /gex');
-              await handleScheduled(env);
-            } catch (e) {
-              console.warn('[gex] morning signal fallback failed:', e.message || e);
+            // Failure cooldown: don't retry more than once per 60s to avoid hammering APIs
+            const lastFail = await env.SIGNAL_KV.get(mFailKey);
+            const sinceFail = lastFail ? Date.now() - parseInt(lastFail) : Infinity;
+            if (sinceFail > 60_000) {
+              try {
+                console.log('[gex] Morning signal not sent yet — triggering from /gex');
+                await handleScheduled(env);
+              } catch (e) {
+                console.warn('[gex] morning signal fallback failed:', e.message || e);
+                await env.SIGNAL_KV.put(mFailKey, String(Date.now()), { expirationTtl: 3600 });
+              }
             }
           }
         }
@@ -2140,6 +2199,19 @@ export default {
         }
 
         if (!data) return jsonResp({ error: 'No GEX data available yet' }, 404, publicCors);
+
+        // Inject full daily event log so all devices see complete history
+        try {
+          const etNow2 = toET();
+          const todayISO2 = `${etNow2.getFullYear()}-${String(etNow2.getMonth()+1).padStart(2,'0')}-${String(etNow2.getDate()).padStart(2,'0')}`;
+          const logRaw = await env.SIGNAL_KV.get(`gex_events_${todayISO2}`);
+          if (logRaw) {
+            const parsed = JSON.parse(data);
+            parsed.eventLog = JSON.parse(logRaw);
+            data = JSON.stringify(parsed);
+          }
+        } catch (e) { /* serve without full log if parse fails */ }
+
         return new Response(data, {
           status: 200,
           headers: { 'Content-Type': 'application/json', ...publicCors },
