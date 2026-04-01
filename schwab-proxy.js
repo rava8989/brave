@@ -1052,6 +1052,7 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
   {
     const crossings = [];
     let cumGex = 0;
+    let minAbsCum = Infinity, minAbsCumStrike = null; // fallback: closest to zero
     for (let i = 0; i < strikeResults.length; i++) {
       const prevCum = cumGex;
       cumGex += strikeResults[i].netGex;
@@ -1061,11 +1062,18 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
         const ratio = Math.abs(prevCum) / (Math.abs(prevCum) + Math.abs(cumGex));
         crossings.push(Math.round(s0 + ratio * (s1 - s0)));
       }
+      if (Math.abs(cumGex) < minAbsCum) {
+        minAbsCum = Math.abs(cumGex);
+        minAbsCumStrike = strikeResults[i].strike;
+      }
     }
     if (crossings.length > 0) {
       // Pick the crossing nearest to spot price
       crossings.sort((a, b) => Math.abs(a - S) - Math.abs(b - S));
       flipStrike = crossings[0];
+    } else if (minAbsCumStrike !== null) {
+      // No true zero crossing — use the strike where cumulative is closest to zero
+      flipStrike = minAbsCumStrike;
     }
   }
 
