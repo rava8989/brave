@@ -702,16 +702,21 @@ async function handleScheduled(env) {
     }
   }
 
-  // ── Morning signal: fire on first cron tick that has VIX data, skip if already sent today ──
+  // ── Morning signal: 9:30-9:40 ET window, first tick with VIX data wins ──
+  const isMorning = etHour === 9 && etMin >= 30 && etMin <= 40;
   const todayISO_check = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
   const morningDoneKey = `morning_signal_${todayISO_check}`;
-  const morningDone = await env.SIGNAL_KV.get(morningDoneKey);
 
-  if (!isMarket || morningDone) {
+  if (!isMorning) {
     return { status: 'discord_poll', discord: discordResult, gex: gexResult, time: `${etHour}:${String(etMin).padStart(2,'0')} ET` };
   }
 
-  console.log('[proxy] Attempting morning signal — first tick with VIX data wins');
+  const morningDone = await env.SIGNAL_KV.get(morningDoneKey);
+  if (morningDone) {
+    return { status: 'discord_poll', discord: discordResult, gex: gexResult, time: `${etHour}:${String(etMin).padStart(2,'0')} ET` };
+  }
+
+  console.log('[proxy] Morning window — sending signal');
 
   // 1. Get access token
   const token = await getAccessToken(env);
