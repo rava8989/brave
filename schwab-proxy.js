@@ -726,7 +726,7 @@ async function handleScheduled(env) {
 
   const etHour = etNow.getHours();
   const etMin = etNow.getMinutes();
-  const isEOD     = etHour === 16 && etMin >= 0  && etMin <= 15;
+  const isEOD     = etHour === 16 && etMin >= 16 && etMin <= 25;
   const isMarket  = (etHour > 9 || (etHour === 9 && etMin >= 30)) && etHour < 16;
 
   // Always poll Discord during market hours
@@ -2227,8 +2227,8 @@ export default {
           }
         }
 
-        // ── EOD fallback: fire from /gex if cron missed 4:00-4:15 PM ──
-        const isEODWindow = dow >= 1 && dow <= 5 && etH === 16 && etM >= 0 && etM <= 20;
+        // ── EOD fallback: fire from /gex if cron missed 4:16-4:25 PM ──
+        const isEODWindow = dow >= 1 && dow <= 5 && etH === 16 && etM >= 16 && etM <= 30;
         if (isEODWindow) {
           const todayCheck = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
           const eodKey = `eod_done_${todayCheck}`;
