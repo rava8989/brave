@@ -490,7 +490,7 @@ function calculateSignal({vixToday,vixYOpen,vixYClose,spxGapPct,etDate}){
   else if(theme==='gxbf'){m8bfText="No M8BF (overnight VIX up)";stradText=`No Straddle (overnight VIX drop > ${T.DROP_GXBF})`;}
   else if(theme==='block'){if(rec.includes('M8BF')){stradText=`No Straddle (${_oNUp?'overnight VIX up':'overnight VIX drop > '+T.DROP_GXBF})`;gxbfText=`No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;}else if(rec.includes('Straddle')||rec.includes('CPI')||rec.includes('Trade')){m8bfText="No M8BF";gxbfText="No GXBF";}else if(rec.includes('GXBF')){m8bfText="No M8BF";stradText="No Straddle";}}
 
-  return {rec,theme,crossed,badge,entryT,blockT,blockD,pmNote,strikeInfo,m8bfText,stradText,gxbfText,bobfRec,bobfBadge,bobfBlocks,oNight,o2o,spxGapPct,spxGapForcesM8BF,dayLabel:tradeWdLabel(etDate),dateStr:todayLong(etDate),eomDay};
+  return {rec,theme,crossed,badge,entryT,blockT,blockD,pmNote,strikeInfo,m8bfText,stradText,gxbfText,bobfRec,bobfBadge,bobfBlocks,oNight,o2o,spxGapPct,spxGapForcesM8BF,dayLabel:tradeWdLabel(etDate),dateStr:todayLong(etDate),eomDay,eom1};
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -852,7 +852,7 @@ async function init() {
       // VIX-blocked GXBF (blockT='vix') does NOT block M8BF
       signal.m8bfRan = (
         (signal.theme === 'm8bf') ||
-        (!signal.eomDay && (
+        (!signal.eomDay && !signal.eom1 && (
           ((signal.theme === 'strad' || signal.theme === 'gxbf') && signal.blockT !== '0%rule') ||
           (signal.theme === 'block' && signal.blockT === 'vix')
         ))
