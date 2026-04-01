@@ -672,7 +672,6 @@ async function handleScheduled(env) {
 
   const etHour = etNow.getHours();
   const etMin = etNow.getMinutes();
-  const isMorning = etHour === 9  && etMin >= 30 && etMin <= 40;
   const isEOD     = etHour === 16 && etMin >= 0  && etMin <= 15;
   const isMarket  = (etHour > 9 || (etHour === 9 && etMin >= 30)) && etHour < 16;
 
@@ -703,22 +702,16 @@ async function handleScheduled(env) {
     }
   }
 
-  // Check if morning signal was already sent today
+  // ── Morning signal: fire on first cron tick that has VIX data, skip if already sent today ──
   const todayISO_check = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
   const morningDoneKey = `morning_signal_${todayISO_check}`;
   const morningDone = await env.SIGNAL_KV.get(morningDoneKey);
 
-  // Skip morning signal if already sent OR if outside catch-up window (after 10:30 ET)
-  if (!isMorning && (morningDone || etHour >= 11 || (etHour === 10 && etMin > 30))) {
+  if (!isMarket || morningDone) {
     return { status: 'discord_poll', discord: discordResult, gex: gexResult, time: `${etHour}:${String(etMin).padStart(2,'0')} ET` };
   }
 
-  // If morning signal not sent yet and we're within catch-up window, send it now
-  if (morningDone) {
-    return { status: 'discord_poll', discord: discordResult, gex: gexResult, time: `${etHour}:${String(etMin).padStart(2,'0')} ET` };
-  }
-
-  console.log('[proxy] Sending morning signal (isMorning:', isMorning, ', catch-up:', !isMorning, ')');
+  console.log('[proxy] Attempting morning signal — first tick with VIX data wins');
 
   // 1. Get access token
   const token = await getAccessToken(env);
