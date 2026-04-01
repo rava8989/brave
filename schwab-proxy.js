@@ -521,11 +521,46 @@ async function handleEOD(env, etNow) {
     } catch (e) { console.warn('[proxy]', e.message || e); }
   }
 
+  // Backfill vixOpen/spxOpen if morning signal missed them
+  let vixOpen = null, spxOpen = null;
+  try {
+    const histResp = await fetch(
+      `https://raw.githubusercontent.com/rava8989/brave/main/history_data.json?t=${Date.now()}`,
+      { headers: { 'Cache-Control': 'no-cache' } }
+    );
+    if (histResp.ok) {
+      const hist = await histResp.json();
+      const todayEntry = hist.find(e => e.date === todayISO);
+      if (todayEntry && todayEntry.vixOpen == null && token) {
+        // Fetch VIX open from candles
+        try {
+          const vixHist2 = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24VIX&periodType=day&period=3&frequencyType=minute&frequency=1&startDate=${start}&endDate=${end}&needExtendedHoursData=true`, token);
+          if (vixHist2.candles) {
+            const openCandles = vixHist2.candles.filter(c => {
+              const d = toET(new Date(c.datetime));
+              return d.toDateString() === todayStr && d.getHours() === 9 && d.getMinutes() >= 30 && d.getMinutes() <= 35;
+            }).sort((a, b) => a.datetime - b.datetime);
+            if (openCandles.length) vixOpen = parseFloat(openCandles[0].open.toFixed(2));
+          }
+        } catch (e) { console.warn('[eod] vixOpen backfill:', e.message); }
+      }
+      if (todayEntry && todayEntry.spxOpen == null && token) {
+        try {
+          const spxQ = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24SPX&fields=quote`, token);
+          const op = spxQ?.['$SPX']?.quote?.openPrice;
+          if (op) spxOpen = parseFloat(op.toFixed(2));
+        } catch (e) { console.warn('[eod] spxOpen backfill:', e.message); }
+      }
+    }
+  } catch (e) { console.warn('[eod] open backfill check:', e.message); }
+
   const fields = {};
   if (vixClose != null) fields.vixClose = vixClose;
   if (spxClose != null) fields.spxClose = spxClose;
   if (m8bfPL != null) fields.m8bfPL = m8bfPL;
   if (m8bfWR != null) fields.m8bfWR = m8bfWR;
+  if (vixOpen != null) fields.vixOpen = vixOpen;
+  if (spxOpen != null) fields.spxOpen = spxOpen;
 
   if (Object.keys(fields).length > 0) {
     await upsertHistoryGitHub(env, todayISO, fields);
@@ -2011,6 +2046,38 @@ export default {
               } catch (e) {
                 console.warn('[gex] inline refresh failed:', e.message || e);
               }
+            }
+          }
+        }
+
+        // ── Morning signal fallback: fire from /gex if cron missed it ──
+        if (marketOpen && etH === 9 && etM >= 30 && etM <= 40) {
+          const todayCheck = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
+          const mKey = `morning_signal_${todayCheck}`;
+          const mDone = await env.SIGNAL_KV.get(mKey);
+          if (!mDone) {
+            try {
+              console.log('[gex] Morning signal not sent yet — triggering from /gex');
+              await handleScheduled(env);
+            } catch (e) {
+              console.warn('[gex] morning signal fallback failed:', e.message || e);
+            }
+          }
+        }
+
+        // ── EOD fallback: fire from /gex if cron missed 4:00-4:15 PM ──
+        const isEODWindow = dow >= 1 && dow <= 5 && etH === 16 && etM >= 0 && etM <= 20;
+        if (isEODWindow) {
+          const todayCheck = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
+          const eodKey = `eod_done_${todayCheck}`;
+          const eodDone = await env.SIGNAL_KV.get(eodKey);
+          if (!eodDone) {
+            try {
+              console.log('[gex] EOD not run yet — triggering from /gex');
+              await env.SIGNAL_KV.put(eodKey, 'done', { expirationTtl: 86400 });
+              await handleEOD(env, etNow);
+            } catch (e) {
+              console.warn('[gex] EOD fallback failed:', e.message || e);
             }
           }
         }
