@@ -808,11 +808,14 @@ async function init() {
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const raw = await resp.json();
 
-    // Filter out placeholder/holiday entries that have no market data
-    const filled = raw.filter(r => r.vixOpen != null || r.vixClose != null || r.spxOpen != null || r.spxClose != null);
+    // Remove weekends and holidays (keep future trading-day placeholders)
+    const filtered = raw.filter(r => {
+      const p = r.date.split('-');
+      return isTrade(new Date(+p[0], +p[1] - 1, +p[2], 12));
+    });
 
-    for (let i = 1; i < filled.length; i++) {
-      const cur = filled[i], prev = filled[i - 1];
+    for (let i = 1; i < filtered.length; i++) {
+      const cur = filtered[i], prev = filtered[i - 1];
       const parts = cur.date.split('-');
       const etDate = new Date(+parts[0], +parts[1] - 1, +parts[2], 12);
 
