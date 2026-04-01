@@ -808,8 +808,11 @@ async function init() {
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const raw = await resp.json();
 
-    for (let i = 1; i < raw.length; i++) {
-      const cur = raw[i], prev = raw[i - 1];
+    // Filter out placeholder/holiday entries that have no market data
+    const filled = raw.filter(r => r.vixOpen != null || r.vixClose != null || r.spxOpen != null || r.spxClose != null);
+
+    for (let i = 1; i < filled.length; i++) {
+      const cur = filled[i], prev = filled[i - 1];
       const parts = cur.date.split('-');
       const etDate = new Date(+parts[0], +parts[1] - 1, +parts[2], 12);
 
