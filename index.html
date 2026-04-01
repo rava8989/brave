@@ -1208,21 +1208,24 @@
       if(postOpMon&&rec.startsWith("M8BF")) pmNote=true;
 
       if(wr0.checked){
-        if(rec.startsWith("M8BF") && !fedDay){
+        // 0% WR → automatic Straddle (overrides M8BF and GXBF, not on Fed day)
+        if(!fedDay && (rec.startsWith("M8BF") || rec.startsWith("GXBF"))){
           rec="Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="0%rule";entryT="9:32 AM";badge="STRADDLE";strikeInfo=null;
         }
       } else if(wr90.checked){
-        if(rec==="Straddle @ 9:32 AM"||rec==="NM Straddle @ 9:32 AM"||rec==="Straddle @ 9:32 AM (EOM)"){const sc=m8Sched(dow);rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=sc;entryT=sc?.window||"";blockT="90%rule";}
+        // 90% WR → automatic M8BF (overrides Straddle, NM Straddle, EOM Straddle, GXBF)
+        if(rec.startsWith("Straddle")||rec.startsWith("NM Straddle")||rec.startsWith("GXBF")){const sc=m8Sched(dow);rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=sc;entryT=sc?.window||"";blockT="90%rule";}
       }
 
-      // o2o cancels non-EOM, non-NM straddles → M8BF
-      if(!eomDay && !rec.startsWith("NM Straddle") && rec.startsWith("Straddle") && o2o > T.O2O_M8BF) {
+      // o2o cancels non-EOM, non-NM straddles → M8BF (skip if WR override active)
+      if(!eomDay && !rec.startsWith("NM Straddle") && rec.startsWith("Straddle") && o2o > T.O2O_M8BF && blockT!=='0%rule') {
         rec = m8Msg(now); theme = "m8bf"; badge = "M8BF";
         strikeInfo = m8Sched(dow); entryT = strikeInfo?.window || "";
         blockT = "o2o"; blockD = `Open-to-open VIX drop ${o2o.toFixed(2)} > ${T.O2O_M8BF} — Straddle cancelled → M8BF`;
       }
 
-      if(postOpDay){
+      // OPEX+1 GXBF override — but NOT when WR 0% or 90% forced the signal
+      if(postOpDay && blockT!=='0%rule' && blockT!=='90%rule'){
         const isM8=rec.startsWith("M8BF"), isStr=rec.startsWith("Straddle")||rec.startsWith("NM Straddle");
         if(isM8||isStr){
           const vixOvernightPct = (vToday - vYClose) / vYClose * 100;
