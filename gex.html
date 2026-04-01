@@ -123,6 +123,12 @@
     .bottom-info a{color:var(--accent);text-decoration:none;font-weight:600;}
     .bottom-info a:hover{text-decoration:underline;}
 
+    /* Mode toggle */
+    .gex-mode-toggle{display:flex;gap:0;border:1px solid var(--border);border-radius:6px;overflow:hidden;}
+    .gex-mode-btn{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;padding:5px 14px;border:none;cursor:pointer;background:transparent;color:var(--text2);transition:background .15s,color .15s;}
+    .gex-mode-btn:hover{background:var(--bg3);color:var(--text);}
+    .gex-mode-btn.active{background:var(--accent);color:#fff;}
+
     /* Loading */
     .loading-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:500;transition:opacity .3s;}
     .loading-overlay.hidden{opacity:0;pointer-events:none;}
@@ -219,7 +225,13 @@
 
   <!-- GEX Profile Chart -->
   <div class="chart-section">
-    <h2><span>GEX</span> Profile by Strike</h2>
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+      <h2 style="margin-bottom:0;"><span>GEX</span> Profile by Strike</h2>
+      <div class="gex-mode-toggle" id="gexModeToggle">
+        <button class="gex-mode-btn active" data-mode="0dte">0DTE</button>
+        <button class="gex-mode-btn" data-mode="all">All Exp</button>
+      </div>
+    </div>
     <div class="chart-wrap">
       <canvas id="gexChart"></canvas>
     </div>
@@ -278,8 +290,10 @@
    No Schwab tokens needed.
    ================================================================ */
 
-const GEX_ENDPOINT = 'https://schwab-proxy.ravamt4.workers.dev/gex';
+const GEX_BASE = 'https://schwab-proxy.ravamt4.workers.dev/gex';
 const TRIGGER_ENDPOINT = 'https://schwab-proxy.ravamt4.workers.dev/trigger';
+let gexMode = '0dte'; // '0dte' (default) or 'all'
+function GEX_ENDPOINT() { return gexMode === '0dte' ? GEX_BASE + '?mode=0dte' : GEX_BASE; }
 const POLL_MS_NORMAL = 30000;
 const POLL_MS_MORNING = 5000; // 5s polling during 9:30-9:40 ET for fast VIX capture
 function isMorningWindow() {
@@ -717,7 +731,7 @@ function showMarketClosed() {
 // ── Try loading cached data (last session) ──
 async function tryLoadCached() {
   try {
-    const resp = await fetch(GEX_ENDPOINT);
+    const resp = await fetch(GEX_ENDPOINT());
     if (!resp.ok) return false;
     const data = await resp.json();
     renderTopBar(data);
@@ -743,7 +757,7 @@ async function tryLoadCached() {
 // ── Main fetch + render ──
 async function fetchAndRender() {
   try {
-    const resp = await fetch(GEX_ENDPOINT);
+    const resp = await fetch(GEX_ENDPOINT());
     if (!resp.ok) {
       if (resp.status === 404) {
         // During market hours, try triggering an update if we haven't already
@@ -757,7 +771,7 @@ async function fetchAndRender() {
               if (tr.ok) {
                 // Wait a moment then retry fetch
                 await new Promise(r => setTimeout(r, 3000));
-                const retry = await fetch(GEX_ENDPOINT);
+                const retry = await fetch(GEX_ENDPOINT());
                 if (retry.ok) {
                   const data = await retry.json();
                   renderTopBar(data); renderCards(data); renderChart(data);
@@ -839,6 +853,18 @@ function startPolling() {
     // No polling — market is closed
   }
 })();
+
+// ── Mode toggle (0DTE vs All Expirations) ──
+document.getElementById('gexModeToggle').addEventListener('click', async (e) => {
+  const btn = e.target.closest('.gex-mode-btn');
+  if (!btn || btn.classList.contains('active')) return;
+  document.querySelectorAll('.gex-mode-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  gexMode = btn.dataset.mode;
+  // Force chart rebuild for clean axis transition
+  if (gexChart) { gexChart.destroy(); gexChart = null; }
+  await fetchAndRender();
+});
 
 // Restart polling when tab becomes visible again during market hours
 document.addEventListener('visibilitychange', () => {
