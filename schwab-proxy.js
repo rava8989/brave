@@ -229,7 +229,7 @@ function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate }) {
     }
     if (isPostVixBeforeOpex(etDate) && rec.startsWith("M8BF")) { rec = "No M8BF (post-VIX exp)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "VIX exp before OPEX this month"; badge = "BLOCKED"; strikeInfo = null; }
 
-    if (nmDay && !isMon && (rec.startsWith("M8BF") || rec.startsWith("No M8BF"))) { rec = "NM Straddle @ 9:32 AM"; theme = "strad"; crossed = false; blockT = ""; entryT = "9:32 AM"; badge = "NM STRADDLE"; strikeInfo = null; }
+    if (nmDay && !isMon && (rec.startsWith("M8BF") || rec.startsWith("No M8BF") || rec.startsWith("Straddle") || rec.startsWith("GXBF") || rec.startsWith("No GXBF"))) { rec = "NM Straddle @ 9:32 AM"; theme = "strad"; crossed = false; blockT = ""; entryT = "9:32 AM"; badge = "NM STRADDLE"; strikeInfo = null; }
     if (eomDay) { rec = "Straddle @ 9:32 AM (EOM)"; theme = "strad"; crossed = false; blockT = ""; entryT = "9:32 AM"; badge = "EOM STRADDLE"; strikeInfo = null; }
     if (isWed && !fedDay && !eomDay && !nmDay && rec.startsWith("Straddle")) { rec = m8Msg(etDate); theme = "m8bf"; badge = "M8BF"; strikeInfo = m8Sched(dow); entryT = strikeInfo?.window || ""; }
     if (opexDay && rec.startsWith("Straddle")) { rec = "No Straddle (OPEX day)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "Straddle not on OPEX"; badge = "BLOCKED"; }
