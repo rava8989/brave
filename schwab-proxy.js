@@ -945,7 +945,7 @@ async function handleScheduled(env) {
 // GEX (GAMMA EXPOSURE) CALCULATION
 // ════════════════════════════════════════════════════════════════════
 
-function calculateGEX(chainData, spot) {
+function calculateGEX(chainData, spot, onlyNearest = false) {
   const R = 0.043, Q = 0.013, MULT = 100;
 
   function normPdf(x) { return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI); }
@@ -960,65 +960,84 @@ function calculateGEX(chainData, spot) {
   const putMap = chainData.putExpDateMap || {};
   const S = spot;
 
-  // Find nearest expiration only
+  // Aggregate expirations: all (default) or only nearest (0DTE mode)
   const allExpiries = [...new Set([...Object.keys(callMap), ...Object.keys(putMap)])].sort();
   if (allExpiries.length === 0) return null;
-  const expKey = allExpiries[0];
+  const expiriesToUse = onlyNearest ? [allExpiries[0]] : allExpiries;
 
-  const calls = callMap[expKey] || {};
-  const puts = putMap[expKey] || {};
-
-  // Parse DTE from key format "YYYY-MM-DD:N"
-  const dteParts = expKey.split(':');
-  const dte = parseInt(dteParts[1]) || 0;
-  const T_years = Math.max(dte / 365, 1 / (365 * 24)); // minimum ~1 hour
-
-  const strikeSet = new Set([...Object.keys(calls), ...Object.keys(puts)]);
-  const strikeResults = [];
+  // Accumulate per-strike across selected expirations
+  const strikeAccum = {}; // strike → { callGex, putGex, callOI, putOI }
   let totalCallGex = 0, totalPutGex = 0;
+  let nearestDte = Infinity;
 
-  for (const strikeStr of strikeSet) {
-    const K = parseFloat(strikeStr);
-    if (isNaN(K)) continue;
+  for (const expKey of expiriesToUse) {
+    const dteParts = expKey.split(':');
+    const dte = parseInt(dteParts[1]) || 0;
+    if (dte < nearestDte) nearestDte = dte;
+    const T_years = Math.max(dte / 365, 1 / (365 * 24)); // minimum ~1 hour
 
-    const callContracts = calls[strikeStr] || [];
-    const putContracts = puts[strikeStr] || [];
+    const calls = callMap[expKey] || {};
+    const puts = putMap[expKey] || {};
+    const strikeSet = new Set([...Object.keys(calls), ...Object.keys(puts)]);
 
-    let callOI = 0, callGex = 0;
-    let putOI = 0, putGex = 0;
+    for (const strikeStr of strikeSet) {
+      const K = parseFloat(strikeStr);
+      if (isNaN(K)) continue;
 
-    for (const c of callContracts) {
-      const oi = c.openInterest || 0;
-      const vol = c.totalVolume || 0;
-      const iv = (c.volatility || 0) / 100;
-      const effectiveOI = oi > 0 ? oi : (dte === 0 ? vol : 0);
-      if (effectiveOI === 0 && vol === 0) continue;
-      callOI += effectiveOI;
-      const gamma = bsGamma(S, K, T_years, iv > 0 ? iv : 0.2);
-      callGex += gamma * effectiveOI * S * S * MULT * 0.01;
+      if (!strikeAccum[strikeStr]) strikeAccum[strikeStr] = { strike: K, callGex: 0, putGex: 0, callOI: 0, putOI: 0 };
+      const acc = strikeAccum[strikeStr];
+
+      const callContracts = calls[strikeStr] || [];
+      const putContracts = puts[strikeStr] || [];
+
+      for (const c of callContracts) {
+        const oi = c.openInterest || 0;
+        const vol = c.totalVolume || 0;
+        const iv = (c.volatility || 0) / 100;
+        // 0DTE: combine OI + volume (OI = overnight, vol = intraday flow)
+        // Non-0DTE: OI only (volume is just today's slice, not full position)
+        const effectiveOI = dte === 0 ? Math.max(oi, 0) + Math.max(vol, 0) : (oi > 0 ? oi : 0);
+        if (effectiveOI === 0) continue;
+        acc.callOI += effectiveOI;
+        const gamma = bsGamma(S, K, T_years, iv > 0 ? iv : 0.2);
+        const gex = gamma * effectiveOI * S * S * MULT * 0.01;
+        acc.callGex += gex;
+        totalCallGex += gex;
+      }
+
+      for (const p of putContracts) {
+        const oi = p.openInterest || 0;
+        const vol = p.totalVolume || 0;
+        const iv = (p.volatility || 0) / 100;
+        const effectiveOI = dte === 0 ? Math.max(oi, 0) + Math.max(vol, 0) : (oi > 0 ? oi : 0);
+        if (effectiveOI === 0) continue;
+        acc.putOI += effectiveOI;
+        const gamma = bsGamma(S, K, T_years, iv > 0 ? iv : 0.2);
+        const gex = gamma * effectiveOI * S * S * MULT * 0.01;
+        acc.putGex -= gex; // puts negative
+        totalPutGex -= gex;
+      }
     }
-
-    for (const p of putContracts) {
-      const oi = p.openInterest || 0;
-      const vol = p.totalVolume || 0;
-      const iv = (p.volatility || 0) / 100;
-      const effectiveOI = oi > 0 ? oi : (dte === 0 ? vol : 0);
-      if (effectiveOI === 0 && vol === 0) continue;
-      putOI += effectiveOI;
-      const gamma = bsGamma(S, K, T_years, iv > 0 ? iv : 0.2);
-      putGex -= gamma * effectiveOI * S * S * MULT * 0.01; // puts negative
-    }
-
-    const netGex = callGex + putGex;
-    if (callOI === 0 && putOI === 0) continue;
-
-    totalCallGex += callGex;
-    totalPutGex += putGex;
-    strikeResults.push({ strike: K, callGex, putGex, netGex, callOI, putOI });
   }
 
-  strikeResults.sort((a, b) => a.strike - b.strike);
-  const totalGex = totalCallGex + totalPutGex;
+  // Filter strikes to ±5% from spot to keep chart focused
+  const rangePct = 0.05;
+  const lo = S * (1 - rangePct), hi = S * (1 + rangePct);
+
+  const strikeResults = Object.values(strikeAccum)
+    .map(s => ({ ...s, netGex: s.callGex + s.putGex }))
+    .filter(s => (s.callOI > 0 || s.putOI > 0) && s.strike >= lo && s.strike <= hi)
+    .sort((a, b) => a.strike - b.strike);
+
+  const dte = nearestDte;
+
+  // Compute totalGex from filtered strikes only (matches what the chart displays)
+  let totalCallGexFiltered = 0, totalPutGexFiltered = 0;
+  for (const r of strikeResults) {
+    totalCallGexFiltered += r.callGex;
+    totalPutGexFiltered += r.putGex;
+  }
+  const totalGex = totalCallGexFiltered + totalPutGexFiltered;
 
   // Max positive gamma strike
   let maxPosStrike = null, maxPosGex = 0;
@@ -1028,32 +1047,25 @@ function calculateGEX(chainData, spot) {
     if (r.netGex < maxNegGex) { maxNegStrike = r.strike; maxNegGex = r.netGex; }
   }
 
-  // GEX flip: cumulative net_gex zero crossing
+  // GEX flip: cumulative net_gex zero crossing nearest to spot
   let flipStrike = null;
-  let cumGex = 0;
-  for (let i = 0; i < strikeResults.length; i++) {
-    const prevCum = cumGex;
-    cumGex += strikeResults[i].netGex;
-    if (prevCum < 0 && cumGex >= 0 && i > 0) {
-      const s0 = strikeResults[i - 1].strike;
-      const s1 = strikeResults[i].strike;
-      const ratio = Math.abs(prevCum) / (Math.abs(prevCum) + Math.abs(cumGex));
-      flipStrike = Math.round(s0 + ratio * (s1 - s0));
-      break;
-    }
-  }
-  if (flipStrike === null) {
-    cumGex = 0;
+  {
+    const crossings = [];
+    let cumGex = 0;
     for (let i = 0; i < strikeResults.length; i++) {
       const prevCum = cumGex;
       cumGex += strikeResults[i].netGex;
-      if (prevCum > 0 && cumGex <= 0 && i > 0) {
+      if (i > 0 && ((prevCum < 0 && cumGex >= 0) || (prevCum > 0 && cumGex <= 0))) {
         const s0 = strikeResults[i - 1].strike;
         const s1 = strikeResults[i].strike;
         const ratio = Math.abs(prevCum) / (Math.abs(prevCum) + Math.abs(cumGex));
-        flipStrike = Math.round(s0 + ratio * (s1 - s0));
-        break;
+        crossings.push(Math.round(s0 + ratio * (s1 - s0)));
       }
+    }
+    if (crossings.length > 0) {
+      // Pick the crossing nearest to spot price
+      crossings.sort((a, b) => Math.abs(a - S) - Math.abs(b - S));
+      flipStrike = crossings[0];
     }
   }
 
@@ -1078,8 +1090,8 @@ function calculateGEX(chainData, spot) {
     spot: parseFloat(S.toFixed(2)),
     regime,
     totalGex: Math.round(totalGex),
-    totalCallGex: Math.round(totalCallGex),
-    totalPutGex: Math.round(totalPutGex),
+    totalCallGex: Math.round(totalCallGexFiltered),
+    totalPutGex: Math.round(totalPutGexFiltered),
     flipStrike,
     maxPosStrike,
     maxPosGex: Math.round(maxPosGex),
@@ -1097,25 +1109,42 @@ function calculateGEX(chainData, spot) {
     events: [],
     commentary: null,
     updatedAt: new Date().toISOString(),
-    expiry: expKey,
+    expiry: expiriesToUse[0],
+    expiryCount: expiriesToUse.length,
     dte,
   };
 }
 
 async function handleGEXUpdate(env, token) {
-  // 1. Fetch SPX options chain (40 strikes around ATM — 80 causes Schwab "TooBigBody" 502)
-  const chainUrl = 'https://api.schwabapi.com/marketdata/v1/chains?symbol=%24SPX&contractType=ALL&strikeCount=40&includeUnderlyingQuote=true&strategy=SINGLE';
-  const chainData = await fetchSchwabJSON(chainUrl, token);
+  // 1. Fetch SPX options chain — split calls/puts to get 80 strikes each without Schwab 502
+  const baseParams = 'symbol=%24SPX&strikeCount=80&includeUnderlyingQuote=true&strategy=SINGLE';
+  const [callData, putData] = await Promise.all([
+    fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/chains?${baseParams}&contractType=CALL`, token),
+    fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/chains?${baseParams}&contractType=PUT`, token),
+  ]);
 
-  // 2. Get spot from underlying quote
-  const spot = chainData.underlyingPrice || chainData.underlying?.last || chainData.underlying?.mark;
+  // 2. Merge into unified chain structure
+  const chainData = {
+    callExpDateMap: callData.callExpDateMap || {},
+    putExpDateMap: putData.putExpDateMap || {},
+  };
+
+  // 3. Get spot from underlying quote
+  const spot = callData.underlyingPrice || callData.underlying?.last || callData.underlying?.mark
+            || putData.underlyingPrice || putData.underlying?.last || putData.underlying?.mark;
   if (!spot) throw new Error('No SPX spot price in chain response');
 
-  // 3. Calculate GEX
-  const gexData = calculateGEX(chainData, spot);
+  // 4. Calculate GEX — both all-expiry and 0DTE-only
+  const gexData = calculateGEX(chainData, spot, false);     // all expirations
+  const gex0dte = calculateGEX(chainData, spot, true);      // 0DTE only
   if (!gexData) throw new Error('GEX calculation returned null (no expirations)');
 
-  // 4. Load history from KV for % change tracking
+  // Store 0DTE snapshot separately
+  if (gex0dte) {
+    await env.SIGNAL_KV.put('gex_current_0dte', JSON.stringify(gex0dte));
+  }
+
+  // 5. Load history from KV for % change tracking
   const historyRaw = await env.SIGNAL_KV.get('gex_history');
   let history = historyRaw ? JSON.parse(historyRaw) : [];
 
@@ -2209,11 +2238,21 @@ export default {
 
         if (!data) return jsonResp({ error: 'No GEX data available yet' }, 404, publicCors);
 
+        // Mode switch: ?mode=0dte returns 0DTE-only GEX, default is all-expiry
+        const gexMode = url.searchParams.get('mode');
+        let actualMode = 'all';
+        if (gexMode === '0dte') {
+          const dte0 = await env.SIGNAL_KV.get('gex_current_0dte');
+          if (dte0) { data = dte0; actualMode = '0dte'; }
+          // else: falls back to all-expiry data, actualMode stays 'all'
+        }
+
         // Inject full daily event + commentary logs so all devices see complete history
         try {
           const etNow2 = toET();
           const todayISO2 = `${etNow2.getFullYear()}-${String(etNow2.getMonth()+1).padStart(2,'0')}-${String(etNow2.getDate()).padStart(2,'0')}`;
           const parsed = JSON.parse(data);
+          parsed.gexMode = actualMode; // tells frontend which mode is actually served
           const logRaw = await env.SIGNAL_KV.get(`gex_events_${todayISO2}`);
           if (logRaw) parsed.eventLog = JSON.parse(logRaw);
           const cLogRaw = await env.SIGNAL_KV.get(`gex_commentary_${todayISO2}`);
