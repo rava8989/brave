@@ -335,7 +335,7 @@ function isMarketOpen() {
   const day = et.getDay();
   if (day === 0 || day === 6) return false;
   const mins = et.getHours() * 60 + et.getMinutes();
-  return mins >= 570 && mins <= 960;
+  return mins >= 570 && mins < 960;
 }
 
 // ── Render functions ──
@@ -792,6 +792,18 @@ async function fetchAndRender() {
     }
     const data = await resp.json();
 
+    // Warn if 0DTE was requested but server fell back to all-expiry
+    const modeWarn = document.getElementById('gexModeFallback');
+    if (gexMode === '0dte' && data.gexMode === 'all') {
+      if (!modeWarn) {
+        const w = document.createElement('span');
+        w.id = 'gexModeFallback';
+        w.style.cssText = 'font-size:10px;color:var(--yellow);font-weight:600;';
+        w.textContent = '(showing all exp — 0DTE not yet available)';
+        document.getElementById('gexModeToggle').after(w);
+      }
+    } else if (modeWarn) { modeWarn.remove(); }
+
     renderTopBar(data);
     renderCards(data);
     renderChart(data);
@@ -812,6 +824,11 @@ async function fetchAndRender() {
 // ── Polling (only during market hours) ──
 let currentPollMs = 0;
 let fetchInFlight = false; // prevent concurrent fetch stacking
+async function guardedFetch() {
+  if (fetchInFlight) return;
+  fetchInFlight = true;
+  try { await fetchAndRender(); } finally { fetchInFlight = false; }
+}
 function startPolling() {
   const ms = getPollMs();
   // Restart interval if speed changed (morning window transition)
@@ -820,9 +837,7 @@ function startPolling() {
   currentPollMs = ms;
   pollTimer = setInterval(async () => {
     if (isMarketOpen()) {
-      if (fetchInFlight) return; // skip if previous fetch still running
-      fetchInFlight = true;
-      try { await fetchAndRender(); } finally { fetchInFlight = false; }
+      await guardedFetch();
       // Switch speed if morning window started/ended
       const newMs = getPollMs();
       if (newMs !== currentPollMs) startPolling();
@@ -842,7 +857,7 @@ function startPolling() {
 (async function init() {
   if (isMarketOpen()) {
     // Market open — fetch live data and poll
-    await fetchAndRender();
+    await guardedFetch();
     startPolling();
   } else {
     // Market closed — try showing cached data, otherwise show closed message
@@ -863,13 +878,13 @@ document.getElementById('gexModeToggle').addEventListener('click', async (e) => 
   gexMode = btn.dataset.mode;
   // Force chart rebuild for clean axis transition
   if (gexChart) { gexChart.destroy(); gexChart = null; }
-  await fetchAndRender();
+  await guardedFetch();
 });
 
 // Restart polling when tab becomes visible again during market hours
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && isMarketOpen() && !pollTimer) {
-    fetchAndRender();
+    guardedFetch();
     startPolling();
   }
 });
@@ -877,7 +892,7 @@ document.addEventListener('visibilitychange', () => {
 // Check every 60s if market opened and we need to start polling
 setInterval(() => {
   if (isMarketOpen() && !pollTimer) {
-    fetchAndRender();
+    guardedFetch();
     startPolling();
   }
 }, 60000);
