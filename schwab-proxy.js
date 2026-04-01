@@ -661,7 +661,6 @@ async function pollDiscordSignals(env) {
   // Save latest message ID
   await env.SIGNAL_KV.put('discord_last_msg_id', messages[messages.length - 1].id);
 
-  const seenCenters = new Set(signals.map(s => s.center));
   const seenMsgIds = new Set(signals.map(s => s.msgId).filter(Boolean));
   let newCount = 0;
 
@@ -673,9 +672,8 @@ async function pollDiscordSignals(env) {
     if (msgISO !== todayISO) continue;
 
     const sig = parseDiscordSignal(msg.content || '');
-    if (!sig || seenCenters.has(sig.center)) continue;
+    if (!sig) continue;
 
-    seenCenters.add(sig.center);
     signals.push({
       time: `${String(msgET.getHours()).padStart(2,'0')}:${String(msgET.getMinutes()).padStart(2,'0')}`,
       center: sig.center,
@@ -1949,6 +1947,33 @@ export default {
       }
     }
 
+    // ── GET /rescrape?date=YYYY-MM-DD ── Re-scrape all Discord signals for a date into KV
+    if (url.pathname === '/rescrape' && request.method === 'GET') {
+      const secret = url.searchParams.get('secret');
+      if (!secret || secret !== env.SYNC_SECRET) {
+        return jsonResp({ error: 'Unauthorized' }, 401, { 'Access-Control-Allow-Origin': '*' });
+      }
+      try {
+        const dateISO = url.searchParams.get('date') || (() => { const et = toET(); return `${et.getFullYear()}-${String(et.getMonth()+1).padStart(2,'0')}-${String(et.getDate()).padStart(2,'0')}`; })();
+        const allSigs = await fetchAllDiscordSignalsForDate(env.DISCORD_USER_TOKEN, '1048242197029458040', dateISO);
+        // Build signals array with banned flag
+        const signals = allSigs.map(s => ({
+          time: s.time,
+          center: s.center,
+          lower: s.lower,
+          upper: s.upper,
+          t1: s.t1,
+          premium: s.premium,
+          cp: s.cp ?? 0,
+          banned: isBanned(s.center, s.t1),
+        }));
+        await env.SIGNAL_KV.put('signals_today', JSON.stringify({ date: dateISO, signals }));
+        return jsonResp({ date: dateISO, total: signals.length, banned: signals.filter(s => s.banned).length }, 200, { 'Access-Control-Allow-Origin': '*' });
+      } catch (e) {
+        return jsonResp({ error: e.message }, 500, { 'Access-Control-Allow-Origin': '*' });
+      }
+    }
+
     // ── GET /vix-for-date ── No CORS restriction (script access), secured by secret
     if (url.pathname === '/vix-for-date' && request.method === 'GET') {
       const secret = request.headers.get('X-Sync-Secret');
@@ -2020,6 +2045,21 @@ export default {
         'Access-Control-Max-Age': '86400',
       };
       try {
+        // ── One-shot rescrape trigger (set via KV key 'rescrape_trigger') ──
+        const rescrapeDate = await env.SIGNAL_KV.get('rescrape_trigger');
+        if (rescrapeDate) {
+          try {
+            await env.SIGNAL_KV.delete('rescrape_trigger');
+            const allSigs = await fetchAllDiscordSignalsForDate(env.DISCORD_USER_TOKEN, '1048242197029458040', rescrapeDate);
+            const signals = allSigs.map(s => ({
+              time: s.time, center: s.center, lower: s.lower, upper: s.upper,
+              t1: s.t1, premium: s.premium, cp: s.cp ?? 0, banned: isBanned(s.center, s.t1),
+            }));
+            await env.SIGNAL_KV.put('signals_today', JSON.stringify({ date: rescrapeDate, signals }));
+            console.log(`[gex] Rescrape complete: ${signals.length} signals for ${rescrapeDate}`);
+          } catch (e) { console.warn('[gex] rescrape failed:', e.message); }
+        }
+
         let data = await env.SIGNAL_KV.get('gex_current');
 
         // Auto-refresh: if no data or stale during market hours, trigger inline update
