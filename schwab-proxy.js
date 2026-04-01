@@ -2106,8 +2106,8 @@ export default {
         // 12:00 UTC = ~7-8 AM ET (before open), 22:00 UTC = ~5-6 PM ET (after close)
         const dayStart = Date.UTC(y, m - 1, d, 12, 0, 0);
         const dayEnd   = Date.UTC(y, m - 1, d, 22, 0, 0);
-        const vixUrl = `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24VIX&periodType=day&period=1&frequencyType=minute&frequency=1&startDate=${dayStart}&endDate=${dayEnd}&needExtendedHoursData=false`;
-        const spxUrl = `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24SPX&periodType=day&period=1&frequencyType=minute&frequency=1&startDate=${dayStart}&endDate=${dayEnd}&needExtendedHoursData=false`;
+        const vixUrl = `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24VIX&periodType=day&period=1&frequencyType=minute&frequency=1&startDate=${dayStart}&endDate=${dayEnd}&needExtendedHoursData=true`;
+        const spxUrl = `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24SPX&periodType=day&period=1&frequencyType=minute&frequency=1&startDate=${dayStart}&endDate=${dayEnd}&needExtendedHoursData=true`;
         const [vixData, spxData] = await Promise.all([fetchSchwabJSON(vixUrl, token), fetchSchwabJSON(spxUrl, token)]);
         function extractOHLC(candles) {
           if (!candles || !candles.length) return { open: null, close: null };
@@ -2121,6 +2121,111 @@ export default {
         return jsonResp({ date: dateStr, vixOpen: vixOHLC.open, vixClose: vixOHLC.close, spxOpen: spxOHLC.open, spxClose: spxOHLC.close }, 200, {});
       } catch (e) {
         return jsonResp({ error: e.message }, 500, {});
+      }
+    }
+
+    // ── GET /vix-bulk ── Fetch VIX+SPX open/close for a date range (requires sync secret)
+    // Usage: /vix-bulk?start=2024-08-01&end=2024-09-01&secret=xxx
+    if (url.pathname === '/vix-bulk' && request.method === 'GET') {
+      const secret = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
+      if (!secret || secret !== env.SYNC_SECRET) {
+        return jsonResp({ error: 'Unauthorized' }, 401, { 'Access-Control-Allow-Origin': '*' });
+      }
+      try {
+        const startDate = url.searchParams.get('start');
+        const endDate = url.searchParams.get('end');
+        if (!startDate || !endDate) return jsonResp({ error: 'Need start and end params (YYYY-MM-DD)' }, 400, { 'Access-Control-Allow-Origin': '*' });
+        const token = await getAccessToken(env);
+        const [sy, sm, sd] = startDate.split('-').map(Number);
+        const [ey, em, ed] = endDate.split('-').map(Number);
+        const startMs = Date.UTC(sy, sm - 1, sd, 0, 0, 0);
+        const endMs = Date.UTC(ey, em - 1, ed, 23, 59, 59);
+        const vixUrl = `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24VIX&periodType=day&period=1&frequencyType=minute&frequency=1&startDate=${startMs}&endDate=${endMs}&needExtendedHoursData=true`;
+        const spxUrl = `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24SPX&periodType=day&period=1&frequencyType=minute&frequency=1&startDate=${startMs}&endDate=${endMs}&needExtendedHoursData=true`;
+        const [vixData, spxData] = await Promise.all([fetchSchwabJSON(vixUrl, token), fetchSchwabJSON(spxUrl, token)]);
+
+        // Group candles by date, extract 9:31 open and last candle <= 4:15 close
+        function groupByDate(candles) {
+          if (!candles || !candles.length) return {};
+          const byDate = {};
+          for (const c of candles) {
+            const et = toET(new Date(c.datetime));
+            const key = `${et.getFullYear()}-${String(et.getMonth()+1).padStart(2,'0')}-${String(et.getDate()).padStart(2,'0')}`;
+            if (!byDate[key]) byDate[key] = [];
+            byDate[key].push({ ...c, etMins: et.getHours() * 60 + et.getMinutes() });
+          }
+          const result = {};
+          for (const [date, dayCandles] of Object.entries(byDate)) {
+            dayCandles.sort((a, b) => a.datetime - b.datetime);
+            // Open: first candle at or after 9:30 (570 mins)
+            const openCandle = dayCandles.find(c => c.etMins >= 570);
+            // Close: last candle at or before 4:15 (975 mins)
+            const closeCandle = dayCandles.slice().reverse().find(c => c.etMins <= 975);
+            result[date] = {
+              open: openCandle ? parseFloat(openCandle.open.toFixed(2)) : null,
+              close: closeCandle ? parseFloat(closeCandle.close.toFixed(2)) : null,
+            };
+          }
+          return result;
+        }
+        const vixByDate = groupByDate(vixData.candles);
+        const spxByDate = groupByDate(spxData.candles);
+        const dates = [...new Set([...Object.keys(vixByDate), ...Object.keys(spxByDate)])].sort();
+        const rows = dates.map(d => ({
+          date: d,
+          vixOpen: vixByDate[d]?.open ?? null,
+          vixClose: vixByDate[d]?.close ?? null,
+          spxOpen: spxByDate[d]?.open ?? null,
+          spxClose: spxByDate[d]?.close ?? null,
+        }));
+        return jsonResp({ count: rows.length, rows }, 200, { 'Access-Control-Allow-Origin': '*' });
+      } catch (e) {
+        return jsonResp({ error: e.message }, 500, { 'Access-Control-Allow-Origin': '*' });
+      }
+    }
+
+    // ── GET /vix-bulk-daily ── Fetch VIX+SPX daily open/close for a date range (years of history)
+    // Usage: /vix-bulk-daily?start=2024-08-01&end=2026-04-01&secret=xxx
+    if (url.pathname === '/vix-bulk-daily' && request.method === 'GET') {
+      const secret = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
+      if (!secret || secret !== env.SYNC_SECRET) {
+        return jsonResp({ error: 'Unauthorized' }, 401, { 'Access-Control-Allow-Origin': '*' });
+      }
+      try {
+        const startDate = url.searchParams.get('start');
+        const endDate = url.searchParams.get('end');
+        if (!startDate || !endDate) return jsonResp({ error: 'Need start and end params (YYYY-MM-DD)' }, 400, { 'Access-Control-Allow-Origin': '*' });
+        const token = await getAccessToken(env);
+        const [sy, sm, sd] = startDate.split('-').map(Number);
+        const [ey, em, ed] = endDate.split('-').map(Number);
+        const startMs = Date.UTC(sy, sm - 1, sd, 0, 0, 0);
+        const endMs = Date.UTC(ey, em - 1, ed, 23, 59, 59);
+        const vixUrl = `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24VIX&periodType=year&period=2&frequencyType=daily&frequency=1&startDate=${startMs}&endDate=${endMs}`;
+        const spxUrl = `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24SPX&periodType=year&period=2&frequencyType=daily&frequency=1&startDate=${startMs}&endDate=${endMs}`;
+        const [vixData, spxData] = await Promise.all([fetchSchwabJSON(vixUrl, token), fetchSchwabJSON(spxUrl, token)]);
+        function toDateMap(candles) {
+          if (!candles || !candles.length) return {};
+          const m = {};
+          for (const c of candles) {
+            const et = toET(new Date(c.datetime));
+            const key = `${et.getFullYear()}-${String(et.getMonth()+1).padStart(2,'0')}-${String(et.getDate()).padStart(2,'0')}`;
+            m[key] = { open: parseFloat(c.open.toFixed(2)), close: parseFloat(c.close.toFixed(2)) };
+          }
+          return m;
+        }
+        const vixByDate = toDateMap(vixData.candles);
+        const spxByDate = toDateMap(spxData.candles);
+        const dates = [...new Set([...Object.keys(vixByDate), ...Object.keys(spxByDate)])].sort();
+        const rows = dates.map(d => ({
+          date: d,
+          vixOpen: vixByDate[d]?.open ?? null,
+          vixClose: vixByDate[d]?.close ?? null,
+          spxOpen: spxByDate[d]?.open ?? null,
+          spxClose: spxByDate[d]?.close ?? null,
+        }));
+        return jsonResp({ count: rows.length, rows }, 200, { 'Access-Control-Allow-Origin': '*' });
+      } catch (e) {
+        return jsonResp({ error: e.message }, 500, { 'Access-Control-Allow-Origin': '*' });
       }
     }
 
