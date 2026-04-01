@@ -424,7 +424,7 @@ function calculateSignal({vixToday,vixYOpen,vixYClose,spxGapPct,etDate}){
   if(cpiDay){
     if(oNight>0){rec="Long ATM Call @ 9:32 AM (CPI) — Max $13";theme="strad";entryT="9:32 AM";badge="CPI CALL";}
     else{rec="No Trade (CPI, VIX up)";theme="block";crossed=true;blockT="hard";blockD="CPI day, VIX up";badge="BLOCKED";}
-  } else if(spxGapForcesM8BF && !eomDay){
+  } else if(spxGapForcesM8BF && !eomDay && !eom1){
     const dir=spxGapPct>0?'▲':'▼';
     rec=m8Msg(etDate);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";
     blockD=`SPX gap ${dir}${Math.abs(spxGapPct).toFixed(2)}% ≥ ${T.SPX_GAP_THRESHOLD}% → M8BF forced`;
@@ -462,8 +462,8 @@ function calculateSignal({vixToday,vixYOpen,vixYClose,spxGapPct,etDate}){
 
   if(pmNote)rec+=" (afternoon times preferred)";
 
-  // o2o override: if o2o > 1.4 and signal is Straddle (not EOM), force M8BF
-  if (o2o > T.O2O_M8BF && !eomDay && (rec === "Straddle @ 9:32 AM" || rec.startsWith("NM Straddle"))) {
+  // o2o override: if o2o > 1.4 and signal is Straddle (not EOM/EOM-1), force M8BF
+  if (o2o > T.O2O_M8BF && !eomDay && !eom1 && (rec === "Straddle @ 9:32 AM" || rec.startsWith("NM Straddle"))) {
     rec = m8Msg(etDate); theme = "m8bf"; badge = "M8BF";
     const sc = m8Sched(etDate.getDay());
     strikeInfo = sc; entryT = sc?.window || ""; blockT = "o2o>" + T.O2O_M8BF;
@@ -839,7 +839,7 @@ async function init() {
         if (prevWR === 0 && signal.rec.startsWith("M8BF")) {
           signal.rec = "Straddle @ 9:32 AM"; signal.theme = "strad"; signal.crossed = false;
           signal.blockT = "0%rule"; signal.entryT = "9:32 AM"; signal.badge = "STRADDLE"; signal.strikeInfo = null;
-        } else if (prevWR >= 90 && (signal.rec === "Straddle @ 9:32 AM" || signal.rec === "Straddle @ 9:32 AM (EOM)" || signal.rec === "NM Straddle @ 9:32 AM")) {
+        } else if (prevWR >= 90 && (signal.rec === "Straddle @ 9:32 AM" || signal.rec === "Straddle @ 9:32 AM (EOM)" || signal.rec === "NM Straddle @ 9:32 AM" || signal.rec === "No M8BF (EOM-1)")) {
           const sc = m8Sched(dow);
           signal.rec = m8Msg(etDate); signal.theme = "m8bf"; signal.badge = "M8BF";
           signal.strikeInfo = sc; signal.entryT = sc?.window || ""; signal.blockT = "90%rule";
