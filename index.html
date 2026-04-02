@@ -594,6 +594,8 @@
       <li><strong>NM Straddle</strong> — first trading day of month, except Mondays. Max risk: <strong>$3,200</strong>.</li>
       <li><strong>EOM Straddle</strong> — last trading day of month. Max risk: <strong>$3,500</strong>.</li>
       <li>Both use standard 9:32 AM Straddle entry.</li>
+      <li>Both <strong>override GXBF</strong> — if NM or EOM falls on a GXBF day, Straddle takes priority.</li>
+      <li>NM Monday follows the regular VIX calculator (no NM Straddle override).</li>
     </ul>
 
     <hr class="divider">
@@ -606,10 +608,10 @@
     </ul>
 
     <hr class="divider">
-    <h3>Post-VIX Expiration Rule</h3>
+    <h3>VIX Expiration Rule</h3>
     <ul>
-      <li>If VIX expiration falls <strong>before OPEX</strong> in the same month → M8BF blocked on the first trading day after VIX expiration.</li>
-      <li>If VIX expiration falls on or after OPEX → this rule does not apply.</li>
+      <li>If VIX expiration falls <strong>after OPEX</strong> in the same month → M8BF blocked on <strong>VIX expiration day itself</strong>.</li>
+      <li>If VIX expiration falls on or before OPEX → this rule does not apply.</li>
     </ul>
 
     <hr class="divider">
@@ -665,7 +667,7 @@
   const T = {
     DROP_GXBF: 0.65, DROP_STRAD_MIN: 0,
     O2O_M8BF: 1.4, VIX_MAX_GXBF: 25, VIX_MAX_BOBF: 23,
-    SPX_GAP_THRESHOLD: 0.9,  // abs SPX gap % that forces M8BF
+    SPX_GAP_THRESHOLD: 0.9,  // abs SPX gap % that cancels Straddle
   };
 
 
