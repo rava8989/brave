@@ -22,6 +22,7 @@ function calcSignal({
   fedDay = false,
   opexDay = false,
   opex1 = false,
+  vixExpAfterOpex = false,
   postOpDay = false,
   spxGapPct = null,
   wr0 = false, wr90 = false,
@@ -48,14 +49,16 @@ function calcSignal({
       rec = m8Msg(); theme = "m8bf";
     }
 
-    // EOM-1 / EOM block on M8BF
+    // EOM / EOM-1 / OPEX-1 / VIX exp block on M8BF
     if (rec.startsWith("M8BF")) {
       if (eomDay) { rec = "No M8BF (EOM)"; theme = "block"; }
       else if (eom1) { rec = "No M8BF (EOM-1)"; theme = "block"; }
+      else if (opex1) { rec = "No M8BF (day before OPEX)"; theme = "block"; }
+      else if (vixExpAfterOpex) { rec = "No M8BF (VIX exp day)"; theme = "block"; }
     }
 
-    // NM Straddle (first trading day of month, non-Monday)
-    if (nmDay && !isMon && (rec.startsWith("M8BF") || rec.startsWith("No M8BF") || rec.startsWith("Straddle"))) {
+    // NM Straddle (first trading day of month, non-Monday) — overrides M8BF, Straddle, and GXBF
+    if (nmDay && !isMon && (rec.startsWith("M8BF") || rec.startsWith("No M8BF") || rec.startsWith("Straddle") || rec.startsWith("GXBF") || rec.startsWith("No GXBF"))) {
       rec = "NM Straddle @ 9:32 AM"; theme = "strad";
     }
 
@@ -63,7 +66,7 @@ function calcSignal({
     if (eomDay) { rec = "Straddle @ 9:32 AM (EOM)"; theme = "strad"; }
 
     // Wednesday (non-Fed, non-blocked, non-NM): Straddle → M8BF
-    const m8bfBanned = eomDay || eom1 || opex1;
+    const m8bfBanned = eomDay || eom1 || opex1 || vixExpAfterOpex;
     if (isWed && !fedDay && !m8bfBanned && !nmDay && rec.startsWith("Straddle")) {
       rec = m8Msg(); theme = "m8bf";
     }
@@ -90,8 +93,8 @@ function calcSignal({
       if (!cpiDay && theme !== 'm8bf') { rec = m8Msg(); theme = "m8bf"; blockT = "90%rule"; }
     }
 
-    // OPEX+1: override to GXBF (or block)
-    if (postOpDay) {
+    // OPEX+1: override to GXBF (or block) — but NOT when WR 0% or 90% forced the signal
+    if (postOpDay && blockT !== '0%rule' && blockT !== '90%rule') {
       const isM8  = rec.startsWith("M8BF");
       const isStr = rec.startsWith("Straddle") || rec.startsWith("NM Straddle");
       if (isM8 || isStr) {
