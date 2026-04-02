@@ -125,11 +125,11 @@ function schedInMonth(list, ref) {
   return null;
 }
 
-function isPostVixBeforeOpex(ref) {
+function isVixAfterOpexDay(ref) {
+  if (!vixSch.includes(todayLong(ref))) return false;
   const vx = schedInMonth(vixSch, ref), op = schedInMonth(opexSch, ref);
-  if (!vx || !op || vx >= op) return false;
-  const pv = nextTrade(vx);
-  return pv.getFullYear() === ref.getFullYear() && pv.getMonth() === ref.getMonth() && pv.getDate() === ref.getDate();
+  if (!vx || !op) return false;
+  return vx > op;
 }
 
 const isPostOpexMon = (etDate) => opexSch.some(ds => isTodayAfter(ds, etDate)) && etDate.getDay() === 1;
@@ -192,7 +192,7 @@ function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate, pre
   const oNight = vixYClose - vixToday;
 
   const spxGapCancelsStrad = (spxGapPct !== null && spxGapPct !== undefined && Math.abs(spxGapPct) >= T.SPX_GAP_THRESHOLD);
-  const vixExpAfterOpex = isPostVixBeforeOpex(etDate);
+  const vixExpAfterOpex = isVixAfterOpexDay(etDate);
   const m8bfBanned = eomDay || eom1 || opex1 || vixExpAfterOpex;
 
   let rec = "", theme = "neutral", crossed = false, pmNote = false;
@@ -219,7 +219,7 @@ function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate, pre
       else if (vixExpAfterOpex) { rec = "No M8BF (VIX exp day)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "VIX exp day when VIX exp falls after OPEX"; badge = "BLOCKED"; strikeInfo = null; }
     }
 
-    if (nmDay && !isMon && (rec.startsWith("M8BF") || rec.startsWith("No M8BF") || rec.startsWith("Straddle"))) { rec = "NM Straddle @ 9:32 AM"; theme = "strad"; crossed = false; blockT = ""; entryT = "9:32 AM"; badge = "NM STRADDLE"; strikeInfo = null; }
+    if (nmDay && !isMon && (rec.startsWith("M8BF") || rec.startsWith("No M8BF") || rec.startsWith("Straddle") || rec.startsWith("GXBF") || rec.startsWith("No GXBF"))) { rec = "NM Straddle @ 9:32 AM"; theme = "strad"; crossed = false; blockT = ""; entryT = "9:32 AM"; badge = "NM STRADDLE"; strikeInfo = null; }
     if (eomDay) { rec = "Straddle @ 9:32 AM (EOM)"; theme = "strad"; crossed = false; blockT = ""; entryT = "9:32 AM"; badge = "EOM STRADDLE"; strikeInfo = null; }
     if (isWed && !fedDay && !m8bfBanned && !nmDay && rec.startsWith("Straddle")) { rec = m8Msg(etDate); theme = "m8bf"; badge = "M8BF"; strikeInfo = m8Sched(dow); entryT = strikeInfo?.window || ""; }
     if (opexDay && rec.startsWith("Straddle")) { rec = "No Straddle (OPEX day)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "Straddle not on OPEX"; badge = "BLOCKED"; }
@@ -228,7 +228,9 @@ function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate, pre
     if (postOpDay) {
       const isM8 = rec.startsWith("M8BF"), isStr = rec.startsWith("Straddle") || rec.startsWith("NM Straddle");
       if (isM8 || isStr) {
+        const vixOvernightPct = (vixToday - vixYClose) / vixYClose * 100;
         if (vixToday >= T.VIX_MAX_GXBF) { rec = `No GXBF (VIX ${vixToday} ≥ ${T.VIX_MAX_GXBF})`; theme = "block"; crossed = true; pmNote = false; blockT = "vix"; blockD = `OPEX+1 GXBF blocked, VIX ${vixToday}`; badge = "BLOCKED"; strikeInfo = null; }
+        else if (vixOvernightPct >= 2) { rec = `No GXBF (VIX gapped up ${vixOvernightPct.toFixed(1)}% overnight)`; theme = "block"; crossed = true; pmNote = false; blockT = "vix"; blockD = `OPEX+1 GXBF blocked — VIX gap up ${vixOvernightPct.toFixed(1)}%`; badge = "BLOCKED"; strikeInfo = null; }
         else { rec = "GXBF @ 9:36 AM (OPEX+1)"; theme = "gxbf"; crossed = false; pmNote = false; blockT = ""; entryT = "9:36 AM"; badge = "GXBF"; strikeInfo = null; }
       }
     }
@@ -357,9 +359,8 @@ function buildDiscordMessage(signal, vixValues) {
   // SPX gap
   if (signal.spxGapPct !== null && signal.spxGapPct !== undefined) {
     const dir = signal.spxGapPct > 0 ? '▲' : '▼';
-    const forced = signal.spxGapForcesM8BF;
     inner += `${DIM}${'─'.repeat(34)}${RST}\n`;
-    inner += `${forced ? RED : DIM}SPX Gap         │ ${dir}${Math.abs(signal.spxGapPct).toFixed(2)}%${forced ? ' ⚠️ M8BF forced' : ''}${RST}\n`;
+    inner += `${DIM}SPX Gap         │ ${dir}${Math.abs(signal.spxGapPct).toFixed(2)}%${RST}\n`;
   }
 
   return `\`\`\`ansi\n${inner}\`\`\`\n*Not financial advice. For informational purposes only.*`;

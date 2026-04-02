@@ -443,7 +443,7 @@ function calculateSignal({vixToday,vixYOpen,vixYClose,spxGapPct,etDate}){
       else if(isVixAfterOpexDay(etDate)){rec="No M8BF (VIX exp day)";theme="block";crossed=true;blockT="hard";blockD="VIX exp day when VIX exp falls after OPEX";badge="BLOCKED";strikeInfo=null;}
     }
 
-    if(nmDay&&!isMon&&(rec.startsWith("M8BF")||rec.startsWith("No M8BF")||rec.startsWith("Straddle"))){rec="NM Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="NM STRADDLE";strikeInfo=null;}
+    if(nmDay&&!isMon&&(rec.startsWith("M8BF")||rec.startsWith("No M8BF")||rec.startsWith("Straddle")||rec.startsWith("GXBF")||rec.startsWith("No GXBF"))){rec="NM Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="NM STRADDLE";strikeInfo=null;}
     if(eomDay){rec="Straddle @ 9:32 AM (EOM)";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="EOM STRADDLE";strikeInfo=null;}
     if(isWed&&!fedDay&&!m8bfBanned&&!nmDay&&rec.startsWith("Straddle")){rec=m8Msg(etDate);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";}
     if(opexDay&&rec.startsWith("Straddle")){rec="No Straddle (OPEX day)";theme="block";crossed=true;blockT="hard";blockD="Straddle not on OPEX";badge="BLOCKED";}
@@ -492,7 +492,7 @@ function calculateSignal({vixToday,vixYOpen,vixYClose,spxGapPct,etDate}){
   else if(theme==='gxbf'){m8bfText="No M8BF (overnight VIX up)";stradText=`No Straddle (overnight VIX drop > ${T.DROP_GXBF})`;}
   else if(theme==='block'){if(rec.includes('M8BF')){stradText=`No Straddle (${_oNUp?'overnight VIX up':'overnight VIX drop > '+T.DROP_GXBF})`;gxbfText=`No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;}else if(rec.includes('Straddle')||rec.includes('CPI')||rec.includes('Trade')){m8bfText="No M8BF";gxbfText="No GXBF";}else if(rec.includes('GXBF')){m8bfText="No M8BF";stradText="No Straddle";}}
 
-  return {rec,theme,crossed,badge,entryT,blockT,blockD,pmNote,strikeInfo,m8bfText,stradText,gxbfText,bobfRec,bobfBadge,bobfBlocks,oNight,o2o,spxGapPct,spxGapCancelsStrad,dayLabel:tradeWdLabel(etDate),dateStr:todayLong(etDate),eomDay,eom1,m8bfBanned};
+  return {rec,theme,crossed,badge,entryT,blockT,blockD,pmNote,strikeInfo,m8bfText,stradText,gxbfText,bobfRec,bobfBadge,bobfBlocks,oNight,o2o,spxGapPct,spxGapCancelsStrad,dayLabel:tradeWdLabel(etDate),dateStr:todayLong(etDate),eomDay,eom1,m8bfBanned,cpiDay,fedDay};
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -834,7 +834,7 @@ async function init() {
         etDate,
       });
 
-      const prevWREntry = raw.slice(0, i).reverse().find(r => r.m8bfWR != null);
+      const prevWREntry = filtered.slice(0, i).reverse().find(r => r.m8bfWR != null);
       const prevWR = prevWREntry ? prevWREntry.m8bfWR : null;
       if (prevWR != null) {
         const dow = etDate.getDay();
