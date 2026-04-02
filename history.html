@@ -821,6 +821,8 @@ async function init() {
     const raw = await resp.json();
 
     // Remove weekends and holidays (keep future trading-day placeholders)
+    // IMPORTANT: history_data.json must always have ~10 empty future date placeholders beyond today.
+    // These are used by the history page to show upcoming trading days. Do NOT remove them.
     const filtered = raw.filter(r => {
       const p = r.date.split('-');
       return isTrade(new Date(+p[0], +p[1] - 1, +p[2], 12));
