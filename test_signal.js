@@ -23,6 +23,8 @@ function calcSignal({
   opexDay = false,
   opex1 = false,
   vixExpAfterOpex = false,
+  earningsBlock = false,
+  dayAfterEarnings = false,
   postOpDay = false,
   spxGapPct = null,
   wr0 = false, wr90 = false,
@@ -54,6 +56,8 @@ function calcSignal({
       if (eomDay) { rec = "No M8BF (EOM)"; theme = "block"; }
       else if (eom1) { rec = "No M8BF (EOM-1)"; theme = "block"; }
       else if (opex1) { rec = "No M8BF (day before OPEX)"; theme = "block"; }
+      else if (earningsBlock) { rec = "No M8BF (earnings)"; theme = "block"; }
+      else if (dayAfterEarnings) { rec = "No M8BF (day after earnings)"; theme = "block"; }
       else if (vixExpAfterOpex) { rec = "No M8BF (VIX exp day)"; theme = "block"; }
     }
 
@@ -66,7 +70,7 @@ function calcSignal({
     if (eomDay) { rec = "Straddle @ 9:32 AM (EOM)"; theme = "strad"; }
 
     // Wednesday (non-Fed, non-blocked, non-NM): Straddle → M8BF
-    const m8bfBanned = eomDay || eom1 || opex1 || vixExpAfterOpex;
+    const m8bfBanned = eomDay || eom1 || opex1 || vixExpAfterOpex || earningsBlock || dayAfterEarnings;
     if (isWed && !fedDay && !m8bfBanned && !nmDay && rec.startsWith("Straddle")) {
       rec = m8Msg(); theme = "m8bf";
     }
@@ -182,6 +186,23 @@ test("EOM-1 + M8BF → blocked",
 
 test("EOM-1 + Straddle day → Straddle still fires (EOM-1 only blocks M8BF)",
   { ...BASE, vYClose: 20.3, vToday: 20, eom1: true },
+  "Straddle @ 9:32 AM", "strad");
+
+console.log("\n── Earnings ──");
+test("Earnings (non-AMZN/TSLA) + M8BF → blocked",
+  { ...BASE, vYClose: 19, vToday: 20, earningsBlock: true },
+  "No M8BF (earnings)", "block");
+
+test("Day after earnings + M8BF → blocked",
+  { ...BASE, vYClose: 19, vToday: 20, dayAfterEarnings: true },
+  "No M8BF (day after earnings)", "block");
+
+test("Earnings + Straddle day → Straddle still fires (earnings only blocks M8BF)",
+  { ...BASE, vYClose: 20.3, vToday: 20, earningsBlock: true },
+  "Straddle @ 9:32 AM", "strad");
+
+test("Wed + earnings → Straddle (not converted to M8BF because m8bfBanned)",
+  { ...BASE, vYClose: 20.3, vToday: 20, isWed: true, earningsBlock: true },
   "Straddle @ 9:32 AM", "strad");
 
 console.log("\n── NM day ──");

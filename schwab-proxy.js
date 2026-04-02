@@ -145,11 +145,11 @@ function isFirstTradeMon(d) {
 
 function m8Sched(dow) {
   switch (dow) {
-    case 1: return { t: "10:00", window: "10:00–10:29", s: ["05", "45", "70", "95"], everyWeek: false };
-    case 2: return { t: "12:00", window: "12:00–12:29", s: ["00", "05", "35", "45", "70", "75", "85", "90"], everyWeek: false };
-    case 3: return { t: "11:30", window: "11:30–11:59", s: ["30", "45", "50", "70", "80", "95"], everyWeek: false };
-    case 4: return { t: "11:30", window: "11:30–11:59", s: ["05", "15", "55", "75", "85"], everyWeek: true };
-    case 5: return { t: "13:00", window: "13:00–13:29", s: ["45", "55", "65", "70", "75", "85", "95"], everyWeek: true };
+    case 1: return { t: "11:00", window: "11:00–11:30", s: ["05", "45", "70", "95"], everyWeek: false };
+    case 2: return { t: "13:30", window: "13:30–14:00", s: ["00", "05", "35", "45", "70", "75", "85", "90"], everyWeek: false };
+    case 3: return { t: "12:00", window: "12:00–12:30", s: ["30", "45", "50", "70", "80", "95"], everyWeek: false };
+    case 4: return { t: "11:00", window: "11:00–11:30", s: ["05", "15", "55", "75", "85"], everyWeek: true };
+    case 5: return { t: "13:00", window: "13:00–13:30", s: ["45", "55", "65", "70", "75", "85", "95"], everyWeek: true };
     default: return null;
   }
 }
@@ -167,6 +167,8 @@ function tradeWdLabel(d) {
 }
 
 function isEarningsDay(etDate) { return earningsSchedule.some(e => e.date === todayLong(etDate)); }
+function isNonAmznTslaEarningsDay(etDate) { return earningsSchedule.some(e => e.date === todayLong(etDate) && e.ticker !== 'AMZN' && e.ticker !== 'TSLA'); }
+function isDayAfterAnyEarnings(etDate) { return earningsSchedule.some(e => isTodayAfter(e.date, etDate)); }
 
 // ════════════════════════════════════════════════════════════════════
 // SIGNAL CALCULATION (ported from index.html calculateStrategy)
@@ -193,7 +195,9 @@ function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate, pre
 
   const spxGapCancelsStrad = (spxGapPct !== null && spxGapPct !== undefined && Math.abs(spxGapPct) >= T.SPX_GAP_THRESHOLD);
   const vixExpAfterOpex = isVixAfterOpexDay(etDate);
-  const m8bfBanned = eomDay || eom1 || opex1 || vixExpAfterOpex;
+  const nonAmznTslaEarn = isNonAmznTslaEarningsDay(etDate);
+  const dayAfterEarn = isDayAfterAnyEarnings(etDate);
+  const m8bfBanned = eomDay || eom1 || opex1 || vixExpAfterOpex || nonAmznTslaEarn || dayAfterEarn;
 
   let rec = "", theme = "neutral", crossed = false, pmNote = false;
   let blockT = "", blockD = "", entryT = "", badge = "";
@@ -216,6 +220,8 @@ function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate, pre
       if (eomDay) { rec = "No M8BF (EOM)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "M8BF not traded on EOM"; badge = "BLOCKED"; strikeInfo = null; }
       else if (eom1) { rec = "No M8BF (EOM-1)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "M8BF not traded on EOM-1"; badge = "BLOCKED"; strikeInfo = null; }
       else if (opex1) { rec = "No M8BF (day before OPEX)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "Skipped day before OPEX"; badge = "BLOCKED"; strikeInfo = null; }
+      else if (nonAmznTslaEarn) { rec = "No M8BF (earnings)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "Not traded on earnings days (except AMZN/TSLA)"; badge = "BLOCKED"; strikeInfo = null; }
+      else if (dayAfterEarn) { rec = "No M8BF (day after earnings)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "Not traded day after any earnings"; badge = "BLOCKED"; strikeInfo = null; }
       else if (vixExpAfterOpex) { rec = "No M8BF (VIX exp day)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "VIX exp day when VIX exp falls after OPEX"; badge = "BLOCKED"; strikeInfo = null; }
     }
 
@@ -225,15 +231,6 @@ function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate, pre
     if (opexDay && rec.startsWith("Straddle")) { rec = "No Straddle (OPEX day)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "Straddle not on OPEX"; badge = "BLOCKED"; }
     if (postOpMon && rec.startsWith("M8BF")) pmNote = true;
 
-    if (postOpDay) {
-      const isM8 = rec.startsWith("M8BF"), isStr = rec.startsWith("Straddle") || rec.startsWith("NM Straddle");
-      if (isM8 || isStr) {
-        const vixOvernightPct = (vixToday - vixYClose) / vixYClose * 100;
-        if (vixToday >= T.VIX_MAX_GXBF) { rec = `No GXBF (VIX ${vixToday} ≥ ${T.VIX_MAX_GXBF})`; theme = "block"; crossed = true; pmNote = false; blockT = "vix"; blockD = `OPEX+1 GXBF blocked, VIX ${vixToday}`; badge = "BLOCKED"; strikeInfo = null; }
-        else if (vixOvernightPct >= 2) { rec = `No GXBF (VIX gapped up ${vixOvernightPct.toFixed(1)}% overnight)`; theme = "block"; crossed = true; pmNote = false; blockT = "vix"; blockD = `OPEX+1 GXBF blocked — VIX gap up ${vixOvernightPct.toFixed(1)}%`; badge = "BLOCKED"; strikeInfo = null; }
-        else { rec = "GXBF @ 9:36 AM (OPEX+1)"; theme = "gxbf"; crossed = false; pmNote = false; blockT = ""; entryT = "9:36 AM"; badge = "GXBF"; strikeInfo = null; }
-      }
-    }
   }
 
   if (pmNote) rec += " (afternoon times preferred)";
@@ -252,14 +249,23 @@ function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate, pre
   // WR=0% and WR>=90% are the STRONGEST overrides — trump gap, o2o, everything (except CPI/Fed)
   if (prevWR != null) {
     if (prevWR === 0 && !cpiDay && !fedDay && theme !== 'strad') {
-      // 0% rule forces Straddle — trumps M8BF, GXBF, gap-blocked, o2o-blocked, everything
       rec = "Straddle @ 9:32 AM"; theme = "strad"; crossed = false;
       blockT = "0%rule"; entryT = "9:32 AM"; badge = "STRADDLE"; strikeInfo = null;
     } else if (prevWR >= 90 && !cpiDay && theme !== 'm8bf') {
-      // 90% rule forces M8BF — trumps Straddle, gap-blocked, o2o-blocked, everything (except CPI)
       const sc = m8Sched(dow);
       rec = m8Msg(etDate); theme = "m8bf"; badge = "M8BF";
       strikeInfo = sc; entryT = sc?.window || ""; blockT = "90%rule";
+    }
+  }
+
+  // OPEX+1 GXBF override — but NOT when WR 0% or 90% forced the signal
+  if (postOpDay && blockT !== '0%rule' && blockT !== '90%rule') {
+    const isM8 = rec.startsWith("M8BF"), isStr = rec.startsWith("Straddle") || rec.startsWith("NM Straddle");
+    if (isM8 || isStr) {
+      const vixOvernightPct = (vixToday - vixYClose) / vixYClose * 100;
+      if (vixToday >= T.VIX_MAX_GXBF) { rec = `No GXBF (VIX ${vixToday} ≥ ${T.VIX_MAX_GXBF})`; theme = "block"; crossed = true; pmNote = false; blockT = "vix"; blockD = `OPEX+1 GXBF blocked, VIX ${vixToday}`; badge = "BLOCKED"; strikeInfo = null; }
+      else if (vixOvernightPct >= 2) { rec = `No GXBF (VIX gapped up ${vixOvernightPct.toFixed(1)}% overnight)`; theme = "block"; crossed = true; pmNote = false; blockT = "vix"; blockD = `OPEX+1 GXBF blocked — VIX gap up ${vixOvernightPct.toFixed(1)}%`; badge = "BLOCKED"; strikeInfo = null; }
+      else { rec = "GXBF @ 9:36 AM (OPEX+1)"; theme = "gxbf"; crossed = false; pmNote = false; blockT = ""; entryT = "9:36 AM"; badge = "GXBF"; strikeInfo = null; }
     }
   }
 
