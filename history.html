@@ -838,10 +838,14 @@ async function init() {
       const prevWR = prevWREntry ? prevWREntry.m8bfWR : null;
       if (prevWR != null) {
         const dow = etDate.getDay();
-        if (prevWR === 0 && signal.rec.startsWith("M8BF")) {
+        const isCPI = signal.cpiDay;
+        const isFed = signal.fedDay;
+        if (prevWR === 0 && !isCPI && !isFed && signal.theme !== 'strad') {
+          // 0% rule is strongest — forces Straddle, trumps gap/o2o/m8bf/gxbf/blocks (except Fed & CPI)
           signal.rec = "Straddle @ 9:32 AM"; signal.theme = "strad"; signal.crossed = false;
           signal.blockT = "0%rule"; signal.entryT = "9:32 AM"; signal.badge = "STRADDLE"; signal.strikeInfo = null;
-        } else if (prevWR >= 90 && (signal.rec === "Straddle @ 9:32 AM" || signal.rec === "Straddle @ 9:32 AM (EOM)" || signal.rec === "NM Straddle @ 9:32 AM" || signal.rec.startsWith("No M8BF"))) {
+        } else if (prevWR >= 90 && !isCPI && signal.theme !== 'm8bf') {
+          // 90% rule is strongest — forces M8BF, trumps gap/o2o/straddle/gxbf/blocks (except CPI)
           const sc = m8Sched(dow);
           signal.rec = m8Msg(etDate); signal.theme = "m8bf"; signal.badge = "M8BF";
           signal.strikeInfo = sc; signal.entryT = sc?.window || ""; signal.blockT = "90%rule";

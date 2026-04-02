@@ -73,15 +73,6 @@ function calcSignal({
       rec = "No Straddle (OPEX day)"; theme = "block";
     }
 
-    // WR overrides
-    if (wr0) {
-      if (rec.startsWith("M8BF") && !fedDay) { rec = "Straddle @ 9:32 AM"; theme = "strad"; blockT = "0%rule"; }
-    } else if (wr90) {
-      if (rec === "Straddle @ 9:32 AM" || rec === "Straddle @ 9:32 AM (EOM)") {
-        rec = m8Msg(); theme = "m8bf"; blockT = "90%rule";
-      }
-    }
-
     // SPX gap cancels straddle only — no effect on butterfly
     if (spxGapCancelsStrad && (rec === "Straddle @ 9:32 AM" || rec === "Straddle @ 9:32 AM (EOM)" || rec.startsWith("NM Straddle"))) {
       rec = "No Straddle (SPX gap)"; theme = "block"; blockT = "gap";
@@ -90,6 +81,13 @@ function calcSignal({
     // o2o cancels straddle only — no effect on butterfly
     if (o2o > T.O2O_M8BF && (rec === "Straddle @ 9:32 AM" || rec.startsWith("NM Straddle"))) {
       rec = "No Straddle (o2o)"; theme = "block"; blockT = "o2o";
+    }
+
+    // WR=0% and WR>=90% are the STRONGEST overrides — trump gap, o2o, everything (except CPI/Fed)
+    if (wr0) {
+      if (!cpiDay && !fedDay && theme !== 'strad') { rec = "Straddle @ 9:32 AM"; theme = "strad"; blockT = "0%rule"; }
+    } else if (wr90) {
+      if (!cpiDay && theme !== 'm8bf') { rec = m8Msg(); theme = "m8bf"; blockT = "90%rule"; }
     }
 
     // OPEX+1: override to GXBF (or block)
@@ -289,6 +287,35 @@ test("SPX gap ≥ 0.9% + EOM → cancels EOM Straddle",
 test("SPX gap < 0.9% → no override",
   { ...BASE, vYClose: 20.3, vToday: 20, spxGapPct: 0.5 },
   "Straddle @ 9:32 AM", "strad");
+
+console.log("\n── WR trumps gap/o2o ──");
+test("WR=0 trumps SPX gap → Straddle (gap canceled straddle, 0% overrides back)",
+  { ...BASE, vYClose: 20.3, vToday: 20, spxGapPct: 1.2, wr0: true },
+  "Straddle @ 9:32 AM", "strad");
+
+test("WR=0 trumps o2o → Straddle (o2o canceled straddle, 0% overrides back)",
+  { ...BASE, vYClose: 20.3, vToday: 20, o2oOverride: 1.5, wr0: true },
+  "Straddle @ 9:32 AM", "strad");
+
+test("WR=0 trumps GXBF → Straddle",
+  { ...BASE, vYClose: 22, vToday: 20, wr0: true },
+  "Straddle @ 9:32 AM", "strad");
+
+test("WR=0 + CPI day → stays CPI (CPI trumps 0%)",
+  { ...BASE, vYClose: 20.3, vToday: 20, cpiDay: true, wr0: true },
+  "CPI CALL", "strad");
+
+test("WR=90 trumps SPX gap-blocked → M8BF",
+  { ...BASE, vYClose: 20.3, vToday: 20, spxGapPct: 1.2, wr90: true },
+  "M8BF", "m8bf");
+
+test("WR=90 trumps o2o-blocked → M8BF",
+  { ...BASE, vYClose: 20.3, vToday: 20, o2oOverride: 1.5, wr90: true },
+  "M8BF", "m8bf");
+
+test("WR=90 + CPI day → stays CPI (CPI trumps 90%)",
+  { ...BASE, vYClose: 20.3, vToday: 20, cpiDay: true, wr90: true },
+  "CPI CALL", "strad");
 
 // ── Summary ──
 console.log(`\n${"─".repeat(44)}`);

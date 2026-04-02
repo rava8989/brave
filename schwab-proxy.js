@@ -173,7 +173,7 @@ function isEarningsDay(etDate) { return earningsSchedule.some(e => e.date === to
 // Win rate overrides default to unchecked (wr0=false, wr90=false)
 // ════════════════════════════════════════════════════════════════════
 
-function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate }) {
+function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate, prevWR = null }) {
   const cpiDay = cpiSch.includes(todayLong(etDate));
   const dow = etDate.getDay();
   const isMon = dow === 1, isFri = dow === 5, isWed = dow === 3;
@@ -245,6 +245,20 @@ function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate }) {
   // o2o cancels straddle only — no effect on butterfly
   if (o2o > T.O2O_M8BF && (rec === "Straddle @ 9:32 AM" || rec.startsWith("NM Straddle"))) {
     rec = `No Straddle (o2o ${o2o.toFixed(1)} > ${T.O2O_M8BF})`; theme = "block"; crossed = true; blockT = "o2o"; blockD = `Open-to-open ${o2o.toFixed(1)} > ${T.O2O_M8BF}`; badge = "BLOCKED"; strikeInfo = null;
+  }
+
+  // WR=0% and WR>=90% are the STRONGEST overrides — trump gap, o2o, everything (except CPI/Fed)
+  if (prevWR != null) {
+    if (prevWR === 0 && !cpiDay && !fedDay && theme !== 'strad') {
+      // 0% rule forces Straddle — trumps M8BF, GXBF, gap-blocked, o2o-blocked, everything
+      rec = "Straddle @ 9:32 AM"; theme = "strad"; crossed = false;
+      blockT = "0%rule"; entryT = "9:32 AM"; badge = "STRADDLE"; strikeInfo = null;
+    } else if (prevWR >= 90 && !cpiDay && theme !== 'm8bf') {
+      // 90% rule forces M8BF — trumps Straddle, gap-blocked, o2o-blocked, everything (except CPI)
+      const sc = m8Sched(dow);
+      rec = m8Msg(etDate); theme = "m8bf"; badge = "M8BF";
+      strikeInfo = sc; entryT = sc?.window || ""; blockT = "90%rule";
+    }
   }
 
   // ── BOBF card logic ──
@@ -892,6 +906,26 @@ async function handleScheduled(env) {
     });
   } catch (e) { console.warn('[proxy]', e.message || e); }
 
+  // 4c. Fetch previous day's m8bfWR from history_data.json
+  let prevWR = null;
+  try {
+    const histResp = await fetch(
+      `https://raw.githubusercontent.com/rava8989/brave/main/history_data.json?t=${Date.now()}`,
+      { headers: { 'User-Agent': 'schwab-proxy' } }
+    );
+    if (histResp.ok) {
+      const histData = await histResp.json();
+      // Find the most recent entry before today that has m8bfWR
+      const sorted = histData
+        .filter(r => r.date < todayISO && r.m8bfWR != null)
+        .sort((a, b) => b.date.localeCompare(a.date));
+      if (sorted.length > 0) {
+        prevWR = parseFloat(sorted[0].m8bfWR);
+        console.log(`[proxy] prevWR = ${prevWR}% (from ${sorted[0].date})`);
+      }
+    }
+  } catch (e) { console.warn('[proxy] prevWR fetch failed:', e.message || e); }
+
   // 5. Calculate signal
   const signal = calculateSignal({
     vixToday,
@@ -899,6 +933,7 @@ async function handleScheduled(env) {
     vixYClose,
     spxGapPct,
     etDate: etNow,
+    prevWR,
   });
 
   // 6. Build Discord message
