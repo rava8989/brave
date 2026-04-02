@@ -191,10 +191,9 @@ function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate }) {
   const o2o = (vixYOpen != null) ? vixYOpen - vixToday : NaN;
   const oNight = vixYClose - vixToday;
 
-  let spxGapForcesM8BF = false;
-  if (spxGapPct !== null && spxGapPct !== undefined) {
-    spxGapForcesM8BF = Math.abs(spxGapPct) >= T.SPX_GAP_THRESHOLD;
-  }
+  const spxGapCancelsStrad = (spxGapPct !== null && spxGapPct !== undefined && Math.abs(spxGapPct) >= T.SPX_GAP_THRESHOLD);
+  const vixExpAfterOpex = isPostVixBeforeOpex(etDate);
+  const m8bfBanned = eomDay || eom1 || opex1 || vixExpAfterOpex;
 
   let rec = "", theme = "neutral", crossed = false, pmNote = false;
   let blockT = "", blockD = "", entryT = "", badge = "";
@@ -203,39 +202,28 @@ function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate }) {
   if (cpiDay) {
     if (oNight > 0) { rec = "Long ATM Call @ 9:32 AM (CPI) — Max $13"; theme = "strad"; entryT = "9:32 AM"; badge = "CPI CALL"; }
     else { rec = "No Trade (CPI, VIX up)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "CPI day, VIX up"; badge = "BLOCKED"; }
-  } else if (spxGapForcesM8BF) {
-    const dir = spxGapPct > 0 ? '▲' : '▼';
-    rec = m8Msg(etDate); theme = "m8bf"; badge = "M8BF"; strikeInfo = m8Sched(dow); entryT = strikeInfo?.window || "";
-    blockD = `SPX gap ${dir}${Math.abs(spxGapPct).toFixed(2)}% ≥ ${T.SPX_GAP_THRESHOLD}% → M8BF forced`;
   } else {
     if (oNight > T.DROP_GXBF) {
       if (vixToday >= T.VIX_MAX_GXBF) { rec = `No GXBF (VIX ${vixToday} ≥ ${T.VIX_MAX_GXBF})`; theme = "block"; crossed = true; blockT = "vix"; blockD = `VIX ${vixToday} ≥ ${T.VIX_MAX_GXBF}`; badge = "BLOCKED"; }
       else { rec = `GXBF @ 9:36 AM`; theme = "gxbf"; entryT = "9:36 AM"; badge = "GXBF"; }
-    } else if (o2o > T.O2O_M8BF) {
-      rec = m8Msg(etDate); theme = "m8bf"; badge = "M8BF"; strikeInfo = m8Sched(dow); entryT = strikeInfo?.window || "";
-    } else if (oNight > T.DROP_STRAD_MIN && oNight < T.DROP_GXBF) {
+    } else if (oNight > 0) {
       rec = "Straddle @ 9:32 AM"; theme = "strad"; entryT = "9:32 AM"; badge = "STRADDLE";
     } else {
       rec = m8Msg(etDate); theme = "m8bf"; badge = "M8BF"; strikeInfo = m8Sched(dow); entryT = strikeInfo?.window || "";
     }
 
     if (rec.startsWith("M8BF")) {
-      if (fedDay) { rec = "No M8BF (Fed day)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "M8BF not traded on Fed days"; badge = "BLOCKED"; strikeInfo = null; }
-      else if (msftMetaEarnings) {
-        const tickers = earningsSchedule.filter(e => e.date === todayLong(etDate) && (e.ticker === 'MSFT' || e.ticker === 'META')).map(e => e.ticker).join(', ');
-        rec = `No M8BF (${tickers} earnings)`; theme = "block"; crossed = true; blockT = "hard"; blockD = `M8BF not traded on MSFT/META earnings days`; badge = "BLOCKED"; strikeInfo = null;
-      }
-      else if (eom1) { rec = "No M8BF (EOM-1)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "M8BF not traded on EOM-1 (no edge)"; badge = "BLOCKED"; strikeInfo = null; }
+      if (eomDay) { rec = "No M8BF (EOM)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "M8BF not traded on EOM"; badge = "BLOCKED"; strikeInfo = null; }
+      else if (eom1) { rec = "No M8BF (EOM-1)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "M8BF not traded on EOM-1"; badge = "BLOCKED"; strikeInfo = null; }
+      else if (opex1) { rec = "No M8BF (day before OPEX)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "Skipped day before OPEX"; badge = "BLOCKED"; strikeInfo = null; }
+      else if (vixExpAfterOpex) { rec = "No M8BF (VIX exp day)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "VIX exp day when VIX exp falls after OPEX"; badge = "BLOCKED"; strikeInfo = null; }
     }
-    if (isPostVixBeforeOpex(etDate) && rec.startsWith("M8BF")) { rec = "No M8BF (post-VIX exp)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "VIX exp before OPEX this month"; badge = "BLOCKED"; strikeInfo = null; }
 
-    if (nmDay && !isMon && (rec.startsWith("M8BF") || rec.startsWith("No M8BF") || rec.startsWith("Straddle") || rec.startsWith("GXBF") || rec.startsWith("No GXBF"))) { rec = "NM Straddle @ 9:32 AM"; theme = "strad"; crossed = false; blockT = ""; entryT = "9:32 AM"; badge = "NM STRADDLE"; strikeInfo = null; }
+    if (nmDay && !isMon && (rec.startsWith("M8BF") || rec.startsWith("No M8BF") || rec.startsWith("Straddle"))) { rec = "NM Straddle @ 9:32 AM"; theme = "strad"; crossed = false; blockT = ""; entryT = "9:32 AM"; badge = "NM STRADDLE"; strikeInfo = null; }
     if (eomDay) { rec = "Straddle @ 9:32 AM (EOM)"; theme = "strad"; crossed = false; blockT = ""; entryT = "9:32 AM"; badge = "EOM STRADDLE"; strikeInfo = null; }
-    if (isWed && !fedDay && !eomDay && !nmDay && rec.startsWith("Straddle")) { rec = m8Msg(etDate); theme = "m8bf"; badge = "M8BF"; strikeInfo = m8Sched(dow); entryT = strikeInfo?.window || ""; }
+    if (isWed && !fedDay && !m8bfBanned && !nmDay && rec.startsWith("Straddle")) { rec = m8Msg(etDate); theme = "m8bf"; badge = "M8BF"; strikeInfo = m8Sched(dow); entryT = strikeInfo?.window || ""; }
     if (opexDay && rec.startsWith("Straddle")) { rec = "No Straddle (OPEX day)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "Straddle not on OPEX"; badge = "BLOCKED"; }
     if (postOpMon && rec.startsWith("M8BF")) pmNote = true;
-
-    // Win rate overrides: default unchecked → skip
 
     if (postOpDay) {
       const isM8 = rec.startsWith("M8BF"), isStr = rec.startsWith("Straddle") || rec.startsWith("NM Straddle");
@@ -247,6 +235,17 @@ function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate }) {
   }
 
   if (pmNote) rec += " (afternoon times preferred)";
+
+  // SPX gap cancels straddle only — no effect on butterfly
+  if (spxGapCancelsStrad && (rec === "Straddle @ 9:32 AM" || rec === "Straddle @ 9:32 AM (EOM)" || rec.startsWith("NM Straddle"))) {
+    const dir = spxGapPct > 0 ? '▲' : '▼';
+    rec = `No Straddle (SPX gap ${dir}${Math.abs(spxGapPct).toFixed(2)}%)`; theme = "block"; crossed = true; blockT = "gap"; blockD = `SPX gap ≥ ${T.SPX_GAP_THRESHOLD}%`; badge = "BLOCKED"; strikeInfo = null;
+  }
+
+  // o2o cancels straddle only — no effect on butterfly
+  if (o2o > T.O2O_M8BF && (rec === "Straddle @ 9:32 AM" || rec.startsWith("NM Straddle"))) {
+    rec = `No Straddle (o2o ${o2o.toFixed(1)} > ${T.O2O_M8BF})`; theme = "block"; crossed = true; blockT = "o2o"; blockD = `Open-to-open ${o2o.toFixed(1)} > ${T.O2O_M8BF}`; badge = "BLOCKED"; strikeInfo = null;
+  }
 
   // ── BOBF card logic ──
   const bobfBlocks = [];
@@ -300,7 +299,7 @@ function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate }) {
     m8bfText, stradText, gxbfText,
     bobfRec, bobfBadge, bobfBlocks,
     oNight, o2o,
-    spxGapPct, spxGapForcesM8BF,
+    spxGapPct, spxGapCancelsStrad, m8bfBanned,
     dayLabel: tradeWdLabel(etDate),
     dateStr: todayLong(etDate),
     cpiDay, fedDay, opexDay, postOpDay: opexSch.some(ds => isTodayAfter(ds, etDate)), eomDay,
