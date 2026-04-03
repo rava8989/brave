@@ -370,7 +370,7 @@ const earningsSchedule = [
   { date:"November 18, 2026", company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:false },
 ];
 
-const T = { DROP_GXBF: 0.65, DROP_STRAD_MIN: 0, O2O_M8BF: 1.4, VIX_MAX_GXBF: 25, VIX_MAX_BOBF: 23, SPX_GAP_THRESHOLD: 0.9 };
+const T = { DROP_GXBF: 0.65, O2O_M8BF: 1.4, VIX_MAX_GXBF: 25, VIX_MAX_BOBF: 23, SPX_GAP_THRESHOLD: 0.9 };
 
 function dateLong(d) { return d.toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' }); }
 const todayLong = d => dateLong(d);
@@ -389,7 +389,7 @@ const isLastTradeMo = d => nextTrade(d).getMonth()!==d.getMonth();
 function isEomN(n,d){const f=new Date(d.getFullYear(),d.getMonth()+1,1);let t=prevTrade(f);for(let i=0;i<n;i++)t=prevTrade(t);return t.getFullYear()===d.getFullYear()&&t.getMonth()===d.getMonth()&&t.getDate()===d.getDate();}
 const isFirstTradeMo = d => prevTrade(d).getMonth()!==d.getMonth();
 function isFirstTradeMon(d){const y=d.getFullYear(),m=d.getMonth();let x=new Date(y,m,1);while(isWkend(x)||isHol(x))x.setDate(x.getDate()+1);while(x.getDay()!==1)x=nextTrade(x);return x.getFullYear()===y&&x.getMonth()===m&&x.getDate()===d.getDate();}
-function m8Sched(dow){const blocked=["10","25","35","40","65","80","90"];switch(dow){case 1:return{t:"11:00",window:"11:00–11:30",blocked:blocked};case 2:return{t:"13:30",window:"13:30–14:00",blocked:blocked};case 3:return{t:"12:00",window:"12:00–12:30",blocked:blocked};case 4:return{t:"11:00",window:"11:00–11:30",blocked:blocked};case 5:return{t:"13:00",window:"13:00–13:30",blocked:blocked};default:return null;}}
+function m8Sched(dow){const blocked=["10","25","35","40","65","80"];const comboBans={0:95,20:15,55:50,65:60,85:90};switch(dow){case 1:return{t:"11:00",window:"11:00–11:30",blocked:blocked,comboBans:comboBans};case 2:return{t:"13:30",window:"13:30–14:00",blocked:blocked,comboBans:comboBans};case 3:return{t:"12:00",window:"12:00–12:30",blocked:blocked,comboBans:comboBans};case 4:return{t:"11:00",window:"11:00–11:30",blocked:blocked,comboBans:comboBans};case 5:return{t:"13:00",window:"13:00–13:30",blocked:blocked,comboBans:comboBans};default:return null;}}
 function m8Msg(d){const sc=m8Sched(d.getDay());return sc?`M8BF — Window ${sc.window}`:"M8BF";}
 function ordinal(n){const s=["th","st","nd","rd"],v=n%100;return n+(s[(v-20)%10]||s[v]||s[0]);}
 function wdName(d){return["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][d]||"";}
