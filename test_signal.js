@@ -92,9 +92,9 @@ function calcSignal({
 
     // WR=0% and WR>=90% are the STRONGEST overrides — trump gap, o2o, everything (except CPI/Fed)
     if (wr0) {
-      if (!cpiDay && !fedDay && theme !== 'strad') { rec = "Straddle @ 9:32 AM"; theme = "strad"; blockT = "0%rule"; }
+      if (!cpiDay && !fedDay) { rec = "Straddle @ 9:32 AM"; theme = "strad"; blockT = "0%rule"; }
     } else if (wr90) {
-      if (!cpiDay && theme !== 'm8bf') { rec = m8Msg(); theme = "m8bf"; blockT = "90%rule"; }
+      if (!cpiDay) { rec = m8Msg(); theme = "m8bf"; blockT = "90%rule"; }
     }
 
     // OPEX+1: override to GXBF (or block) — but NOT when WR 0% or 90% forced the signal
@@ -340,6 +340,51 @@ test("WR=90 trumps o2o-blocked → M8BF",
 test("WR=90 + CPI day → stays CPI (CPI trumps 90%)",
   { ...BASE, vYClose: 20.3, vToday: 20, cpiDay: true, wr90: true },
   "CPI CALL", "strad");
+
+console.log("\n── NM/EOM override GXBF ──");
+test("NM Straddle overrides GXBF (non-Monday)",
+  { ...BASE, vYClose: 21, vToday: 20, nmDay: true, isMon: false },  // oNight=1 → GXBF, but NM overrides
+  "NM Straddle @ 9:32 AM", "strad");
+
+test("NM Straddle overrides No GXBF (VIX high, non-Monday)",
+  { ...BASE, vYClose: 26, vToday: 25, nmDay: true, isMon: false },  // No GXBF → NM overrides
+  "NM Straddle @ 9:32 AM", "strad");
+
+test("EOM Straddle overrides GXBF",
+  { ...BASE, vYClose: 21, vToday: 20, eomDay: true },  // oNight=1 → GXBF, but EOM overrides
+  "Straddle @ 9:32 AM (EOM)", "strad");
+
+console.log("\n── WR on banned/special days ──");
+test("WR=90 on m8bfBanned day (EOM-1) → M8BF (90% trumps ban)",
+  { ...BASE, vYClose: 20.3, vToday: 20, wr90: true, eom1: true },
+  "M8BF", "m8bf");
+
+test("OPEX+1 + WR=0% → stays Straddle (WR trumps OPEX+1)",
+  { ...BASE, vYClose: 20.3, vToday: 20, postOpDay: true, wr0: true },
+  "Straddle @ 9:32 AM", "strad");
+
+test("OPEX+1 + WR=90% → stays M8BF (WR trumps OPEX+1)",
+  { ...BASE, vYClose: 20.3, vToday: 20, postOpDay: true, wr90: true },
+  "M8BF", "m8bf");
+
+console.log("\n── CPI edge cases ──");
+test("CPI + VIX flat (oNight=0) → No Trade",
+  { ...BASE, vYClose: 20, vToday: 20, cpiDay: true },
+  "No Trade", "block");
+
+console.log("\n── NM + Wednesday interaction ──");
+test("Wednesday + NM (non-Monday) → NM Straddle (NM overrides Wed conversion)",
+  { ...BASE, vYClose: 20.3, vToday: 20, isWed: true, nmDay: true, isMon: false },
+  "NM Straddle @ 9:32 AM", "strad");
+
+console.log("\n── o2o / SPX gap cancel NM Straddle ──");
+test("o2o > 1.4 cancels NM Straddle",
+  { ...BASE, vYClose: 20.3, vToday: 20, nmDay: true, isMon: false, o2oOverride: 1.5 },
+  "No Straddle (o2o)", "block");
+
+test("SPX gap ≥ 0.9% cancels NM Straddle",
+  { ...BASE, vYClose: 20.3, vToday: 20, nmDay: true, isMon: false, spxGapPct: 1.2 },
+  "No Straddle (SPX gap)", "block");
 
 // ── Summary ──
 console.log(`\n${"─".repeat(44)}`);
