@@ -416,7 +416,6 @@ function calculateSignal({vixToday,vixYOpen,vixYClose,spxGapPct,etDate}){
   const dayAfterEarn=isDayAfterAnyEarnings(etDate);
   const m8bfBanned=eomDay||eom1||opex1||vixExpAfterOpex||nonAmznTslaEarn||dayAfterEarn;
   const earningsDay=isEarningsDay(etDate);
-  const msftMetaEarnings=earningsSchedule.some(e=>e.date===todayLong(etDate)&&(e.ticker==='MSFT'||e.ticker==='META'));
 
   const o2o=(vixYOpen!=null)?vixYOpen-vixToday:NaN;
   const oNight=(vixYClose!=null)?vixYClose-vixToday:NaN;
@@ -852,11 +851,11 @@ async function init() {
         const dow = etDate.getDay();
         const isCPI = signal.cpiDay;
         const isFed = signal.fedDay;
-        if (prevWR === 0 && !isCPI && !isFed && signal.theme !== 'strad') {
+        if (prevWR === 0 && !isCPI && !isFed) {
           // 0% rule is strongest — forces Straddle, trumps gap/o2o/m8bf/gxbf/blocks (except Fed & CPI)
           signal.rec = "Straddle @ 9:32 AM"; signal.theme = "strad"; signal.crossed = false;
           signal.blockT = "0%rule"; signal.entryT = "9:32 AM"; signal.badge = "STRADDLE"; signal.strikeInfo = null;
-        } else if (prevWR >= 90 && !isCPI && signal.theme !== 'm8bf') {
+        } else if (prevWR >= 90 && !isCPI) {
           // 90% rule is strongest — forces M8BF, trumps gap/o2o/straddle/gxbf/blocks (except CPI)
           const sc = m8Sched(dow);
           signal.rec = m8Msg(etDate); signal.theme = "m8bf"; signal.badge = "M8BF";

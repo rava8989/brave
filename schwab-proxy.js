@@ -188,7 +188,6 @@ function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate, pre
   const vixExpDay = vixSch.includes(todayLong(etDate));
   const opex1 = opexSch.some(ds => isTodayBefore(ds, etDate));
   const earningsDay = isEarningsDay(etDate);
-  const msftMetaEarnings = earningsSchedule.some(e => e.date === todayLong(etDate) && (e.ticker === 'MSFT' || e.ticker === 'META'));
 
   const o2o = (vixYOpen != null) ? vixYOpen - vixToday : NaN;
   const oNight = vixYClose - vixToday;
@@ -248,10 +247,10 @@ function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate, pre
 
   // WR=0% and WR>=90% are the STRONGEST overrides — trump gap, o2o, everything (except CPI/Fed)
   if (prevWR != null) {
-    if (prevWR === 0 && !cpiDay && !fedDay && theme !== 'strad') {
+    if (prevWR === 0 && !cpiDay && !fedDay) {
       rec = "Straddle @ 9:32 AM"; theme = "strad"; crossed = false;
       blockT = "0%rule"; entryT = "9:32 AM"; badge = "STRADDLE"; strikeInfo = null;
-    } else if (prevWR >= 90 && !cpiDay && theme !== 'm8bf') {
+    } else if (prevWR >= 90 && !cpiDay) {
       const sc = m8Sched(dow);
       rec = m8Msg(etDate); theme = "m8bf"; badge = "M8BF";
       strikeInfo = sc; entryT = sc?.window || ""; blockT = "90%rule";
