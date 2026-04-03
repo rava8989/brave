@@ -952,10 +952,10 @@ async function handleScheduled(env) {
   if (!dcRaw) throw new Error('No Discord config in KV — sync from browser');
   const dc = JSON.parse(dcRaw);
 
-  // Validate proxyUrl against allowlist — only Discord webhook URLs are permitted
-  const discordWebhookPattern = /^https:\/\/discord\.com\/api\/webhooks\/[^/?#]+\/[^/?#]+$/;
-  if (!dc.proxyUrl || !discordWebhookPattern.test(dc.proxyUrl)) {
-    throw new Error('Invalid proxyUrl: must be a Discord webhook URL (https://discord.com/api/webhooks/*)');
+  // Validate proxyUrl — must be HTTPS (typically a Cloudflare Worker that relays to Discord Bot API)
+  // The proxy worker accepts { userId, message } and sends DMs via Discord Bot token
+  if (!dc.proxyUrl || !dc.proxyUrl.startsWith('https://')) {
+    throw new Error('Invalid proxyUrl: must be an HTTPS URL (your Cloudflare Worker proxy)');
   }
 
   const dcResp = await fetch(dc.proxyUrl, {
