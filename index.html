@@ -1692,6 +1692,7 @@
     const payload = {};
     const t = SC.tokens(); if(t) payload.schwab_tokens = t;
     const c = SC.creds();  if(c) payload.schwab_creds = { appKey: c.appKey };
+    const dc = DC.get('config'); if(dc) payload.discord_config = dc;
     if(!t){
       schwabSetStatus('error', 'No tokens in browser — re-authenticate first');
       btn.textContent = origText; btn.disabled = false;
