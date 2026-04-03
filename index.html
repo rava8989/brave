@@ -255,7 +255,6 @@
       .mv{font-size:13px;}
       #recBlock{border-radius:10px;}
       .signal-stack{flex-direction:column;}
-      .sig-header{padding:8px 12px;gap:6px;}
       .strategy-doc{padding:14px;}
       .strategy-image img{max-width:100%;}
       .top-header h1{font-size:15px;}
@@ -665,7 +664,7 @@
 
   /* ====== CONSTANTS ====== */
   const T = {
-    DROP_GXBF: 0.65, DROP_STRAD_MIN: 0,
+    DROP_GXBF: 0.65,
     O2O_M8BF: 1.4, VIX_MAX_GXBF: 25, VIX_MAX_BOBF: 23,
     SPX_GAP_THRESHOLD: 0.9,  // abs SPX gap % that cancels Straddle
   };
@@ -762,12 +761,7 @@
   function parseLong(s){ const d=new Date(s); return isNaN(d)?null:new Date(d.getFullYear(),d.getMonth(),d.getDate(),12); }
   function schedInMonth(list,ref){ const y=ref.getFullYear(),m=ref.getMonth(); for(const s of list){const d=parseLong(s);if(d&&d.getFullYear()===y&&d.getMonth()===m)return d;} return null; }
 
-  function isPostVixBeforeOpex(ref=new Date()){
-    const vx=schedInMonth(vixSch,ref), op=schedInMonth(opexSch,ref);
-    if(!vx||!op||vx>=op) return false;
-    const pv=nextTrade(vx);
-    return pv.getFullYear()===ref.getFullYear()&&pv.getMonth()===ref.getMonth()&&pv.getDate()===ref.getDate();
-  }
+  // isPostVixBeforeOpex removed — unused dead code
   const isPostHol     = () => holidays.some(isTodayAfter);
   const isPostOpexMon = () => opexSch.some(isTodayAfter) && new Date().getDay()===1;
   const isLastTradeMo = (d=new Date()) => nextTrade(d).getMonth()!==d.getMonth();
@@ -1831,8 +1825,9 @@
           if(yDate){
             const spxYCandles = spxCandles.filter(c => new Date(c.datetime).toDateString() === yDate);
             spxYCandles.sort((a,b) => a.datetime - b.datetime);
-            const spxCloseCandle = spxYCandles.slice().reverse().find(c => {
-              const d = new Date(c.datetime);
+            const toET_close = ts => new Date(new Date(ts).toLocaleString('en-US', { timeZone: 'America/New_York' }));
+          const spxCloseCandle = spxYCandles.slice().reverse().find(c => {
+              const d = toET_close(c.datetime);
               return (d.getHours() === 16 && d.getMinutes() >= 10) || d.getHours() > 16;
             }) || spxYCandles[spxYCandles.length - 1];
             if(spxCloseCandle) spxYClose = spxCloseCandle.close;
@@ -1869,7 +1864,6 @@
   function schwabScheduleStream(){
     // Calculate ms until next 9:30 AM ET
     const now = new Date();
-    const etOffset = -5; // EST (adjust to -4 for EDT — JS handles this automatically via toLocaleString)
     const etNow = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
     const etTarget = new Date(etNow);
     etTarget.setHours(9, 30, 0, 0);

@@ -81,7 +81,7 @@ const earningsSchedule = [
 ];
 
 const T = {
-  DROP_GXBF: 0.65, DROP_STRAD_MIN: 0,
+  DROP_GXBF: 0.65,
   O2O_M8BF: 1.4, VIX_MAX_GXBF: 25, VIX_MAX_BOBF: 23,
   SPX_GAP_THRESHOLD: 0.9,
 };
@@ -144,12 +144,14 @@ function isFirstTradeMon(d) {
 }
 
 function m8Sched(dow) {
+  const blocked = ["10","25","35","40","65","80"];
+  const comboBans = {0:95,20:15,55:50,65:60,85:90};
   switch (dow) {
-    case 1: return { t: "11:00", window: "11:00–11:30", s: ["05", "45", "70", "95"], everyWeek: false };
-    case 2: return { t: "13:30", window: "13:30–14:00", s: ["00", "05", "35", "45", "70", "75", "85", "90"], everyWeek: false };
-    case 3: return { t: "12:00", window: "12:00–12:30", s: ["30", "45", "50", "70", "80", "95"], everyWeek: false };
-    case 4: return { t: "11:00", window: "11:00–11:30", s: ["05", "15", "55", "75", "85"], everyWeek: true };
-    case 5: return { t: "13:00", window: "13:00–13:30", s: ["45", "55", "65", "70", "75", "85", "95"], everyWeek: true };
+    case 1: return { t: "11:00", window: "11:00–11:30", blocked, comboBans };
+    case 2: return { t: "13:30", window: "13:30–14:00", blocked, comboBans };
+    case 3: return { t: "12:00", window: "12:00–12:30", blocked, comboBans };
+    case 4: return { t: "11:00", window: "11:00–11:30", blocked, comboBans };
+    case 5: return { t: "13:00", window: "13:00–13:30", blocked, comboBans };
     default: return null;
   }
 }
@@ -375,7 +377,7 @@ function buildDiscordMessage(signal, vixValues) {
 // SCHWAB TOKEN HELPERS
 // ════════════════════════════════════════════════════════════════════
 
-async function getAccessToken(env) {
+async function getAccessToken(env, forceRefresh = false) {
   const tokensRaw = await env.SIGNAL_KV.get('schwab_tokens');
   if (!tokensRaw) throw new Error('No Schwab tokens in KV — sync from browser first');
   const tokens = JSON.parse(tokensRaw);
@@ -385,8 +387,8 @@ async function getAccessToken(env) {
     throw new Error('Schwab refresh token expired — re-authenticate in browser');
   }
 
-  // Refresh access token if within 2 minutes of expiry
-  if (Date.now() > tokens.expiry - 120000) {
+  // Refresh access token if within 2 minutes of expiry or forced (401 retry)
+  if (forceRefresh || Date.now() > tokens.expiry - 120000) {
     // Mutex: if a refresh is already in-flight, all concurrent callers share the same promise
     // so only ONE actual Schwab refresh call is made (Schwab refresh tokens are single-use)
     if (!_tokenRefreshPromise) {
@@ -447,8 +449,14 @@ async function getAccessToken(env) {
   return tokens.access;
 }
 
-async function fetchSchwabJSON(url, token) {
-  const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+async function fetchSchwabJSON(url, token, env) {
+  let resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  // Retry once with refreshed token on 401
+  if (resp.status === 401 && env) {
+    console.warn('[proxy] Schwab 401 — retrying with fresh token');
+    const freshToken = await getAccessToken(env, true);
+    resp = await fetch(url, { headers: { Authorization: `Bearer ${freshToken}` } });
+  }
   if (!resp.ok) throw new Error(`Schwab API ${resp.status}: ${url.split('?')[0]}`);
   return resp.json();
 }
@@ -798,7 +806,7 @@ async function handleScheduled(env) {
   const end = Date.now();
   const start = end - 5 * 24 * 60 * 60 * 1000;
   const vixHistUrl = `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24VIX&periodType=day&period=5&frequencyType=minute&frequency=1&startDate=${start}&endDate=${end}&needExtendedHoursData=true`;
-  const vixHist = await fetchSchwabJSON(vixHistUrl, token);
+  const vixHist = await fetchSchwabJSON(vixHistUrl, token, env);
   if (!vixHist.candles || !vixHist.candles.length) throw new Error('No VIX history data');
 
   const candles = vixHist.candles;
@@ -831,7 +839,7 @@ async function handleScheduled(env) {
 
   // Override yClose with quote's closePrice (official previous close)
   try {
-    const qData = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`, token);
+    const qData = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`, token, env);
     const qClose = qData?.['$VIX']?.quote?.closePrice;
     if (qClose) vixYClose = parseFloat(qClose.toFixed(2));
   } catch (e) { console.warn('[proxy]', e.message || e); }
@@ -854,7 +862,7 @@ async function handleScheduled(env) {
 
   // Fallback: quote API if no candle yet (skip 15s sleep — risky for Worker wall time)
   if (vixToday === null) {
-    const vixQuote = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`, token);
+    const vixQuote = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`, token, env);
     const quote = vixQuote?.['$VIX']?.quote;
     if (quote?.openPrice) vixToday = parseFloat(quote.openPrice.toFixed(2));
     else if (quote?.lastPrice) vixToday = parseFloat(quote.lastPrice.toFixed(2));
@@ -862,7 +870,7 @@ async function handleScheduled(env) {
 
   // Second fallback: re-fetch candle history (market may have just opened)
   if (vixToday === null) {
-    const retry = await fetchSchwabJSON(vixHistUrl, token);
+    const retry = await fetchSchwabJSON(vixHistUrl, token, env);
     if (retry.candles) {
       const rc = retry.candles.filter(c => {
         const d = toET(new Date(c.datetime));
@@ -880,7 +888,7 @@ async function handleScheduled(env) {
   try {
     // Get SPX yesterday close from history
     const spxHistUrl = `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24SPX&periodType=day&period=5&frequencyType=minute&frequency=1&startDate=${start}&endDate=${end}&needExtendedHoursData=true`;
-    const spxHist = await fetchSchwabJSON(spxHistUrl, token);
+    const spxHist = await fetchSchwabJSON(spxHistUrl, token, env);
     let spxYClose = null;
     if (spxHist.candles && yDate) {
       const spxYCandles = spxHist.candles.filter(c => toET(new Date(c.datetime)).toDateString() === yDate);
@@ -894,7 +902,7 @@ async function handleScheduled(env) {
 
     // Get SPX today open from quote
     const spxQuoteUrl = `https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24SPX&fields=quote`;
-    const spxQuote = await fetchSchwabJSON(spxQuoteUrl, token);
+    const spxQuote = await fetchSchwabJSON(spxQuoteUrl, token, env);
     const spxQ = spxQuote?.['$SPX']?.quote;
     spxTodayOpen = spxQ ? parseFloat((spxQ.openPrice || spxQ.lastPrice).toFixed(2)) : null;
 
@@ -957,13 +965,31 @@ async function handleScheduled(env) {
     throw new Error('Invalid proxyUrl: must be an HTTPS URL (your Cloudflare Worker proxy)');
   }
 
+  const dcHeaders = { 'Content-Type': 'application/json' };
+  if (env.PROXY_SECRET) dcHeaders['Authorization'] = `Bearer ${env.PROXY_SECRET}`;
   const dcResp = await fetch(dc.proxyUrl, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ userId: dc.channelId, message }),
+    headers: dcHeaders,
+    body: JSON.stringify({ userId: dc.channelId /* actually Discord user ID */, message: message.slice(0, 2000) }),
   });
-  const dcData = await dcResp.json();
-  if (!dcResp.ok) throw new Error('Discord post failed: ' + JSON.stringify(dcData));
+  let dcData;
+  try { dcData = await dcResp.json(); } catch { dcData = { error: `Non-JSON response (HTTP ${dcResp.status})` }; }
+  if (!dcResp.ok) {
+    // Retry once on 429 (rate limit) after Retry-After delay
+    if (dcResp.status === 429 && dcData.retry_after) {
+      await new Promise(r => setTimeout(r, (dcData.retry_after + 0.5) * 1000));
+      const retryResp = await fetch(dc.proxyUrl, {
+        method: 'POST',
+        headers: dcHeaders,
+        body: JSON.stringify({ userId: dc.channelId, message: message.slice(0, 2000) }),
+      });
+      let retryData;
+      try { retryData = await retryResp.json(); } catch { retryData = { error: `Non-JSON (HTTP ${retryResp.status})` }; }
+      if (!retryResp.ok) throw new Error('Discord post failed after retry: ' + JSON.stringify(retryData));
+      return retryData;
+    }
+    throw new Error('Discord post failed: ' + JSON.stringify(dcData));
+  }
 
   // Mark morning signal as sent for today (expires at midnight + 1h buffer)
   const msDoneKey = `morning_signal_${todayISO}`;
@@ -2624,6 +2650,25 @@ export default {
     } catch (e) {
       console.error('[cron] Error:', e.message || e);
       result = { status: 'error', error: e.message, date: new Date().toISOString() };
+
+      // Send error notification to Discord so failures aren't silent
+      try {
+        const dcRaw = await env.SIGNAL_KV.get('discord_config');
+        if (dcRaw) {
+          const dc = JSON.parse(dcRaw);
+          if (dc.proxyUrl && dc.channelId) {
+            const errHeaders = { 'Content-Type': 'application/json' };
+            if (env.PROXY_SECRET) errHeaders['Authorization'] = `Bearer ${env.PROXY_SECRET}`;
+            await fetch(dc.proxyUrl, {
+              method: 'POST',
+              headers: errHeaders,
+              body: JSON.stringify({ userId: dc.channelId, message: `⚠️ **Signal Error**\n\`${e.message}\`\nCheck schwab-proxy logs.` }),
+            });
+          }
+        }
+      } catch (notifyErr) {
+        console.error('[cron] Failed to send error notification:', notifyErr.message);
+      }
     }
     result.date = result.date || new Date().toISOString();
     await env.SIGNAL_KV.put('last_run', JSON.stringify(result));
