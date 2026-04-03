@@ -39,7 +39,16 @@ function calcSignal({
 
   if (cpiDay) {
     if (oNight > 0) { rec = "CPI CALL"; theme = "strad"; }
-    else            { rec = "No Trade (CPI)"; theme = "block"; }
+    else {
+      rec = m8Msg(); theme = "m8bf";
+      // M8BF bans still apply on CPI + VIX up
+      if (eomDay) { rec = "No M8BF (EOM)"; theme = "block"; }
+      else if (eom1) { rec = "No M8BF (EOM-1)"; theme = "block"; }
+      else if (opex1) { rec = "No M8BF (day before OPEX)"; theme = "block"; }
+      else if (earningsBlock) { rec = "No M8BF (earnings)"; theme = "block"; }
+      else if (dayAfterEarnings) { rec = "No M8BF (day after earnings)"; theme = "block"; }
+      else if (vixExpAfterOpex) { rec = "No M8BF (VIX exp day)"; theme = "block"; }
+    }
   } else {
     // ── Core VIX overnight branch ──
     if (oNight > T.DROP_GXBF) {
@@ -167,9 +176,9 @@ test("CPI + VIX drop → CPI Call",
   { ...BASE, vYClose: 21, vToday: 20, cpiDay: true },
   "CPI CALL", "strad");
 
-test("CPI + VIX up → No Trade",
+test("CPI + VIX up → M8BF",
   { ...BASE, vYClose: 19, vToday: 20, cpiDay: true },
-  "No Trade", "block");
+  "M8BF", "m8bf");
 
 console.log("\n── EOM / EOM-1 ──");
 test("EOM → EOM Straddle (overrides everything)",
@@ -368,9 +377,17 @@ test("OPEX+1 + WR=90% → stays M8BF (WR trumps OPEX+1)",
   "M8BF", "m8bf");
 
 console.log("\n── CPI edge cases ──");
-test("CPI + VIX flat (oNight=0) → No Trade",
+test("CPI + VIX flat (oNight=0) → M8BF",
   { ...BASE, vYClose: 20, vToday: 20, cpiDay: true },
-  "No Trade", "block");
+  "M8BF", "m8bf");
+
+test("CPI + VIX up + EOM → No M8BF (ban still applies)",
+  { ...BASE, vYClose: 19, vToday: 20, cpiDay: true, eomDay: true },
+  "No M8BF (EOM)", "block");
+
+test("CPI + VIX up + earnings → No M8BF (ban still applies)",
+  { ...BASE, vYClose: 19, vToday: 20, cpiDay: true, earningsBlock: true },
+  "No M8BF (earnings)", "block");
 
 console.log("\n── NM + Wednesday interaction ──");
 test("Wednesday + NM (non-Monday) → NM Straddle (NM overrides Wed conversion)",
