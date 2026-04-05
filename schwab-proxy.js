@@ -1426,7 +1426,9 @@ Provide exactly 2-3 sentences of actionable dealer hedging commentary. Focus on:
 2. Expected price behavior given the regime and GEX profile
 3. Key strikes to watch
 
-Be direct and technical. No disclaimers. Use trader language.`;
+Then add a final line starting with "Bottom line:" — a single short plain-English sentence (no jargon) summarizing what this means for price direction. Example: "Bottom line: expect choppy sideways action around 5500."
+
+Be direct and technical in the main commentary. No disclaimers. Use trader language.`;
 
   try {
     const controller = new AbortController();
