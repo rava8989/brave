@@ -112,6 +112,7 @@
     .commentary-entry:last-child{border-bottom:none;}
     .commentary-entry .c-time{font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-bottom:4px;}
     .commentary-entry .c-text{font-size:13px;line-height:1.6;color:var(--text);}
+    .tldr-label{font-weight:700;color:#22c55e;}
     .commentary-meta{font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);display:flex;align-items:center;gap:8px;}
     .commentary-meta .ai-badge{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:2px 8px;border-radius:10px;background:rgba(129,140,248,.15);color:var(--accent);border:1px solid rgba(129,140,248,.3);}
 
@@ -636,7 +637,7 @@ function renderCommentary(data) {
   if (data.commentaryLog && data.commentaryLog.length > 0) {
     const entries = [...data.commentaryLog].reverse();
     body.innerHTML = entries.map(e => {
-      const safe = e.text.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+      const safe = e.text.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>').replace(/(Bottom line:)/i, '<span class="tldr-label">$1</span>');
       const spot = e.spot ? ' · SPX ' + e.spot.toFixed(0) : '';
       const regime = e.regime ? ' · ' + esc(e.regime) : '';
       return '<div class="commentary-entry">' +
@@ -647,7 +648,7 @@ function renderCommentary(data) {
     meta.style.display = 'flex';
     meta.innerHTML = '<span class="ai-badge">AI</span> ' + entries.length + ' updates today';
   } else if (data.commentary) {
-    const safe = data.commentary.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+    const safe = data.commentary.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>').replace(/(Bottom line:)/i, '<span class="tldr-label">$1</span>');
     body.innerHTML = '<div class="commentary-text">' + safe + '</div>';
     meta.style.display = 'flex';
     const timeStr = data.commentaryAt ? fmtTime(data.commentaryAt) : fmtTime(data.updatedAt);
