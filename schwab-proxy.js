@@ -531,21 +531,9 @@ async function handleEOD(env, etNow) {
     } catch (e) { console.warn('[proxy]', e.message || e); }
   }
 
-  // Read today_trade.json from GitHub — written by live_updater.py at EOD
+  // Compute m8bfPL directly from today's signals + spxClose (no live_updater dependency)
   let m8bfPL = null;
   let m8bfWR = null;
-  try {
-    const tradeResp = await fetch(
-      `https://raw.githubusercontent.com/rava8989/brave/main/today_trade.json?t=${Date.now()}`,
-      { headers: { 'Cache-Control': 'no-cache' } }
-    );
-    if (tradeResp.ok) {
-      const trade = await tradeResp.json();
-      if (trade.date === todayISO && trade.status === 'closed' && typeof trade.final_pl === 'number') {
-        m8bfPL = trade.final_pl;
-      }
-    }
-  } catch (e) { console.warn('[proxy]', e.message || e); }
 
   // Re-scrape all Discord signals for today (full pagination) to ensure completeness
   // The live KV polling may have missed signals if cron was down
@@ -575,6 +563,37 @@ async function handleEOD(env, etNow) {
         }
       }
     } catch (e) { console.warn('[proxy]', e.message || e); }
+  }
+
+  // Compute m8bfPL from first qualifying signal in window (same logic as backfillMissingPL)
+  if (spxClose != null && fullSigs.length > 0) {
+    try {
+      const dow = etNow.getDay();
+      const win = M8BF_WINDOWS[dow];
+      if (win) {
+        const [winLo, winHi] = win;
+        let qualifying = null;
+        for (const sig of fullSigs) {
+          if (!sig.time) continue;
+          const [h, m] = sig.time.split(':').map(Number);
+          const mins = h * 60 + m;
+          if (mins >= winLo && mins < winHi && !isBanned(sig.center, sig.t1)) {
+            qualifying = sig;
+            break;
+          }
+        }
+        if (qualifying) {
+          const lo = qualifying.lower, hi = qualifying.upper;
+          const wing = (hi - lo) / 2;
+          const intrinsic = Math.max(0, Math.min(spxClose - lo, hi - spxClose));
+          const clipped = Math.min(intrinsic, wing);
+          m8bfPL = Math.round((clipped - qualifying.premium) * 100);
+          console.log(`[eod] m8bfPL computed: $${m8bfPL} (center=${qualifying.center}, premium=${qualifying.premium}, spxClose=${spxClose})`);
+        } else {
+          console.log('[eod] No qualifying signal in window for m8bfPL');
+        }
+      }
+    } catch (e) { console.warn('[eod] m8bfPL compute:', e.message); }
   }
 
   // Backfill vixOpen/spxOpen if morning signal missed them
@@ -1794,7 +1813,7 @@ async function backfillMissingPL(env, targetDates = null) {
   if (targetDates) {
     missing = content.filter(r => targetDates.includes(r.date));
   } else {
-    missing = content.filter(r => r.date < todayISO && r.m8bfPL == null && r.spxClose != null);
+    missing = content.filter(r => r.date <= todayISO && r.m8bfPL == null && r.spxClose != null);
   }
 
   const filled = [], failed = [];
