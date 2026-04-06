@@ -137,10 +137,7 @@ const isLastTradeMo = (d) => nextTrade(d).getMonth() !== d.getMonth();
 function isEomN(n, d) { const f = new Date(d.getFullYear(), d.getMonth() + 1, 1); let t = prevTrade(f); for (let i = 0; i < n; i++) t = prevTrade(t); return t.getFullYear() === d.getFullYear() && t.getMonth() === d.getMonth() && t.getDate() === d.getDate(); }
 const isFirstTradeMo = (d) => prevTrade(d).getMonth() !== d.getMonth();
 function isFirstTradeMon(d) {
-  const y = d.getFullYear(), m = d.getMonth();
-  let x = new Date(y, m, 1); while (isWkend(x) || isHol(x)) x.setDate(x.getDate() + 1);
-  while (x.getDay() !== 1) x = nextTrade(x);
-  return x.getFullYear() === y && x.getMonth() === m && x.getDate() === d.getDate();
+  return isFirstTradeMo(d) && d.getDay() === 1;
 }
 
 function m8Sched(dow) {
@@ -351,7 +348,7 @@ function buildDiscordMessage(signal, vixValues) {
   const sigColor  = text => isActive(text) ? GRN : isBlocked(text) ? RED : DIM;
 
   const m8bfDisplay = signal.m8bfText.replace(/^M8BF\s*[—-]\s*/, '').replace(/^M8BF$/, '—');
-  const strikes = (signal.strikeInfo && signal.theme === 'm8bf') ? signal.strikeInfo.s.join('  ') : '';
+  const strikes = (signal.strikeInfo && signal.theme === 'm8bf' && signal.strikeInfo.blocked) ? `Banned center strikes — skip these:  ${signal.strikeInfo.blocked.join('  ')}  Combo bans (T1 → center):  ${Object.entries(signal.strikeInfo.comboBans || {}).map(([k,v])=>`${k}→${v}`).join('  ')}` : '';
   const m8bfReason = signal.blockT === 'hard' && signal.rec.includes('M8BF') ? signal.blockD : '';
 
   let inner = `${DIM}📅 ${signal.dateStr} — ${signal.dayLabel}${RST}\n`;
@@ -793,17 +790,13 @@ async function handleScheduled(env) {
     }
   }
 
-  // ── Morning signal: 9:30-9:40 ET window, first tick with VIX data wins ──
-  const isMorning = etHour === 9 && etMin >= 30 && etMin <= 40;
+  // ── Morning signal: retries every cron tick until sent ──
   const todayISO_check = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
   const morningDoneKey = `morning_signal_${todayISO_check}`;
-
-  if (!isMorning) {
-    return { status: 'discord_poll', discord: discordResult, gex: gexResult, time: `${etHour}:${String(etMin).padStart(2,'0')} ET` };
-  }
-
   const morningDone = await env.SIGNAL_KV.get(morningDoneKey);
-  if (morningDone) {
+  const preMarket = etHour < 9 || (etHour === 9 && etMin < 30);
+
+  if (morningDone || preMarket) {
     return { status: 'discord_poll', discord: discordResult, gex: gexResult, time: `${etHour}:${String(etMin).padStart(2,'0')} ET` };
   }
 
@@ -971,28 +964,40 @@ async function handleScheduled(env) {
 
   // Validate proxyUrl — must be HTTPS (typically a Cloudflare Worker that relays to Discord Bot API)
   // The proxy worker accepts { userId, message } and sends DMs via Discord Bot token
-  if (!dc.proxyUrl || !dc.proxyUrl.startsWith('https://')) {
-    throw new Error('Invalid proxyUrl: must be an HTTPS URL (your Cloudflare Worker proxy)');
-  }
-
+  // Use Service Binding if available (worker-to-worker on same account), fallback to URL fetch
   const dcHeaders = { 'Content-Type': 'application/json' };
   if (env.PROXY_SECRET) dcHeaders['Authorization'] = `Bearer ${env.PROXY_SECRET}`;
-  const dcResp = await fetch(dc.proxyUrl, {
-    method: 'POST',
-    headers: dcHeaders,
-    body: JSON.stringify({ userId: dc.channelId /* actually Discord user ID */, message: message.slice(0, 2000) }),
-  });
+  const dcBody = JSON.stringify({ userId: dc.channelId /* actually Discord user ID */, message: message.slice(0, 2000) });
+
+  let dcResp;
+  if (env.DISCORD_PROXY) {
+    // Service Binding — direct worker-to-worker call, no public URL needed
+    dcResp = await env.DISCORD_PROXY.fetch(new Request('https://dummy/', {
+      method: 'POST',
+      headers: dcHeaders,
+      body: dcBody,
+    }));
+  } else if (dc.proxyUrl && dc.proxyUrl.startsWith('https://')) {
+    dcResp = await fetch(dc.proxyUrl, {
+      method: 'POST',
+      headers: dcHeaders,
+      body: dcBody,
+    });
+  } else {
+    throw new Error('No DISCORD_PROXY binding and no valid proxyUrl — cannot send Discord DM');
+  }
   let dcData;
   try { dcData = await dcResp.json(); } catch { dcData = { error: `Non-JSON response (HTTP ${dcResp.status})` }; }
   if (!dcResp.ok) {
     // Retry once on 429 (rate limit) after Retry-After delay
     if (dcResp.status === 429 && dcData.retry_after) {
       await new Promise(r => setTimeout(r, (dcData.retry_after + 0.5) * 1000));
-      const retryResp = await fetch(dc.proxyUrl, {
-        method: 'POST',
-        headers: dcHeaders,
-        body: JSON.stringify({ userId: dc.channelId, message: message.slice(0, 2000) }),
-      });
+      let retryResp;
+      if (env.DISCORD_PROXY) {
+        retryResp = await env.DISCORD_PROXY.fetch(new Request('https://dummy/', { method: 'POST', headers: dcHeaders, body: dcBody }));
+      } else {
+        retryResp = await fetch(dc.proxyUrl, { method: 'POST', headers: dcHeaders, body: dcBody });
+      }
       let retryData;
       try { retryData = await retryResp.json(); } catch { retryData = { error: `Non-JSON (HTTP ${retryResp.status})` }; }
       if (!retryResp.ok) throw new Error('Discord post failed after retry: ' + JSON.stringify(retryData));
@@ -2014,7 +2019,7 @@ export default {
       console.error('ALLOWED_ORIGIN env var is not set — all cross-origin requests will be blocked');
     }
     const allowed = env.ALLOWED_ORIGIN || 'null';
-    const corsOk = origin !== '' && origin === allowed;
+    const corsOk = origin !== '' && (origin === allowed || origin.startsWith('http://localhost'));
 
     const corsHeaders = {
       'Access-Control-Allow-Origin': corsOk ? origin || '*' : '',
@@ -2389,7 +2394,7 @@ export default {
         }
 
         // ── Morning signal fallback: fire from /gex if cron missed it ──
-        if (marketOpen && etH === 9 && etM >= 30 && etM <= 40) {
+        if (marketOpen && (etH > 9 || (etH === 9 && etM >= 30))) {
           const todayCheck = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
           const mKey = `morning_signal_${todayCheck}`;
           const mFailKey = `morning_signal_fail_${todayCheck}`;

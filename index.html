@@ -769,10 +769,7 @@
   function isEomN(n,d=new Date()){ const f=new Date(d.getFullYear(),d.getMonth()+1,1); let t=prevTrade(f); for(let i=0;i<n;i++)t=prevTrade(t); return t.getFullYear()===d.getFullYear()&&t.getMonth()===d.getMonth()&&t.getDate()===d.getDate(); }
   const isFirstTradeMo=(d=new Date())=>prevTrade(d).getMonth()!==d.getMonth();
   function isFirstTradeMon(d=new Date()){
-    const y=d.getFullYear(),m=d.getMonth();
-    let x=new Date(y,m,1); while(isWkend(x)||isHol(x))x.setDate(x.getDate()+1);
-    while(x.getDay()!==1)x=nextTrade(x);
-    return x.getFullYear()===y&&x.getMonth()===m&&x.getDate()===d.getDate();
+    return isFirstTradeMo(d)&&d.getDay()===1;
   }
 
   /* Trading days countdown */
@@ -1877,10 +1874,21 @@
     etTarget.setHours(9, 30, 0, 0);
 
     let msUntil = etTarget - etNow;
-    if(msUntil < 0) msUntil += 24 * 60 * 60 * 1000; // already past — schedule for tomorrow
 
     // If market is closed today (weekend/holiday), don't bother
     if(!isTradingDay(new Date())) return;
+
+    if(msUntil < 0){
+      // Already past 9:30 ET — poll immediately if VIX fields are still empty
+      const hasVix = document.getElementById('todayOpen').value;
+      if(!hasVix){
+        schwabSetStatus('connecting', 'Fetching VIX data…');
+        schwabStartPolling();
+      } else {
+        schwabSetStatus('connected', 'Schwab connected ✓');
+      }
+      return;
+    }
 
     schwabSetStatus('connected', `Schwab connected ✓ · Stream starts at 9:30 AM ET`);
 
