@@ -1252,6 +1252,28 @@ async function handleGEXUpdate(env, token) {
     await env.SIGNAL_KV.put('gex_current_0dte', JSON.stringify(gex0dte));
   }
 
+  // Store SPX price tick for live.html chart (replaces dead live_updater.py → spx_history.json)
+  try {
+    const etNowGex = toET(new Date());
+    const todayGex = `${etNowGex.getFullYear()}-${String(etNowGex.getMonth()+1).padStart(2,'0')}-${String(etNowGex.getDate()).padStart(2,'0')}`;
+    const hh = String(etNowGex.getHours()).padStart(2, '0');
+    const mm = String(etNowGex.getMinutes()).padStart(2, '0');
+    // Snap to 5-min intervals for consistency
+    const mm5 = String(Math.floor(parseInt(mm) / 5) * 5).padStart(2, '0');
+    const timeKey = `${hh}:${mm5}`;
+
+    const spxHistKey = `spx_history_${todayGex}`;
+    const spxHistRaw = await env.SIGNAL_KV.get(spxHistKey);
+    const spxHist = spxHistRaw ? JSON.parse(spxHistRaw) : [];
+
+    // Only add if this 5-min slot doesn't exist yet
+    if (!spxHist.some(p => p.time === timeKey)) {
+      spxHist.push({ time: timeKey, price: parseFloat(spot.toFixed(2)) });
+      spxHist.sort((a, b) => a.time.localeCompare(b.time));
+      await env.SIGNAL_KV.put(spxHistKey, JSON.stringify(spxHist), { expirationTtl: 86400 });
+    }
+  } catch (e) { console.warn('[gex] spx history tick:', e.message); }
+
   // 5. Load history from KV for % change tracking
   const historyRaw = await env.SIGNAL_KV.get('gex_history');
   let history = historyRaw ? JSON.parse(historyRaw) : [];
@@ -2669,6 +2691,63 @@ export default {
       if (url.pathname === '/signals' && request.method === 'GET') {
         const data = await env.SIGNAL_KV.get('signals_today');
         return jsonResp(data ? JSON.parse(data) : { date: '', signals: [] }, 200, corsHeaders);
+      }
+
+      // ── GET /spx-history ── Today's SPX price ticks (replaces dead spx_history.json)
+      if (url.pathname === '/spx-history' && request.method === 'GET') {
+        const etNowH = toET(new Date());
+        const todayH = `${etNowH.getFullYear()}-${String(etNowH.getMonth()+1).padStart(2,'0')}-${String(etNowH.getDate()).padStart(2,'0')}`;
+        const spxHistRaw = await env.SIGNAL_KV.get(`spx_history_${todayH}`);
+        return jsonResp({ date: todayH, data: spxHistRaw ? JSON.parse(spxHistRaw) : [] }, 200, corsHeaders);
+      }
+
+      // ── GET /trade ── Today's M8BF trade status (replaces dead today_trade.json)
+      if (url.pathname === '/trade' && request.method === 'GET') {
+        const etNowT = toET(new Date());
+        const todayT = `${etNowT.getFullYear()}-${String(etNowT.getMonth()+1).padStart(2,'0')}-${String(etNowT.getDate()).padStart(2,'0')}`;
+        const dow = etNowT.getDay();
+        const win = M8BF_WINDOWS[dow];
+
+        const sigRaw = await env.SIGNAL_KV.get('signals_today');
+        const sigData = sigRaw ? JSON.parse(sigRaw) : { date: '', signals: [] };
+
+        if (!win || sigData.date !== todayT) {
+          return jsonResp({ date: todayT, triggered: false, status: 'waiting', reason: 'No window today or no signals' }, 200, corsHeaders);
+        }
+
+        const [winLo, winHi] = win;
+        let qualifying = null;
+        for (const sig of (sigData.signals || [])) {
+          if (!sig.time) continue;
+          const [h, m] = sig.time.split(':').map(Number);
+          const mins = h * 60 + m;
+          if (mins >= winLo && mins < winHi && !sig.banned) {
+            qualifying = sig;
+            break;
+          }
+        }
+
+        if (!qualifying) {
+          // Check if we're past the window
+          const nowMins = etNowT.getHours() * 60 + etNowT.getMinutes();
+          if (nowMins >= winHi) {
+            return jsonResp({ date: todayT, triggered: false, status: 'no_signal', reason: 'Window passed, no qualifying signal' }, 200, corsHeaders);
+          }
+          return jsonResp({ date: todayT, triggered: false, status: 'waiting', window: `${Math.floor(winLo/60)}:${String(winLo%60).padStart(2,'0')}-${Math.floor(winHi/60)}:${String(winHi%60).padStart(2,'0')}` }, 200, corsHeaders);
+        }
+
+        return jsonResp({
+          date: todayT,
+          triggered: true,
+          status: 'open',
+          signal_time: qualifying.time,
+          center: qualifying.center,
+          lower: qualifying.lower,
+          upper: qualifying.upper,
+          t1: qualifying.t1,
+          premium: qualifying.premium,
+          cp: qualifying.cp,
+        }, 200, corsHeaders);
       }
 
       return jsonResp({ error: 'Not found' }, 404, corsHeaders);

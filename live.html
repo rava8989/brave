@@ -256,14 +256,27 @@ function todayET() {
   return getNowET().toISOString().slice(0, 10);
 }
 const RAW = 'https://raw.githubusercontent.com/rava8989/brave/main/';
+const PROXY = 'https://schwab-proxy.ravamt4.workers.dev';
 async function loadSPXHistory() {
+  try {
+    // Primary: fetch from worker (live KV data, updated every 2 min)
+    const r = await fetchWithRetry(PROXY + '/spx-history', { cache: 'no-store' });
+    if (r.ok) {
+      const d = await r.json();
+      if (d.date === todayET() && d.data && d.data.length > 0) {
+        spxHistory = d.data;
+        return;
+      }
+    }
+  } catch { /* worker unavailable */ }
+  // Fallback: GitHub raw (legacy, may be stale)
   try {
     const r = await fetchWithRetry(RAW + 'spx_history.json?v=' + Date.now(), { cache: 'no-store' });
     if (!r.ok) return;
     const d = await r.json();
-    if (d.date !== todayET()) return; // stale — different day
+    if (d.date !== todayET()) return;
     spxHistory = d.data || [];
-  } catch { /* file not yet created by scraper */ }
+  } catch { /* file not yet created */ }
 }
 async function loadSignals() {
   try {
@@ -421,15 +434,22 @@ function updateSPXChartTheme() {
   spxChart.update();
 }
 
-// ─── Load today_trade.json ────────────────────────────────────────────────────
+// ─── Load today's trade status from worker ───────────────────────────────────
 async function loadTrade() {
   try {
+    // Primary: fetch from worker (computes trade from live signals + window rules)
+    const r = await fetchWithRetry(PROXY + '/trade', { cache: 'no-store' });
+    if (r.ok) {
+      trade = await r.json();
+      return;
+    }
+  } catch { /* worker unavailable */ }
+  // Fallback: GitHub raw (legacy, may be stale)
+  try {
     const r = await fetchWithRetry(RAW + 'today_trade.json', { cache: 'no-store' });
-    if (!r.ok) return;           // keep last known trade on error
+    if (!r.ok) return;
     trade = await r.json();
-  } catch {
-    // keep last known trade on network failure
-  }
+  } catch { /* keep last known trade */ }
 }
 
 // ─── OAuth Callback Handler ───────────────────────────────────────────────────
