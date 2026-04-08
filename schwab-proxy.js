@@ -301,18 +301,18 @@ function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate, pre
   let m8bfText = rec, stradText = rec, gxbfText = rec;
 
   if (theme === 'm8bf') {
-    stradText = `No Straddle (${oNight <= 0 ? 'overnight VIX down' : 'overnight VIX drop > ' + T.DROP_GXBF})`;
+    stradText = `No Straddle (${oNight <= 0 ? 'overnight VIX up' : 'overnight VIX drop > ' + T.DROP_GXBF})`;
     gxbfText = `No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;
   } else if (theme === 'strad') {
-    m8bfText = `No M8BF (${oNight > 0 ? 'overnight VIX up' : 'open-to-open ≤ ' + T.O2O_M8BF})`;
+    m8bfText = `No M8BF (Straddle takes priority)`;
     gxbfText = `No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;
   } else if (theme === 'gxbf') {
-    m8bfText = `No M8BF (overnight VIX up)`;
+    m8bfText = `No M8BF (GXBF takes priority)`;
     stradText = `No Straddle (overnight VIX drop > ${T.DROP_GXBF})`;
   } else if (theme === 'block') {
     // keep rec as-is for the blocked card
     if (rec.includes('M8BF')) {
-      stradText = `No Straddle (${oNight <= 0 ? 'overnight VIX down' : 'overnight VIX drop > ' + T.DROP_GXBF})`;
+      stradText = `No Straddle (${oNight <= 0 ? 'overnight VIX up' : 'overnight VIX drop > ' + T.DROP_GXBF})`;
       gxbfText = `No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;
     } else if (rec.includes('Straddle') || rec.includes('CPI') || rec.includes('Trade')) {
       m8bfText = `No M8BF`;
@@ -976,34 +976,40 @@ async function handleScheduled(env) {
   const vixValues = { yOpen: vixYOpen, yClose: vixYClose, todayOpen: vixToday };
   const message = buildDiscordMessage(signal, vixValues);
 
-  // 7. Post to Discord
+  // 7. Claim the morning slot BEFORE sending (prevents duplicate messages from concurrent cron ticks)
+  const msDoneKey = `morning_signal_${todayISO}`;
+  await env.SIGNAL_KV.put(msDoneKey, 'sending', { expirationTtl: 86400 });
+
+  // 8. Post to Discord
   const dcRaw = await env.SIGNAL_KV.get('discord_config');
-  if (!dcRaw) throw new Error('No Discord config in KV — sync from browser');
+  if (!dcRaw) { await env.SIGNAL_KV.delete(msDoneKey); throw new Error('No Discord config in KV — sync from browser'); }
   const dc = JSON.parse(dcRaw);
 
-  // Validate proxyUrl — must be HTTPS (typically a Cloudflare Worker that relays to Discord Bot API)
-  // The proxy worker accepts { userId, message } and sends DMs via Discord Bot token
-  // Use Service Binding if available (worker-to-worker on same account), fallback to URL fetch
   const dcHeaders = { 'Content-Type': 'application/json' };
   if (env.PROXY_SECRET) dcHeaders['Authorization'] = `Bearer ${env.PROXY_SECRET}`;
   const dcBody = JSON.stringify({ userId: dc.channelId /* actually Discord user ID */, message: message.slice(0, 2000) });
 
   let dcResp;
-  if (env.DISCORD_PROXY) {
-    // Service Binding — direct worker-to-worker call, no public URL needed
-    dcResp = await env.DISCORD_PROXY.fetch(new Request('https://dummy/', {
-      method: 'POST',
-      headers: dcHeaders,
-      body: dcBody,
-    }));
-  } else if (dc.proxyUrl && dc.proxyUrl.startsWith('https://')) {
-    dcResp = await fetch(dc.proxyUrl, {
-      method: 'POST',
-      headers: dcHeaders,
-      body: dcBody,
-    });
-  } else {
-    throw new Error('No DISCORD_PROXY binding and no valid proxyUrl — cannot send Discord DM');
+  try {
+    if (env.DISCORD_PROXY) {
+      dcResp = await env.DISCORD_PROXY.fetch(new Request('https://dummy/', {
+        method: 'POST',
+        headers: dcHeaders,
+        body: dcBody,
+      }));
+    } else if (dc.proxyUrl && dc.proxyUrl.startsWith('https://')) {
+      dcResp = await fetch(dc.proxyUrl, {
+        method: 'POST',
+        headers: dcHeaders,
+        body: dcBody,
+      });
+    } else {
+      throw new Error('No DISCORD_PROXY binding and no valid proxyUrl — cannot send Discord DM');
+    }
+  } catch (e) {
+    // Send failed — release the slot so next cron tick can retry
+    await env.SIGNAL_KV.delete(msDoneKey);
+    throw e;
   }
   let dcData;
   try { dcData = await dcResp.json(); } catch { dcData = { error: `Non-JSON response (HTTP ${dcResp.status})` }; }
@@ -1019,14 +1025,19 @@ async function handleScheduled(env) {
       }
       let retryData;
       try { retryData = await retryResp.json(); } catch { retryData = { error: `Non-JSON (HTTP ${retryResp.status})` }; }
-      if (!retryResp.ok) throw new Error('Discord post failed after retry: ' + JSON.stringify(retryData));
+      if (!retryResp.ok) {
+        await env.SIGNAL_KV.delete(msDoneKey);
+        throw new Error('Discord post failed after retry: ' + JSON.stringify(retryData));
+      }
+      // Mark as fully sent
+      await env.SIGNAL_KV.put(msDoneKey, 'sent', { expirationTtl: 86400 });
       return retryData;
     }
+    await env.SIGNAL_KV.delete(msDoneKey);
     throw new Error('Discord post failed: ' + JSON.stringify(dcData));
   }
 
-  // Mark morning signal as sent for today (expires at midnight + 1h buffer)
-  const msDoneKey = `morning_signal_${todayISO}`;
+  // Mark morning signal as fully sent
   await env.SIGNAL_KV.put(msDoneKey, 'sent', { expirationTtl: 86400 });
 
   return {
@@ -2742,8 +2753,8 @@ export default {
           status: 'open',
           signal_time: qualifying.time,
           center: qualifying.center,
-          lower: qualifying.lower,
-          upper: qualifying.upper,
+          bf_lower: qualifying.lower,
+          bf_upper: qualifying.upper,
           t1: qualifying.t1,
           premium: qualifying.premium,
           cp: qualifying.cp,
