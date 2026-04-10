@@ -794,7 +794,10 @@ async function handleScheduled(env) {
     let backfillWR = {}, backfillPL = {};
     try { backfillWR = await backfillMissingWR(env); } catch(e) { backfillWR = { error: e.message }; }
     try { backfillPL = await backfillMissingPL(env); } catch(e) { backfillPL = { error: e.message }; }
-    return { ...eodResult, discord: discordResult, backfill_wr: backfillWR, backfill_pl: backfillPL };
+    // Append today's raw signals to scraped_signals.csv on GitHub
+    let scrapeAppend = {};
+    try { scrapeAppend = await appendScrapedSignals(env, etNow); } catch(e) { scrapeAppend = { error: e.message }; }
+    return { ...eodResult, discord: discordResult, backfill_wr: backfillWR, backfill_pl: backfillPL, scrape_append: scrapeAppend };
   }
 
   // ── GEX update during market hours (every 2-min cron tick) ──
@@ -1699,6 +1702,137 @@ async function fetchAllDiscordSignalsForDate(token, channelId, dateISO) {
   return allSignals;
 }
 
+// ── Append today's full Discord signals to scraped_signals.csv on GitHub ──
+async function appendScrapedSignals(env, etNow) {
+  const todayISO = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
+  const token = env.DISCORD_USER_TOKEN;
+  const channelId = '1048242197029458040';
+
+  // Check if already appended today
+  const doneKey = `scrape_appended_${todayISO}`;
+  if (await env.SIGNAL_KV.get(doneKey)) return { skipped: true, date: todayISO };
+
+  // Fetch raw Discord messages for today
+  const [y, m, d] = todayISO.split('-').map(Number);
+  const startMs = Date.UTC(y, m - 1, d, 12, 0, 0);
+  const endMs = Date.UTC(y, m - 1, d, 22, 0, 0);
+  const discordEpoch = 1420070400000n;
+  let afterSnowflake = ((BigInt(startMs) - discordEpoch) << 22n).toString();
+  const beforeSnowflake = ((BigInt(endMs) - discordEpoch) << 22n).toString();
+
+  const rows = [];
+  for (let page = 0; page < 10; page++) {
+    const resp = await fetch(
+      `https://discord.com/api/v9/channels/${channelId}/messages?limit=100&after=${afterSnowflake}&before=${beforeSnowflake}`,
+      { headers: { 'Authorization': token, 'User-Agent': 'Mozilla/5.0' } }
+    );
+    if (!resp.ok) break;
+    const batch = await resp.json();
+    if (!Array.isArray(batch) || batch.length === 0) break;
+    batch.sort((a, b) => a.id.localeCompare(b.id));
+
+    for (const msg of batch) {
+      const content = msg.content || '';
+      const msgET = toET(new Date(msg.timestamp));
+      const msgDate = `${msgET.getFullYear()}-${String(msgET.getMonth()+1).padStart(2,'0')}-${String(msgET.getDate()).padStart(2,'0')}`;
+      if (msgDate !== todayISO) continue;
+      const msgTime = `${String(msgET.getHours()).padStart(2,'0')}:${String(msgET.getMinutes()).padStart(2,'0')}`;
+
+      const priceM = content.match(/Price:\s*([\d.]+)/i);
+      if (!priceM) continue; // not a signal message
+
+      const field = (pat) => { const m = content.match(pat); return m ? m[1] : ''; };
+      const bfStrikesM = content.match(/Butterfly[^/]*(\d{4,5})\/(\d{4,5})\/(\d{4,5})\s*(CALL|PUT)/i);
+      const bfPriceM = content.match(/Butterfly[^@]*@([\d.]+)/i);
+      const icStrikesM = content.match(/Iron Condor[^/]*(\d{4,5})\/(\d{4,5})\/(\d{4,5})\/(\d{4,5})/i);
+      const icPriceM = content.match(/Iron Condor[^@]*@([\d.]+)/i);
+      const vtStrikesM = content.match(/Vertical[^/]*(\d{4,5})\/(\d{4,5})\s*(CALL|PUT)/i);
+      const vtPriceM = content.match(/Vertical[^@]*@([\d.]+)/i);
+
+      // Sonar IC (appears after "Sonar:" label in the message)
+      const sonarBlock = content.split(/Sonar:/i)[1] || '';
+      const sonarStrikesM = sonarBlock.match(/Iron Condor[^/]*(\d{4,5})\/(\d{4,5})\/(\d{4,5})\/(\d{4,5})/i);
+      const sonarPriceM = sonarBlock.match(/Iron Condor[^@]*@([\d.]+)/i);
+
+      const csvLine = [
+        msg.timestamp, msgDate, msgTime,
+        priceM[1],
+        field(/Trend:\s*(\w+)/i),
+        field(/Predicted Close:\s*([\d.]+)/i),
+        field(/Strength:\s*([\d.]+)/i),
+        field(/Short term:\s*([\d.]+)/i),
+        field(/Long term:\s*([\d.]+)/i),
+        field(/Short term bias:\s*(\w+)/i),
+        field(/Long term bias:\s*(\w+)/i),
+        field(/Calls:\s*([\d.]+)/i),
+        field(/Puts:\s*([\d.]+)/i),
+        field(/Center:\s*([\d.]+)/i),
+        field(/Range:\s*([\d.]+)/i),
+        field(/Target 1:\s*([\d.]+)/i),
+        field(/Target 2:\s*([\d.]+)/i),
+        field(/Delta:\s*([\d.]+)/i),
+        field(/Gamma:\s*([\d.]+)/i),
+        field(/Interest:\s*([\d.]+)/i),
+        field(/Sonar:\s*([\d.]+)/i),
+        field(/Volume:\s*([\d.]+)/i),
+        bfStrikesM ? 'BUY' : '',
+        bfStrikesM ? `${bfStrikesM[1]}/${bfStrikesM[2]}/${bfStrikesM[3]}` : '',
+        bfStrikesM ? bfStrikesM[2] : '',
+        bfStrikesM ? bfStrikesM[1] : '',
+        bfStrikesM ? bfStrikesM[3] : '',
+        bfPriceM ? bfPriceM[1] : '',
+        icStrikesM ? 'SELL' : '',
+        icStrikesM ? `${icStrikesM[1]}/${icStrikesM[2]}/${icStrikesM[3]}/${icStrikesM[4]}` : '',
+        icPriceM ? icPriceM[1] : '',
+        sonarStrikesM ? 'SELL' : '',
+        sonarStrikesM ? `${sonarStrikesM[1]}/${sonarStrikesM[2]}/${sonarStrikesM[3]}/${sonarStrikesM[4]}` : '',
+        sonarPriceM ? sonarPriceM[1] : '',
+        vtStrikesM ? 'SELL' : '',
+        vtStrikesM ? `${vtStrikesM[1]}/${vtStrikesM[2]}` : '',
+        vtStrikesM ? vtStrikesM[3] : '',
+        vtPriceM ? vtPriceM[1] : '',
+      ].map(v => String(v).includes(',') ? `"${v}"` : v).join(',');
+      rows.push(csvLine);
+    }
+    if (batch.length < 100) break;
+    afterSnowflake = batch[batch.length - 1].id;
+  }
+
+  if (rows.length === 0) return { date: todayISO, appended: 0 };
+
+  // Fetch current scraped_signals.csv from GitHub, append rows, push
+  const apiUrl = 'https://api.github.com/repos/rava8989/brave/contents/scraped_signals.csv';
+  const ghHeaders = {
+    'Authorization': `Bearer ${env.GITHUB_TOKEN}`,
+    'Accept': 'application/vnd.github+json',
+    'User-Agent': 'schwab-proxy-worker/1.0',
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
+
+  const getResp = await fetch(apiUrl, { headers: ghHeaders });
+  let existingContent = '', sha = '';
+  if (getResp.ok) {
+    const meta = await getResp.json();
+    sha = meta.sha;
+    existingContent = atob(meta.content.replace(/\n/g, ''));
+  }
+
+  const newContent = existingContent.trimEnd() + '\n' + rows.join('\n') + '\n';
+  const putResp = await fetch(apiUrl, {
+    method: 'PUT',
+    headers: ghHeaders,
+    body: JSON.stringify({
+      message: `auto: append ${rows.length} scraped signals for ${todayISO}`,
+      content: btoa(newContent),
+      sha,
+    }),
+  });
+
+  if (!putResp.ok) throw new Error(`GitHub PUT failed: ${putResp.status}`);
+  await env.SIGNAL_KV.put(doneKey, 'done', { expirationTtl: 86400 * 3 });
+  return { date: todayISO, appended: rows.length };
+}
+
 function computeWinRateFromSignals(signals, spxClose) {
   if (!signals || signals.length === 0) return null;
   let wins = 0;
@@ -2238,6 +2372,146 @@ export default {
         }));
         await env.SIGNAL_KV.put('signals_today', JSON.stringify({ date: dateISO, signals }));
         return jsonResp({ date: dateISO, total: signals.length, banned: signals.filter(s => s.banned).length }, 200, { 'Access-Control-Allow-Origin': '*' });
+      } catch (e) {
+        return jsonResp({ error: e.message }, 500, { 'Access-Control-Allow-Origin': '*' });
+      }
+    }
+
+    // ── GET /scrape-raw?from=YYYY-MM-DD&to=YYYY-MM-DD ── Fetch raw Discord signals for CSV
+    if (url.pathname === '/scrape-raw' && request.method === 'GET') {
+      const secret = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
+      if (!secret || secret !== env.SYNC_SECRET) {
+        return jsonResp({ error: 'Unauthorized' }, 401, { 'Access-Control-Allow-Origin': '*' });
+      }
+      try {
+        const from = url.searchParams.get('from');
+        const to = url.searchParams.get('to');
+        if (!from || !to) return jsonResp({ error: 'missing from/to' }, 400, {});
+
+        const token = env.DISCORD_USER_TOKEN;
+        const channelId = '1048242197029458040';
+        const results = [];
+
+        // Iterate trading days
+        const startD = new Date(from + 'T12:00:00Z');
+        const endD = new Date(to + 'T12:00:00Z');
+        for (let d = new Date(startD); d <= endD; d.setUTCDate(d.getUTCDate() + 1)) {
+          const dow = d.getUTCDay();
+          if (dow === 0 || dow === 6) continue;
+          const dateISO = d.toISOString().slice(0, 10);
+
+          // Fetch raw messages for this date
+          const [y, m, dd] = dateISO.split('-').map(Number);
+          const startMs = Date.UTC(y, m - 1, dd, 12, 0, 0);
+          const endMs = Date.UTC(y, m - 1, dd, 22, 0, 0);
+          const discordEpoch = 1420070400000n;
+          let afterSnowflake = ((BigInt(startMs) - discordEpoch) << 22n).toString();
+          const beforeSnowflake = ((BigInt(endMs) - discordEpoch) << 22n).toString();
+
+          for (let page = 0; page < 10; page++) {
+            const resp = await fetch(
+              `https://discord.com/api/v9/channels/${channelId}/messages?limit=100&after=${afterSnowflake}&before=${beforeSnowflake}`,
+              { headers: { 'Authorization': token, 'User-Agent': 'Mozilla/5.0' } }
+            );
+            if (!resp.ok) break;
+            const batch = await resp.json();
+            if (!Array.isArray(batch) || batch.length === 0) break;
+            batch.sort((a, b) => a.id.localeCompare(b.id));
+
+            for (const msg of batch) {
+              const content = msg.content || '';
+              const msgET = toET(new Date(msg.timestamp));
+              const msgDate = `${msgET.getFullYear()}-${String(msgET.getMonth()+1).padStart(2,'0')}-${String(msgET.getDate()).padStart(2,'0')}`;
+              if (msgDate !== dateISO) continue;
+              const msgTime = `${String(msgET.getHours()).padStart(2,'0')}:${String(msgET.getMinutes()).padStart(2,'0')}`;
+
+              // Parse full signal fields
+              const priceM = content.match(/Price:\s*([\d.]+)/i);
+              const trendM = content.match(/Trend:\s*(\w+)/i);
+              const predM = content.match(/Predicted Close:\s*([\d.]+)/i);
+              const strM = content.match(/Strength:\s*([\d.]+)/i);
+              const stM = content.match(/Short term:\s*([\d.]+)/i);
+              const ltM = content.match(/Long term:\s*([\d.]+)/i);
+              const sbM = content.match(/Short term bias:\s*(\w+)/i);
+              const lbM = content.match(/Long term bias:\s*(\w+)/i);
+              const callsM = content.match(/Calls:\s*([\d.]+)/i);
+              const putsM = content.match(/Puts:\s*([\d.]+)/i);
+              const centerM = content.match(/Center:\s*([\d.]+)/i);
+              const rangeM = content.match(/Range:\s*([\d.]+)/i);
+              const t1M = content.match(/Target 1:\s*([\d.]+)/i);
+              const t2M = content.match(/Target 2:\s*([\d.]+)/i);
+              const deltaM = content.match(/Delta:\s*([\d.]+)/i);
+              const gammaM = content.match(/Gamma:\s*([\d.]+)/i);
+              const interestM = content.match(/Interest:\s*([\d.]+)/i);
+              const sonarM = content.match(/Sonar:\s*([\d.]+)/i);
+              const volumeM = content.match(/Volume:\s*([\d.]+)/i);
+
+              // Butterfly
+              const bfM = content.match(/(BUY \+1 Butterfly SPX[^@]*@([\d.]+)\s*LMT)/i);
+              const bfStrikesM = content.match(/Butterfly[^/]*(\d{4,5})\/(\d{4,5})\/(\d{4,5})\s*(CALL|PUT)/i);
+
+              // IC
+              const icM = content.match(/(SELL -1 Iron Condor SPX[^@]*@([\d.]+)\s*LMT)/i);
+              const icStrikesM = content.match(/Iron Condor[^/]*(\d{4,5})\/(\d{4,5})\/(\d{4,5})\/(\d{4,5})/i);
+
+              // Sonar IC
+              const sonarICM = content.match(/Sonar:[^S]*SELL -1 Iron Condor SPX[^@]*@([\d.]+)/i);
+              const sonarStrikesM = content.match(/Sonar:[^S]*Iron Condor[^/]*(\d{4,5})\/(\d{4,5})\/(\d{4,5})\/(\d{4,5})/i);
+
+              // Vertical
+              const vtM = content.match(/(SELL -1 Vertical SPX[^@]*@([\d.]+)\s*LMT)/i);
+              const vtStrikesM = content.match(/Vertical[^/]*(\d{4,5})\/(\d{4,5})\s*(CALL|PUT)/i);
+
+              if (!priceM) continue; // not a signal message
+
+              results.push({
+                datetime: msg.timestamp,
+                date: msgDate,
+                time: msgTime,
+                price: priceM ? priceM[1] : '',
+                trend: trendM ? trendM[1] : '',
+                predicted_close: predM ? predM[1] : '',
+                strength: strM ? strM[1] : '',
+                short_term: stM ? stM[1] : '',
+                long_term: ltM ? ltM[1] : '',
+                short_bias: sbM ? sbM[1] : '',
+                long_bias: lbM ? lbM[1] : '',
+                calls: callsM ? callsM[1] : '',
+                puts: putsM ? putsM[1] : '',
+                center: centerM ? centerM[1] : '',
+                range: rangeM ? rangeM[1] : '',
+                target1: t1M ? t1M[1] : '',
+                target2: t2M ? t2M[1] : '',
+                delta: deltaM ? deltaM[1] : '',
+                gamma: gammaM ? gammaM[1] : '',
+                interest: interestM ? interestM[1] : '',
+                sonar: sonarM ? sonarM[1] : '',
+                volume: volumeM ? volumeM[1] : '',
+                bf_action: bfM ? 'BUY' : '',
+                bf_strikes: bfStrikesM ? `${bfStrikesM[1]}/${bfStrikesM[2]}/${bfStrikesM[3]}` : '',
+                bf_center: bfStrikesM ? bfStrikesM[2] : '',
+                bf_upper: bfStrikesM ? bfStrikesM[1] : '',
+                bf_lower: bfStrikesM ? bfStrikesM[3] : '',
+                bf_price: bfM ? bfM[2] : '',
+                ic_action: icM ? 'SELL' : '',
+                ic_strikes: icStrikesM ? `${icStrikesM[1]}/${icStrikesM[2]}/${icStrikesM[3]}/${icStrikesM[4]}` : '',
+                ic_price: icM ? icM[2] : '',
+                sonar_action: sonarICM ? 'SELL' : '',
+                sonar_strikes: sonarStrikesM ? `${sonarStrikesM[1]}/${sonarStrikesM[2]}/${sonarStrikesM[3]}/${sonarStrikesM[4]}` : '',
+                sonar_price: sonarICM ? sonarICM[1] : '',
+                vt_action: vtM ? 'SELL' : '',
+                vt_strikes: vtStrikesM ? `${vtStrikesM[1]}/${vtStrikesM[2]}` : '',
+                vt_side: vtStrikesM ? vtStrikesM[3] : '',
+                vt_price: vtM ? vtM[2] : '',
+              });
+            }
+            if (batch.length < 100) break;
+            afterSnowflake = batch[batch.length - 1].id;
+          }
+          // Small delay between days to avoid rate limits
+          await new Promise(r => setTimeout(r, 500));
+        }
+        return jsonResp({ total: results.length, signals: results }, 200, { 'Access-Control-Allow-Origin': '*' });
       } catch (e) {
         return jsonResp({ error: e.message }, 500, { 'Access-Control-Allow-Origin': '*' });
       }
