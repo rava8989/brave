@@ -526,7 +526,7 @@
     <hr class="divider">
     <h3>M8 Butterfly (M8BF)</h3>
     <ul>
-      <li><strong>Trades every week, every day Mon–Fri</strong> inside fixed 30-minute windows: Mon 11:00–11:30 · Tue 13:30–14:00 · Wed 12:00–12:30 · Thu 11:00–11:30 · Fri 13:00–13:30.</li>
+      <li><strong>Trades every week, every day Mon–Fri</strong> inside fixed 30-minute windows: Mon 11:00–11:30 · Tue 13:30–14:00 · Wed 12:00–12:30 · Thu 11:00–11:30 (2nd trading Thu: 13:30–14:00) · Fri 13:00–13:30.</li>
       <li>Enter the <strong>first qualifying center strike</strong> inside the window. One trade per day. Skip if none appears.</li>
       <li><strong>Banned center strikes (full):</strong> 10, 25, 35, 40, 65, 80 — bad on both T1 sides. <strong>Combo bans:</strong> T1=x00→x95 · T1=x20→x15 · T1=x55→x50 · T1=x65→x60 · T1=x85→x90 — bad on one side only.</li>
       <li><strong>Not traded on:</strong> EOM · EOM-1 · day before OPEX · VIX exp day (when VIX exp falls after OPEX) · all earnings days except AMZN and TSLA · day after any earnings (NVDA, MSFT, META, GOOG, AAPL) · NVDA earnings days. On EOM/EOM-1/day before OPEX/VIX exp day, M8BF is <strong>only</strong> allowed if previous day WR ≥ 90%. <strong>Use discretion on:</strong> first trading day of month · CPI day · Fed decision day.</li>
@@ -786,19 +786,29 @@
   /* ====== M8BF SCHEDULE ====== */
   // Updated from Strike Model — M8BF Edition image
   // Window = start of entry window; everyWeek = can trade even on non-M8BF days
-  function m8Sched(dow){
+  function isSecondTradingThursday(d=new Date()){
+    if(d.getDay()!==4)return false;
+    let thuCount=0;
+    for(let day=1;day<=d.getDate();day++){
+      if(new Date(d.getFullYear(),d.getMonth(),day).getDay()===4)thuCount++;
+    }
+    return thuCount===2;
+  }
+  function m8Sched(dow,d=new Date()){
     const blocked=["10","25","35","40","65","80"];
     const comboBans={0:95,20:15,55:50,65:60,85:90};
     switch(dow){
       case 1:return{t:"11:00",window:"11:00–11:30",blocked:blocked,comboBans:comboBans};
       case 2:return{t:"13:30",window:"13:30–14:00",blocked:blocked,comboBans:comboBans};
       case 3:return{t:"12:00",window:"12:00–12:30",blocked:blocked,comboBans:comboBans};
-      case 4:return{t:"11:00",window:"11:00–11:30",blocked:blocked,comboBans:comboBans};
+      case 4:
+        if(isSecondTradingThursday(d))return{t:"13:30",window:"13:30–14:00 (2nd Thu)",blocked:blocked,comboBans:comboBans};
+        return{t:"11:00",window:"11:00–11:30",blocked:blocked,comboBans:comboBans};
       case 5:return{t:"13:00",window:"13:00–13:30",blocked:blocked,comboBans:comboBans};
       default:return null;
     }
   }
-  function m8Msg(d=new Date()){ const sc=m8Sched(d.getDay()); return sc?`M8BF — Window ${sc.window}`:"M8BF"; }
+  function m8Msg(d=new Date()){ const sc=m8Sched(d.getDay(),d); return sc?`M8BF — Window ${sc.window}`:"M8BF"; }
 
   /* ====== DISPLAY HELPERS ====== */
   function ordinal(n){const s=["th","st","nd","rd"],v=n%100;return n+(s[(v-20)%10]||s[v]||s[0]);}
@@ -1180,7 +1190,7 @@
 
     if(cpiDay){
       if(oNight>0){rec="Long ATM Call @ 9:32 AM (CPI) — Max $13";theme="strad";entryT="9:32 AM";badge="CPI CALL";}
-      else{rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";
+      else{rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow,now);entryT=strikeInfo?.window||"";
         // M8BF bans still apply on CPI + VIX up
         if(eomDay){rec="No M8BF (EOM)";theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on EOM";badge="BLOCKED";strikeInfo=null;}
         else if(eom1){rec="No M8BF (EOM-1)";theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on EOM-1";badge="BLOCKED";strikeInfo=null;}
@@ -1196,7 +1206,7 @@
       } else if(oNight>0){
         rec="Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="STRADDLE";strikeInfo=null;
       } else {
-        rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";
+        rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow,now);entryT=strikeInfo?.window||"";
       }
 
       if(rec.startsWith("M8BF")){
@@ -1210,7 +1220,7 @@
 
       if(nmDay&&!isMon&&(rec.startsWith("M8BF")||rec.startsWith("No M8BF")||rec.startsWith("Straddle")||rec.startsWith("GXBF")||rec.startsWith("No GXBF"))){rec="NM Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="NM STRADDLE";strikeInfo=null;}
       if(eomDay){rec="Straddle @ 9:32 AM (EOM)";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="EOM STRADDLE";strikeInfo=null;}
-      if(isWed&&!fedDay&&!m8bfBlocked&&!nmDay&&rec.startsWith("Straddle")){rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";}
+      if(isWed&&!fedDay&&!m8bfBlocked&&!nmDay&&rec.startsWith("Straddle")){rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow,now);entryT=strikeInfo?.window||"";}
       if(opexDay&&rec.startsWith("Straddle")){rec="No Straddle (OPEX day)";theme="block";crossed=true;blockT="hard";blockD="Straddle not on OPEX";badge="BLOCKED";}
       if(postOpMon&&rec.startsWith("M8BF")) pmNote=true;
 
@@ -1231,7 +1241,7 @@
           rec="Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="0%rule";entryT="9:32 AM";badge="STRADDLE";strikeInfo=null;
         }
       } else if(wr90.checked){
-        if(!cpiDay){const sc=m8Sched(dow);rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=sc;entryT=sc?.window||"";blockT="90%rule";}
+        if(!cpiDay){const sc=m8Sched(dow,now);rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=sc;entryT=sc?.window||"";blockT="90%rule";}
       }
 
       // OPEX+1 GXBF override — but NOT when WR 0% or 90% forced the signal
@@ -1264,7 +1274,7 @@
     const gxbfReason= document.getElementById('gxbfReason');
 
     // ── CARD 1: M8BF ──
-    const dowSched = m8Sched(dow);
+    const dowSched = m8Sched(dow,now);
 
     if(m8bfBlocked){
       cardM8bf.className='scard active-block';

@@ -569,7 +569,7 @@ async function handleEOD(env, etNow) {
   if (spxClose != null && fullSigs.length > 0) {
     try {
       const dow = etNow.getDay();
-      const win = M8BF_WINDOWS[dow];
+      const win = getM8BFWindow(dow, todayISO);
       if (win) {
         const [winLo, winHi] = win;
         let qualifying = null;
@@ -1819,6 +1819,25 @@ const M8BF_WINDOWS = {
   4: [11*60,     11*60+30],  // Thu 11:00–11:30
   5: [13*60,     13*60+30],  // Fri 13:00–13:30
 };
+const M8BF_WINDOWS_2ND_THU = [13*60+30, 14*60]; // 2nd trading Thu: 13:30–14:00
+
+// Is dateISO the 2nd trading Thursday of its month?
+function isSecondTradingThursday(dateISO) {
+  const d = new Date(dateISO + 'T12:00:00Z');
+  if (d.getUTCDay() !== 4) return false; // not Thursday
+  const year = d.getUTCFullYear(), month = d.getUTCMonth();
+  let thuCount = 0;
+  for (let day = 1; day <= d.getUTCDate(); day++) {
+    const check = new Date(Date.UTC(year, month, day));
+    if (check.getUTCDay() === 4) thuCount++;
+  }
+  return thuCount === 2;
+}
+
+function getM8BFWindow(dow, dateISO) {
+  if (dow === 4 && isSecondTradingThursday(dateISO)) return M8BF_WINDOWS_2ND_THU;
+  return M8BF_WINDOWS[dow];
+}
 
 async function backfillMissingPL(env, targetDates = null) {
   const token = env.DISCORD_USER_TOKEN;
@@ -1856,7 +1875,7 @@ async function backfillMissingPL(env, targetDates = null) {
       // Get day of week in ET
       const etDate = toET(new Date(row.date + 'T20:00:00Z'));
       const dow = etDate.getDay(); // 0=Sun,1=Mon...6=Sat
-      const win = M8BF_WINDOWS[dow];
+      const win = getM8BFWindow(dow, row.date);
       if (!win) {
         failed.push({ date: row.date, reason: 'no window for dow=' + dow });
         continue;
@@ -2717,7 +2736,7 @@ export default {
         const etNowT = toET(new Date());
         const todayT = `${etNowT.getFullYear()}-${String(etNowT.getMonth()+1).padStart(2,'0')}-${String(etNowT.getDate()).padStart(2,'0')}`;
         const dow = etNowT.getDay();
-        const win = M8BF_WINDOWS[dow];
+        const win = getM8BFWindow(dow, todayT);
 
         const sigRaw = await env.SIGNAL_KV.get('signals_today');
         const sigData = sigRaw ? JSON.parse(sigRaw) : { date: '', signals: [] };

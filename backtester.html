@@ -661,6 +661,18 @@ const M8BF_SKIP = new Set([
 const M8BF_BLOCKED = new Set([10,25,35,40,65,80,90]);
 // dow 0=Mon..4=Fri → [windowStart, windowEnd]
 const M8BF_WIN = {0:['10:00','10:30'],1:['13:30','14:00'],2:['12:00','12:30'],3:['11:00','11:30'],4:['13:00','13:30']};
+const M8BF_WIN_2ND_THU = ['13:30','14:00']; // 2nd trading Thu override
+
+function isSecondTradingThursday(dateStr) {
+  const d = new Date(dateStr + 'T12:00:00Z');
+  if (d.getUTCDay() !== 4) return false;
+  const y = d.getUTCFullYear(), m = d.getUTCMonth();
+  let thuCount = 0;
+  for (let day = 1; day <= d.getUTCDate(); day++) {
+    if (new Date(Date.UTC(y, m, day)).getUTCDay() === 4) thuCount++;
+  }
+  return thuCount === 2;
+}
 
 let m8bfTradesCache = null;
 function buildM8BFTrades() {
@@ -672,7 +684,7 @@ function buildM8BFTrades() {
     if (M8BF_SKIP.has(date)) continue;
     const dayTrades = byDate[date];
     const dow = dayTrades[0][DAY];
-    const win = M8BF_WIN[dow];
+    const win = (dow === 3 && isSecondTradingThursday(date)) ? M8BF_WIN_2ND_THU : M8BF_WIN[dow];
     if (!win) continue;
     const [ws, we] = win;
     const q = dayTrades
