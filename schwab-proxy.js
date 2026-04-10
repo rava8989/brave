@@ -565,8 +565,51 @@ async function handleEOD(env, etNow) {
     } catch (e) { console.warn('[proxy]', e.message || e); }
   }
 
+  // Determine if today is a SKIP day per the live signal logic.
+  // We need vixToday/vixYClose/vixYOpen to call calculateSignal — pull from history.
+  // m8bfBlockedByLive == true means: live system would NOT trade M8BF today (calendar
+  // blocks, gap, o2o, 0% rule, etc.). In that case the backtester must also skip,
+  // so we set m8bfPL = 0 and add the date to M8BF_SKIP after appending trades.
+  let m8bfBlockedByLive = false;
+  try {
+    const histResp0 = await fetch(
+      `https://raw.githubusercontent.com/rava8989/brave/main/history_data.json?t=${Date.now()}`,
+      { headers: { 'Cache-Control': 'no-cache' } }
+    );
+    if (histResp0.ok) {
+      const hist0 = await histResp0.json();
+      const todayE = hist0.find(e => e.date === todayISO);
+      // Find prior trading day for vixYClose / vixYOpen
+      const prior = hist0
+        .filter(e => e.date < todayISO && e.vixClose != null && e.vixOpen != null)
+        .sort((a, b) => b.date.localeCompare(a.date))[0];
+      const prevWREntry = hist0
+        .filter(e => e.date < todayISO && e.m8bfWR != null)
+        .sort((a, b) => b.date.localeCompare(a.date))[0];
+      if (todayE && prior && todayE.vixOpen != null) {
+        const spxGapPct = (todayE.spxOpen != null && prior.spxClose != null)
+          ? ((todayE.spxOpen - prior.spxClose) / prior.spxClose) * 100
+          : null;
+        const sig = calculateSignal({
+          vixToday: todayE.vixOpen,
+          vixYOpen: prior.vixOpen,
+          vixYClose: prior.vixClose,
+          spxGapPct,
+          etDate: etNow,
+          prevWR: prevWREntry ? parseFloat(prevWREntry.m8bfWR) : null,
+        });
+        if (sig.theme !== 'm8bf') {
+          m8bfBlockedByLive = true;
+          console.log(`[eod] M8BF blocked by live signal (theme=${sig.theme}, blockT=${sig.blockT})`);
+        }
+      }
+    }
+  } catch (e) { console.warn('[eod] live signal check:', e.message); }
+
   // Compute m8bfPL from first qualifying signal in window (same logic as backfillMissingPL)
-  if (spxClose != null && fullSigs.length > 0) {
+  if (m8bfBlockedByLive) {
+    m8bfPL = 0;
+  } else if (spxClose != null && fullSigs.length > 0) {
     try {
       const dow = etNow.getDay();
       const win = getM8BFWindow(dow, todayISO);
@@ -590,7 +633,10 @@ async function handleEOD(env, etNow) {
           m8bfPL = Math.round((clipped - qualifying.premium) * 100);
           console.log(`[eod] m8bfPL computed: $${m8bfPL} (center=${qualifying.center}, premium=${qualifying.premium}, spxClose=${spxClose})`);
         } else {
-          console.log('[eod] No qualifying signal in window for m8bfPL');
+          // No qualifying signal in window — also a skip day for the backtester
+          m8bfPL = 0;
+          m8bfBlockedByLive = true;
+          console.log('[eod] No qualifying signal in window — marking as skip day');
         }
       }
     } catch (e) { console.warn('[eod] m8bfPL compute:', e.message); }
@@ -645,7 +691,7 @@ async function handleEOD(env, etNow) {
   let appendResult = { appended: 0 };
   if (spxClose != null && fullSigs.length > 0) {
     try {
-      appendResult = await appendTradesToBacktester(env, todayISO, etNow, fullSigs, spxClose);
+      appendResult = await appendTradesToBacktester(env, todayISO, etNow, fullSigs, spxClose, m8bfBlockedByLive);
     } catch (e) {
       appendResult = { appended: 0, error: e.message };
     }
@@ -2074,7 +2120,7 @@ async function backfillMissingPL(env, targetDates = null) {
 // APPEND DAILY SIGNALS TO TRADES DATABASE (backtester.html)
 // ════════════════════════════════════════════════════════════════════
 
-async function appendTradesToBacktester(env, todayISO, etNow, signals, spxClose) {
+async function appendTradesToBacktester(env, todayISO, etNow, signals, spxClose, addToSkip = false) {
   if (!signals || signals.length === 0) return { appended: 0, reason: 'no signals' };
   if (spxClose == null) return { appended: 0, reason: 'no spxClose' };
 
@@ -2103,21 +2149,34 @@ async function appendTradesToBacktester(env, todayISO, etNow, signals, spxClose)
     return { appended: 0, reason: `already exists: ${todayISO}` };
   }
 
-  // 3. Build new TRADES rows
-  // DAY index: 0=Mon,1=Tue,2=Wed,3=Thu,4=Fri (JS getDay: 0=Sun,1=Mon...5=Fri)
+  // 3. Build new TRADES rows — 9-field schema must match backtester.html and rebake_trades.py
+  // [D, DAY, TIME, PREM, SPR, PROF, MAXP, CTR, BANNED]
+  // SPR is half-wing width (center→wing), not full span.
+  // BANNED encodes both full bans AND combo bans (computed from real T1).
+  // DAY: 0=Mon..4=Fri  (JS getDay: 0=Sun..6=Sat)
   const dayIdx = etNow.getDay() - 1;
 
-  const newRows = [];
+  // Bucket signals into 5-min buckets, keeping the FIRST signal per bucket
+  // (matches rebake_trades.py behavior so daily append matches a fresh rebake).
+  const buckets = new Map();
   for (const sig of signals) {
-    const spr = sig.upper - sig.lower;
-    const maxp = Math.round((spr / 2 - sig.premium) * 100);
-    if (maxp <= 0) continue; // skip degenerate (premium >= wing width)
+    const t = sig.time || '10:00';
+    const [hh, mm] = t.split(':').map(Number);
+    const bucket = `${String(hh).padStart(2,'0')}:${String(Math.floor(mm/5)*5).padStart(2,'0')}`;
+    if (!buckets.has(bucket)) buckets.set(bucket, { ...sig, bucket });
+  }
+
+  const newRows = [];
+  for (const bucket of [...buckets.keys()].sort()) {
+    const sig = buckets.get(bucket);
+    const spr = Math.floor((sig.upper - sig.lower) / 2);
+    if (spr <= 0) continue;
+    const maxp = Math.round((spr - sig.premium) * 100);
+    if (maxp <= 0) continue;
     const intrinsic = Math.max(0, Math.min(spxClose - sig.lower, sig.upper - spxClose));
     const prof = Math.round((intrinsic - sig.premium) * 100);
-    const cp = sig.cp ?? 0;
-    const time = sig.time || '10:00';
-    // [date, DAY, CP, PREM, SPR, PROF, MAXP, CTR, TIME, PEAK, TROUGH, PKFIRST]
-    newRows.push([todayISO, dayIdx, cp, sig.premium, spr, prof, maxp, sig.center, time, 0, 0, false]);
+    const banned = isBanned(sig.center, sig.t1);
+    newRows.push([todayISO, dayIdx, bucket, sig.premium, spr, prof, maxp, sig.center, banned]);
   }
 
   if (newRows.length === 0) return { appended: 0, reason: 'all rows filtered out' };
@@ -2136,6 +2195,17 @@ async function appendTradesToBacktester(env, todayISO, etNow, signals, spxClose)
   if (countMatch) {
     const newCount = parseInt(countMatch[1]) + newRows.length;
     html = html.replace(/"count"\s*:\s*\d+/, `"count": ${newCount}`);
+  }
+
+  // 5b. If today is a SKIP date (live system blocked M8BF), inject into M8BF_SKIP set
+  if (addToSkip && !html.includes(`"${todayISO}"`)) {
+    const skipMatch = html.match(/(const M8BF_SKIP = new Set\(\[)([\s\S]*?)(\]\);)/);
+    if (skipMatch) {
+      const inner = skipMatch[2].trimEnd();
+      const sep = inner.endsWith(',') ? '' : ',';
+      const injected = `${skipMatch[1]}${inner}${sep}\n  "${todayISO}"\n${skipMatch[3]}`;
+      html = html.replace(skipMatch[0], injected);
+    }
   }
 
   // 6. Push via Git Data API (handles files >1MB — GitHub Contents API has 1MB limit)

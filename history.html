@@ -871,17 +871,9 @@ async function init() {
         }
       }
 
-      // M8BF runs when theme='m8bf' (includes WR>=90 override, even on EOM)
-      // On EOM without WR>=90 override, theme stays 'strad' — M8BF does NOT run
-      // On strad/gxbf days M8BF runs alongside unless blocked by 0%rule
-      // O2O and VIX blocks only cancel straddle/gxbf — M8BF still runs
-      signal.m8bfRan = (
-        (signal.theme === 'm8bf') ||
-        (!signal.m8bfBanned && (
-          ((signal.theme === 'strad' || signal.theme === 'gxbf') && signal.blockT !== '0%rule') ||
-          (signal.theme === 'block' && (signal.blockT === 'vix' || signal.blockT === 'o2o'))
-        ))
-      );
+      // M8BF ran if history_data has a non-zero m8bfPL for this date
+      // This is the source of truth — matches backtester exactly
+      signal.m8bfRan = (cur.m8bfPL != null && cur.m8bfPL !== 0);
       // Straddle is blocked only when WR>=90 override fired (blockT='90%rule'); runs on all other days
       signal.stradRan = signal.blockT !== '90%rule';
 
