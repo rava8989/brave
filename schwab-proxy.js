@@ -200,28 +200,18 @@ function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate, pre
   let rec = "", theme = "neutral", crossed = false, pmNote = false;
   let blockT = "", blockD = "", entryT = "", badge = "";
   let strikeInfo = null;
-  let cpiLongCall = false; // CPI-day Long ATM Call fires alongside M8BF when VIX gapped down overnight
+  let cpiLongCall = false; // retained for compatibility (always false under new rule)
 
   if (cpiDay) {
-    // CPI rule: M8BF ALWAYS runs on CPI (subject to hard bans) unless prev WR=0%.
-    // When VIX gapped DOWN overnight, the CPI Long ATM Call ALSO fires alongside M8BF.
-    if (prevWR != null && prevWR === 0) {
-      // Prev WR=0% forces straddle — no M8BF, no long call
-      rec = "Straddle @ 9:32 AM"; theme = "strad"; crossed = false;
-      blockT = "0%rule"; entryT = "9:32 AM"; badge = "STRADDLE"; strikeInfo = null;
-    } else {
-      const sc = m8Sched(dow);
-      rec = m8Msg(etDate); theme = "m8bf"; badge = "M8BF"; strikeInfo = sc; entryT = sc?.window || "";
-      // M8BF hard bans still apply on CPI
-      if (eomDay) { rec = "No M8BF (EOM)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "M8BF not traded on EOM"; badge = "BLOCKED"; strikeInfo = null; }
-      else if (eom1) { rec = "No M8BF (EOM-1)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "M8BF not traded on EOM-1"; badge = "BLOCKED"; strikeInfo = null; }
-      else if (opex1) { rec = "No M8BF (day before OPEX)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "Skipped day before OPEX"; badge = "BLOCKED"; strikeInfo = null; }
-      else if (vixExpAfterOpex) { rec = "No M8BF (VIX exp day)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "VIX exp day when VIX exp falls after OPEX"; badge = "BLOCKED"; strikeInfo = null; }
-      else if (nonAmznTslaEarn) { rec = "No M8BF (earnings day)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "Non-AMZN/TSLA mega-cap earnings day"; badge = "BLOCKED"; strikeInfo = null; }
-      else if (dayAfterEarn) { rec = "No M8BF (day after earnings)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "Day after mega-cap earnings"; badge = "BLOCKED"; strikeInfo = null; }
-      // CPI Long ATM Call fires alongside M8BF when VIX gapped DOWN overnight
-      if (oNight > 0) cpiLongCall = true;
-    }
+    // CPI rule: ALL strategies are hard-blocked on CPI days. Zero exceptions.
+    // WR=0%, WR≥90%, overnight VIX direction — nothing can un-block this.
+    rec = "No trades (CPI day)";
+    theme = "block";
+    crossed = true;
+    blockT = "cpi-day";
+    blockD = "CPI day — all strategies blocked";
+    badge = "BLOCKED";
+    strikeInfo = null;
   } else {
     if (oNight > T.DROP_GXBF) {
       if (vixToday >= T.VIX_MAX_GXBF) { rec = `No GXBF (VIX ${vixToday} ≥ ${T.VIX_MAX_GXBF})`; theme = "block"; crossed = true; blockT = "vix"; blockD = `VIX ${vixToday} ≥ ${T.VIX_MAX_GXBF}`; badge = "BLOCKED"; }
@@ -287,6 +277,7 @@ function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate, pre
 
   // ── BOBF card logic ──
   const bobfBlocks = [];
+  if (cpiDay) bobfBlocks.push("CPI day");
   if (nmMon) bobfBlocks.push("NM Monday");
   if (vixExpDay) bobfBlocks.push("VIX expiration");
   if (opexDay) bobfBlocks.push("OPEX");
@@ -308,11 +299,16 @@ function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate, pre
   // ── Build dimmed card texts for inactive strategies ──
   let m8bfText = rec, stradText = rec, gxbfText = rec;
 
-  if (theme === 'm8bf') {
+  if (cpiDay) {
+    // CPI day: all three strategy cards show blocked
+    m8bfText = `No M8BF (CPI day)`;
+    stradText = `No Straddle (CPI day)`;
+    gxbfText = `No GXBF (CPI day)`;
+  } else if (theme === 'm8bf') {
     stradText = `No Straddle (${oNight <= 0 ? 'overnight VIX up' : 'overnight VIX drop > ' + T.DROP_GXBF})`;
     gxbfText = `No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;
   } else if (theme === 'strad') {
-    m8bfText = cpiDay ? `No M8BF (CPI WR=0% — Straddle only)` : `No M8BF (Straddle takes priority)`;
+    m8bfText = `No M8BF (Straddle takes priority)`;
     gxbfText = `No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;
   } else if (theme === 'gxbf') {
     m8bfText = `No M8BF (GXBF takes priority)`;
@@ -322,18 +318,13 @@ function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate, pre
     if (rec.includes('M8BF')) {
       stradText = `No Straddle (${oNight <= 0 ? 'overnight VIX up' : 'overnight VIX drop > ' + T.DROP_GXBF})`;
       gxbfText = `No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;
-    } else if (rec.includes('Straddle') || rec.includes('CPI') || rec.includes('Trade')) {
+    } else if (rec.includes('Straddle') || rec.includes('Trade')) {
       m8bfText = `No M8BF`;
       gxbfText = `No GXBF`;
     } else if (rec.includes('GXBF')) {
       m8bfText = `No M8BF`;
       stradText = `No Straddle`;
     }
-  }
-
-  // CPI Long ATM Call fires alongside M8BF — override Straddle card text
-  if (cpiLongCall) {
-    stradText = `Long ATM Call @ 9:32 AM (CPI) — Max $13`;
   }
 
   return {
