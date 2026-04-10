@@ -868,6 +868,19 @@ async function handleScheduled(env) {
     return { status: 'discord_poll', discord: discordResult, gex: gexResult, time: `${etHour}:${String(etMin).padStart(2,'0')} ET` };
   }
 
+  // ── Claim the slot BEFORE doing slow API work ──
+  // Concurrent cron ticks can pass the gate above before any of them writes,
+  // because the slot claim used to live ~30s later (after VIX/SPX fetches).
+  // We write a unique token, wait for KV to propagate, then verify our token won.
+  const claimToken = crypto.randomUUID();
+  await env.SIGNAL_KV.put(morningDoneKey, `claim:${claimToken}`, { expirationTtl: 86400 });
+  await new Promise(r => setTimeout(r, 1500)); // let concurrent ticks also write
+  const claimCheck = await env.SIGNAL_KV.get(morningDoneKey, { cacheTtl: 0 });
+  if (claimCheck !== `claim:${claimToken}`) {
+    console.log(`[proxy] Lost claim race (saw ${claimCheck}, mine was ${claimToken}) — skipping`);
+    return { status: 'duplicate_skipped', claimWinner: claimCheck, time: `${etHour}:${String(etMin).padStart(2,'0')} ET` };
+  }
+
   console.log('[proxy] Morning window — sending signal');
 
   // 1. Get access token
@@ -1025,9 +1038,8 @@ async function handleScheduled(env) {
   const vixValues = { yOpen: vixYOpen, yClose: vixYClose, todayOpen: vixToday };
   const message = buildDiscordMessage(signal, vixValues);
 
-  // 7. Claim the morning slot BEFORE sending (prevents duplicate messages from concurrent cron ticks)
-  const msDoneKey = `morning_signal_${todayISO}`;
-  await env.SIGNAL_KV.put(msDoneKey, 'sending', { expirationTtl: 86400 });
+  // 7. Slot already claimed at the top of the morning block. Reuse the same key.
+  const msDoneKey = morningDoneKey;
 
   // 8. Post to Discord
   const dcRaw = await env.SIGNAL_KV.get('discord_config');
