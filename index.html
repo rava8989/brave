@@ -584,8 +584,10 @@
     <h3>CPI Rule</h3>
     <ul>
       <li>CPI day uses <strong>only Yesterday's Close − Today's Open</strong> (open-to-open is ignored).</li>
-      <li>VIX down → <strong>Long ATM Call @ 9:32 AM</strong>. Max entry premium: <strong>$13</strong>.</li>
-      <li>VIX up/flat on CPI day → <strong>M8BF</strong> (with all M8BF rules: banned strikes, time windows, combo bans). M8BF bans still apply (EOM, earnings, etc.).</li>
+      <li><strong>M8BF always runs on CPI day</strong>, regardless of overnight VIX direction — subject to the usual M8BF hard bans (EOM, EOM-1, day before OPEX, VIX exp day, earnings, day after earnings).</li>
+      <li><strong>VIX gapped DOWN overnight</strong> → <strong>Long ATM Call @ 9:32 AM (Max $13 premium)</strong> fires <em>alongside</em> M8BF. Both trade.</li>
+      <li><strong>VIX up/flat overnight</strong> → only M8BF (no Long Call).</li>
+      <li><strong>Prev day WR = 0% → Straddle only</strong> on CPI day. No M8BF, no Long Call. (WR=0% is the only override that blocks M8BF on CPI.)</li>
       <li>CPI day overrides all other signals including OPEX+1 GXBF.</li>
     </ul>
 
@@ -602,8 +604,8 @@
     <hr class="divider">
     <h3>Win Rate Rules (Strongest Overrides)</h3>
     <ul>
-      <li><strong>WR = 0%</strong> prior day → forces Straddle. Trumps M8BF, GXBF, SPX gap block, o2o block — everything except CPI and Fed day.</li>
-      <li><strong>WR ≥ 90%</strong> prior day → forces M8BF. Trumps Straddle, NM Straddle, SPX gap block, o2o block — everything except CPI.</li>
+      <li><strong>WR = 0%</strong> prior day → forces Straddle. Trumps M8BF, GXBF, SPX gap block, o2o block — and on CPI day it also blocks M8BF and the CPI Long Call (straddle only). Only Fed day takes priority.</li>
+      <li><strong>WR ≥ 90%</strong> prior day → forces M8BF. Trumps Straddle, NM Straddle, SPX gap block, o2o block. On CPI day M8BF already runs by default, so WR=90% is a no-op there.</li>
       <li>Win rate = 0% on a Fed day → Fed day takes priority (Straddle not forced).</li>
       <li>These are the <strong>strongest signals</strong> in the system. Gap and o2o rules only apply when neither WR=0% nor WR≥90% is active.</li>
     </ul>
@@ -1188,17 +1190,25 @@
     let rec="", theme="neutral", crossed=false, pmNote=false;
     let blockT="", blockD="", entryT="", badge="";
     let strikeInfo=null;
+    let cpiLongCall=false; // CPI-day Long ATM Call fires alongside M8BF when VIX gapped down overnight
 
     if(cpiDay){
-      if(oNight>0){rec="Long ATM Call @ 9:32 AM (CPI) — Max $13";theme="strad";entryT="9:32 AM";badge="CPI CALL";}
-      else{rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow,now);entryT=strikeInfo?.window||"";
-        // M8BF bans still apply on CPI + VIX up
+      // CPI rule: M8BF ALWAYS runs on CPI (subject to hard bans) unless prev WR=0%.
+      // When VIX gapped DOWN overnight, the CPI Long ATM Call ALSO fires alongside M8BF.
+      if(wr0.checked){
+        // Prev WR=0% forces straddle — no M8BF, no long call
+        rec="Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="0%rule";entryT="9:32 AM";badge="STRADDLE";strikeInfo=null;
+      } else {
+        rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow,now);entryT=strikeInfo?.window||"";
+        // M8BF hard bans still apply on CPI (nmDay is NOT a hard ban on CPI)
         if(eomDay){rec="No M8BF (EOM)";theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on EOM";badge="BLOCKED";strikeInfo=null;}
         else if(eom1){rec="No M8BF (EOM-1)";theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on EOM-1";badge="BLOCKED";strikeInfo=null;}
         else if(opex1){rec="No M8BF (day before OPEX)";theme="block";crossed=true;blockT="hard";blockD="Skipped day before OPEX";badge="BLOCKED";strikeInfo=null;}
         else if(isVixAfterOpexDay()){rec="No M8BF (VIX exp day)";theme="block";crossed=true;blockT="hard";blockD="VIX exp day when VIX exp falls after OPEX";badge="BLOCKED";strikeInfo=null;}
         else if(isNonAmznTslaEarningsDay()){rec="No M8BF (earnings day)";theme="block";crossed=true;blockT="hard";blockD="Non-AMZN/TSLA mega-cap earnings day";badge="BLOCKED";strikeInfo=null;}
         else if(isDayAfterAnyEarnings()){rec="No M8BF (day after earnings)";theme="block";crossed=true;blockT="hard";blockD="Day after mega-cap earnings";badge="BLOCKED";strikeInfo=null;}
+        // CPI Long ATM Call fires alongside M8BF when VIX gapped DOWN overnight
+        if(oNight>0) cpiLongCall=true;
       }
     } else {
       if(oNight>T.DROP_GXBF){
@@ -1283,15 +1293,15 @@
       m8bfRec.innerHTML=`<span class="crossed">${m8bfBlocked.r}</span>`;
       m8bfReason.innerHTML=`<span class="block-hard">⛔ ${m8bfBlocked.n}</span>`;
       strikeInfo=null;
-    } else if(theme==='strad' || theme==='gxbf'){
-      // Another strategy has priority (CPI/NM/EOM Straddle, GXBF) — M8BF stands down
-      cardM8bf.className='scard active-block';
-      m8bfBadge.textContent='STAND DOWN';
-      m8bfRec.textContent = theme==='strad' ? 'No M8BF (Straddle takes priority)' : 'No M8BF (GXBF takes priority)';
+    } else if(blockT==='0%rule'){
+      // WR=0% forces Straddle — M8BF stands down
+      cardM8bf.className='scard dimmed';
+      m8bfBadge.textContent='—';
+      m8bfRec.textContent='No M8BF (0% WR → Straddle)';
       m8bfReason.textContent='';
       strikeInfo=null;
     } else {
-      // M8BF runs
+      // M8BF always runs when not hard-blocked — independent of overnight VIX
       cardM8bf.className='scard active-m8bf';
       m8bfBadge.textContent=dowSched?`🕐 ${dowSched.window}`:'TRADE';
       m8bfRec.textContent=dowSched?`M8BF — Window ${dowSched.window}`:'M8BF';
@@ -1301,21 +1311,25 @@
     }
 
     // ── CARD 2: Straddle / CPI / NM / EOM ──
-    if(theme==='strad'){
+    if(cpiLongCall){
+      // CPI Long ATM Call fires alongside M8BF (theme is still 'm8bf' or 'block')
       cardStrad.className='scard active-strad';
-      const isCpiSignal = badge==='CPI CALL';
+      stradBadge.textContent='📊 CPI — 9:32 AM';
+      stradRec.textContent='Long ATM Call @ 9:32 AM (CPI) — Max $13';
+      stradReason.textContent='Long ATM Call · Max $13 premium · fires alongside M8BF';
+    } else if(theme==='strad'){
+      cardStrad.className='scard active-strad';
       const isNM  = badge==='NM STRADDLE';
       const isEOM = badge==='EOM STRADDLE';
-      if(isCpiSignal) stradBadge.textContent='📊 CPI — 9:32 AM';
-      else if(isNM)   stradBadge.textContent='📅 NM — 9:32 AM';
+      if(isNM)        stradBadge.textContent='📅 NM — 9:32 AM';
       else if(isEOM)  stradBadge.textContent='📆 EOM — 9:32 AM';
-      else             stradBadge.textContent=entryT?`⏰ ${entryT}`:'TRADE';
+      else            stradBadge.textContent=entryT?`⏰ ${entryT}`:'TRADE';
       stradRec.innerHTML=crossed?`<span class="crossed">${rec}</span>`:rec;
-      if(isCpiSignal)      stradReason.textContent='Long ATM Call · Max $13 premium';
-      else if(isNM)        stradReason.textContent='First trading day of month · Max risk $3,200';
-      else if(isEOM)       stradReason.textContent='Last trading day of month · Max risk $3,500';
+      if(isNM)                   stradReason.textContent='First trading day of month · Max risk $3,200';
+      else if(isEOM)             stradReason.textContent='Last trading day of month · Max risk $3,500';
+      else if(blockT==='0%rule' && cpiDay) stradReason.innerHTML=`<span style="color:var(--accent);font-style:italic;">📉 0% rule on CPI — Straddle only (no M8BF, no Long Call)</span>`;
       else if(blockT==='0%rule') stradReason.innerHTML=`<span style="color:var(--accent);font-style:italic;">📉 0% rule — M8BF → Straddle</span>`;
-      else                 stradReason.textContent='';
+      else                       stradReason.textContent='';
     } else if(theme==='block' && (rec.includes('Straddle') || rec.includes('CPI') || rec.includes('Trade'))){
       cardStrad.className='scard active-block';
       stradBadge.textContent='BLOCKED';
