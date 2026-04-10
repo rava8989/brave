@@ -1283,8 +1283,15 @@
       m8bfRec.innerHTML=`<span class="crossed">${m8bfBlocked.r}</span>`;
       m8bfReason.innerHTML=`<span class="block-hard">⛔ ${m8bfBlocked.n}</span>`;
       strikeInfo=null;
+    } else if(theme==='strad' || theme==='gxbf'){
+      // Another strategy has priority (CPI/NM/EOM Straddle, GXBF) — M8BF stands down
+      cardM8bf.className='scard active-block';
+      m8bfBadge.textContent='STAND DOWN';
+      m8bfRec.textContent = theme==='strad' ? 'No M8BF (Straddle takes priority)' : 'No M8BF (GXBF takes priority)';
+      m8bfReason.textContent='';
+      strikeInfo=null;
     } else {
-      // M8BF always runs when not hard-blocked — independent of overnight VIX
+      // M8BF runs
       cardM8bf.className='scard active-m8bf';
       m8bfBadge.textContent=dowSched?`🕐 ${dowSched.window}`:'TRADE';
       m8bfRec.textContent=dowSched?`M8BF — Window ${dowSched.window}`:'M8BF';
@@ -1975,8 +1982,8 @@
         schwabSetStatus('connected', `Schwab connected ✓ · Auto-calculated at ${timeStr} ET`);
 
         calculateStrategy();
-        // Auto-post to Discord if configured
-        setTimeout(discordAutoPost, 500); // small delay to let cards render first
+        // Discord auto-post removed — schwab-proxy.js cron is the single source of truth.
+        // Browser auto-post caused duplicates (multi-tab) and read stale DOM (wrong M8BF on CPI).
       } catch(e){ console.warn('[S3] VIX stream:', e); }
     }, 10000); // every 10 seconds
   }
