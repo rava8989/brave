@@ -866,7 +866,7 @@ async function handleScheduled(env) {
   const morningDone = await env.SIGNAL_KV.get(morningDoneKey);
   const preMarket = etHour < 9 || (etHour === 9 && etMin < 30);
 
-  if (morningDone || preMarket) {
+  if (morningDone === 'sent' || preMarket) {
     return { status: 'discord_poll', discord: discordResult, gex: gexResult, time: `${etHour}:${String(etMin).padStart(2,'0')} ET` };
   }
 
@@ -877,7 +877,7 @@ async function handleScheduled(env) {
   const claimToken = crypto.randomUUID();
   await env.SIGNAL_KV.put(morningDoneKey, `claim:${claimToken}`, { expirationTtl: 86400 });
   await new Promise(r => setTimeout(r, 1500)); // let concurrent ticks also write
-  const claimCheck = await env.SIGNAL_KV.get(morningDoneKey, { cacheTtl: 0 });
+  const claimCheck = await env.SIGNAL_KV.get(morningDoneKey, { cacheTtl: 30 });
   if (claimCheck !== `claim:${claimToken}`) {
     console.log(`[proxy] Lost claim race (saw ${claimCheck}, mine was ${claimToken}) — skipping`);
     return { status: 'duplicate_skipped', claimWinner: claimCheck, time: `${etHour}:${String(etMin).padStart(2,'0')} ET` };
