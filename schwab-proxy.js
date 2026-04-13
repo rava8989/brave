@@ -194,8 +194,7 @@ function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate, pre
   const spxGapCancelsStrad = (spxGapPct !== null && spxGapPct !== undefined && Math.abs(spxGapPct) >= T.SPX_GAP_THRESHOLD);
   const vixExpAfterOpex = isVixAfterOpexDay(etDate);
   const nonAmznTslaEarn = isNonAmznTslaEarningsDay(etDate);
-  const dayAfterEarn = isDayAfterAnyEarnings(etDate);
-  const m8bfBanned = eomDay || eom1 || opex1 || vixExpAfterOpex || nonAmznTslaEarn || dayAfterEarn;
+  const m8bfBanned = eomDay || eom1 || opex1 || vixExpAfterOpex || nonAmznTslaEarn;
 
   let rec = "", theme = "neutral", crossed = false, pmNote = false;
   let blockT = "", blockD = "", entryT = "", badge = "";
@@ -227,7 +226,6 @@ function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate, pre
       else if (eom1) { rec = "No M8BF (EOM-1)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "M8BF not traded on EOM-1"; badge = "BLOCKED"; strikeInfo = null; }
       else if (opex1) { rec = "No M8BF (day before OPEX)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "Skipped day before OPEX"; badge = "BLOCKED"; strikeInfo = null; }
       else if (nonAmznTslaEarn) { rec = "No M8BF (earnings)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "Not traded on earnings days (except AMZN/TSLA)"; badge = "BLOCKED"; strikeInfo = null; }
-      else if (dayAfterEarn) { rec = "No M8BF (day after earnings)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "Not traded day after any earnings"; badge = "BLOCKED"; strikeInfo = null; }
       else if (vixExpAfterOpex) { rec = "No M8BF (VIX exp day)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "VIX exp day when VIX exp falls after OPEX"; badge = "BLOCKED"; strikeInfo = null; }
     }
 
@@ -1141,6 +1139,15 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
   if (allExpiries.length === 0) return null;
   const expiriesToUse = onlyNearest ? [allExpiries[0]] : allExpiries;
 
+  // Compute real hours remaining until today's 16:00 ET close (for 0DTE T calc)
+  // Falls back to a safe minimum of 15 minutes (1/(365*96)) near / after close.
+  function zeroDteT() {
+    const etNow = toET(new Date());
+    const hrsLeft = (16 - etNow.getHours()) - (etNow.getMinutes() / 60) - (etNow.getSeconds() / 3600);
+    const safeHrs = Math.max(hrsLeft, 0.25); // 15 min floor
+    return safeHrs / (365 * 24);
+  }
+
   // Accumulate per-strike across selected expirations
   const strikeAccum = {}; // strike → { callGex, putGex, callOI, putOI }
   let totalCallGex = 0, totalPutGex = 0;
@@ -1150,7 +1157,8 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
     const dteParts = expKey.split(':');
     const dte = parseInt(dteParts[1]) || 0;
     if (dte < nearestDte) nearestDte = dte;
-    const T_years = Math.max(dte / 365, 1 / (365 * 24)); // minimum ~1 hour
+    // 0DTE uses real hours-to-close; longer-dated uses calendar dte/365
+    const T_years = dte === 0 ? zeroDteT() : Math.max(dte / 365, 1 / (365 * 24));
 
     const calls = callMap[expKey] || {};
     const puts = putMap[expKey] || {};
@@ -1167,29 +1175,24 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
       const putContracts = puts[strikeStr] || [];
 
       for (const c of callContracts) {
-        const oi = c.openInterest || 0;
-        const vol = c.totalVolume || 0;
+        const oi = Math.max(c.openInterest || 0, 0);
         const iv = (c.volatility || 0) / 100;
-        // 0DTE: combine OI + volume (OI = overnight, vol = intraday flow)
-        // Non-0DTE: OI only (volume is just today's slice, not full position)
-        const effectiveOI = dte === 0 ? Math.max(oi, 0) + Math.max(vol, 0) : (oi > 0 ? oi : 0);
-        if (effectiveOI === 0) continue;
-        acc.callOI += effectiveOI;
+        // Standard GEX: use open interest only (volume is turnover, not dealer inventory)
+        if (oi === 0) continue;
+        acc.callOI += oi;
         const gamma = bsGamma(S, K, T_years, iv > 0 ? iv : 0.2);
-        const gex = gamma * effectiveOI * S * S * MULT * 0.01;
+        const gex = gamma * oi * S * S * MULT * 0.01;
         acc.callGex += gex;
         totalCallGex += gex;
       }
 
       for (const p of putContracts) {
-        const oi = p.openInterest || 0;
-        const vol = p.totalVolume || 0;
+        const oi = Math.max(p.openInterest || 0, 0);
         const iv = (p.volatility || 0) / 100;
-        const effectiveOI = dte === 0 ? Math.max(oi, 0) + Math.max(vol, 0) : (oi > 0 ? oi : 0);
-        if (effectiveOI === 0) continue;
-        acc.putOI += effectiveOI;
+        if (oi === 0) continue;
+        acc.putOI += oi;
         const gamma = bsGamma(S, K, T_years, iv > 0 ? iv : 0.2);
-        const gex = gamma * effectiveOI * S * S * MULT * 0.01;
+        const gex = gamma * oi * S * S * MULT * 0.01;
         acc.putGex -= gex; // puts negative
         totalPutGex -= gex;
       }
@@ -2846,8 +2849,11 @@ export default {
           }
         }
 
-        // ── EOD fallback: fire from /gex if cron missed 4:16-4:25 PM ──
-        const isEODWindow = dow >= 1 && dow <= 5 && etH === 16 && etM >= 16 && etM <= 30;
+        // ── EOD fallback: fire from /gex any time after 4:16 PM ET on a weekday
+        // if EOD hasn't already completed for today. Covers cases where Cloudflare
+        // cron missed the 4:17 PM tick entirely (free-tier unreliability).
+        const afterEOD = (etH === 16 && etM >= 16) || (etH >= 17 && etH < 24);
+        const isEODWindow = dow >= 1 && dow <= 5 && afterEOD;
         if (isEODWindow) {
           const todayCheck = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
           const eodKey = `eod_done_${todayCheck}`;

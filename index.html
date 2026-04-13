@@ -561,7 +561,7 @@
       <li><strong>Trades every week, every day Mon–Fri</strong> inside fixed 30-minute windows: Mon 11:00–11:30 · Tue 13:30–14:00 · Wed 12:00–12:30 · Thu 11:00–11:30 (2nd trading Thu: 13:30–14:00) · Fri 13:00–13:30.</li>
       <li>Enter the <strong>first qualifying center strike</strong> inside the window. One trade per day. Skip if none appears.</li>
       <li><strong>Banned center strikes (full):</strong> 10, 25, 35, 40, 65, 80 — bad on both T1 sides. <strong>Combo bans:</strong> T1=x00→x95 · T1=x20→x15 · T1=x55→x50 · T1=x65→x60 · T1=x85→x90 — bad on one side only.</li>
-      <li><strong>Not traded on:</strong> EOM · EOM-1 · day before OPEX · VIX exp day (when VIX exp falls after OPEX) · all earnings days except AMZN and TSLA · day after any earnings (NVDA, MSFT, META, GOOG, AAPL) · NVDA earnings days. On EOM/EOM-1/day before OPEX/VIX exp day, M8BF is <strong>only</strong> allowed if previous day WR ≥ 90%. <strong>Use discretion on:</strong> first trading day of month · Fed decision day.</li>
+      <li><strong>Not traded on:</strong> EOM · EOM-1 · day before OPEX · VIX exp day (when VIX exp falls after OPEX) · all earnings days except AMZN and TSLA · NVDA earnings days. On EOM/EOM-1/day before OPEX/VIX exp day, M8BF is <strong>only</strong> allowed if previous day WR ≥ 90%. <strong>Use discretion on:</strong> first trading day of month · Fed decision day.</li>
       <li><strong>2nd trading Thursday override:</strong> window shifts to <strong>13:30–14:00</strong> (instead of 11:00–11:30). All other rules (banned strikes, skip dates) remain the same.</li>
       <li>No stop-loss — hold to expiration. Entry cost ≈ $14.</li>
     </ul>
@@ -1200,7 +1200,6 @@
       if(eom1)                    return blk("No M8BF (EOM-1)",            "M8BF not traded on EOM-1");
       if(opex1)                   return blk("No M8BF (day before OPEX)",  "Skipped day before OPEX");
       if(isNonAmznTslaEarningsDay()) return blk("No M8BF (earnings)",      "Not traded on earnings days (except AMZN/TSLA)");
-      if(isDayAfterAnyEarnings()) return blk("No M8BF (day after earnings)","Not traded day after any earnings");
       if(isVixAfterOpexDay())     return blk("No M8BF (VIX exp day)",      "VIX exp day when VIX exp falls after OPEX");
       if(nmDay)                   return blk("No M8BF (first trading day)", "Skipped on first trading day of month");
       return null;
@@ -1278,7 +1277,6 @@
         else if(opex1){rec="No M8BF (day before OPEX)";theme="block";crossed=true;blockT="hard";blockD="Skipped day before OPEX";badge="BLOCKED";strikeInfo=null;}
         else if(isVixAfterOpexDay()){rec="No M8BF (VIX exp day)";theme="block";crossed=true;blockT="hard";blockD="VIX exp day when VIX exp falls after OPEX";badge="BLOCKED";strikeInfo=null;}
         else if(isNonAmznTslaEarningsDay()){rec="No M8BF (earnings day)";theme="block";crossed=true;blockT="hard";blockD="Non-AMZN/TSLA mega-cap earnings day";badge="BLOCKED";strikeInfo=null;}
-        else if(isDayAfterAnyEarnings()){rec="No M8BF (day after earnings)";theme="block";crossed=true;blockT="hard";blockD="Day after mega-cap earnings";badge="BLOCKED";strikeInfo=null;}
       }
 
       if(nmDay&&!isMon&&(rec.startsWith("M8BF")||rec.startsWith("No M8BF")||rec.startsWith("Straddle")||rec.startsWith("GXBF")||rec.startsWith("No GXBF"))){rec="NM Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="NM STRADDLE";strikeInfo=null;}

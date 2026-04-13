@@ -414,8 +414,7 @@ function calculateSignal({vixToday,vixYOpen,vixYClose,spxGapPct,etDate}){
   const opex1=opexSch.some(ds=>isTodayBefore(ds,etDate));
   // M8BF banned days — only WR>=90 can override
   const nonAmznTslaEarn=isNonAmznTslaEarningsDay(etDate);
-  const dayAfterEarn=isDayAfterAnyEarnings(etDate);
-  const m8bfBanned=eomDay||eom1||opex1||vixExpAfterOpex||nonAmznTslaEarn||dayAfterEarn;
+  const m8bfBanned=eomDay||eom1||opex1||vixExpAfterOpex||nonAmznTslaEarn;
   const earningsDay=isEarningsDay(etDate);
 
   const o2o=(vixYOpen!=null)?vixYOpen-vixToday:NaN;
@@ -435,7 +434,6 @@ function calculateSignal({vixToday,vixYOpen,vixYClose,spxGapPct,etDate}){
       else if(opex1){rec="No M8BF (day before OPEX)";theme="block";crossed=true;blockT="hard";blockD="Skipped day before OPEX";badge="BLOCKED";strikeInfo=null;}
       else if(vixExpAfterOpex){rec="No M8BF (VIX exp day)";theme="block";crossed=true;blockT="hard";blockD="VIX exp day when VIX exp falls after OPEX";badge="BLOCKED";strikeInfo=null;}
       else if(nonAmznTslaEarn){rec="No M8BF (earnings day)";theme="block";crossed=true;blockT="hard";blockD="Non-AMZN/TSLA mega-cap earnings day";badge="BLOCKED";strikeInfo=null;}
-      else if(dayAfterEarn){rec="No M8BF (day after earnings)";theme="block";crossed=true;blockT="hard";blockD="Day after mega-cap earnings";badge="BLOCKED";strikeInfo=null;}
     }
   } else {
     if(oNight>T.DROP_GXBF){
@@ -452,7 +450,6 @@ function calculateSignal({vixToday,vixYOpen,vixYClose,spxGapPct,etDate}){
       else if(eom1)                 {rec="No M8BF (EOM-1)";         theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on EOM-1";                badge="BLOCKED";strikeInfo=null;}
       else if(opex1)                {rec="No M8BF (day before OPEX)";theme="block";crossed=true;blockT="hard";blockD="Skipped day before OPEX";               badge="BLOCKED";strikeInfo=null;}
       else if(nonAmznTslaEarn)     {rec="No M8BF (earnings)";       theme="block";crossed=true;blockT="hard";blockD="Not traded on earnings days (except AMZN/TSLA)";badge="BLOCKED";strikeInfo=null;}
-      else if(dayAfterEarn)        {rec="No M8BF (day after earnings)";theme="block";crossed=true;blockT="hard";blockD="Not traded day after any earnings";badge="BLOCKED";strikeInfo=null;}
       else if(isVixAfterOpexDay(etDate)){rec="No M8BF (VIX exp day)";theme="block";crossed=true;blockT="hard";blockD="VIX exp day when VIX exp falls after OPEX";badge="BLOCKED";strikeInfo=null;}
     }
 
