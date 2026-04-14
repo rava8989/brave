@@ -932,41 +932,21 @@ async function handleScheduled(env) {
 
   if (vixYClose === null) throw new Error('Could not determine yesterday VIX close');
 
-  // 3. Get today's VIX open from candles — first 1-min candle at or after 9:30 ET
+  // 3. Get today's VIX open = first print after 9:30 ET.
+  //    The worker only runs here after 9:30 ET (preMarket check above), so
+  //    quote.lastPrice at this moment IS the first post-open print (or very
+  //    close to it, within a few seconds of open for the 9:30 cron tick).
+  //
+  //    Why not candles/openPrice:
+  //    - Schwab's pricehistory for $VIX can lag 60-90 min behind real time
+  //    - Schwab's quote.openPrice is unreliable for calculated indices (VIX)
+  //      e.g. 2026-04-14: openPrice=18.73 but first print was 18.25
   let vixToday = null;
-  const todayCandles = candles.filter(c => {
-    const d = toET(new Date(c.datetime));
-    if (d.toDateString() !== todayStr) return false;
-    const mins = d.getHours() * 60 + d.getMinutes();
-    return mins >= 570; // 9:30 ET = 570 minutes
-  });
-  todayCandles.sort((a, b) => a.datetime - b.datetime);
-  if (todayCandles.length > 0) {
-    // Use the open of the very first candle at or after 9:30 ET
-    vixToday = parseFloat(todayCandles[0].open.toFixed(2));
-  }
+  const vixQuote = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`, token, env);
+  const vixQ = vixQuote?.['$VIX']?.quote;
+  if (vixQ?.lastPrice) vixToday = parseFloat(vixQ.lastPrice.toFixed(2));
 
-  // Fallback: quote API if no candle yet (skip 15s sleep — risky for Worker wall time)
-  if (vixToday === null) {
-    const vixQuote = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`, token, env);
-    const quote = vixQuote?.['$VIX']?.quote;
-    if (quote?.openPrice) vixToday = parseFloat(quote.openPrice.toFixed(2));
-    else if (quote?.lastPrice) vixToday = parseFloat(quote.lastPrice.toFixed(2));
-  }
-
-  // Second fallback: re-fetch candle history (market may have just opened)
-  if (vixToday === null) {
-    const retry = await fetchSchwabJSON(vixHistUrl, token, env);
-    if (retry.candles) {
-      const rc = retry.candles.filter(c => {
-        const d = toET(new Date(c.datetime));
-        return d.toDateString() === todayStr && d.getHours() * 60 + d.getMinutes() >= 570;
-      }).sort((a, b) => a.datetime - b.datetime);
-      if (rc.length > 0) vixToday = parseFloat(rc[0].open.toFixed(2));
-    }
-  }
-
-  if (vixToday === null) throw new Error('Could not get VIX today open');
+  if (vixToday === null) throw new Error('Could not get VIX today from quote API');
 
   // 4. Fetch SPX quote → gap % + today's SPX open
   let spxGapPct = null;

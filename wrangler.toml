@@ -3,8 +3,12 @@ main = "schwab-proxy.js"
 compatibility_date = "2026-03-17"
 
 [triggers]
-# Every 2 min during market hours (DST pair), EOD ~16:17 ET (DST pair)
+# Morning signal: dedicated 9:30 ET tick (EDT + EST)
+# Market hours: every 2 min for GEX + Discord poll (EDT + EST)
+# EOD: ~16:17 ET (EDT + EST)
 crons = [
+  "30 13 * * 1-5",
+  "30 14 * * 1-5",
   "*/2 13-20 * * 1-5",
   "17 20 * * 1-5",
   "17 21 * * 1-5"
