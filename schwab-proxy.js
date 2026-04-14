@@ -864,7 +864,9 @@ async function handleScheduled(env) {
   const todayISO_check = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
   const morningDoneKey = `morning_signal_${todayISO_check}`;
   const morningDone = await env.SIGNAL_KV.get(morningDoneKey);
-  const preMarket = etHour < 9 || (etHour === 9 && etMin < 30);
+  // Morning signal waits until 9:35 ET — avoids 9:30:00 first-print race and
+  // gives VIX/SPX 5 min of regular-market trading to settle.
+  const preMarket = etHour < 9 || (etHour === 9 && etMin < 35);
 
   if (morningDone === 'sent' || preMarket) {
     return { status: 'discord_poll', discord: discordResult, gex: gexResult, time: `${etHour}:${String(etMin).padStart(2,'0')} ET` };
@@ -949,8 +951,8 @@ async function handleScheduled(env) {
     if (vixQ?.lastPrice && vixQ?.tradeTime) {
       const tradeET = toET(new Date(vixQ.tradeTime));
       const tradeMin = tradeET.getHours() * 60 + tradeET.getMinutes();
-      // Accept only if trade is today AND at or after 9:30 ET
-      if (tradeET.toDateString() === todayStr && tradeMin >= 570) {
+      // Accept only if trade is today AND at or after 9:35 ET (matches cron)
+      if (tradeET.toDateString() === todayStr && tradeMin >= 575) {
         vixToday = parseFloat(vixQ.lastPrice.toFixed(2));
         console.log(`[proxy] VIX open ${vixToday} (tradeTime ${tradeET.toTimeString().slice(0,8)} ET, attempt ${attempt+1})`);
         break;
