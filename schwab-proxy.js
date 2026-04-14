@@ -932,21 +932,35 @@ async function handleScheduled(env) {
 
   if (vixYClose === null) throw new Error('Could not determine yesterday VIX close');
 
-  // 3. Get today's VIX open = first print after 9:30 ET.
-  //    The worker only runs here after 9:30 ET (preMarket check above), so
-  //    quote.lastPrice at this moment IS the first post-open print (or very
-  //    close to it, within a few seconds of open for the 9:30 cron tick).
+  // 3. Get today's VIX open = first print AT OR AFTER 9:30 ET.
+  //    Poll quote API with tradeTime verification: only accept a lastPrice
+  //    whose tradeTime is >= today 9:30 ET. Otherwise it's a stale pre-market
+  //    tick — wait 1.5s and retry (up to ~8s total).
   //
   //    Why not candles/openPrice:
   //    - Schwab's pricehistory for $VIX can lag 60-90 min behind real time
   //    - Schwab's quote.openPrice is unreliable for calculated indices (VIX)
   //      e.g. 2026-04-14: openPrice=18.73 but first print was 18.25
+  const quoteUrl = `https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`;
   let vixToday = null;
-  const vixQuote = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`, token, env);
-  const vixQ = vixQuote?.['$VIX']?.quote;
-  if (vixQ?.lastPrice) vixToday = parseFloat(vixQ.lastPrice.toFixed(2));
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const vixQuote = await fetchSchwabJSON(quoteUrl, token, env);
+    const vixQ = vixQuote?.['$VIX']?.quote;
+    if (vixQ?.lastPrice && vixQ?.tradeTime) {
+      const tradeET = toET(new Date(vixQ.tradeTime));
+      const tradeMin = tradeET.getHours() * 60 + tradeET.getMinutes();
+      // Accept only if trade is today AND at or after 9:30 ET
+      if (tradeET.toDateString() === todayStr && tradeMin >= 570) {
+        vixToday = parseFloat(vixQ.lastPrice.toFixed(2));
+        console.log(`[proxy] VIX open ${vixToday} (tradeTime ${tradeET.toTimeString().slice(0,8)} ET, attempt ${attempt+1})`);
+        break;
+      }
+      console.log(`[proxy] VIX tick stale (tradeTime ${tradeET.toTimeString().slice(0,8)} ET), retrying...`);
+    }
+    await new Promise(r => setTimeout(r, 1500));
+  }
 
-  if (vixToday === null) throw new Error('Could not get VIX today from quote API');
+  if (vixToday === null) throw new Error('VIX post-open tick not yet available after 5 attempts');
 
   // 4. Fetch SPX quote → gap % + today's SPX open
   let spxGapPct = null;
