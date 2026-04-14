@@ -933,8 +933,8 @@ async function handleScheduled(env) {
   if (vixYClose === null) throw new Error('Could not determine yesterday VIX close');
 
   // 3. Get today's VIX open = first print AT OR AFTER 9:30 ET.
-  //    Cron fires at 9:30:00 ET — wait until wall clock passes 9:30:32 ET
-  //    before querying, so VIX has 32 sec to post the opening print.
+  //    Cron fires at 9:30:00 ET — wait until wall clock passes 9:30:02 ET
+  //    before querying, so VIX has 2 sec to post the opening print.
   //    Then poll with tradeTime verification.
   //
   //    Why not candles/openPrice:
@@ -948,11 +948,11 @@ async function handleScheduled(env) {
     // et has wall-clock ET values. Back it out to UTC ms by computing the
     // ET-UTC offset at this moment (4h in EDT, 5h in EST).
     const offsetMin = Math.round((d.getTime() - et.getTime()) / 60000);
-    return Date.UTC(et.getFullYear(), et.getMonth(), et.getDate(), 9, 30, 32) + offsetMin * 60000;
+    return Date.UTC(et.getFullYear(), et.getMonth(), et.getDate(), 9, 30, 2) + offsetMin * 60000;
   })();
   const waitMs = targetMs - Date.now();
   if (waitMs > 0 && waitMs < 60000) {
-    console.log(`[proxy] Sleeping ${waitMs}ms until 9:30:32 ET`);
+    console.log(`[proxy] Sleeping ${waitMs}ms until 9:30:02 ET`);
     await new Promise(r => setTimeout(r, waitMs));
   }
   const quoteUrl = `https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`;
