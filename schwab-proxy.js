@@ -864,9 +864,7 @@ async function handleScheduled(env) {
   const todayISO_check = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
   const morningDoneKey = `morning_signal_${todayISO_check}`;
   const morningDone = await env.SIGNAL_KV.get(morningDoneKey);
-  // Morning signal waits until 9:35 ET — avoids 9:30:00 first-print race and
-  // gives VIX/SPX 5 min of regular-market trading to settle.
-  const preMarket = etHour < 9 || (etHour === 9 && etMin < 35);
+  const preMarket = etHour < 9 || (etHour === 9 && etMin < 30);
 
   if (morningDone === 'sent' || preMarket) {
     return { status: 'discord_poll', discord: discordResult, gex: gexResult, time: `${etHour}:${String(etMin).padStart(2,'0')} ET` };
@@ -935,14 +933,28 @@ async function handleScheduled(env) {
   if (vixYClose === null) throw new Error('Could not determine yesterday VIX close');
 
   // 3. Get today's VIX open = first print AT OR AFTER 9:30 ET.
-  //    Poll quote API with tradeTime verification: only accept a lastPrice
-  //    whose tradeTime is >= today 9:30 ET. Otherwise it's a stale pre-market
-  //    tick — wait 1.5s and retry (up to ~8s total).
+  //    Cron fires at 9:30:00 ET — wait until wall clock passes 9:30:32 ET
+  //    before querying, so VIX has 32 sec to post the opening print.
+  //    Then poll with tradeTime verification.
   //
   //    Why not candles/openPrice:
   //    - Schwab's pricehistory for $VIX can lag 60-90 min behind real time
   //    - Schwab's quote.openPrice is unreliable for calculated indices (VIX)
   //      e.g. 2026-04-14: openPrice=18.73 but first print was 18.25
+  const targetMs = (() => {
+    // Today at 9:30:32 ET expressed as UTC ms
+    const d = new Date();
+    const et = toET(d);
+    // et has wall-clock ET values. Back it out to UTC ms by computing the
+    // ET-UTC offset at this moment (4h in EDT, 5h in EST).
+    const offsetMin = Math.round((d.getTime() - et.getTime()) / 60000);
+    return Date.UTC(et.getFullYear(), et.getMonth(), et.getDate(), 9, 30, 32) + offsetMin * 60000;
+  })();
+  const waitMs = targetMs - Date.now();
+  if (waitMs > 0 && waitMs < 60000) {
+    console.log(`[proxy] Sleeping ${waitMs}ms until 9:30:32 ET`);
+    await new Promise(r => setTimeout(r, waitMs));
+  }
   const quoteUrl = `https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`;
   let vixToday = null;
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -951,8 +963,8 @@ async function handleScheduled(env) {
     if (vixQ?.lastPrice && vixQ?.tradeTime) {
       const tradeET = toET(new Date(vixQ.tradeTime));
       const tradeMin = tradeET.getHours() * 60 + tradeET.getMinutes();
-      // Accept only if trade is today AND at or after 9:35 ET (matches cron)
-      if (tradeET.toDateString() === todayStr && tradeMin >= 575) {
+      // Accept only if trade is today AND at or after 9:30 ET
+      if (tradeET.toDateString() === todayStr && tradeMin >= 570) {
         vixToday = parseFloat(vixQ.lastPrice.toFixed(2));
         console.log(`[proxy] VIX open ${vixToday} (tradeTime ${tradeET.toTimeString().slice(0,8)} ET, attempt ${attempt+1})`);
         break;
