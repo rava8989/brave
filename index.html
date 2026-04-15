@@ -1200,7 +1200,7 @@
       if(eom1)                    return blk("No M8BF (EOM-1)",            "M8BF not traded on EOM-1");
       if(opex1)                   return blk("No M8BF (day before OPEX)",  "Skipped day before OPEX");
       if(isNonAmznTslaEarningsDay()) return blk("No M8BF (earnings)",      "Not traded on earnings days (except AMZN/TSLA)");
-      if(isVixAfterOpexDay())     return blk("No M8BF (VIX exp day)",      "VIX exp day when VIX exp falls after OPEX");
+      if(isVixAfterOpexDay(now))  return blk("No M8BF (VIX exp day)",      "VIX exp day when VIX exp falls after OPEX");
       if(nmDay)                   return blk("No M8BF (first trading day)", "Skipped on first trading day of month");
       return null;
     })();
@@ -1275,7 +1275,7 @@
         if(eomDay){rec="No M8BF (EOM)";theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on EOM";badge="BLOCKED";strikeInfo=null;}
         else if(eom1){rec="No M8BF (EOM-1)";theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on EOM-1";badge="BLOCKED";strikeInfo=null;}
         else if(opex1){rec="No M8BF (day before OPEX)";theme="block";crossed=true;blockT="hard";blockD="Skipped day before OPEX";badge="BLOCKED";strikeInfo=null;}
-        else if(isVixAfterOpexDay()){rec="No M8BF (VIX exp day)";theme="block";crossed=true;blockT="hard";blockD="VIX exp day when VIX exp falls after OPEX";badge="BLOCKED";strikeInfo=null;}
+        else if(isVixAfterOpexDay(now)){rec="No M8BF (VIX exp day)";theme="block";crossed=true;blockT="hard";blockD="VIX exp day when VIX exp falls after OPEX";badge="BLOCKED";strikeInfo=null;}
         else if(isNonAmznTslaEarningsDay()){rec="No M8BF (earnings day)";theme="block";crossed=true;blockT="hard";blockD="Non-AMZN/TSLA mega-cap earnings day";badge="BLOCKED";strikeInfo=null;}
       }
 
@@ -1285,14 +1285,14 @@
       if(opexDay&&rec.startsWith("Straddle")){rec="No Straddle (OPEX day)";theme="block";crossed=true;blockT="hard";blockD="Straddle not on OPEX";badge="BLOCKED";}
       if(postOpMon&&rec.startsWith("M8BF")) pmNote=true;
 
-      // SPX gap cancels straddle — Straddle blocked, no M8BF fallback
-      if(spxGapCancelsStrad && (rec === "Straddle @ 9:32 AM" || rec === "Straddle @ 9:32 AM (EOM)" || rec.startsWith("NM Straddle"))) {
+      // SPX gap cancels straddle — Straddle blocked, no M8BF fallback. WR=0% forced straddle is immune.
+      if(spxGapCancelsStrad && blockT!=='0%rule' && (rec === "Straddle @ 9:32 AM" || rec === "Straddle @ 9:32 AM (EOM)" || rec.startsWith("NM Straddle"))) {
         const dir=spxGapPct>0?'▲':'▼';
         rec=`No Straddle (SPX gap ${dir}${Math.abs(spxGapPct).toFixed(2)}%)`;theme="block";crossed=true;blockT="gap";blockD=`SPX gap ≥ ${T.SPX_GAP_THRESHOLD}%`;badge="BLOCKED";strikeInfo=null;
       }
 
-      // o2o cancels straddle — Straddle blocked, no M8BF fallback
-      if(o2o > T.O2O_M8BF && (rec === "Straddle @ 9:32 AM" || rec.startsWith("NM Straddle"))) {
+      // o2o cancels straddle — Straddle blocked, no M8BF fallback. WR=0% forced straddle is immune.
+      if(o2o > T.O2O_M8BF && blockT!=='0%rule' && (rec === "Straddle @ 9:32 AM" || rec.startsWith("NM Straddle"))) {
         rec=`No Straddle (o2o ${o2o.toFixed(1)} > ${T.O2O_M8BF})`;theme="block";crossed=true;blockT="o2o";blockD=`Open-to-open ${o2o.toFixed(1)} > ${T.O2O_M8BF}`;badge="BLOCKED";strikeInfo=null;
       }
 
@@ -1305,8 +1305,8 @@
         if(!cpiDay){const sc=m8Sched(dow,now);rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=sc;entryT=sc?.window||"";blockT="90%rule";}
       }
 
-      // OPEX+1 GXBF override — but NOT when WR 0% or 90% forced the signal
-      if(postOpDay && blockT!=='0%rule' && blockT!=='90%rule'){
+      // OPEX+1 GXBF override — but NOT when WR 0% or 90% forced the signal, and NOT on CPI days
+      if(postOpDay && !cpiDay && blockT!=='0%rule' && blockT!=='90%rule'){
         const isM8=rec.startsWith("M8BF"), isStr=rec.startsWith("Straddle")||rec.startsWith("NM Straddle");
         if(isM8||isStr){
           const vixOvernightPct = (vToday - vYClose) / vYClose * 100;
