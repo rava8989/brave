@@ -1396,7 +1396,7 @@
     } else {
       cardStrad.className='scard dimmed';
       stradBadge.textContent='—';
-      stradRec.textContent=`No Straddle (${oNight<=0?'overnight VIX up':'overnight VIX drop > '+T.DROP_GXBF})`;
+      stradRec.textContent=`No Straddle (${oNight<=0?'overnight VIX up':oNight>T.DROP_GXBF?'overnight VIX drop > '+T.DROP_GXBF:blockT==='90%rule'?'WR ≥ 90%':'non-CPI/Fed Wednesday'})`;
       stradReason.textContent='';
     }
 
