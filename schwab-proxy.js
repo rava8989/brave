@@ -309,7 +309,8 @@ function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate, pre
     m8bfText = `No M8BF (Straddle takes priority)`;
     gxbfText = `No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;
   } else if (theme === 'gxbf') {
-    m8bfText = `No M8BF (GXBF takes priority)`;
+    // M8BF is independent — GXBF does not block it
+    m8bfText = m8bfBanned ? (eomDay?`No M8BF (EOM)`:eom1?`No M8BF (EOM-1)`:opex1?`No M8BF (day before OPEX)`:nonAmznTslaEarn?`No M8BF (earnings)`:vixExpAfterOpex?`No M8BF (VIX exp day)`:`No M8BF`) : m8Msg(etDate);
     stradText = `No Straddle (overnight VIX drop > ${T.DROP_GXBF})`;
   } else if (theme === 'block') {
     // keep rec as-is for the blocked card
@@ -320,8 +321,9 @@ function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate, pre
       m8bfText = `No M8BF`;
       gxbfText = `No GXBF`;
     } else if (rec.includes('GXBF')) {
-      m8bfText = `No M8BF`;
-      stradText = `No Straddle`;
+      // M8BF is independent — blocked GXBF does not block M8BF
+      m8bfText = m8bfBanned ? (eomDay?`No M8BF (EOM)`:eom1?`No M8BF (EOM-1)`:opex1?`No M8BF (day before OPEX)`:nonAmznTslaEarn?`No M8BF (earnings)`:vixExpAfterOpex?`No M8BF (VIX exp day)`:`No M8BF`) : m8Msg(etDate);
+      stradText = `No Straddle (overnight VIX drop > ${T.DROP_GXBF})`;
     }
   }
 
