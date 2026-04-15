@@ -41,3 +41,13 @@ Check tokens, creds, discord_config are present in KV after every deploy.
 ---
 
 ## Never remove the ~10 future empty date placeholders from history_data.json
+
+---
+
+## calculateSignal lives in TWO places — always update both
+
+`schwab-proxy.js` and `index.html` both contain a full copy of calculateSignal.
+They must stay identical. When fixing signal logic in one, fix it in the other
+immediately in the same commit. history.html has a third copy for the backtester.
+
+Any signal logic change = touch all 3: schwab-proxy.js + index.html + history.html
