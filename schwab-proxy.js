@@ -239,15 +239,27 @@ function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate, pre
 
   if (pmNote) rec += " (afternoon times preferred)";
 
-  // SPX gap cancels straddle only — no effect on butterfly. WR=0% forced straddle is immune.
+  // SPX gap cancels straddle → fall back to M8BF (unless M8BF banned, then block). WR=0% forced straddle is immune.
   if (spxGapCancelsStrad && blockT !== '0%rule' && (rec === "Straddle @ 9:32 AM" || rec === "Straddle @ 9:32 AM (EOM)" || rec.startsWith("NM Straddle"))) {
-    const dir = spxGapPct > 0 ? '▲' : '▼';
-    rec = `No Straddle (SPX gap ${dir}${Math.abs(spxGapPct).toFixed(2)}%)`; theme = "block"; crossed = true; blockT = "gap"; blockD = `SPX gap ≥ ${T.SPX_GAP_THRESHOLD}%`; badge = "BLOCKED"; strikeInfo = null;
+    if (!m8bfBanned) {
+      const sc = m8Sched(dow);
+      rec = m8Msg(etDate); theme = "m8bf"; badge = "M8BF"; strikeInfo = sc; entryT = sc?.window || "";
+      crossed = false; blockT = ""; blockD = "";
+    } else {
+      const dir = spxGapPct > 0 ? '▲' : '▼';
+      rec = `No Straddle (SPX gap ${dir}${Math.abs(spxGapPct).toFixed(2)}%)`; theme = "block"; crossed = true; blockT = "gap"; blockD = `SPX gap ≥ ${T.SPX_GAP_THRESHOLD}%`; badge = "BLOCKED"; strikeInfo = null;
+    }
   }
 
-  // o2o cancels straddle only — no effect on butterfly. WR=0% forced straddle is immune.
+  // o2o cancels straddle → fall back to M8BF (unless M8BF banned, then block). WR=0% forced straddle is immune.
   if (o2o > T.O2O_M8BF && blockT !== '0%rule' && (rec === "Straddle @ 9:32 AM" || rec.startsWith("NM Straddle"))) {
-    rec = `No Straddle (o2o ${o2o.toFixed(1)} > ${T.O2O_M8BF})`; theme = "block"; crossed = true; blockT = "o2o"; blockD = `Open-to-open ${o2o.toFixed(1)} > ${T.O2O_M8BF}`; badge = "BLOCKED"; strikeInfo = null;
+    if (!m8bfBanned) {
+      const sc = m8Sched(dow);
+      rec = m8Msg(etDate); theme = "m8bf"; badge = "M8BF"; strikeInfo = sc; entryT = sc?.window || "";
+      crossed = false; blockT = ""; blockD = "";
+    } else {
+      rec = `No Straddle (o2o ${o2o.toFixed(1)} > ${T.O2O_M8BF})`; theme = "block"; crossed = true; blockT = "o2o"; blockD = `Open-to-open ${o2o.toFixed(1)} > ${T.O2O_M8BF}`; badge = "BLOCKED"; strikeInfo = null;
+    }
   }
 
   // WR=0% and WR>=90% are the STRONGEST overrides — trump gap, o2o, everything (except CPI/Fed)
