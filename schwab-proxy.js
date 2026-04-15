@@ -303,7 +303,7 @@ function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate, pre
     stradText = `No Straddle (CPI day)`;
     gxbfText = `No GXBF (CPI day)`;
   } else if (theme === 'm8bf') {
-    stradText = `No Straddle (${oNight <= 0 ? 'overnight VIX up' : 'overnight VIX drop > ' + T.DROP_GXBF})`;
+    stradText = `No Straddle (${oNight <= 0 ? 'overnight VIX up' : oNight > T.DROP_GXBF ? 'overnight VIX drop > ' + T.DROP_GXBF : blockT === '90%rule' ? 'WR ≥ 90%' : 'non-CPI/Fed Wednesday'})`;
     gxbfText = `No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;
   } else if (theme === 'strad') {
     m8bfText = `No M8BF (Straddle takes priority)`;
@@ -314,7 +314,7 @@ function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate, pre
   } else if (theme === 'block') {
     // keep rec as-is for the blocked card
     if (rec.includes('M8BF')) {
-      stradText = `No Straddle (${oNight <= 0 ? 'overnight VIX up' : 'overnight VIX drop > ' + T.DROP_GXBF})`;
+      stradText = `No Straddle (${oNight <= 0 ? 'overnight VIX up' : oNight > T.DROP_GXBF ? 'overnight VIX drop > ' + T.DROP_GXBF : blockT === '90%rule' ? 'WR ≥ 90%' : 'non-CPI/Fed Wednesday'})`;
       gxbfText = `No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;
     } else if (rec.includes('Straddle') || rec.includes('Trade')) {
       m8bfText = `No M8BF`;
