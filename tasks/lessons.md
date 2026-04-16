@@ -11,8 +11,13 @@ Specifically banned patterns:
 - "GXBF takes priority" over M8BF — GXBF firing never affects M8BF
 - "Straddle takes priority" over M8BF — Straddle firing never affects M8BF
 - Any `if (!m8bfBanned) { fallback to M8BF }` inside a Straddle or GXBF block
+- **Using `sig.theme !== 'm8bf'` as an M8BF-blocked check in EOD/backfill code.** `theme` is the PRIMARY recommendation (only one strategy per day). A non-`m8bf` theme just means another strategy was primary — it does NOT mean M8BF is blocked. Always use `sig.m8bfBanned || sig.cpiDay` to determine if M8BF should skip. (Caught 2026-04-16 — had been silently zeroing m8bfPL on every GXBF/Straddle day.)
 
 When fixing a blocked-strategy message: show that strategy's own blocked reason. Full stop. Do not introduce the other strategy.
+
+**In backend code (EOD, backfill, etc.):** to check whether a strategy ran, use its own ban conditions, not `theme`:
+- M8BF ran iff `!sig.m8bfBanned && !sig.cpiDay` and a qualifying signal is in window
+- `theme` is for the dashboard primary rec only, not per-strategy status
 
 ---
 
