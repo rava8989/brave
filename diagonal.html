@@ -187,6 +187,33 @@ body {
 .run-btn:active { transform: scale(.97); }
 .run-btn:disabled { opacity: .4; cursor: not-allowed; }
 
+/* Special day pills */
+.tpill {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; font-weight: 500;
+  padding: 3px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text3);
+  cursor: pointer;
+  transition: all .1s;
+  white-space: nowrap;
+}
+.tpill.active { border-color: var(--accent); color: var(--accent); background: rgba(99,102,241,.1); }
+.tpill:hover  { border-color: var(--text2); color: var(--text2); }
+.sdmode-btn {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px; font-weight: 700;
+  padding: 3px 9px; border-radius: 5px;
+  border: 1.5px solid var(--border);
+  background: transparent; color: var(--text3);
+  cursor: pointer; transition: all .12s;
+}
+.sdmode-btn:hover { border-color: var(--text2); color: var(--text2); }
+.sdmode-btn.active-exclude { border-color: var(--red); color: var(--red); background: rgba(239,68,68,.1); }
+.sdmode-btn.active-only    { border-color: var(--accent); color: var(--accent); background: rgba(99,102,241,.1); }
+
 /* ── Main content ── */
 .content { padding: 20px 24px 40px; }
 
@@ -421,8 +448,52 @@ body {
   </div>
 
   <div class="fg">
+    <div class="fg-label">Long DTE Tolerance (±days)</div>
+    <input type="number" class="num-input" id="longDteTol" value="3" min="0" max="10">
+  </div>
+
+  <div class="fg">
+    <div class="fg-label">DTE Fallback</div>
+    <select class="num-input" id="dteFallback" style="width:auto;min-width:115px;cursor:pointer">
+      <option value="prefer_longer" selected>Prefer longer</option>
+      <option value="prefer_shorter">Prefer shorter</option>
+      <option value="nearest">Nearest</option>
+      <option value="strict">Strict (skip if missing)</option>
+    </select>
+  </div>
+
+  <div class="fg">
     <div class="fg-label">Contracts</div>
     <input type="number" class="num-input" id="contracts" value="1" min="1" max="100">
+  </div>
+
+  <div class="fg" style="flex-basis:100%;width:100%">
+    <div class="fg-label" style="display:flex;align-items:center;gap:10px">
+      Special Days
+      <div style="display:flex;gap:4px" id="sdModeSeg">
+        <button class="sdmode-btn" id="sdExclude" data-mode="exclude">EXCLUDE</button>
+        <button class="sdmode-btn" id="sdOnly"    data-mode="only">ONLY</button>
+      </div>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:4px;padding:2px 0" id="sdPills">
+      <button class="tpill" data-sd="OPEX">OPEX</button>
+      <button class="tpill" data-sd="OPEX-1">OPEX-1</button>
+      <button class="tpill" data-sd="OPEX+1">OPEX+1</button>
+      <button class="tpill" data-sd="EOM">EOM</button>
+      <button class="tpill" data-sd="EOM-1">EOM-1</button>
+      <button class="tpill" data-sd="NM">NM</button>
+      <button class="tpill" data-sd="FED">FED</button>
+      <button class="tpill" data-sd="CPI">CPI</button>
+      <button class="tpill" data-sd="VIX">VIX EXP</button>
+      <button class="tpill" data-sd="AAPL">AAPL</button>
+      <button class="tpill" data-sd="GOOGL">GOOGL</button>
+      <button class="tpill" data-sd="MSFT">MSFT</button>
+      <button class="tpill" data-sd="TSLA">TSLA</button>
+      <button class="tpill" data-sd="META">META</button>
+      <button class="tpill" data-sd="NVDA">NVDA</button>
+      <button class="tpill" data-sd="AMZN">AMZN</button>
+      <button class="tpill" data-sd="ALL_EARNINGS">ALL EARNINGS</button>
+    </div>
   </div>
 
   <button class="run-btn" id="runBtn" disabled>RUN BACKTEST</button>
@@ -547,6 +618,47 @@ body {
 })();
 
 // ══════════════════════════════════════════════════════════════════════
+// Special day filter state
+// ══════════════════════════════════════════════════════════════════════
+const specialState = {
+  mode: null,          // null | 'exclude' | 'only'
+  active: new Set(),   // which categories are toggled on
+};
+
+function syncSpecialUI() {
+  // Mode buttons
+  document.getElementById('sdExclude').classList.toggle('active-exclude', specialState.mode === 'exclude');
+  document.getElementById('sdOnly').classList.toggle('active-only',       specialState.mode === 'only');
+  // Pills
+  document.querySelectorAll('#sdPills .tpill').forEach(p => {
+    p.classList.toggle('active', specialState.active.has(p.dataset.sd));
+  });
+}
+
+// Mode buttons — click toggles on/off
+document.querySelectorAll('#sdModeSeg .sdmode-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const m = btn.dataset.mode;
+    specialState.mode = specialState.mode === m ? null : m;
+    // If no mode chosen, clear selected pills too
+    if (specialState.mode === null) specialState.active.clear();
+    syncSpecialUI();
+  });
+});
+
+// Pills — click toggles membership. If mode not set, default to 'exclude' on first click.
+document.querySelectorAll('#sdPills .tpill').forEach(p => {
+  p.addEventListener('click', () => {
+    const sd = p.dataset.sd;
+    if (specialState.active.has(sd)) specialState.active.delete(sd);
+    else specialState.active.add(sd);
+    if (specialState.active.size && specialState.mode === null) specialState.mode = 'exclude';
+    if (!specialState.active.size) specialState.mode = null;
+    syncSpecialUI();
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
 // Tabs
 // ══════════════════════════════════════════════════════════════════════
 document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -575,30 +687,115 @@ async function loadData() {
 }
 
 // ══════════════════════════════════════════════════════════════════════
+// Param gatherer — pulls values from the form
+// ══════════════════════════════════════════════════════════════════════
+function getParams() {
+  return {
+    from:          document.getElementById('dateFrom').value,
+    to:            document.getElementById('dateTo').value,
+    entryTime:     document.getElementById('entryTime').value,   // "HH:MM"
+    exitTime:      document.getElementById('exitTime').value,    // "HH:MM"
+    shortDte:      parseInt(document.getElementById('shortDte').value, 10),
+    shortOffset:   parseInt(document.getElementById('shortOffset').value, 10),
+    longDte:       parseInt(document.getElementById('longDte').value, 10),
+    longOffset:    parseInt(document.getElementById('longOffset').value, 10),
+    longDteTol:    parseInt(document.getElementById('longDteTol').value, 10),
+    dteFallback:   document.getElementById('dteFallback').value, // prefer_longer|prefer_shorter|nearest|strict
+    contracts:     parseInt(document.getElementById('contracts').value, 10),
+    specialMode:   specialState.mode,           // null | 'exclude' | 'only'
+    specialActive: new Set(specialState.active),
+  };
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// DTE resolver — picks the best available DTE given fallback policy
+// ══════════════════════════════════════════════════════════════════════
+function resolveDTE(availableDTEs, targetDTE, tolerance, policy) {
+  // availableDTEs: sorted array of DTEs present in today's chain
+  // targetDTE:    user's target (e.g. 20)
+  // tolerance:    max deviation in days (e.g. ±3)
+  // policy:       'prefer_longer' | 'prefer_shorter' | 'nearest' | 'strict'
+  const candidates = availableDTEs.filter(d => Math.abs(d - targetDTE) <= tolerance);
+  if (!candidates.length) return null;
+  if (policy === 'strict') return candidates.includes(targetDTE) ? targetDTE : null;
+  if (policy === 'prefer_longer') {
+    // Try target, then +1, +2..., then -1, -2...
+    const longer  = candidates.filter(d => d >= targetDTE).sort((a,b) => a-b);
+    const shorter = candidates.filter(d => d <  targetDTE).sort((a,b) => b-a);
+    return longer[0] ?? shorter[0];
+  }
+  if (policy === 'prefer_shorter') {
+    const shorter = candidates.filter(d => d <= targetDTE).sort((a,b) => b-a);
+    const longer  = candidates.filter(d => d >  targetDTE).sort((a,b) => a-b);
+    return shorter[0] ?? longer[0];
+  }
+  // 'nearest'
+  return candidates.slice().sort((a,b) => Math.abs(a-targetDTE) - Math.abs(b-targetDTE))[0];
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Special day filter — computes sets from the data calendar
+// ══════════════════════════════════════════════════════════════════════
+function buildSpecialDateSets(tradingDays) {
+  // tradingDays: sorted array of ISO date strings actually in the dataset
+  // Returns: Map of category → Set of ISO dates
+  // Categories: OPEX, OPEX-1, OPEX+1, EOM, EOM-1, NM, FED, CPI, VIX EXP,
+  //             AAPL, GOOGL, MSFT, TSLA, META, NVDA, AMZN, ALL_EARNINGS
+  //
+  // TODO: port the logic from backtester.html lines 662-880 when wiring up data.
+  // For the framework stub, return empty sets.
+  const sets = {};
+  ['OPEX','OPEX-1','OPEX+1','EOM','EOM-1','NM','FED','CPI','VIX',
+   'AAPL','GOOGL','MSFT','TSLA','META','NVDA','AMZN','ALL_EARNINGS'].forEach(k => sets[k] = new Set());
+  return sets;
+}
+
+function applySpecialFilter(dates, specialSets, mode, activeCategories) {
+  if (!mode || !activeCategories.size) return dates;
+  const inAnyActive = d => [...activeCategories].some(cat => specialSets[cat]?.has(d));
+  if (mode === 'exclude') return dates.filter(d => !inAnyActive(d));
+  if (mode === 'only')    return dates.filter(d =>  inAnyActive(d));
+  return dates;
+}
+
+// ══════════════════════════════════════════════════════════════════════
 // Backtester core — strategy logic placeholder
 // ══════════════════════════════════════════════════════════════════════
 function runBacktest(data, params) {
   // TODO: implement once data shape is locked in.
   //
   // Pseudocode:
-  //   trades = []
-  //   for each day d in range:
-  //     spot_at_entry = d.entrySnapshot.spxSpot
-  //     short_strike  = round_to_5(spot_at_entry + params.shortOffset)
-  //     long_strike   = short_strike - params.longOffset
-  //     short_put_open = find_put(d.entrySnapshot, short_strike, params.shortDte)
-  //     long_put_open  = find_put(d.entrySnapshot, long_strike,  params.longDte)
-  //     diag_open  = long_put_open.ask - short_put_open.bid   (debit paid)
+  //   1. Build date list from data (tradingDays array)
+  //   2. Filter by date range [params.from, params.to]
+  //   3. Apply special-day filter:
+  //        tradingDays = applySpecialFilter(tradingDays, buildSpecialDateSets(...),
+  //                                         params.specialMode, params.specialActive)
+  //   4. For each day d in filtered tradingDays:
+  //        spot_at_entry = d.entrySnapshot.spxSpot
+  //        short_strike  = round_to_5(spot_at_entry + params.shortOffset)
+  //        long_strike   = short_strike - params.longOffset
   //
-  //     next_d = next trading day
-  //     short_put_close = find_put(next_d.exitSnapshot, short_strike, params.shortDte - 1)
-  //     long_put_close  = find_put(next_d.exitSnapshot, long_strike,  params.longDte  - 1)
-  //     diag_close = long_put_close.bid - short_put_close.ask   (credit received)
+  //        // Resolve long DTE if exact not available
+  //        availableLongDTEs = unique DTEs in chain for long_strike
+  //        longDteActual = resolveDTE(availableLongDTEs, params.longDte,
+  //                                   params.longDteTol, params.dteFallback)
+  //        if longDteActual === null: skip day
   //
-  //     pnl = (diag_close - diag_open) * 100 * params.contracts
-  //     trades.push({ openDate, closeDate, shortStrike, longStrike, diagOpen, diagClose, pnl })
+  //        short_put_open = find_put(d.entrySnapshot, short_strike, params.shortDte)
+  //        long_put_open  = find_put(d.entrySnapshot, long_strike,  longDteActual)
+  //        diag_open  = long_put_open.ask - short_put_open.bid   (debit paid)
   //
-  //   return { trades, kpis: compute_kpis(trades) }
+  //        next_d = next trading day
+  //        short_put_close = find_put(next_d.exitSnapshot, short_strike, params.shortDte - 1)
+  //        long_put_close  = find_put(next_d.exitSnapshot, long_strike,  longDteActual - 1)
+  //        diag_close = long_put_close.bid - short_put_close.ask   (credit received)
+  //
+  //        pnl = (diag_close - diag_open) * 100 * params.contracts
+  //        trades.push({ openDate, closeDate, shortStrike, longStrike,
+  //                      longDteActual, diagOpen, diagClose, pnl })
+  //
+  //   5. Compute KPIs: totalPL, trades, WR, avgWin, avgLoss, maxDD, PF, Sharpe
+  //   6. Return { trades, kpis }
   return { trades: [], kpis: null };
 }
 
