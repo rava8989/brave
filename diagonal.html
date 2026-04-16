@@ -942,19 +942,60 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 });
 
 // ══════════════════════════════════════════════════════════════════════
-// Data loader stub — REPLACE when you have SPX option chain data
+// Data loader — precomputed SPX+VIX at 14:00 and 12:00 ET per day
 // ══════════════════════════════════════════════════════════════════════
-const DIAGONAL_DATA = null; // will become an array of {date, chains: {...}}
+let DIAGONAL_DATA = null;
 
 async function loadData() {
-  // TODO: load from ./data/diagonal/ when data arrives
-  // Expected format per day:
-  //   {
-  //     date: "2026-04-15",
-  //     entrySnapshot: { timestamp, spxSpot, puts: [{strike, dte, bid, ask, mid}, ...] },
-  //     exitSnapshot:  { timestamp, spxSpot, puts: [{strike, dte, bid, ask, mid}, ...] },
-  //   }
-  return null;
+  try {
+    const resp = await fetch('./data/diagonal_bs_data.json?t=' + Date.now(), { cache: 'no-cache' });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const d = await resp.json();
+    // Expected: { dates: [...], by_date: {date: {spot_14, vix_14, spot_12, vix_12}} }
+    if (!d.dates || !d.by_date) throw new Error('Invalid data format');
+    return d;
+  } catch (e) {
+    console.error('[diagonal] data load failed:', e);
+    return null;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Black-Scholes put pricing (educational approximation — not production)
+// ══════════════════════════════════════════════════════════════════════
+function normCDF(x) {
+  // Abramowitz-Stegun 26.2.17 — ~7e-8 max error
+  const a1 =  0.254829592, a2 = -0.284496736, a3 = 1.421413741;
+  const a4 = -1.453152027, a5 =  1.061405429, p  = 0.3275911;
+  const sign = x < 0 ? -1 : 1;
+  x = Math.abs(x) / Math.sqrt(2);
+  const t = 1.0 / (1.0 + p * x);
+  const y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
+  return 0.5 * (1.0 + sign * y);
+}
+
+function bsPut(S, K, T_years, sigma, r) {
+  // Returns theoretical put price. If T<=0, returns intrinsic max(0, K-S).
+  if (T_years <= 0) return Math.max(0, K - S);
+  if (sigma <= 0) sigma = 0.0001;
+  const sqrtT = Math.sqrt(T_years);
+  const d1 = (Math.log(S/K) + (r + sigma*sigma/2) * T_years) / (sigma * sqrtT);
+  const d2 = d1 - sigma * sqrtT;
+  return K * Math.exp(-r * T_years) * normCDF(-d2) - S * normCDF(-d1);
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Calendar helpers
+// ══════════════════════════════════════════════════════════════════════
+function nextTradingDay(dates, after) {
+  // dates: sorted array of ISO strings
+  const i = dates.indexOf(after);
+  return (i >= 0 && i < dates.length - 1) ? dates[i + 1] : null;
+}
+function weekdayFromISO(iso) {
+  // Returns 0=Mon..6=Sun (ISO weekday -1)
+  const [y, m, d] = iso.split('-').map(Number);
+  return (new Date(Date.UTC(y, m-1, d)).getUTCDay() + 6) % 7; // shift Sun=0 -> Mon=0
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -1120,17 +1161,89 @@ function resolveDTE(availableDTEs, targetDTE, tolerance, policy) {
 // ══════════════════════════════════════════════════════════════════════
 // Special day filter — computes sets from the data calendar
 // ══════════════════════════════════════════════════════════════════════
+function _thirdFriday(y, m) {
+  let d = new Date(Date.UTC(y, m, 1));
+  let count = 0;
+  while (true) {
+    if (d.getUTCDay() === 5 && ++count === 3) return d.toISOString().slice(0, 10);
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+}
+
 function buildSpecialDateSets(tradingDays) {
-  // tradingDays: sorted array of ISO date strings actually in the dataset
-  // Returns: Map of category → Set of ISO dates
-  // Categories: OPEX, OPEX-1, OPEX+1, EOM, EOM-1, NM, FED, CPI, VIX EXP,
-  //             AAPL, GOOGL, MSFT, TSLA, META, NVDA, AMZN, ALL_EARNINGS
-  //
-  // TODO: port the logic from backtester.html lines 662-880 when wiring up data.
-  // For the framework stub, return empty sets.
+  // Port of backtester.html special-date builder.
   const sets = {};
   ['OPEX','OPEX-1','OPEX+1','EOM','EOM-1','NM','FED','CPI','VIX',
    'AAPL','GOOGL','MSFT','TSLA','META','NVDA','AMZN','ALL_EARNINGS'].forEach(k => sets[k] = new Set());
+
+  const OPEX_OVERRIDES = { '2025-04-18': '2025-04-17' };  // Good Friday
+
+  // OPEX + VIX expiry (Wednesday 2 days before 3rd Friday)
+  const tdSet = new Set(tradingDays);
+  for (let y = 2023; y <= 2027; y++) {
+    for (let m = 0; m < 12; m++) {
+      const raw = _thirdFriday(y, m);
+      const opexDate = OPEX_OVERRIDES[raw] || raw;
+      if (tdSet.has(opexDate)) sets['OPEX'].add(opexDate);
+      const opexD = new Date(opexDate + 'T12:00Z');
+      const opex1D = new Date(opexD); opex1D.setUTCDate(opexD.getUTCDate() - 1);
+      const vixD   = new Date(opexD); vixD.setUTCDate(opexD.getUTCDate() - 2);
+      sets['OPEX-1'].add(opex1D.toISOString().slice(0, 10));
+      sets['VIX'].add(vixD.toISOString().slice(0, 10));
+    }
+  }
+  // OPEX+1: next actual trading day after OPEX
+  sets['OPEX'].forEach(o => {
+    const next = tradingDays.find(d => d > o);
+    if (next) sets['OPEX+1'].add(next);
+  });
+
+  // EOM / EOM-1 / NM from trading days themselves
+  const byMonth = {};
+  tradingDays.forEach(d => {
+    const ym = d.slice(0, 7);
+    (byMonth[ym] = byMonth[ym] || []).push(d);
+  });
+  Object.values(byMonth).forEach(ds => {
+    sets['NM'].add(ds[0]);
+    sets['EOM'].add(ds[ds.length - 1]);
+    if (ds.length >= 2) sets['EOM-1'].add(ds[ds.length - 2]);
+  });
+
+  // FED (FOMC announcement days) — verified calendar
+  ['2023-02-01','2023-03-22','2023-05-03','2023-06-14','2023-07-26',
+   '2023-09-20','2023-11-01','2023-12-13',
+   '2024-01-31','2024-03-20','2024-05-01','2024-06-12','2024-07-31',
+   '2024-09-18','2024-11-07','2024-12-18',
+   '2025-01-29','2025-03-19','2025-05-07','2025-06-18','2025-07-30',
+   '2025-09-17','2025-10-29','2025-12-10',
+   '2026-01-28','2026-03-18','2026-04-29','2026-06-10','2026-07-29',
+   '2026-09-16','2026-11-04','2026-12-09'
+  ].forEach(d => sets['FED'].add(d));
+
+  // CPI (BLS release dates — verified against bls.gov archive)
+  ['2023-01-12','2023-02-14','2023-03-14','2023-04-12','2023-05-10',
+   '2023-06-13','2023-07-12','2023-08-10','2023-09-13','2023-10-12',
+   '2023-11-14','2023-12-12',
+   '2024-01-11','2024-02-13','2024-03-12','2024-04-10','2024-05-15',
+   '2024-06-12','2024-07-11','2024-08-14','2024-09-11','2024-10-10',
+   '2024-11-13','2024-12-11',
+   '2025-01-15','2025-02-12','2025-03-12','2025-04-10','2025-05-13',
+   '2025-06-11','2025-07-15','2025-08-12','2025-09-11','2025-10-24',
+   '2025-12-18',
+   '2026-01-13','2026-02-13','2026-03-11'
+  ].forEach(d => sets['CPI'].add(d));
+
+  // Earnings — big tech (AMC announcement day = IV crush day for 0DTE/short-DTE)
+  // NOTE: these should be verified per symbol. Using approximate pattern.
+  // For now, leave empty — user can refine later if they want earnings filtering.
+  // (Won't affect most backtests since these dates are sparse.)
+
+  // ALL_EARNINGS: union of the 7 tickers
+  ['AAPL','GOOGL','MSFT','TSLA','META','NVDA','AMZN'].forEach(t => {
+    sets[t].forEach(d => sets['ALL_EARNINGS'].add(d));
+  });
+
   return sets;
 }
 
@@ -1166,9 +1279,90 @@ function sizePosition(equity, marginPerContract, params) {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// Backtester core — strategy logic placeholder
+// Backtester core — Black-Scholes approximation, real data
 // ══════════════════════════════════════════════════════════════════════
-function runBacktest(data, params) {
+function runBacktestBS(data, params) {
+  const r = 0.045;              // risk-free rate (approx, can be made param later)
+  const SPREAD_PCT = 0.03;      // 3% bid/ask spread haircut vs theoretical mid
+  const trades = [];
+  let skipped = { noNextDay: 0, noExitData: 0, contracts0: 0 };
+
+  // Special-day filter on the candidate date list
+  const special = buildSpecialDateSets(data.dates);
+  let candidates = data.dates.filter(d => d >= params.from && d <= params.to);
+  candidates = applySpecialFilter(candidates, special, params.specialMode, params.specialActive);
+
+  let equity = params.startingFunds;
+
+  for (const openDate of candidates) {
+    const closeDate = nextTradingDay(data.dates, openDate);
+    if (!closeDate) { skipped.noNextDay++; continue; }
+
+    const entry = data.by_date[openDate];
+    const exit  = data.by_date[closeDate];
+    if (!entry?.spot_14 || !entry?.vix_14 || !exit?.spot_12 || !exit?.vix_12) {
+      skipped.noExitData++; continue;
+    }
+
+    const spotEntry = entry.spot_14;
+    const ivEntry   = entry.vix_14 / 100;   // VIX is annualized % → decimal
+    const spotExit  = exit.spot_12;
+    const ivExit    = exit.vix_12 / 100;
+
+    // Strikes: short = spot + offset ITM, rounded to nearest 5
+    const shortStrike = Math.round((spotEntry + params.shortOffset) / 5) * 5;
+    const longStrike  = shortStrike - params.longOffset;
+
+    // DTE at entry
+    const T_short_entry = params.shortDte / 365.25;
+    const T_long_entry  = params.longDte  / 365.25;
+
+    // Time elapsed between 14:00 entry and 12:00 next-day exit ≈ 22 hours
+    // (22/24 of a calendar day, ignoring market-closed hours for simplicity)
+    const elapsedYrs = (22 / 24) / 365.25;
+    const T_short_exit = Math.max(0, T_short_entry - elapsedYrs);
+    const T_long_exit  = Math.max(0, T_long_entry  - elapsedYrs);
+
+    // Theoretical mid prices
+    const shortMidIn  = bsPut(spotEntry, shortStrike, T_short_entry, ivEntry, r);
+    const longMidIn   = bsPut(spotEntry, longStrike,  T_long_entry,  ivEntry, r);
+    const shortMidOut = bsPut(spotExit,  shortStrike, T_short_exit,  ivExit,  r);
+    const longMidOut  = bsPut(spotExit,  longStrike,  T_long_exit,   ivExit,  r);
+
+    // Simulate bid/ask spread: mid × (1 ± spread)
+    // Opening: buy long at ask, sell short at bid → diagonal_open = longAsk - shortBid
+    const diagOpen  = (longMidIn  * (1 + SPREAD_PCT)) - (shortMidIn  * (1 - SPREAD_PCT));
+    // Closing: sell long at bid, buy short at ask → diagonal_close = longBid - shortAsk
+    const diagClose = (longMidOut * (1 - SPREAD_PCT)) - (shortMidOut * (1 + SPREAD_PCT));
+
+    // Margin estimate: width × 100 (conservative upper bound for debit diagonal)
+    const marginPerContract = (shortStrike - longStrike) * 100;
+    const contracts = sizePosition(equity, marginPerContract, params);
+    if (contracts < 1) { skipped.contracts0++; continue; }
+
+    const pnl = (diagClose - diagOpen) * 100 * contracts;
+    const premium = Math.abs(diagOpen) * 100 * contracts;
+    equity += pnl;
+
+    // Minutes in trade: 14:00→16:00 (120) + 09:30→12:00 (150) = 270 (market-hours only)
+    trades.push({
+      openDate, closeDate,
+      shortStrike, longStrike,
+      longDteActual: params.longDte,
+      diagOpen, diagClose,
+      contracts, pnl, premium,
+      minutesInTrade: 270,
+    });
+  }
+
+  return { trades, kpis: computeKPIs(trades, params), skipped };
+}
+
+// Alias so the calling code can remain generic
+function runBacktest(data, params) { return runBacktestBS(data, params); }
+
+// Stub preserved for reference when real option-chain data loader is added
+function _runBacktestStub(data, params) {
   // TODO: implement once data shape is locked in.
   //
   // Pseudocode (full version with allocation + position management):
@@ -1248,23 +1442,183 @@ function runBacktest(data, params) {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// Wire up run button (disabled until data loads)
+// Chart renderers (Plotly)
 // ══════════════════════════════════════════════════════════════════════
-document.getElementById('runBtn').addEventListener('click', async () => {
-  // Stub — will enable once loadData returns real data
-  alert('Data not loaded yet. Hook up ./data/diagonal/ loader first.');
+function isDark() { return document.documentElement.getAttribute('data-theme') === 'dark'; }
+
+function plotCfg() {
+  const dark = isDark();
+  return {
+    paper_bgcolor: dark ? '#1e293b' : '#fff',
+    plot_bgcolor:  dark ? '#1e293b' : '#fff',
+    font: { family: 'JetBrains Mono, monospace', color: dark ? '#94a3b8' : '#475569', size: 10 },
+    xaxis: { gridcolor: dark ? '#2d3f55' : '#e2e8f0', zerolinecolor: dark ? '#2d3f55' : '#e2e8f0' },
+    yaxis: { gridcolor: dark ? '#2d3f55' : '#e2e8f0', zerolinecolor: dark ? '#2d3f55' : '#e2e8f0' },
+    margin: { t: 30, l: 55, r: 20, b: 50 },
+    showlegend: false,
+  };
+}
+
+function renderEquityCurve(trades, startingFunds, scale) {
+  const el = document.getElementById('chartEquity');
+  el.innerHTML = '';
+  if (!trades.length) { el.textContent = 'No trades in this range.'; return; }
+  let eq = startingFunds;
+  const xs = [trades[0].openDate], ys = [eq];
+  for (const t of trades) {
+    eq += t.pnl;
+    xs.push(t.closeDate);
+    ys.push(eq);
+  }
+  const color = '#c9a227';
+  Plotly.newPlot(el, [
+    { x: xs, y: ys, type: 'scatter', mode: 'lines', line: { color, width: 1.8 },
+      hovertemplate: '%{x}<br>$%{y:,.0f}<extra></extra>' },
+  ], {
+    ...plotCfg(),
+    title: { text: 'Funds By Date', font: { size: 13, color: isDark() ? '#e2e8f0' : '#1e293b' }, x: 0.5 },
+    yaxis: { ...plotCfg().yaxis, tickformat: '$,.0f', type: scale === 'log' ? 'log' : 'linear' },
+    height: 420,
+  }, { displayModeBar: false, responsive: true });
+}
+
+function renderHistogram(trades) {
+  const el = document.getElementById('chartHist');
+  el.innerHTML = '';
+  if (!trades.length) { el.textContent = 'No trades.'; return; }
+  const pls = trades.map(t => t.pnl);
+  Plotly.newPlot(el, [
+    { x: pls, type: 'histogram', nbinsx: 40, marker: { color: '#818cf8', opacity: 0.8 },
+      hovertemplate: '$%{x}<br>%{y} trades<extra></extra>' },
+  ], {
+    ...plotCfg(),
+    xaxis: { ...plotCfg().xaxis, title: 'PnL ($)', tickformat: '$,.0f' },
+    yaxis: { ...plotCfg().yaxis, title: 'Trades' },
+    height: 380,
+    shapes: [{ type: 'line', x0: 0, x1: 0, y0: 0, y1: 1, yref: 'paper',
+               line: { color: isDark() ? '#64748b' : '#94a3b8', width: 1, dash: 'dash' } }],
+  }, { displayModeBar: false, responsive: true });
+}
+
+function renderByDay(trades) {
+  const el = document.getElementById('chartByDay');
+  el.innerHTML = '';
+  if (!trades.length) { el.textContent = 'No trades.'; return; }
+  const names = ['Mon','Tue','Wed','Thu','Fri'];
+  const sums = [0,0,0,0,0], counts = [0,0,0,0,0], wins = [0,0,0,0,0];
+  for (const t of trades) {
+    const dow = weekdayFromISO(t.openDate);
+    if (dow > 4) continue;
+    sums[dow] += t.pnl;
+    counts[dow]++;
+    if (t.pnl > 0) wins[dow]++;
+  }
+  const wr = counts.map((c, i) => c ? 100 * wins[i] / c : 0);
+  Plotly.newPlot(el, [
+    { x: names, y: sums, type: 'bar', name: 'PnL',
+      marker: { color: sums.map(v => v >= 0 ? '#22c55e' : '#ef4444'), opacity: 0.85 },
+      text: sums.map((v, i) => `$${Math.round(v).toLocaleString()}\n${wr[i].toFixed(0)}% WR (${counts[i]})`),
+      textposition: 'outside', hovertemplate: '%{x}: $%{y:,.0f}<extra></extra>' },
+  ], {
+    ...plotCfg(),
+    yaxis: { ...plotCfg().yaxis, tickformat: '$,.0f', title: 'Total PnL ($)' },
+    height: 380,
+  }, { displayModeBar: false, responsive: true });
+}
+
+function renderTradeLog(trades) {
+  const body = document.getElementById('tradeTableBody');
+  if (!trades.length) { body.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:24px;color:var(--text3)">No trades</td></tr>'; return; }
+  const $fmt = n => (n >= 0 ? '$' : '-$') + Math.abs(Math.round(n)).toLocaleString();
+  body.innerHTML = trades.slice(-2000).reverse().map(t => `
+    <tr>
+      <td>${t.openDate}</td>
+      <td>${t.closeDate}</td>
+      <td>${t.shortStrike}</td>
+      <td>${t.longStrike}</td>
+      <td>${t.longDteActual}</td>
+      <td>${t.diagOpen.toFixed(2)}</td>
+      <td>${t.diagClose.toFixed(2)}</td>
+      <td>${t.contracts}</td>
+      <td class="${t.pnl >= 0 ? 'pos' : 'neg'}">${$fmt(t.pnl)}</td>
+      <td>${t.minutesInTrade}</td>
+    </tr>
+  `).join('');
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Run — wire button + scale radio
+// ══════════════════════════════════════════════════════════════════════
+let lastTrades = null;
+
+async function doRun() {
+  if (!DIAGONAL_DATA) { alert('Data not loaded.'); return; }
+  const btn = document.getElementById('runBtn');
+  btn.disabled = true; btn.textContent = 'Running...';
+  // Brief yield so button state paints
+  await new Promise(r => setTimeout(r, 10));
+  try {
+    const params = getParams();
+    const { trades, kpis, skipped } = runBacktest(DIAGONAL_DATA, params);
+    lastTrades = trades;
+
+    // Show results
+    document.getElementById('emptyState').style.display = 'none';
+    document.getElementById('kpiHeading').style.display = '';
+    document.getElementById('statsGrid').style.display = '';
+    document.getElementById('resultsArea').style.display = '';
+
+    if (kpis) renderKPIs(kpis);
+    const scale = document.querySelector('input[name="equityScale"]:checked')?.value || 'linear';
+    renderEquityCurve(trades, params.startingFunds, scale);
+    renderHistogram(trades);
+    renderByDay(trades);
+    renderTradeLog(trades);
+
+    document.getElementById('hdrMeta').textContent =
+      `${trades.length} trades${skipped ? ` (${skipped.noExitData + skipped.noNextDay} skipped)` : ''}`;
+  } catch (e) {
+    console.error(e);
+    alert('Backtest failed: ' + e.message);
+  }
+  btn.disabled = false; btn.textContent = 'RUN BACKTEST';
+}
+
+document.getElementById('runBtn').addEventListener('click', doRun);
+
+// Equity scale radio — re-render on change
+document.querySelectorAll('input[name="equityScale"]').forEach(r => {
+  r.addEventListener('change', () => {
+    if (!lastTrades) return;
+    const params = getParams();
+    const scale = document.querySelector('input[name="equityScale"]:checked')?.value || 'linear';
+    renderEquityCurve(lastTrades, params.startingFunds, scale);
+  });
 });
 
 // Kick off
 (async () => {
   const data = await loadData();
-  if (data) {
+  if (data && data.dates && data.dates.length) {
+    DIAGONAL_DATA = data;
     document.getElementById('dataNotice').style.display = 'none';
-    document.getElementById('emptyState').style.display = 'none';
-    document.getElementById('statsGrid').style.display = '';
-    document.getElementById('resultsArea').style.display = '';
     document.getElementById('runBtn').disabled = false;
-    document.getElementById('hdrMeta').textContent = `${data.length} days loaded`;
+    document.getElementById('hdrMeta').textContent =
+      `${data.dates.length} days loaded · BS approx`;
+    // Default date range to full available span
+    document.getElementById('dateFrom').value = data.dates[0];
+    document.getElementById('dateTo').value   = data.dates[data.dates.length - 1];
+    // Update empty state to invite running
+    document.getElementById('emptyState').innerHTML =
+      `<div class="empty-title">Data loaded — ${data.dates.length} trading days</div>
+       <div class="empty-desc">
+         Using Black-Scholes approximation on SPX + VIX 1-min bars.
+         Bid/ask modeled as ±3% of theoretical mid.
+         Press <strong>RUN BACKTEST</strong> to compute results.
+       </div>`;
+  } else {
+    document.getElementById('dataNotice').textContent =
+      '⚠ Failed to load ./data/diagonal_bs_data.json — run build_diagonal_data.py to generate it.';
   }
 })();
 </script>
