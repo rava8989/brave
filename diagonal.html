@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SPX-BF // Diagonal Backtester</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
+<script src="https://cdn.plot.ly/plotly-2.27.0.min.js" charset="utf-8"></script>
+<style>
+:root {
+  --bg:   #f1f5f9;
+  --bg2:  #ffffff;
+  --bg3:  #f8fafc;
+  --border: #e2e8f0;
+  --text:   #1e293b;
+  --text2:  #475569;
+  --text3:  #94a3b8;
+  --accent: #6366f1;
+  --accent2:#818cf8;
+  --green:  #22c55e;
+  --red:    #ef4444;
+  --amber:  #f59e0b;
+  --shadow: 0 1px 3px rgba(0,0,0,.07), 0 4px 16px rgba(0,0,0,.05);
+  --radius: 12px;
+  --radius-sm: 8px;
+}
+[data-theme="dark"] {
+  --bg:   #0f172a;
+  --bg2:  #1e293b;
+  --bg3:  #162032;
+  --border: #2d3f55;
+  --text:   #e2e8f0;
+  --text2:  #94a3b8;
+  --text3:  #475569;
+  --accent: #818cf8;
+  --accent2:#6366f1;
+  --shadow: 0 1px 3px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.2);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Inter', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  min-height: 100vh;
+  transition: background .2s, color .2s;
+}
+
+/* ── Header ── */
+.header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 13px 24px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  box-shadow: var(--shadow);
+}
+.logo {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: -.01em;
+  white-space: nowrap;
+}
+.logo span { color: var(--text3); font-weight: 400; }
+.header-sep { width: 1px; height: 20px; background: var(--border); }
+.header-meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text3);
+}
+.header-spacer { flex: 1; }
+.theme-btn {
+  width: 34px; height: 18px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--bg3);
+  cursor: pointer;
+  position: relative;
+  transition: background .2s;
+  flex-shrink: 0;
+}
+.theme-btn::after {
+  content: '';
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  transition: transform .2s;
+}
+[data-theme="dark"] .theme-btn::after { transform: translateX(16px); }
+.nav{display:flex;gap:4px;}
+.nav a{font-size:12px;font-weight:500;padding:5px 12px;border-radius:6px;color:var(--text2);text-decoration:none;transition:background .15s,color .15s;border:1px solid transparent;}
+.nav a:hover{background:var(--bg3);color:var(--text);}
+.nav a.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+
+/* ── Strategy description ── */
+.strategy-banner {
+  padding: 18px 24px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+}
+.strategy-title {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--accent);
+  margin-bottom: 8px;
+  letter-spacing: -.01em;
+}
+.strategy-desc {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text2);
+  max-width: 920px;
+}
+.strategy-desc code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  background: var(--bg3);
+  padding: 1px 6px;
+  border-radius: 3px;
+  color: var(--accent);
+}
+
+/* ── Params ── */
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  padding: 14px 24px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  align-items: flex-end;
+}
+.fg { display: flex; flex-direction: column; gap: 6px; }
+.fg-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--text3);
+}
+.fg-row { display: flex; gap: 4px; align-items: center; }
+.date-input, .num-input, .time-input {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg3);
+  color: var(--text);
+  cursor: pointer;
+}
+.date-input { width: 108px; }
+.num-input { width: 72px; text-align: right; cursor: text; }
+.time-input { width: 90px; }
+.date-input:focus, .num-input:focus, .time-input:focus {
+  outline: none; border-color: var(--accent);
+}
+.run-btn {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  padding: 8px 22px;
+  border-radius: 7px;
+  border: none;
+  background: var(--accent2);
+  color: #fff;
+  cursor: pointer;
+  transition: opacity .12s, transform .1s;
+  white-space: nowrap;
+  align-self: flex-end;
+}
+.run-btn:hover { opacity: .88; }
+.run-btn:active { transform: scale(.97); }
+.run-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+/* ── Main content ── */
+.content { padding: 20px 24px 40px; }
+
+/* Empty state */
+.empty-state {
+  padding: 40px 24px;
+  text-align: center;
+  background: var(--bg2);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 24px;
+}
+.empty-title {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text2);
+  margin-bottom: 10px;
+}
+.empty-desc {
+  font-size: 12px;
+  color: var(--text3);
+  line-height: 1.7;
+  max-width: 620px;
+  margin: 0 auto;
+}
+
+/* Stats grid */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 10px;
+  margin-bottom: 20px;
+}
+.stat-card {
+  padding: 14px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg2);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  transition: border-color .15s;
+}
+.stat-card.green { background: rgba(34,197,94,.07); border-color: rgba(34,197,94,.22); }
+.stat-card.red   { background: rgba(239,68,68,.07);  border-color: rgba(239,68,68,.22); }
+.stat-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--text3);
+}
+.stat-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -.02em;
+}
+.stat-placeholder { color: var(--text3); font-weight: 400; }
+
+/* Tabs */
+.tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+.tab-btn {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  padding: 10px 18px;
+  border: none;
+  background: transparent;
+  color: var(--text3);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: all .12s;
+  white-space: nowrap;
+}
+.tab-btn:hover { color: var(--text2); }
+.tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+/* Chart containers */
+.chart-box {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 18px;
+  margin-bottom: 16px;
+  box-shadow: var(--shadow);
+  min-height: 300px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text3);
+  font-size: 12px;
+}
+
+/* Trade table */
+.trade-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  background: var(--bg2);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+.trade-table th {
+  text-align: left;
+  padding: 10px 12px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--text3);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg3);
+}
+.trade-table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+}
+.trade-table td.pos { color: var(--green); font-weight: 600; }
+.trade-table td.neg { color: var(--red);   font-weight: 600; }
+.trade-table tr:last-child td { border-bottom: none; }
+.trade-table tbody tr:hover { background: var(--bg3); }
+
+/* Data notice */
+.data-notice {
+  padding: 12px 16px;
+  background: rgba(245,158,11,.08);
+  border: 1px solid rgba(245,158,11,.25);
+  border-radius: var(--radius-sm);
+  color: var(--amber);
+  font-size: 11px;
+  margin-bottom: 18px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.data-notice::before {
+  content: '⚠';
+  font-size: 14px;
+}
+</style>
+</head>
+<body>
+
+<!-- Header — no link to this page on purpose; hidden nav -->
+<header class="header">
+  <div class="logo">SPX-BF <span>//</span> Diagonal Backtester</div>
+  <nav class="nav">
+    <a href="index.html">Dashboard</a>
+    <a href="history.html">History</a>
+    <a href="backtester.html">Backtester</a>
+    <a href="live.html">M8BF Today</a>
+    <a href="gex.html">GEX</a>
+  </nav>
+  <div class="header-spacer"></div>
+  <div class="header-sep"></div>
+  <div class="header-meta" id="hdrMeta">No data loaded</div>
+  <button class="theme-btn" id="themeBtn" title="Toggle theme"></button>
+</header>
+
+<!-- Strategy description -->
+<section class="strategy-banner">
+  <div class="strategy-title">1/20 DTE Put Diagonal — Bullish Skewed</div>
+  <div class="strategy-desc">
+    <strong>Entry</strong> — every trading day at <code>14:00 ET</code>: <strong>sell</strong> a 1 DTE put
+    <code>10 pts ITM</code>, <strong>buy</strong> a 20 DTE put <code>20 pts lower</code> than the short strike.
+    E.g. SPX at 6300 → sell 1 DTE 6310, buy 21 DTE 6290.
+    <br>
+    <strong>Management</strong> — hold overnight. Next day roll <strong>both legs</strong> out 1 day for a credit.
+    If a 1-day roll can't get a credit even with 10 pt strike adjustment, try a 2-day roll as close to price as possible.
+    <br>
+    <strong>Exit</strong> — typically hold until midday to capture theta decay from the now-0 DTE short,
+    then roll. P/L comes from the diagonal price rising (short decays faster than long) — roll cost/credit is just bookkeeping.
+  </div>
+</section>
+
+<!-- Parameters -->
+<div class="filters">
+  <div class="fg">
+    <div class="fg-label">Date Range</div>
+    <div class="fg-row">
+      <input type="date" class="date-input" id="dateFrom">
+      <span style="color:var(--text3);font-size:11px;padding:0 2px">→</span>
+      <input type="date" class="date-input" id="dateTo">
+    </div>
+  </div>
+
+  <div class="fg">
+    <div class="fg-label">Entry Time (ET)</div>
+    <div class="fg-row">
+      <input type="time" class="time-input" id="entryTime" value="14:00">
+    </div>
+  </div>
+
+  <div class="fg">
+    <div class="fg-label">Exit Time (ET, next day)</div>
+    <div class="fg-row">
+      <input type="time" class="time-input" id="exitTime" value="12:00">
+    </div>
+  </div>
+
+  <div class="fg">
+    <div class="fg-label">Short DTE</div>
+    <input type="number" class="num-input" id="shortDte" value="1" min="0" max="5">
+  </div>
+
+  <div class="fg">
+    <div class="fg-label">Short ITM Offset (pts)</div>
+    <input type="number" class="num-input" id="shortOffset" value="10" min="0" step="5">
+  </div>
+
+  <div class="fg">
+    <div class="fg-label">Long DTE</div>
+    <input type="number" class="num-input" id="longDte" value="20" min="5" max="60">
+  </div>
+
+  <div class="fg">
+    <div class="fg-label">Long Below Short (pts)</div>
+    <input type="number" class="num-input" id="longOffset" value="20" min="0" step="5">
+  </div>
+
+  <div class="fg">
+    <div class="fg-label">Contracts</div>
+    <input type="number" class="num-input" id="contracts" value="1" min="1" max="100">
+  </div>
+
+  <button class="run-btn" id="runBtn" disabled>RUN BACKTEST</button>
+</div>
+
+<!-- Main content -->
+<main class="content">
+
+  <!-- No-data notice -->
+  <div class="data-notice" id="dataNotice">
+    No SPX options historical data loaded. Backtester is wired up but waiting for data (ThetaData Options PRO snapshots or equivalent). Run button stays disabled until data file is present.
+  </div>
+
+  <!-- Empty state -->
+  <div class="empty-state" id="emptyState">
+    <div class="empty-title">Framework ready — no data yet</div>
+    <div class="empty-desc">
+      Once SPX puts historical chain data is loaded (2:00 PM ET entry snapshot + next-day 12:00 ET exit snapshot for each trading day, across 1&nbsp;DTE to 25&nbsp;DTE, strikes ±100 pts around ATM), this page will compute results using the parameters above.
+      <br><br>
+      Drop your data file at <code>./data/diagonal/SPX_YYYYMMDD.csv</code> or adapt the loader in <code>diagonal.html</code> to your format.
+    </div>
+  </div>
+
+  <!-- KPIs (hidden until results) -->
+  <div class="stats-grid" id="statsGrid" style="display:none">
+    <div class="stat-card">
+      <div class="stat-label">Total PnL</div>
+      <div class="stat-value stat-placeholder" id="kpiTotalPL">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Trades</div>
+      <div class="stat-value stat-placeholder" id="kpiTrades">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Win Rate</div>
+      <div class="stat-value stat-placeholder" id="kpiWR">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Avg Win</div>
+      <div class="stat-value stat-placeholder" id="kpiAvgWin">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Avg Loss</div>
+      <div class="stat-value stat-placeholder" id="kpiAvgLoss">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Max Drawdown</div>
+      <div class="stat-value stat-placeholder" id="kpiMaxDD">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Profit Factor</div>
+      <div class="stat-value stat-placeholder" id="kpiPF">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Sharpe</div>
+      <div class="stat-value stat-placeholder" id="kpiSharpe">—</div>
+    </div>
+  </div>
+
+  <!-- Tabs (hidden until results) -->
+  <div id="resultsArea" style="display:none">
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="equity">Equity Curve</button>
+      <button class="tab-btn" data-tab="histogram">PnL Distribution</button>
+      <button class="tab-btn" data-tab="trades">Trade Log</button>
+      <button class="tab-btn" data-tab="byday">By Day of Week</button>
+    </div>
+
+    <div class="tab-panel active" data-tab="equity">
+      <div class="chart-box" id="chartEquity">Equity curve will render here</div>
+    </div>
+    <div class="tab-panel" data-tab="histogram">
+      <div class="chart-box" id="chartHist">PnL distribution will render here</div>
+    </div>
+    <div class="tab-panel" data-tab="trades">
+      <table class="trade-table" id="tradeTable">
+        <thead>
+          <tr>
+            <th>Open</th>
+            <th>Close</th>
+            <th>Short Strike</th>
+            <th>Long Strike</th>
+            <th>Diagonal Open</th>
+            <th>Diagonal Close</th>
+            <th>PnL</th>
+          </tr>
+        </thead>
+        <tbody id="tradeTableBody"></tbody>
+      </table>
+    </div>
+    <div class="tab-panel" data-tab="byday">
+      <div class="chart-box" id="chartByDay">Per-day-of-week breakdown will render here</div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+// ══════════════════════════════════════════════════════════════════════
+// Theme toggle
+// ══════════════════════════════════════════════════════════════════════
+(function(){
+  const saved = localStorage.getItem('diag_theme');
+  if (saved) document.documentElement.setAttribute('data-theme', saved);
+  document.getElementById('themeBtn').addEventListener('click', () => {
+    const cur = document.documentElement.getAttribute('data-theme');
+    const next = cur === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    localStorage.setItem('diag_theme', next);
+  });
+})();
+
+// ══════════════════════════════════════════════════════════════════════
+// Default date range — last 90 days
+// ══════════════════════════════════════════════════════════════════════
+(function(){
+  const today = new Date();
+  const past  = new Date(today); past.setDate(today.getDate() - 90);
+  const fmt = d => d.toISOString().slice(0,10);
+  document.getElementById('dateFrom').value = fmt(past);
+  document.getElementById('dateTo').value   = fmt(today);
+})();
+
+// ══════════════════════════════════════════════════════════════════════
+// Tabs
+// ══════════════════════════════════════════════════════════════════════
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const t = btn.dataset.tab;
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b === btn));
+    document.querySelectorAll('.tab-panel').forEach(p =>
+      p.classList.toggle('active', p.dataset.tab === t));
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// Data loader stub — REPLACE when you have SPX option chain data
+// ══════════════════════════════════════════════════════════════════════
+const DIAGONAL_DATA = null; // will become an array of {date, chains: {...}}
+
+async function loadData() {
+  // TODO: load from ./data/diagonal/ when data arrives
+  // Expected format per day:
+  //   {
+  //     date: "2026-04-15",
+  //     entrySnapshot: { timestamp, spxSpot, puts: [{strike, dte, bid, ask, mid}, ...] },
+  //     exitSnapshot:  { timestamp, spxSpot, puts: [{strike, dte, bid, ask, mid}, ...] },
+  //   }
+  return null;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Backtester core — strategy logic placeholder
+// ══════════════════════════════════════════════════════════════════════
+function runBacktest(data, params) {
+  // TODO: implement once data shape is locked in.
+  //
+  // Pseudocode:
+  //   trades = []
+  //   for each day d in range:
+  //     spot_at_entry = d.entrySnapshot.spxSpot
+  //     short_strike  = round_to_5(spot_at_entry + params.shortOffset)
+  //     long_strike   = short_strike - params.longOffset
+  //     short_put_open = find_put(d.entrySnapshot, short_strike, params.shortDte)
+  //     long_put_open  = find_put(d.entrySnapshot, long_strike,  params.longDte)
+  //     diag_open  = long_put_open.ask - short_put_open.bid   (debit paid)
+  //
+  //     next_d = next trading day
+  //     short_put_close = find_put(next_d.exitSnapshot, short_strike, params.shortDte - 1)
+  //     long_put_close  = find_put(next_d.exitSnapshot, long_strike,  params.longDte  - 1)
+  //     diag_close = long_put_close.bid - short_put_close.ask   (credit received)
+  //
+  //     pnl = (diag_close - diag_open) * 100 * params.contracts
+  //     trades.push({ openDate, closeDate, shortStrike, longStrike, diagOpen, diagClose, pnl })
+  //
+  //   return { trades, kpis: compute_kpis(trades) }
+  return { trades: [], kpis: null };
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Wire up run button (disabled until data loads)
+// ══════════════════════════════════════════════════════════════════════
+document.getElementById('runBtn').addEventListener('click', async () => {
+  // Stub — will enable once loadData returns real data
+  alert('Data not loaded yet. Hook up ./data/diagonal/ loader first.');
+});
+
+// Kick off
+(async () => {
+  const data = await loadData();
+  if (data) {
+    document.getElementById('dataNotice').style.display = 'none';
+    document.getElementById('emptyState').style.display = 'none';
+    document.getElementById('statsGrid').style.display = '';
+    document.getElementById('resultsArea').style.display = '';
+    document.getElementById('runBtn').disabled = false;
+    document.getElementById('hdrMeta').textContent = `${data.length} days loaded`;
+  }
+})();
+</script>
+
+</body>
+</html>
