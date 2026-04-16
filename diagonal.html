@@ -888,16 +888,9 @@ body {
   });
 })();
 
-// ══════════════════════════════════════════════════════════════════════
-// Default date range — last 90 days
-// ══════════════════════════════════════════════════════════════════════
-(function(){
-  const today = new Date();
-  const past  = new Date(today); past.setDate(today.getDate() - 90);
-  const fmt = d => d.toISOString().slice(0,10);
-  document.getElementById('dateFrom').value = fmt(past);
-  document.getElementById('dateTo').value   = fmt(today);
-})();
+// (Date range defaults are set after data loads — see kick-off block below.
+//  No pre-init: avoids flashing wrong dates before the dataset's true span
+//  overrides them.)
 
 // ══════════════════════════════════════════════════════════════════════
 // Special day filter state
@@ -1681,21 +1674,30 @@ document.querySelectorAll('input[name="equityScale"]').forEach(r => {
   const data = await loadData();
   if (data && data.dates && data.dates.length) {
     DIAGONAL_DATA = data;
+    const first = data.dates[0];
+    const last  = data.dates[data.dates.length - 1];
+
+    // Set dates FIRST and clamp inputs to the available range so browsers
+    // can't autofill something outside it.
+    const dfEl = document.getElementById('dateFrom');
+    const dtEl = document.getElementById('dateTo');
+    dfEl.value = first; dfEl.min = first; dfEl.max = last;
+    dtEl.value = last;  dtEl.min = first; dtEl.max = last;
+
+    // Then show UI state
     document.getElementById('dataNotice').style.display = 'none';
-    document.getElementById('runBtn').disabled = false;
     document.getElementById('hdrMeta').textContent =
-      `${data.dates.length} days loaded · BS approx`;
-    // Default date range to full available span
-    document.getElementById('dateFrom').value = data.dates[0];
-    document.getElementById('dateTo').value   = data.dates[data.dates.length - 1];
-    // Update empty state to invite running
+      `${data.dates.length} days loaded (${first} → ${last}) · BS approx`;
     document.getElementById('emptyState').innerHTML =
       `<div class="empty-title">Data loaded — ${data.dates.length} trading days</div>
        <div class="empty-desc">
-         Using Black-Scholes approximation on SPX + VIX 1-min bars.
-         Bid/ask modeled as ±3% of theoretical mid.
+         Range: <strong>${first}</strong> → <strong>${last}</strong><br>
+         Using Black-Scholes on SPX + VIX 1-min bars. Bid/ask modeled as ±3% of theoretical mid.<br>
          Press <strong>RUN BACKTEST</strong> to compute results.
        </div>`;
+
+    // Finally enable run
+    document.getElementById('runBtn').disabled = false;
   } else {
     document.getElementById('dataNotice').textContent =
       '⚠ Failed to load ./data/diagonal_bs_data.json — run build_diagonal_data.py to generate it.';
