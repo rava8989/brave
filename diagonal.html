@@ -834,23 +834,34 @@ body {
       </div>
     </div>
     <div class="tab-panel" data-tab="trades">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:10px;flex-wrap:wrap">
+        <div style="font-size:11px;color:var(--text3)" id="tradeLogCount">—</div>
+        <button class="run-btn" id="exportCsvBtn" style="padding:6px 14px;font-size:10px">EXPORT CSV</button>
+      </div>
+      <div style="overflow-x:auto">
       <table class="trade-table" id="tradeTable">
         <thead>
           <tr>
             <th>Open</th>
+            <th>DOW</th>
             <th>Close</th>
-            <th>Short Strike</th>
-            <th>Long Strike</th>
-            <th>Long DTE</th>
-            <th>Diagonal Open</th>
-            <th>Diagonal Close</th>
-            <th>Contracts</th>
+            <th>SPX Entry</th>
+            <th>SPX Exit</th>
+            <th>VIX Entry</th>
+            <th>VIX Exit</th>
+            <th>Short K</th>
+            <th>Long K</th>
+            <th>DTE (S/L)</th>
+            <th>Diag Open</th>
+            <th>Diag Close</th>
+            <th>Qty</th>
             <th>PnL</th>
-            <th>Min In Trade</th>
+            <th>Tags</th>
           </tr>
         </thead>
         <tbody id="tradeTableBody"></tbody>
       </table>
+      </div>
     </div>
     <div class="tab-panel" data-tab="histogram">
       <div class="chart-box" id="chartHist">PnL distribution will render here</div>
@@ -1344,14 +1355,28 @@ function runBacktestBS(data, params) {
     const premium = Math.abs(diagOpen) * 100 * contracts;
     equity += pnl;
 
+    // Tag with special-day categories that apply
+    const tags = [];
+    for (const [cat, daySet] of Object.entries(special)) {
+      if (cat === 'ALL_EARNINGS') continue;
+      if (daySet.has(openDate)) tags.push(cat);
+    }
+
     // Minutes in trade: 14:00→16:00 (120) + 09:30→12:00 (150) = 270 (market-hours only)
     trades.push({
       openDate, closeDate,
+      dow: weekdayFromISO(openDate),                 // 0=Mon..4=Fri
+      spotEntry: Math.round(spotEntry * 100) / 100,
+      spotExit:  Math.round(spotExit  * 100) / 100,
+      vixEntry:  entry.vix_14,
+      vixExit:   exit.vix_12,
       shortStrike, longStrike,
       longDteActual: params.longDte,
+      shortDte: params.shortDte,
       diagOpen, diagClose,
       contracts, pnl, premium,
       minutesInTrade: 270,
+      tags,                                           // array of special-day category names
     });
   }
 
@@ -1526,25 +1551,80 @@ function renderByDay(trades) {
   }, { displayModeBar: false, responsive: true });
 }
 
+const DOW_NAMES = ['Mon','Tue','Wed','Thu','Fri'];
+
 function renderTradeLog(trades) {
   const body = document.getElementById('tradeTableBody');
-  if (!trades.length) { body.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:24px;color:var(--text3)">No trades</td></tr>'; return; }
+  const countEl = document.getElementById('tradeLogCount');
+  if (!trades.length) {
+    body.innerHTML = '<tr><td colspan="15" style="text-align:center;padding:24px;color:var(--text3)">No trades</td></tr>';
+    countEl.textContent = '0 trades';
+    return;
+  }
   const $fmt = n => (n >= 0 ? '$' : '-$') + Math.abs(Math.round(n)).toLocaleString();
-  body.innerHTML = trades.slice(-2000).reverse().map(t => `
+  const shown = trades.slice(-2000).reverse();
+  countEl.textContent = `${trades.length} trades${trades.length > 2000 ? ' (showing last 2000)' : ''} — newest first`;
+
+  body.innerHTML = shown.map(t => `
     <tr>
-      <td>${t.openDate}</td>
+      <td style="font-weight:600;color:var(--text)">${t.openDate}</td>
+      <td style="color:var(--accent);font-weight:600">${DOW_NAMES[t.dow] || '—'}</td>
       <td>${t.closeDate}</td>
-      <td>${t.shortStrike}</td>
-      <td>${t.longStrike}</td>
-      <td>${t.longDteActual}</td>
+      <td>${t.spotEntry?.toFixed(2) ?? '—'}</td>
+      <td>${t.spotExit?.toFixed(2)  ?? '—'}</td>
+      <td>${t.vixEntry?.toFixed(2)  ?? '—'}</td>
+      <td>${t.vixExit?.toFixed(2)   ?? '—'}</td>
+      <td style="color:var(--red)">${t.shortStrike}</td>
+      <td style="color:var(--green)">${t.longStrike}</td>
+      <td style="color:var(--text3);font-size:10px">${t.shortDte ?? '—'} / ${t.longDteActual}</td>
       <td>${t.diagOpen.toFixed(2)}</td>
       <td>${t.diagClose.toFixed(2)}</td>
       <td>${t.contracts}</td>
       <td class="${t.pnl >= 0 ? 'pos' : 'neg'}">${$fmt(t.pnl)}</td>
-      <td>${t.minutesInTrade}</td>
+      <td style="font-size:9px;color:var(--text3)">${(t.tags || []).join(' ') || '—'}</td>
     </tr>
   `).join('');
 }
+
+// ══════════════════════════════════════════════════════════════════════
+// CSV export
+// ══════════════════════════════════════════════════════════════════════
+function exportTradesCSV(trades) {
+  if (!trades.length) { alert('No trades to export.'); return; }
+  const header = [
+    'open_date','day_of_week','close_date',
+    'spx_entry','spx_exit','vix_entry','vix_exit',
+    'short_strike','long_strike','short_dte','long_dte',
+    'diagonal_open','diagonal_close','contracts','premium','pnl',
+    'minutes_in_trade','tags'
+  ];
+  const rows = trades.map(t => [
+    t.openDate, DOW_NAMES[t.dow] || '', t.closeDate,
+    t.spotEntry ?? '', t.spotExit ?? '', t.vixEntry ?? '', t.vixExit ?? '',
+    t.shortStrike, t.longStrike, t.shortDte ?? '', t.longDteActual,
+    t.diagOpen.toFixed(4), t.diagClose.toFixed(4), t.contracts,
+    t.premium.toFixed(2), t.pnl.toFixed(2),
+    t.minutesInTrade, (t.tags || []).join(';')
+  ]);
+  const csv = [header, ...rows].map(r => r.map(v => {
+    const s = String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  }).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `diagonal_backtest_${new Date().toISOString().slice(0,10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+document.getElementById('exportCsvBtn').addEventListener('click', () => {
+  if (lastTrades) exportTradesCSV(lastTrades);
+  else alert('Run a backtest first.');
+});
 
 // ══════════════════════════════════════════════════════════════════════
 // Run — wire button + scale radio
