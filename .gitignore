@@ -22,3 +22,8 @@ scraper/__pycache__/
 # Allow scraper Python source files (no secrets in them)
 !scraper/*.py
 !scraper/requirements.txt
+
+# Allow the precomputed diagonal backtester dataset (browser fetches it)
+!data/diagonal_bs_data.json
+# Allow the build script so the dataset can be regenerated
+!build_diagonal_data.py
