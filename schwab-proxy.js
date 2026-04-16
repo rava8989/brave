@@ -602,9 +602,11 @@ async function handleEOD(env, etNow) {
           etDate: etNow,
           prevWR: prevWREntry ? parseFloat(prevWREntry.m8bfWR) : null,
         });
-        if (sig.theme !== 'm8bf') {
+        // M8BF independence: only block if M8BF's OWN conditions block it.
+        // GXBF/Straddle firing does NOT block M8BF. Ever.
+        if (sig.m8bfBanned || sig.cpiDay) {
           m8bfBlockedByLive = true;
-          console.log(`[eod] M8BF blocked by live signal (theme=${sig.theme}, blockT=${sig.blockT})`);
+          console.log(`[eod] M8BF blocked by own conditions (m8bfBanned=${sig.m8bfBanned}, cpiDay=${sig.cpiDay})`);
         }
       }
     }
