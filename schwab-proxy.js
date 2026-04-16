@@ -2871,8 +2871,9 @@ export default {
           if (!eodDone) {
             try {
               console.log('[gex] EOD not run yet — triggering from /gex');
-              await env.SIGNAL_KV.put(eodKey, 'done', { expirationTtl: 86400 });
               await handleEOD(env, etNow);
+              // Only mark done AFTER handleEOD succeeds — otherwise retries stay unblocked
+              await env.SIGNAL_KV.put(eodKey, 'done', { expirationTtl: 86400 });
             } catch (e) {
               console.warn('[gex] EOD fallback failed:', e.message || e);
             }
