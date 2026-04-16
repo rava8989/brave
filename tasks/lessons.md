@@ -4,14 +4,15 @@
 
 **Violated multiple times. Do not repeat.**
 
-M8BF, Straddle, GXBF, BOBF compute their own status independently. No cross-references. No fallbacks. No "takes priority" language.
+M8BF, Straddle, GXBF, BOBF compute their own status independently. No cross-references. No fallbacks. No cross-strategy precedence language.
 
-Specifically banned patterns:
+Forbidden patterns:
 - Converting blocked Straddle into M8BF (the o2o/gap → M8BF fallback)
-- "GXBF takes priority" over M8BF — GXBF firing never affects M8BF
-- "Straddle takes priority" over M8BF — Straddle firing never affects M8BF
+- Any `m8bfText`/`stradText`/`gxbfText` that names another strategy as the blocker
 - Any `if (!m8bfBanned) { fallback to M8BF }` inside a Straddle or GXBF block
 - **Using `sig.theme !== 'm8bf'` as an M8BF-blocked check in EOD/backfill code.** `theme` is the PRIMARY recommendation (only one strategy per day). A non-`m8bf` theme just means another strategy was primary — it does NOT mean M8BF is blocked. Always use `sig.m8bfBanned || sig.cpiDay` to determine if M8BF should skip. (Caught 2026-04-16 — had been silently zeroing m8bfPL on every GXBF/Straddle day.)
+
+The pre-commit hook `scripts/check-strategy-independence.sh` fails the commit if any of these patterns reappear.
 
 When fixing a blocked-strategy message: show that strategy's own blocked reason. Full stop. Do not introduce the other strategy.
 

@@ -47,20 +47,22 @@ Only aggressive buys (traded at ask or above) are counted. Call bought = bullish
 M8BF, Straddle, GXBF, and BOBF are COMPLETELY INDEPENDENT strategies. This has been established and violated multiple times. Never again.
 
 **Hard rules:**
-- GXBF firing does NOT block, cancel, or take priority over M8BF. Ever.
-- Straddle firing does NOT block, cancel, or take priority over M8BF. Ever.
+- GXBF firing does NOT block or cancel M8BF. Ever.
+- Straddle firing does NOT block or cancel M8BF. Ever.
 - If Straddle is blocked (o2o too wide, SPX gap, OPEX), it stays blocked — it does NOT fall back to M8BF.
 - If GXBF is blocked, it does NOT affect M8BF status. Ever.
 - M8BF card always shows M8BF's OWN status (day-of-week window + its own banned conditions).
 - Straddle card always shows Straddle's OWN status (overnight VIX drop + o2o + gap conditions).
 - GXBF card always shows GXBF's OWN status (large overnight VIX drop conditions).
-- No strategy's dimmed card text should ever say "X takes priority" — that implies connection.
 
-**Banned patterns — never write these:**
+**Forbidden cross-strategy logic:**
 - `if (!m8bfBanned) { → M8BF fallback }` inside a Straddle block
-- `m8bfText = "No M8BF (GXBF takes priority)"`
-- `m8bfText = "No M8BF (Straddle takes priority)"`
+- Any m8bfText, stradText, gxbfText that references another strategy's name as a blocker
+- Any EOD/backfill code that treats `sig.theme !== 'm8bf'` as an M8BF-blocked signal
 - Any logic that converts one strategy to another when blocked
+
+Check M8BF blocked status via `sig.m8bfBanned || sig.cpiDay` — never via `sig.theme`.
+The pre-commit hook (`scripts/check-strategy-independence.sh`) enforces these rules automatically.
 
 ## Data Layout
 
