@@ -277,6 +277,182 @@ body {
 }
 .stat-placeholder { color: var(--text3); font-weight: 400; }
 
+/* Compound stat card (two values with vertical divider) */
+.stat-card.compound {
+  flex-direction: row;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+.stat-card.compound .compound-half {
+  flex: 1;
+  padding: 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.stat-card.compound .compound-half + .compound-half {
+  border-left: 1px solid var(--border);
+}
+
+/* Section heading */
+.section-heading {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--text);
+  margin: 22px 0 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Funds & Allocation form */
+.alloc-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px 24px;
+  padding: 16px 18px 20px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  margin-bottom: 16px;
+}
+.alloc-field { display: flex; flex-direction: column; gap: 6px; }
+.alloc-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.alloc-label .info-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--text3);
+  color: var(--text3);
+  font-size: 9px;
+  font-weight: 700;
+  cursor: help;
+  position: relative;
+}
+.alloc-label .info-dot:hover { border-color: var(--accent); color: var(--accent); }
+.alloc-label .info-dot[data-tip]:hover::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text2);
+  width: 260px;
+  white-space: normal;
+  text-align: left;
+  box-shadow: var(--shadow);
+  z-index: 10;
+}
+.alloc-input, .alloc-input-dollar {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg3);
+  color: var(--text);
+  width: 100%;
+}
+.alloc-input:focus, .alloc-input-dollar:focus {
+  outline: none; border-color: var(--accent);
+}
+.alloc-input-wrap {
+  position: relative;
+}
+.alloc-input-wrap::after {
+  content: '$';
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text3);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  pointer-events: none;
+}
+.alloc-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Toggle switch */
+.toggle {
+  position: relative;
+  width: 38px;
+  height: 20px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+  flex-shrink: 0;
+}
+.toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text3);
+  transition: transform .15s, background .15s;
+}
+.toggle.on {
+  background: rgba(99,102,241,.2);
+  border-color: var(--accent);
+}
+.toggle.on::after {
+  background: var(--accent);
+  transform: translateX(18px);
+}
+.toggle-label {
+  font-size: 12px;
+  color: var(--text);
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+}
+
+/* Chart scale toggle */
+.scale-toggle {
+  display: flex;
+  gap: 16px;
+  padding: 0 4px 10px;
+  font-size: 12px;
+  color: var(--text2);
+}
+.scale-toggle label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.scale-toggle input[type="radio"] {
+  accent-color: var(--accent);
+}
+
 /* Tabs */
 .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
 .tab-btn {
@@ -517,56 +693,145 @@ body {
     </div>
   </div>
 
+  <!-- Funds & Allocation (visible always, controls the backtest) -->
+  <div class="section-heading">Funds &amp; Allocation</div>
+  <div class="alloc-grid">
+    <div class="alloc-field">
+      <label class="alloc-label" for="startingFunds">Starting Funds</label>
+      <div class="alloc-input-wrap">
+        <input type="number" class="alloc-input-dollar" id="startingFunds" value="100000" min="1" step="1000" style="padding-right:26px">
+      </div>
+    </div>
+
+    <div class="alloc-field">
+      <label class="alloc-label" for="marginPct">
+        Margin Allocation % Per Trade
+        <span class="info-dot" data-tip="Percent of current account equity committed as margin per trade. Controls position sizing.">ⓘ</span>
+      </label>
+      <input type="number" class="alloc-input" id="marginPct" value="25" min="1" max="100" step="1">
+    </div>
+
+    <div class="alloc-field">
+      <label class="alloc-label" for="maxOpen">Max Open Positions</label>
+      <div class="alloc-row">
+        <input type="number" class="alloc-input" id="maxOpen" value="1" min="1" max="50" step="1">
+        <div class="toggle" id="pruneToggle" role="switch" aria-checked="false"></div>
+        <label class="toggle-label" for="pruneToggle" id="pruneLabel">Prune Oldest Trades</label>
+      </div>
+    </div>
+
+    <div class="alloc-field">
+      <label class="alloc-label" for="maxContracts">Max Contracts Per Trade</label>
+      <div class="alloc-row">
+        <input type="number" class="alloc-input" id="maxContracts" value="1" min="1" max="1000" step="1">
+        <div class="toggle" id="ignoreMarginToggle" role="switch" aria-checked="false"></div>
+        <label class="toggle-label" for="ignoreMarginToggle" id="ignoreMarginLabel">Ignore Margin Requirements</label>
+      </div>
+    </div>
+
+    <div class="alloc-field">
+      <label class="alloc-label" for="maxAllocAmt">Max Allocation Amount Per Trade</label>
+      <div class="alloc-input-wrap">
+        <input type="number" class="alloc-input-dollar" id="maxAllocAmt" placeholder="optional" min="0" step="100" style="padding-right:26px">
+      </div>
+    </div>
+  </div>
+
   <!-- KPIs (hidden until results) -->
+  <div class="section-heading" id="kpiHeading" style="display:none">Performance</div>
   <div class="stats-grid" id="statsGrid" style="display:none">
-    <div class="stat-card">
-      <div class="stat-label">Total PnL</div>
-      <div class="stat-value stat-placeholder" id="kpiTotalPL">—</div>
+    <div class="stat-card green">
+      <div class="stat-label">P/L</div>
+      <div class="stat-value stat-placeholder" id="kpiPL">—</div>
     </div>
-    <div class="stat-card">
-      <div class="stat-label">Trades</div>
-      <div class="stat-value stat-placeholder" id="kpiTrades">—</div>
+    <div class="stat-card green">
+      <div class="stat-label">CAGR</div>
+      <div class="stat-value stat-placeholder" id="kpiCAGR">—</div>
     </div>
-    <div class="stat-card">
-      <div class="stat-label">Win Rate</div>
-      <div class="stat-value stat-placeholder" id="kpiWR">—</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Avg Win</div>
-      <div class="stat-value stat-placeholder" id="kpiAvgWin">—</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Avg Loss</div>
-      <div class="stat-value stat-placeholder" id="kpiAvgLoss">—</div>
-    </div>
-    <div class="stat-card">
+    <div class="stat-card red">
       <div class="stat-label">Max Drawdown</div>
       <div class="stat-value stat-placeholder" id="kpiMaxDD">—</div>
     </div>
-    <div class="stat-card">
-      <div class="stat-label">Profit Factor</div>
-      <div class="stat-value stat-placeholder" id="kpiPF">—</div>
+    <div class="stat-card green">
+      <div class="stat-label">MAR Ratio</div>
+      <div class="stat-value stat-placeholder" id="kpiMAR">—</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Sharpe</div>
-      <div class="stat-value stat-placeholder" id="kpiSharpe">—</div>
+      <div class="stat-label">Win Percentage</div>
+      <div class="stat-value stat-placeholder" id="kpiWR">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Total Premium</div>
+      <div class="stat-value stat-placeholder" id="kpiTotalPremium">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Capture Rate</div>
+      <div class="stat-value stat-placeholder" id="kpiCaptureRate">—</div>
+    </div>
+    <div class="stat-card compound">
+      <div class="compound-half">
+        <div class="stat-label">Starting Capital</div>
+        <div class="stat-value stat-placeholder" id="kpiStartCap">—</div>
+      </div>
+      <div class="compound-half">
+        <div class="stat-label">Ending Capital</div>
+        <div class="stat-value stat-placeholder" id="kpiEndCap">—</div>
+      </div>
+    </div>
+
+    <div class="stat-card green">
+      <div class="stat-label">Avg Per Trade</div>
+      <div class="stat-value stat-placeholder" id="kpiAvgPerTrade">—</div>
+    </div>
+    <div class="stat-card green">
+      <div class="stat-label">Avg Winner</div>
+      <div class="stat-value stat-placeholder" id="kpiAvgWin">—</div>
+    </div>
+    <div class="stat-card red">
+      <div class="stat-label">Avg Loser</div>
+      <div class="stat-value stat-placeholder" id="kpiAvgLoss">—</div>
+    </div>
+    <div class="stat-card green">
+      <div class="stat-label">Max Winner</div>
+      <div class="stat-value stat-placeholder" id="kpiMaxWin">—</div>
+    </div>
+    <div class="stat-card red">
+      <div class="stat-label">Max Loser</div>
+      <div class="stat-value stat-placeholder" id="kpiMaxLoss">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Avg Minutes In Trade</div>
+      <div class="stat-value stat-placeholder" id="kpiAvgMinutes">—</div>
+    </div>
+    <div class="stat-card compound">
+      <div class="compound-half">
+        <div class="stat-label">Trades</div>
+        <div class="stat-value stat-placeholder" id="kpiTrades">—</div>
+      </div>
+      <div class="compound-half">
+        <div class="stat-label">Winners</div>
+        <div class="stat-value stat-placeholder" id="kpiWinners">—</div>
+      </div>
     </div>
   </div>
 
   <!-- Tabs (hidden until results) -->
   <div id="resultsArea" style="display:none">
     <div class="tabs">
-      <button class="tab-btn active" data-tab="equity">Equity Curve</button>
-      <button class="tab-btn" data-tab="histogram">PnL Distribution</button>
-      <button class="tab-btn" data-tab="trades">Trade Log</button>
-      <button class="tab-btn" data-tab="byday">By Day of Week</button>
+      <button class="tab-btn active" data-tab="summary">📊 Summary</button>
+      <button class="tab-btn" data-tab="trades">🧾 Trade Log</button>
+      <button class="tab-btn" data-tab="histogram">📈 Distribution</button>
+      <button class="tab-btn" data-tab="byday">📅 By Day of Week</button>
     </div>
 
-    <div class="tab-panel active" data-tab="equity">
-      <div class="chart-box" id="chartEquity">Equity curve will render here</div>
-    </div>
-    <div class="tab-panel" data-tab="histogram">
-      <div class="chart-box" id="chartHist">PnL distribution will render here</div>
+    <div class="tab-panel active" data-tab="summary">
+      <div class="scale-toggle">
+        <label><input type="radio" name="equityScale" value="linear" checked> Linear</label>
+        <label><input type="radio" name="equityScale" value="log"> Logarithmic</label>
+      </div>
+      <div class="chart-box" id="chartEquity" style="justify-content:flex-start;align-items:flex-start;padding:8px 12px;min-height:420px">
+        <div style="text-align:center;width:100%;color:var(--text3);padding:100px 0">Funds By Date curve will render here</div>
+      </div>
     </div>
     <div class="tab-panel" data-tab="trades">
       <table class="trade-table" id="tradeTable">
@@ -576,13 +841,19 @@ body {
             <th>Close</th>
             <th>Short Strike</th>
             <th>Long Strike</th>
+            <th>Long DTE</th>
             <th>Diagonal Open</th>
             <th>Diagonal Close</th>
+            <th>Contracts</th>
             <th>PnL</th>
+            <th>Min In Trade</th>
           </tr>
         </thead>
         <tbody id="tradeTableBody"></tbody>
       </table>
+    </div>
+    <div class="tab-panel" data-tab="histogram">
+      <div class="chart-box" id="chartHist">PnL distribution will render here</div>
     </div>
     <div class="tab-panel" data-tab="byday">
       <div class="chart-box" id="chartByDay">Per-day-of-week breakdown will render here</div>
@@ -687,24 +958,137 @@ async function loadData() {
 }
 
 // ══════════════════════════════════════════════════════════════════════
+// Toggle switches (prune oldest, ignore margin)
+// ══════════════════════════════════════════════════════════════════════
+function wireToggle(toggleId, labelId) {
+  const t = document.getElementById(toggleId);
+  const l = document.getElementById(labelId);
+  const flip = () => {
+    const on = !t.classList.contains('on');
+    t.classList.toggle('on', on);
+    t.setAttribute('aria-checked', String(on));
+  };
+  t.addEventListener('click', flip);
+  if (l) l.addEventListener('click', flip);
+}
+wireToggle('pruneToggle', 'pruneLabel');
+wireToggle('ignoreMarginToggle', 'ignoreMarginLabel');
+
+// ══════════════════════════════════════════════════════════════════════
 // Param gatherer — pulls values from the form
 // ══════════════════════════════════════════════════════════════════════
 function getParams() {
+  const numOrNull = v => (v === '' || v === null) ? null : parseFloat(v);
   return {
+    // Date + strategy params
     from:          document.getElementById('dateFrom').value,
     to:            document.getElementById('dateTo').value,
-    entryTime:     document.getElementById('entryTime').value,   // "HH:MM"
-    exitTime:      document.getElementById('exitTime').value,    // "HH:MM"
+    entryTime:     document.getElementById('entryTime').value,
+    exitTime:      document.getElementById('exitTime').value,
     shortDte:      parseInt(document.getElementById('shortDte').value, 10),
     shortOffset:   parseInt(document.getElementById('shortOffset').value, 10),
     longDte:       parseInt(document.getElementById('longDte').value, 10),
     longOffset:    parseInt(document.getElementById('longOffset').value, 10),
     longDteTol:    parseInt(document.getElementById('longDteTol').value, 10),
-    dteFallback:   document.getElementById('dteFallback').value, // prefer_longer|prefer_shorter|nearest|strict
+    dteFallback:   document.getElementById('dteFallback').value,
     contracts:     parseInt(document.getElementById('contracts').value, 10),
-    specialMode:   specialState.mode,           // null | 'exclude' | 'only'
+    specialMode:   specialState.mode,
     specialActive: new Set(specialState.active),
+    // Funds & Allocation
+    startingFunds:    numOrNull(document.getElementById('startingFunds').value) ?? 100000,
+    marginPct:        numOrNull(document.getElementById('marginPct').value) ?? 25,
+    maxOpen:          parseInt(document.getElementById('maxOpen').value, 10) || 1,
+    maxContracts:     parseInt(document.getElementById('maxContracts').value, 10) || 1,
+    maxAllocAmt:      numOrNull(document.getElementById('maxAllocAmt').value),
+    pruneOldest:      document.getElementById('pruneToggle').classList.contains('on'),
+    ignoreMargin:     document.getElementById('ignoreMarginToggle').classList.contains('on'),
   };
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// KPI computation — given trades[] + params, produce every dashboard stat
+// ══════════════════════════════════════════════════════════════════════
+function computeKPIs(trades, params) {
+  if (!trades.length) return null;
+  const wins = trades.filter(t => t.pnl > 0);
+  const losses = trades.filter(t => t.pnl < 0);
+  const totalPL = trades.reduce((s, t) => s + t.pnl, 0);
+  const totalPremium = trades.reduce((s, t) => s + (t.premium || 0), 0);
+
+  // Equity curve for drawdown
+  let eq = params.startingFunds, peak = eq, maxDD = 0, maxDDPct = 0;
+  for (const t of trades) {
+    eq += t.pnl;
+    peak = Math.max(peak, eq);
+    const dd = eq - peak;
+    const ddPct = peak > 0 ? dd / peak : 0;
+    if (dd < maxDD) { maxDD = dd; maxDDPct = ddPct; }
+  }
+
+  // CAGR — time span from first to last trade
+  const days = trades.length > 1
+    ? (new Date(trades[trades.length-1].closeDate) - new Date(trades[0].openDate)) / 86400000
+    : 1;
+  const years = Math.max(days / 365.25, 1/365.25);
+  const endCap = params.startingFunds + totalPL;
+  const cagr = years > 0 && params.startingFunds > 0
+    ? Math.pow(endCap / params.startingFunds, 1 / years) - 1
+    : 0;
+
+  const mar = maxDDPct < 0 ? cagr / Math.abs(maxDDPct) : 0;
+  const avgMinutes = trades.reduce((s, t) => s + (t.minutesInTrade || 0), 0) / trades.length;
+
+  return {
+    pl: totalPL,
+    cagr: cagr * 100,
+    maxDD: maxDDPct * 100,
+    mar,
+    winPct: (wins.length / trades.length) * 100,
+    totalPremium,
+    captureRate: totalPremium !== 0 ? (totalPL / totalPremium) * 100 : 0,
+    startCap: params.startingFunds,
+    endCap,
+    avgPerTrade: totalPL / trades.length,
+    avgWin: wins.length ? wins.reduce((s,t) => s + t.pnl, 0) / wins.length : 0,
+    avgLoss: losses.length ? losses.reduce((s,t) => s + t.pnl, 0) / losses.length : 0,
+    maxWin: trades.reduce((m, t) => Math.max(m, t.pnl), -Infinity),
+    maxLoss: trades.reduce((m, t) => Math.min(m, t.pnl), Infinity),
+    avgMinutes,
+    trades: trades.length,
+    winners: wins.length,
+  };
+}
+
+function renderKPIs(k) {
+  if (!k) return;
+  const fmt$     = n => (n >= 0 ? '$' : '-$') + Math.abs(Math.round(n)).toLocaleString();
+  const fmt$fmt  = n => fmt$(n) + ' / lot';
+  const fmtPct   = n => n.toFixed(1) + '%';
+  const fmtNum   = n => n.toLocaleString();
+  const fmtRatio = n => n.toFixed(1);
+  const set = (id, val) => {
+    const el = document.getElementById(id);
+    el.textContent = val;
+    el.classList.remove('stat-placeholder');
+  };
+
+  set('kpiPL',            fmt$(k.pl));
+  set('kpiCAGR',          fmtPct(k.cagr));
+  set('kpiMaxDD',         fmtPct(k.maxDD));
+  set('kpiMAR',           fmtRatio(k.mar));
+  set('kpiWR',            fmtPct(k.winPct));
+  set('kpiTotalPremium',  fmt$(k.totalPremium));
+  set('kpiCaptureRate',   fmtPct(k.captureRate));
+  set('kpiStartCap',      fmt$(k.startCap));
+  set('kpiEndCap',        fmt$(k.endCap));
+  set('kpiAvgPerTrade',   fmt$fmt(k.avgPerTrade));
+  set('kpiAvgWin',        fmt$fmt(k.avgWin));
+  set('kpiAvgLoss',       fmt$fmt(k.avgLoss));
+  set('kpiMaxWin',        fmt$fmt(k.maxWin));
+  set('kpiMaxLoss',       fmt$fmt(k.maxLoss));
+  set('kpiAvgMinutes',    k.avgMinutes.toFixed(1));
+  set('kpiTrades',        fmtNum(k.trades));
+  set('kpiWinners',       fmtNum(k.winners));
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -759,43 +1143,107 @@ function applySpecialFilter(dates, specialSets, mode, activeCategories) {
 }
 
 // ══════════════════════════════════════════════════════════════════════
+// Position sizer — given current equity + margin per contract, decide size
+// ══════════════════════════════════════════════════════════════════════
+function sizePosition(equity, marginPerContract, params) {
+  // Return contract count for this trade based on allocation rules.
+  // Order of precedence:
+  //   1. Hard user cap (params.contracts) — smallest value wins
+  //   2. Max contracts per trade cap
+  //   3. Max allocation amount cap (if set)
+  //   4. Margin % of equity (unless ignoreMargin)
+  if (params.ignoreMargin) {
+    return Math.max(1, Math.min(params.contracts, params.maxContracts));
+  }
+  const marginDollars = (equity * params.marginPct) / 100;
+  const allocCap = params.maxAllocAmt != null
+    ? Math.min(marginDollars, params.maxAllocAmt)
+    : marginDollars;
+  const byMargin   = Math.floor(allocCap / marginPerContract);
+  const byUserCap  = params.contracts;
+  const byHardCap  = params.maxContracts;
+  return Math.max(0, Math.min(byMargin, byUserCap, byHardCap));
+}
+
+// ══════════════════════════════════════════════════════════════════════
 // Backtester core — strategy logic placeholder
 // ══════════════════════════════════════════════════════════════════════
 function runBacktest(data, params) {
   // TODO: implement once data shape is locked in.
   //
-  // Pseudocode:
+  // Pseudocode (full version with allocation + position management):
+  //
+  //   equity = params.startingFunds
+  //   openPositions = []          // currently-open diagonals
+  //   trades = []                 // closed trades
+  //
   //   1. Build date list from data (tradingDays array)
   //   2. Filter by date range [params.from, params.to]
   //   3. Apply special-day filter:
   //        tradingDays = applySpecialFilter(tradingDays, buildSpecialDateSets(...),
   //                                         params.specialMode, params.specialActive)
   //   4. For each day d in filtered tradingDays:
+  //
+  //        // --- Close/roll existing positions (if any reach exit time) ---
+  //        for pos of openPositions.slice():
+  //          if pos.exitDate === d.date && pos.exitTime matches:
+  //            // Look up close prices from d.exitSnapshot
+  //            short_close = find_put(d.exitSnapshot, pos.shortStrike, pos.shortDte-1)
+  //            long_close  = find_put(d.exitSnapshot, pos.longStrike,  pos.longDteActual-1)
+  //            diag_close  = long_close.bid - short_close.ask
+  //            pnl = (diag_close - pos.diagOpen) * 100 * pos.contracts
+  //            equity += pnl
+  //            trades.push({...pos, closeDate: d.date, diagClose: diag_close, pnl,
+  //                         minutesInTrade})
+  //            openPositions.splice(openPositions.indexOf(pos), 1)
+  //
+  //        // --- Entry logic ---
+  //        // Max open positions check
+  //        if (openPositions.length >= params.maxOpen) {
+  //          if (params.pruneOldest) {
+  //            // Force-close oldest position at current snapshot prices
+  //            // (liquidate, count pnl toward equity, remove from openPositions)
+  //          } else {
+  //            continue; // skip entry this day
+  //          }
+  //        }
+  //
+  //        // Compute strikes
   //        spot_at_entry = d.entrySnapshot.spxSpot
   //        short_strike  = round_to_5(spot_at_entry + params.shortOffset)
   //        long_strike   = short_strike - params.longOffset
   //
-  //        // Resolve long DTE if exact not available
+  //        // Resolve long DTE with fallback policy
   //        availableLongDTEs = unique DTEs in chain for long_strike
   //        longDteActual = resolveDTE(availableLongDTEs, params.longDte,
   //                                   params.longDteTol, params.dteFallback)
-  //        if longDteActual === null: skip day
+  //        if longDteActual === null: continue
   //
-  //        short_put_open = find_put(d.entrySnapshot, short_strike, params.shortDte)
-  //        long_put_open  = find_put(d.entrySnapshot, long_strike,  longDteActual)
-  //        diag_open  = long_put_open.ask - short_put_open.bid   (debit paid)
+  //        short_put = find_put(d.entrySnapshot, short_strike, params.shortDte)
+  //        long_put  = find_put(d.entrySnapshot, long_strike,  longDteActual)
+  //        diag_open = long_put.ask - short_put.bid   // debit paid
   //
-  //        next_d = next trading day
-  //        short_put_close = find_put(next_d.exitSnapshot, short_strike, params.shortDte - 1)
-  //        long_put_close  = find_put(next_d.exitSnapshot, long_strike,  longDteActual - 1)
-  //        diag_close = long_put_close.bid - short_put_close.ask   (credit received)
+  //        // Margin required per contract for a put diagonal = short put margin
+  //        // minus long put value (rough Reg-T). Use broker-specific formula.
+  //        marginPerContract = estimatePutDiagonalMargin(short_put, long_put)
+  //        contracts = sizePosition(equity, marginPerContract, params)
+  //        if contracts < 1: continue  // can't afford even 1
   //
-  //        pnl = (diag_close - diag_open) * 100 * params.contracts
-  //        trades.push({ openDate, closeDate, shortStrike, longStrike,
-  //                      longDteActual, diagOpen, diagClose, pnl })
+  //        // Record premium paid (for Total Premium / Capture Rate stats)
+  //        premium = diag_open * 100 * contracts
   //
-  //   5. Compute KPIs: totalPL, trades, WR, avgWin, avgLoss, maxDD, PF, Sharpe
-  //   6. Return { trades, kpis }
+  //        openPositions.push({
+  //          openDate: d.date,
+  //          entrySnapshot: d.entrySnapshot.timestamp,
+  //          shortStrike, longStrike, longDteActual,
+  //          diagOpen: diag_open, contracts, premium,
+  //          exitDate: next_trading_day(d.date),
+  //          exitTime: params.exitTime,
+  //        })
+  //
+  //   5. At end: close any still-open positions at last available price
+  //   6. KPIs = computeKPIs(trades, params)
+  //   7. return { trades, kpis: KPIs }
   return { trades: [], kpis: null };
 }
 
