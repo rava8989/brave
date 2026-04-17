@@ -715,20 +715,12 @@ body {
 
     <div class="alloc-field">
       <label class="alloc-label" for="maxOpen">Max Open Positions</label>
-      <div class="alloc-row">
-        <input type="number" class="alloc-input" id="maxOpen" value="1" min="1" max="50" step="1">
-        <div class="toggle" id="pruneToggle" role="switch" aria-checked="false"></div>
-        <label class="toggle-label" for="pruneToggle" id="pruneLabel">Prune Oldest Trades</label>
-      </div>
+      <input type="number" class="alloc-input" id="maxOpen" value="1" min="1" max="50" step="1">
     </div>
 
     <div class="alloc-field">
       <label class="alloc-label" for="maxContracts">Max Contracts Per Trade</label>
-      <div class="alloc-row">
-        <input type="number" class="alloc-input" id="maxContracts" value="1" min="1" max="1000" step="1">
-        <div class="toggle" id="ignoreMarginToggle" role="switch" aria-checked="false"></div>
-        <label class="toggle-label" for="ignoreMarginToggle" id="ignoreMarginLabel">Ignore Margin Requirements</label>
-      </div>
+      <input type="number" class="alloc-input" id="maxContracts" value="1" min="1" max="1000" step="1">
     </div>
 
     <div class="alloc-field">
@@ -1032,8 +1024,6 @@ function wireToggle(toggleId, labelId) {
   t.addEventListener('click', flip);
   if (l) l.addEventListener('click', flip);
 }
-wireToggle('pruneToggle', 'pruneLabel');
-wireToggle('ignoreMarginToggle', 'ignoreMarginLabel');
 
 // ══════════════════════════════════════════════════════════════════════
 // Param gatherer — pulls values from the form
@@ -1061,8 +1051,8 @@ function getParams() {
     maxOpen:          parseInt(document.getElementById('maxOpen').value, 10) || 1,
     maxContracts:     parseInt(document.getElementById('maxContracts').value, 10) || 1,
     maxAllocAmt:      numOrNull(document.getElementById('maxAllocAmt').value),
-    pruneOldest:      document.getElementById('pruneToggle').classList.contains('on'),
-    ignoreMargin:     document.getElementById('ignoreMarginToggle').classList.contains('on'),
+    pruneOldest:      false,
+    ignoreMargin:     false,
   };
 }
 
