@@ -590,16 +590,18 @@ body {
   </div>
 
   <div class="fg">
-    <div class="fg-label">Entry Time (ET)</div>
+    <div class="fg-label">Entry Time (ET)<span style="font-size:9px;color:var(--text3);margin-left:4px">🔒 locked</span></div>
     <div class="fg-row">
-      <input type="time" class="time-input" id="entryTime" value="14:00">
+      <input type="time" class="time-input" id="entryTime" value="14:00" disabled
+             title="Locked — we only have 2:00 PM ET snapshots right now. Intraday data coming later.">
     </div>
   </div>
 
   <div class="fg">
-    <div class="fg-label">Exit Time (ET, next day)</div>
+    <div class="fg-label">Exit Time (ET, next day)<span style="font-size:9px;color:var(--text3);margin-left:4px">🔒 locked</span></div>
     <div class="fg-row">
-      <input type="time" class="time-input" id="exitTime" value="14:00">
+      <input type="time" class="time-input" id="exitTime" value="14:00" disabled
+             title="Locked — we only have 2:00 PM ET snapshots right now. Intraday data coming later.">
     </div>
   </div>
 
