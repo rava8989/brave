@@ -1132,6 +1132,19 @@ function renderKPIs(k) {
     el.textContent = val;
     el.classList.remove('stat-placeholder');
   };
+  // Color a stat-card green when its value indicates a positive outcome, red when negative.
+  // Only flips cards where sign has semantic meaning (P/L, CAGR, MAR, AvgPerTrade, EndCap vs StartCap).
+  const colorByValue = (id, value, positiveIsGood = true) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const card = el.closest('.stat-card');
+    if (!card) return;
+    card.classList.remove('green', 'red');
+    const good = positiveIsGood ? value > 0 : value < 0;
+    const bad  = positiveIsGood ? value < 0 : value > 0;
+    if (good) card.classList.add('green');
+    else if (bad) card.classList.add('red');
+  };
 
   set('kpiPL',            fmt$(k.pl));
   set('kpiCAGR',          fmtPct(k.cagr));
@@ -1150,6 +1163,13 @@ function renderKPIs(k) {
   set('kpiAvgMinutes',    k.avgMinutes.toFixed(1));
   set('kpiTrades',        fmtNum(k.trades));
   set('kpiWinners',       fmtNum(k.winners));
+
+  // Dynamic card coloring based on values
+  colorByValue('kpiPL',          k.pl);           // +=green, -=red
+  colorByValue('kpiCAGR',        k.cagr);          // +=green, -=red
+  colorByValue('kpiMAR',         k.mar);           // +=green, -=red
+  colorByValue('kpiAvgPerTrade', k.avgPerTrade);   // +=green, -=red
+  colorByValue('kpiEndCap',      k.endCap - k.startCap); // green if grew
 }
 
 // ══════════════════════════════════════════════════════════════════════
