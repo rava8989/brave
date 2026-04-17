@@ -1791,24 +1791,14 @@ document.querySelectorAll('input[name="equityScale"]').forEach(r => {
 
     // Then show UI state
     document.getElementById('dataNotice').style.display = 'none';
+    document.getElementById('emptyState').style.display = 'none';
     const realDays = REAL_DATA?.dates?.length || 0;
     const realPct = data.dates.length ? Math.round(100 * realDays / data.dates.length) : 0;
     const sourceLabel = realDays > 0
-      ? `${realDays}/${data.dates.length} days with REAL Polygon quotes (${realPct}%)`
-      : `B-S approximation only (real data not loaded)`;
+      ? `${realDays}/${data.dates.length} days REAL (${realPct}%)`
+      : `B-S only`;
     document.getElementById('hdrMeta').textContent =
       `${data.dates.length} days (${first} → ${last}) · ${sourceLabel}`;
-    const realRangeText = realDays > 0
-      ? `Real bid/ask from Polygon Options Advanced (SPXW only). Outside the real-data range the backtester falls back to Black-Scholes with VIX as IV.`
-      : `Real data unavailable — using Black-Scholes approximation with VIX as IV.`;
-    document.getElementById('emptyState').innerHTML =
-      `<div class="empty-title">Data loaded — ${data.dates.length} trading days</div>
-       <div class="empty-desc">
-         Range: <strong>${first}</strong> → <strong>${last}</strong><br>
-         <strong>Real quotes coverage:</strong> ${realDays > 0 ? `${realDays} days (${realPct}%)` : 'none yet'}<br>
-         ${realRangeText}<br>
-         Press <strong>RUN BACKTEST</strong> to compute results.
-       </div>`;
 
     // Finally enable run
     document.getElementById('runBtn').disabled = false;
