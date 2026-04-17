@@ -1283,13 +1283,52 @@ function sizePosition(equity, marginPerContract, params) {
 }
 
 // ══════════════════════════════════════════════════════════════════════
+// Calendar helpers for DTE resolution
+// ══════════════════════════════════════════════════════════════════════
+function daysBetween(d1, d2) {
+  // Calendar days between two ISO dates (YYYY-MM-DD)
+  return Math.round((new Date(d2 + 'T00:00:00Z') - new Date(d1 + 'T00:00:00Z')) / 86400000);
+}
+
+function resolveExpFromCalendar(tradingDays, openDate, targetDTE, tolerance, policy) {
+  // Walks trading days after openDate, finds the one whose calendar DTE
+  // best matches the target under the given policy.
+  // Returns { date, dte } or null if nothing is within tolerance.
+  const openIdx = tradingDays.indexOf(openDate);
+  if (openIdx < 0) return null;
+
+  const candidates = [];
+  for (let i = openIdx + 1; i < tradingDays.length; i++) {
+    const dte = daysBetween(openDate, tradingDays[i]);
+    if (dte > targetDTE + tolerance) break;
+    if (dte >= targetDTE - tolerance) candidates.push({ date: tradingDays[i], dte });
+  }
+  if (!candidates.length) return null;
+
+  if (policy === 'strict') return candidates.find(c => c.dte === targetDTE) || null;
+  if (policy === 'prefer_longer') {
+    const longer  = candidates.filter(c => c.dte >= targetDTE).sort((a,b) => a.dte - b.dte);
+    const shorter = candidates.filter(c => c.dte <  targetDTE).sort((a,b) => b.dte - a.dte);
+    return longer[0] ?? shorter[0];
+  }
+  if (policy === 'prefer_shorter') {
+    const shorter = candidates.filter(c => c.dte <= targetDTE).sort((a,b) => b.dte - a.dte);
+    const longer  = candidates.filter(c => c.dte >  targetDTE).sort((a,b) => a.dte - b.dte);
+    return shorter[0] ?? longer[0];
+  }
+  // 'nearest'
+  return candidates.slice().sort((a,b) => Math.abs(a.dte - targetDTE) - Math.abs(b.dte - targetDTE))[0];
+}
+
+// ══════════════════════════════════════════════════════════════════════
 // Backtester core — Black-Scholes approximation, real data
 // ══════════════════════════════════════════════════════════════════════
 function runBacktestBS(data, params) {
   const r = 0.045;              // risk-free rate (approx, can be made param later)
   const SPREAD_ABS = 0.25;      // $0.25/leg half-spread (~$0.50 bid-ask, realistic for SPX near-money)
+  const SHORT_DTE_TOL = 3;      // short leg tolerance: 1 DTE Fri fallback to 3-4 DTE over weekend
   const trades = [];
-  let skipped = { noNextDay: 0, noExitData: 0, contracts0: 0 };
+  let skipped = { noNextDay: 0, noExitData: 0, contracts0: 0, noDTE: 0 };
 
   // Special-day filter on the candidate date list
   const special = buildSpecialDateSets(data.dates);
@@ -1317,15 +1356,23 @@ function runBacktestBS(data, params) {
     const shortStrike = Math.round((spotEntry + params.shortOffset) / 5) * 5;
     const longStrike  = shortStrike - params.longOffset;
 
-    // DTE at entry
-    const T_short_entry = params.shortDte / 365.25;
-    const T_long_entry  = params.longDte  / 365.25;
+    // Resolve actual expirations against the trading-day calendar.
+    // Handles weekends/holidays: e.g. 1 DTE on Friday → 3 DTE (Monday).
+    const shortExp = resolveExpFromCalendar(data.dates, openDate, params.shortDte, SHORT_DTE_TOL, params.dteFallback);
+    const longExp  = resolveExpFromCalendar(data.dates, openDate, params.longDte,  params.longDteTol, params.dteFallback);
+    if (!shortExp || !longExp) { skipped.noDTE++; continue; }
 
-    // Time elapsed between 14:00 entry and 14:00 next-day exit = 24 hours
-    // (1 calendar day, ignoring market-closed hours for simplicity)
-    const elapsedYrs = 1 / 365.25;
-    const T_short_exit = Math.max(0, T_short_entry - elapsedYrs);
-    const T_long_exit  = Math.max(0, T_long_entry  - elapsedYrs);
+    const shortDteActual = shortExp.dte;
+    const longDteActual  = longExp.dte;
+
+    // Elapsed time from entry (14:00) to exit (14:00 next trading day) in calendar days
+    const elapsedDays = daysBetween(openDate, closeDate);
+
+    const T_short_entry = shortDteActual / 365.25;
+    const T_long_entry  = longDteActual  / 365.25;
+    const elapsedYrs    = elapsedDays    / 365.25;
+    const T_short_exit  = Math.max(0, T_short_entry - elapsedYrs);
+    const T_long_exit   = Math.max(0, T_long_entry  - elapsedYrs);
 
     // Theoretical mid prices
     const shortMidIn  = bsPut(spotEntry, shortStrike, T_short_entry, ivEntry, r);
@@ -1364,8 +1411,10 @@ function runBacktestBS(data, params) {
       vixEntry:  entry.vix_14,
       vixExit:   exit.vix_14,
       shortStrike, longStrike,
-      longDteActual: params.longDte,
-      shortDte: params.shortDte,
+      longDteActual,
+      shortDte: shortDteActual,
+      shortExpDate: shortExp.date,
+      longExpDate:  longExp.date,
       diagOpen, diagClose,
       contracts, pnl, premium,
       minutesInTrade: 390,
