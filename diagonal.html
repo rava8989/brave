@@ -1455,39 +1455,45 @@ function runBacktestBS(data, params) {
     const T_short_exit  = Math.max(0, T_short_entry - elapsedYrs);
     const T_long_exit   = Math.max(0, T_long_entry  - elapsedYrs);
 
-    // Try REAL quotes first (Polygon Advanced), fall back to Black-Scholes approximation
-    // Real data encodes exact listed strikes + actual bid/ask. Strike must round to $5 grid.
-    let diagOpen, diagClose, priceSource = 'BS';
+    // Entry and exit pricing are INDEPENDENT.
+    // Entry uses real quotes on openDate if the specific (strike, exp) is listed.
+    // Exit uses real quotes on closeDate if the SAME ticker is still listed there
+    // (can fail when a big overnight spot move pushes strikes outside our fetch grid).
+    // If either side is missing, fall back to Black-Scholes for that side only.
+    let diagOpen, diagClose;
+    let entrySource = 'BS', exitSource = 'BS';
     const realEntry = REAL_DATA?.by_date?.[openDate];
     const realExit  = REAL_DATA?.by_date?.[closeDate];
+    const shortTicker = realEntry?.quotes ? findTicker(realEntry.quotes, shortStrike, shortExp.date) : null;
+    const longTicker  = realEntry?.quotes ? findTicker(realEntry.quotes, longStrike,  longExp.date)  : null;
+    const sEntry = shortTicker && realEntry?.quotes ? realEntry.quotes[shortTicker] : null;
+    const lEntry = longTicker  && realEntry?.quotes ? realEntry.quotes[longTicker]  : null;
+    const sExit  = shortTicker && realExit?.quotes  ? realExit.quotes[shortTicker]  : null;
+    const lExit  = longTicker  && realExit?.quotes  ? realExit.quotes[longTicker]   : null;
 
-    if (realEntry && realExit && realEntry.quotes && realExit.quotes) {
-      // Find the ticker that matches (strike, expirationDate) in the entry snapshot
-      const shortTicker = findTicker(realEntry.quotes, shortStrike, shortExp.date);
-      const longTicker  = findTicker(realEntry.quotes, longStrike,  longExp.date);
-      const sEntry = shortTicker ? realEntry.quotes[shortTicker] : null;
-      const lEntry = longTicker  ? realEntry.quotes[longTicker]  : null;
-      // Same ticker must exist on close day too
-      const sExit  = shortTicker ? realExit.quotes[shortTicker]  : null;
-      const lExit  = longTicker  ? realExit.quotes[longTicker]   : null;
-
-      if (sEntry && lEntry && sExit && lExit) {
-        diagOpen  = lEntry.ask - sEntry.bid;   // buy long ask, sell short bid
-        diagClose = lExit.bid  - sExit.ask;    // sell long bid, buy short ask
-        priceSource = 'REAL';
-      }
+    // ENTRY: use real if both legs are listed on openDate, else B-S
+    if (sEntry && lEntry) {
+      diagOpen = lEntry.ask - sEntry.bid;
+      entrySource = 'REAL';
+    } else {
+      const shortMidIn = bsPut(spotEntry, shortStrike, T_short_entry, ivEntry, r);
+      const longMidIn  = bsPut(spotEntry, longStrike,  T_long_entry,  ivEntry, r);
+      diagOpen = (longMidIn + SPREAD_ABS) - (shortMidIn - SPREAD_ABS);
     }
 
-    if (priceSource === 'BS') {
-      // Fallback: Black-Scholes with VIX (the old model)
-      const shortMidIn  = bsPut(spotEntry, shortStrike, T_short_entry, ivEntry, r);
-      const longMidIn   = bsPut(spotEntry, longStrike,  T_long_entry,  ivEntry, r);
-      const shortMidOut = bsPut(spotExit,  shortStrike, T_short_exit,  ivExit,  r);
-      const longMidOut  = bsPut(spotExit,  longStrike,  T_long_exit,   ivExit,  r);
-      diagOpen  = (longMidIn  + SPREAD_ABS) - (shortMidIn  - SPREAD_ABS);
+    // EXIT: use real if both legs are listed on closeDate, else B-S
+    if (sExit && lExit) {
+      diagClose = lExit.bid - sExit.ask;
+      exitSource = 'REAL';
+    } else {
+      const shortMidOut = bsPut(spotExit, shortStrike, T_short_exit, ivExit, r);
+      const longMidOut  = bsPut(spotExit, longStrike,  T_long_exit,  ivExit, r);
       diagClose = (longMidOut - SPREAD_ABS) - (shortMidOut + SPREAD_ABS);
     }
-    priceSourceCount[priceSource]++;
+
+    // Combined source label: REAL (both), BS (neither), REAL/BS (entry real, exit BS), BS/REAL (entry BS, exit real)
+    const priceSource = entrySource === exitSource ? entrySource : `${entrySource}/${exitSource}`;
+    priceSourceCount[entrySource === 'REAL' && exitSource === 'REAL' ? 'REAL' : 'BS']++;
 
     // Margin estimate: width × 100 (conservative upper bound for debit diagonal)
     const marginPerContract = (shortStrike - longStrike) * 100;
