@@ -856,6 +856,7 @@ body {
             <th>Diag Close</th>
             <th>Qty</th>
             <th>PnL</th>
+            <th title="REAL=Polygon bid/ask, BS=Black-Scholes fallback">Src</th>
             <th>Tags</th>
           </tr>
         </thead>
@@ -1676,6 +1677,7 @@ function renderTradeLog(trades) {
       <td>${t.diagClose.toFixed(2)}</td>
       <td>${t.contracts}</td>
       <td class="${t.pnl >= 0 ? 'pos' : 'neg'}">${$fmt(t.pnl)}</td>
+      <td style="font-size:9px;font-weight:600;color:${t.priceSource === 'REAL' ? 'var(--green)' : 'var(--text3)'}">${t.priceSource || 'BS'}</td>
       <td style="font-size:9px;color:var(--text3)">${(t.tags || []).join(' ') || '—'}</td>
     </tr>
   `).join('');
@@ -1691,7 +1693,7 @@ function exportTradesCSV(trades) {
     'spx_entry','spx_exit','vix_entry','vix_exit',
     'short_strike','long_strike','short_dte','long_dte',
     'diagonal_open','diagonal_close','contracts','premium','pnl',
-    'minutes_in_trade','tags'
+    'price_source','minutes_in_trade','tags'
   ];
   const rows = trades.map(t => [
     t.openDate, DOW_NAMES[t.dow] || '', t.closeDate,
@@ -1699,6 +1701,7 @@ function exportTradesCSV(trades) {
     t.shortStrike, t.longStrike, t.shortDte ?? '', t.longDteActual,
     t.diagOpen.toFixed(4), t.diagClose.toFixed(4), t.contracts,
     t.premium.toFixed(2), t.pnl.toFixed(2),
+    t.priceSource || 'BS',
     t.minutesInTrade, (t.tags || []).join(';')
   ]);
   const csv = [header, ...rows].map(r => r.map(v => {
@@ -1788,13 +1791,22 @@ document.querySelectorAll('input[name="equityScale"]').forEach(r => {
 
     // Then show UI state
     document.getElementById('dataNotice').style.display = 'none';
+    const realDays = REAL_DATA?.dates?.length || 0;
+    const realPct = data.dates.length ? Math.round(100 * realDays / data.dates.length) : 0;
+    const sourceLabel = realDays > 0
+      ? `${realDays}/${data.dates.length} days with REAL Polygon quotes (${realPct}%)`
+      : `B-S approximation only (real data not loaded)`;
     document.getElementById('hdrMeta').textContent =
-      `${data.dates.length} days loaded (${first} → ${last}) · BS approx`;
+      `${data.dates.length} days (${first} → ${last}) · ${sourceLabel}`;
+    const realRangeText = realDays > 0
+      ? `Real bid/ask from Polygon Options Advanced (SPXW only). Outside the real-data range the backtester falls back to Black-Scholes with VIX as IV.`
+      : `Real data unavailable — using Black-Scholes approximation with VIX as IV.`;
     document.getElementById('emptyState').innerHTML =
       `<div class="empty-title">Data loaded — ${data.dates.length} trading days</div>
        <div class="empty-desc">
          Range: <strong>${first}</strong> → <strong>${last}</strong><br>
-         Using Black-Scholes on SPX + VIX 1-min bars. Bid/ask modeled as ±3% of theoretical mid.<br>
+         <strong>Real quotes coverage:</strong> ${realDays > 0 ? `${realDays} days (${realPct}%)` : 'none yet'}<br>
+         ${realRangeText}<br>
          Press <strong>RUN BACKTEST</strong> to compute results.
        </div>`;
 
