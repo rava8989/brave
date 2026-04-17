@@ -567,8 +567,8 @@ body {
   <div class="strategy-title">1/20 DTE Put Diagonal — Bullish Skewed</div>
   <div class="strategy-desc">
     <strong>Entry</strong> — every trading day at <code>14:00 ET</code>: <strong>sell</strong> a 1 DTE put
-    <code>10 pts ITM</code>, <strong>buy</strong> a 20 DTE put <code>20 pts higher</code> than the short strike (deeper ITM).
-    E.g. SPX at 6300 → sell 1 DTE 6310, buy 21 DTE 6330.
+    <code>10 pts ITM</code>, <strong>buy</strong> a 20 DTE put <code>20 pts lower</code> than the short strike (10 pts OTM).
+    E.g. SPX at 6300 → sell 1 DTE 6310, buy 21 DTE 6290.
     <br>
     <strong>Management</strong> — hold overnight. Next day roll <strong>both legs</strong> out 1 day for a credit.
     If a 1-day roll can't get a credit even with 10 pt strike adjustment, try a 2-day roll as close to price as possible.
@@ -619,7 +619,7 @@ body {
   </div>
 
   <div class="fg">
-    <div class="fg-label">Long Above Short (pts)</div>
+    <div class="fg-label">Long Below Short (pts)</div>
     <input type="number" class="num-input" id="longOffset" value="20" min="0" step="5">
   </div>
 
@@ -1382,10 +1382,10 @@ function runBacktestBS(data, params) {
     const spotExit  = exit.spot_14;
     const ivExit    = exit.vix_14 / 100;
 
-    // Strikes: short = spot + shortOffset ITM, long = short + longOffset (deeper ITM)
-    // e.g. spot=6830, shortOffset=10 → short=6840, longOffset=20 → long=6860 (30 pts ITM)
+    // Strikes: short = spot + shortOffset ITM (10 ITM), long = short - longOffset (10 OTM)
+    // e.g. spot=6830, shortOffset=10 → short=6840; longOffset=20 → long=6820 (10 pts OTM)
     const shortStrike = Math.round((spotEntry + params.shortOffset) / 5) * 5;
-    const longStrike  = shortStrike + params.longOffset;
+    const longStrike  = shortStrike - params.longOffset;
 
     // Resolve actual expirations against the trading-day calendar.
     // Handles weekends/holidays: e.g. 1 DTE on Friday → 3 DTE (Monday).
@@ -1440,7 +1440,7 @@ function runBacktestBS(data, params) {
     priceSourceCount[priceSource]++;
 
     // Margin estimate: width × 100 (conservative upper bound for debit diagonal)
-    const marginPerContract = Math.abs(longStrike - shortStrike) * 100;
+    const marginPerContract = (shortStrike - longStrike) * 100;
     const contracts = sizePosition(equity, marginPerContract, params);
     if (contracts < 1) { skipped.contracts0++; continue; }
 
