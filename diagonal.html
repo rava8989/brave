@@ -1287,7 +1287,7 @@ function sizePosition(equity, marginPerContract, params) {
 // ══════════════════════════════════════════════════════════════════════
 function runBacktestBS(data, params) {
   const r = 0.045;              // risk-free rate (approx, can be made param later)
-  const SPREAD_PCT = 0.03;      // 3% bid/ask spread haircut vs theoretical mid
+  const SPREAD_ABS = 0.25;      // $0.25/leg half-spread (~$0.50 bid-ask, realistic for SPX near-money)
   const trades = [];
   let skipped = { noNextDay: 0, noExitData: 0, contracts0: 0 };
 
@@ -1333,11 +1333,11 @@ function runBacktestBS(data, params) {
     const shortMidOut = bsPut(spotExit,  shortStrike, T_short_exit,  ivExit,  r);
     const longMidOut  = bsPut(spotExit,  longStrike,  T_long_exit,   ivExit,  r);
 
-    // Simulate bid/ask spread: mid × (1 ± spread)
-    // Opening: buy long at ask, sell short at bid → diagonal_open = longAsk - shortBid
-    const diagOpen  = (longMidIn  * (1 + SPREAD_PCT)) - (shortMidIn  * (1 - SPREAD_PCT));
-    // Closing: sell long at bid, buy short at ask → diagonal_close = longBid - shortAsk
-    const diagClose = (longMidOut * (1 - SPREAD_PCT)) - (shortMidOut * (1 + SPREAD_PCT));
+    // Simulate bid/ask spread: mid ± fixed half-spread in dollars
+    // Opening: buy long at ask (mid + half), sell short at bid (mid - half) → diagonal_open = longAsk - shortBid
+    const diagOpen  = (longMidIn  + SPREAD_ABS) - (shortMidIn  - SPREAD_ABS);
+    // Closing: sell long at bid (mid - half), buy short at ask (mid + half) → diagonal_close = longBid - shortAsk
+    const diagClose = (longMidOut - SPREAD_ABS) - (shortMidOut + SPREAD_ABS);
 
     // Margin estimate: width × 100 (conservative upper bound for debit diagonal)
     const marginPerContract = (shortStrike - longStrike) * 100;
