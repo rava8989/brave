@@ -1089,9 +1089,10 @@ function computeKPIs(trades, params) {
     : 1;
   const years = Math.max(days / 365.25, 1/365.25);
   const endCap = params.startingFunds + totalPL;
-  const cagr = years > 0 && params.startingFunds > 0
+  // CAGR undefined if account is blown (endCap <= 0) — Math.pow(neg, frac) → NaN
+  const cagr = years > 0 && params.startingFunds > 0 && endCap > 0
     ? Math.pow(endCap / params.startingFunds, 1 / years) - 1
-    : 0;
+    : (endCap <= 0 ? -1 : 0);
 
   const mar = maxDDPct < 0 ? cagr / Math.abs(maxDDPct) : 0;
   const avgMinutes = trades.reduce((s, t) => s + (t.minutesInTrade || 0), 0) / trades.length;
@@ -1302,8 +1303,9 @@ function sizePosition(equity, marginPerContract, params) {
   //   2. Max contracts per trade cap
   //   3. Max allocation amount cap (if set)
   //   4. Margin % of equity (unless ignoreMargin)
-  if (params.ignoreMargin) {
-    return Math.max(1, Math.min(params.contracts, params.maxContracts));
+  if (params.ignoreMargin || marginPerContract <= 0) {
+    // No valid margin → fall back to user caps only (avoid /0 → Infinity)
+    return Math.max(0, Math.min(params.contracts, params.maxContracts));
   }
   const marginDollars = (equity * params.marginPct) / 100;
   const allocCap = params.maxAllocAmt != null
@@ -1468,8 +1470,13 @@ function runBacktestBS(data, params) {
     const sExit  = shortTicker && realExit?.quotes  ? realExit.quotes[shortTicker]  : null;
     const lExit  = longTicker  && realExit?.quotes  ? realExit.quotes[longTicker]   : null;
 
-    // ENTRY: use real mid if both legs are listed on openDate, else B-S
-    if (sEntry && lEntry) {
+    // Reject garbage quotes: bid must be > 0 AND ask >= bid AND spread not insane.
+    // Deep OTM puts with bid=0 / ask=0.05 are quoted but not realistically tradeable —
+    // using their "mid" (= ask/2) as a fill price biases PnL.
+    const quoteOk = q => q && q.bid > 0 && q.ask >= q.bid && q.ask / q.bid < 5;
+
+    // ENTRY: use real mid if both legs have sane quotes on openDate, else B-S
+    if (quoteOk(sEntry) && quoteOk(lEntry)) {
       const shortMid = (sEntry.bid + sEntry.ask) / 2;
       const longMid  = (lEntry.bid + lEntry.ask) / 2;
       diagOpen = longMid - shortMid;
@@ -1480,8 +1487,8 @@ function runBacktestBS(data, params) {
       diagOpen = longMidIn - shortMidIn;
     }
 
-    // EXIT: use real mid if both legs are listed on closeDate, else B-S
-    if (sExit && lExit) {
+    // EXIT: use real mid if both legs have sane quotes on closeDate, else B-S
+    if (quoteOk(sExit) && quoteOk(lExit)) {
       const shortMid = (sExit.bid + sExit.ask) / 2;
       const longMid  = (lExit.bid + lExit.ask) / 2;
       diagClose = longMid - shortMid;
@@ -1494,7 +1501,8 @@ function runBacktestBS(data, params) {
 
     // Combined source label: REAL (both), BS (neither), REAL/BS (entry real, exit BS), BS/REAL (entry BS, exit real)
     const priceSource = entrySource === exitSource ? entrySource : `${entrySource}/${exitSource}`;
-    priceSourceCount[entrySource === 'REAL' && exitSource === 'REAL' ? 'REAL' : 'BS']++;
+    // Count REAL if EITHER side used real data (not just both)
+    priceSourceCount[(entrySource === 'REAL' || exitSource === 'REAL') ? 'REAL' : 'BS']++;
 
     // Margin estimate: width × 100 (conservative upper bound for debit diagonal)
     const marginPerContract = (shortStrike - longStrike) * 100;
@@ -1719,7 +1727,7 @@ function renderTradeLog(trades) {
   const body = document.getElementById('tradeTableBody');
   const countEl = document.getElementById('tradeLogCount');
   if (!trades.length) {
-    body.innerHTML = '<tr><td colspan="13" style="text-align:center;padding:24px;color:var(--text3)">No trades</td></tr>';
+    body.innerHTML = '<tr><td colspan="14" style="text-align:center;padding:24px;color:var(--text3)">No trades</td></tr>';
     countEl.textContent = '0 trades';
     return;
   }
