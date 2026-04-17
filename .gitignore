@@ -19,11 +19,21 @@ scraper/tokens.json
 scraper/data/
 scraper/__pycache__/
 
+# Polygon API credentials — NEVER commit
+.env
+polygon.env
+*.env
+
 # Allow scraper Python source files (no secrets in them)
 !scraper/*.py
 !scraper/requirements.txt
 
-# Allow the precomputed diagonal backtester dataset (browser fetches it)
+# Allow the precomputed diagonal backtester datasets (browser fetches them)
 !data/diagonal_bs_data.json
-# Allow the build script so the dataset can be regenerated
+!data/diagonal_real_data.json
+# Allow the build scripts so the datasets can be regenerated
 !build_diagonal_data.py
+!build_diagonal_real_data.py
+!fetch_polygon_spx.py
+# Allow shared signal engine module (loaded by browser + worker)
+!signal-engine.js
