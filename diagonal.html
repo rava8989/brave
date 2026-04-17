@@ -1733,12 +1733,19 @@ async function doRun() {
   if (!DIAGONAL_DATA) { alert('Data not loaded.'); return; }
   const btn = document.getElementById('runBtn');
   btn.disabled = true; btn.textContent = 'Running...';
-  // Brief yield so button state paints
   await new Promise(r => setTimeout(r, 10));
+
   try {
     const params = getParams();
-    const { trades, kpis, skipped } = runBacktest(DIAGONAL_DATA, params);
+    console.log('[diagonal] backtest params:', params);
+    const result = runBacktest(DIAGONAL_DATA, params);
+    const { trades, kpis, skipped, priceSourceCount } = result;
     lastTrades = trades;
+    console.log('[diagonal] backtest done:', {
+      trades: trades.length,
+      skipped,
+      priceSource: priceSourceCount,
+    });
 
     // Show results
     document.getElementById('emptyState').style.display = 'none';
@@ -1748,18 +1755,26 @@ async function doRun() {
 
     if (kpis) renderKPIs(kpis);
     const scale = document.querySelector('input[name="equityScale"]:checked')?.value || 'linear';
-    renderEquityCurve(trades, params.startingFunds, scale);
-    renderHistogram(trades);
-    renderByDay(trades);
-    renderTradeLog(trades);
 
+    // Each render wrapped so one failure doesn't block the others or button reset
+    try { renderEquityCurve(trades, params.startingFunds, scale); } catch (e) { console.error('[diagonal] equity render failed:', e); }
+    try { renderHistogram(trades); } catch (e) { console.error('[diagonal] histogram render failed:', e); }
+    try { renderByDay(trades); } catch (e) { console.error('[diagonal] byDay render failed:', e); }
+    try { renderTradeLog(trades); } catch (e) { console.error('[diagonal] log render failed:', e); }
+
+    const src = priceSourceCount || { REAL: 0, BS: 0 };
+    const realPct = trades.length ? Math.round(100 * src.REAL / trades.length) : 0;
     document.getElementById('hdrMeta').textContent =
-      `${trades.length} trades${skipped ? ` (${skipped.noExitData + skipped.noNextDay} skipped)` : ''}`;
+      `${trades.length} trades · ${src.REAL} REAL / ${src.BS} BS (${realPct}%)` +
+      (skipped ? ` · ${skipped.noExitData + skipped.noNextDay + skipped.noDTE} skipped` : '');
   } catch (e) {
-    console.error(e);
+    console.error('[diagonal] backtest failed:', e);
     alert('Backtest failed: ' + e.message);
+  } finally {
+    // ALWAYS re-enable button, even if anything above threw
+    btn.disabled = false;
+    btn.textContent = 'RUN BACKTEST';
   }
-  btn.disabled = false; btn.textContent = 'RUN BACKTEST';
 }
 
 document.getElementById('runBtn').addEventListener('click', doRun);
