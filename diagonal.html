@@ -599,7 +599,7 @@ body {
   <div class="fg">
     <div class="fg-label">Exit Time (ET, next day)</div>
     <div class="fg-row">
-      <input type="time" class="time-input" id="exitTime" value="12:00">
+      <input type="time" class="time-input" id="exitTime" value="14:00">
     </div>
   </div>
 
@@ -687,7 +687,7 @@ body {
   <div class="empty-state" id="emptyState">
     <div class="empty-title">Framework ready — no data yet</div>
     <div class="empty-desc">
-      Once SPX puts historical chain data is loaded (2:00 PM ET entry snapshot + next-day 12:00 ET exit snapshot for each trading day, across 1&nbsp;DTE to 25&nbsp;DTE, strikes ±100 pts around ATM), this page will compute results using the parameters above.
+      Once SPX puts historical chain data is loaded (2:00 PM ET entry snapshot + next-day 2:00 PM ET exit snapshot for each trading day, across 1&nbsp;DTE to 25&nbsp;DTE, strikes ±100 pts around ATM), this page will compute results using the parameters above.
       <br><br>
       Drop your data file at <code>./data/diagonal/SPX_YYYYMMDD.csv</code> or adapt the loader in <code>diagonal.html</code> to your format.
     </div>
@@ -946,7 +946,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 });
 
 // ══════════════════════════════════════════════════════════════════════
-// Data loader — precomputed SPX+VIX at 14:00 and 12:00 ET per day
+// Data loader — precomputed SPX+VIX at 14:00 ET per day (entry = today 14:00, exit = next-day 14:00)
 // ══════════════════════════════════════════════════════════════════════
 let DIAGONAL_DATA = null;
 
@@ -1304,14 +1304,14 @@ function runBacktestBS(data, params) {
 
     const entry = data.by_date[openDate];
     const exit  = data.by_date[closeDate];
-    if (!entry?.spot_14 || !entry?.vix_14 || !exit?.spot_12 || !exit?.vix_12) {
+    if (!entry?.spot_14 || !entry?.vix_14 || !exit?.spot_14 || !exit?.vix_14) {
       skipped.noExitData++; continue;
     }
 
     const spotEntry = entry.spot_14;
     const ivEntry   = entry.vix_14 / 100;   // VIX is annualized % → decimal
-    const spotExit  = exit.spot_12;
-    const ivExit    = exit.vix_12 / 100;
+    const spotExit  = exit.spot_14;
+    const ivExit    = exit.vix_14 / 100;
 
     // Strikes: short = spot + offset ITM, rounded to nearest 5
     const shortStrike = Math.round((spotEntry + params.shortOffset) / 5) * 5;
@@ -1321,9 +1321,9 @@ function runBacktestBS(data, params) {
     const T_short_entry = params.shortDte / 365.25;
     const T_long_entry  = params.longDte  / 365.25;
 
-    // Time elapsed between 14:00 entry and 12:00 next-day exit ≈ 22 hours
-    // (22/24 of a calendar day, ignoring market-closed hours for simplicity)
-    const elapsedYrs = (22 / 24) / 365.25;
+    // Time elapsed between 14:00 entry and 14:00 next-day exit = 24 hours
+    // (1 calendar day, ignoring market-closed hours for simplicity)
+    const elapsedYrs = 1 / 365.25;
     const T_short_exit = Math.max(0, T_short_entry - elapsedYrs);
     const T_long_exit  = Math.max(0, T_long_entry  - elapsedYrs);
 
@@ -1355,20 +1355,20 @@ function runBacktestBS(data, params) {
       if (daySet.has(openDate)) tags.push(cat);
     }
 
-    // Minutes in trade: 14:00→16:00 (120) + 09:30→12:00 (150) = 270 (market-hours only)
+    // Minutes in trade: 14:00→16:00 (120) + 09:30→14:00 (270) = 390 (market-hours only)
     trades.push({
       openDate, closeDate,
       dow: weekdayFromISO(openDate),                 // 0=Mon..4=Fri
       spotEntry: Math.round(spotEntry * 100) / 100,
       spotExit:  Math.round(spotExit  * 100) / 100,
       vixEntry:  entry.vix_14,
-      vixExit:   exit.vix_12,
+      vixExit:   exit.vix_14,
       shortStrike, longStrike,
       longDteActual: params.longDte,
       shortDte: params.shortDte,
       diagOpen, diagClose,
       contracts, pnl, premium,
-      minutesInTrade: 270,
+      minutesInTrade: 390,
       tags,                                           // array of special-day category names
     });
   }
