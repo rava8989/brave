@@ -1873,11 +1873,14 @@ document.querySelectorAll('input[name="equityScale"]').forEach(r => {
     const last  = data.dates[data.dates.length - 1];
 
     // Set dates FIRST and clamp inputs to the available range so browsers
-    // can't autofill something outside it.
+    // can't autofill something outside it. Hard floor at 2023-01-01 — we never
+    // have data before then so the picker shouldn't even allow it.
+    const HARD_MIN = '2023-01-01';
+    const minDate = first < HARD_MIN ? HARD_MIN : first;
     const dfEl = document.getElementById('dateFrom');
     const dtEl = document.getElementById('dateTo');
-    dfEl.value = first; dfEl.min = first; dfEl.max = last;
-    dtEl.value = last;  dtEl.min = first; dtEl.max = last;
+    dfEl.value = minDate; dfEl.min = minDate; dfEl.max = last;
+    dtEl.value = last;    dtEl.min = minDate; dtEl.max = last;
 
     // Then show UI state
     document.getElementById('dataNotice').style.display = 'none';
