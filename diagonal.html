@@ -1472,24 +1472,28 @@ function runBacktestBS(data, params) {
     const sExit  = shortTicker && realExit?.quotes  ? realExit.quotes[shortTicker]  : null;
     const lExit  = longTicker  && realExit?.quotes  ? realExit.quotes[longTicker]   : null;
 
-    // ENTRY: use real if both legs are listed on openDate, else B-S
+    // ENTRY: use real mid if both legs are listed on openDate, else B-S
     if (sEntry && lEntry) {
-      diagOpen = lEntry.ask - sEntry.bid;
+      const shortMid = (sEntry.bid + sEntry.ask) / 2;
+      const longMid  = (lEntry.bid + lEntry.ask) / 2;
+      diagOpen = longMid - shortMid;
       entrySource = 'REAL';
     } else {
       const shortMidIn = bsPut(spotEntry, shortStrike, T_short_entry, ivEntry, r);
       const longMidIn  = bsPut(spotEntry, longStrike,  T_long_entry,  ivEntry, r);
-      diagOpen = (longMidIn + SPREAD_ABS) - (shortMidIn - SPREAD_ABS);
+      diagOpen = longMidIn - shortMidIn;
     }
 
-    // EXIT: use real if both legs are listed on closeDate, else B-S
+    // EXIT: use real mid if both legs are listed on closeDate, else B-S
     if (sExit && lExit) {
-      diagClose = lExit.bid - sExit.ask;
+      const shortMid = (sExit.bid + sExit.ask) / 2;
+      const longMid  = (lExit.bid + lExit.ask) / 2;
+      diagClose = longMid - shortMid;
       exitSource = 'REAL';
     } else {
       const shortMidOut = bsPut(spotExit, shortStrike, T_short_exit, ivExit, r);
       const longMidOut  = bsPut(spotExit, longStrike,  T_long_exit,  ivExit, r);
-      diagClose = (longMidOut - SPREAD_ABS) - (shortMidOut + SPREAD_ABS);
+      diagClose = longMidOut - shortMidOut;
     }
 
     // Combined source label: REAL (both), BS (neither), REAL/BS (entry real, exit BS), BS/REAL (entry BS, exit real)
