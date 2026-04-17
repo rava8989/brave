@@ -1352,8 +1352,30 @@ function resolveExpFromCalendar(tradingDays, openDate, targetDTE, tolerance, pol
     if (dte > targetDTE + tolerance) break;
     if (dte >= targetDTE - tolerance) candidates.push({ date: tradingDays[i], dte });
   }
-  if (!candidates.length) return null;
+  return pickByPolicy(candidates, targetDTE, policy);
+}
 
+// Resolve expiration from actual listed contracts in the REAL quote data for openDate.
+// This handles dates beyond our spot-data range — Polygon gives us contracts expiring
+// weeks into the future, even past the last day of SPX bars we have.
+function resolveExpFromQuotes(quotes, openDate, targetDTE, tolerance, policy) {
+  if (!quotes) return null;
+  const seen = new Set();
+  const candidates = [];
+  for (const t in quotes) {
+    const exp = quotes[t].expiration;
+    if (seen.has(exp)) continue;
+    seen.add(exp);
+    const dte = daysBetween(openDate, exp);
+    if (dte > 0 && Math.abs(dte - targetDTE) <= tolerance) {
+      candidates.push({ date: exp, dte });
+    }
+  }
+  return pickByPolicy(candidates, targetDTE, policy);
+}
+
+function pickByPolicy(candidates, targetDTE, policy) {
+  if (!candidates.length) return null;
   if (policy === 'strict') return candidates.find(c => c.dte === targetDTE) || null;
   if (policy === 'prefer_longer') {
     const longer  = candidates.filter(c => c.dte >= targetDTE).sort((a,b) => a.dte - b.dte);
@@ -1365,7 +1387,6 @@ function resolveExpFromCalendar(tradingDays, openDate, targetDTE, tolerance, pol
     const longer  = candidates.filter(c => c.dte >  targetDTE).sort((a,b) => a.dte - b.dte);
     return shorter[0] ?? longer[0];
   }
-  // 'nearest'
   return candidates.slice().sort((a,b) => Math.abs(a.dte - targetDTE) - Math.abs(b.dte - targetDTE))[0];
 }
 
@@ -1407,10 +1428,19 @@ function runBacktestBS(data, params) {
     const shortStrike = Math.round((spotEntry + params.shortOffset) / 5) * 5;
     const longStrike  = shortStrike - params.longOffset;
 
-    // Resolve actual expirations against the trading-day calendar.
-    // Handles weekends/holidays: e.g. 1 DTE on Friday → 3 DTE (Monday).
-    const shortExp = resolveExpFromCalendar(data.dates, openDate, params.shortDte, SHORT_DTE_TOL, params.dteFallback);
-    const longExp  = resolveExpFromCalendar(data.dates, openDate, params.longDte,  params.longDteTol, params.dteFallback);
+    // Resolve actual expirations.
+    // When REAL data is loaded, prefer the listed contracts in the quotes (handles
+    // dates past our spot-data range — long leg expirations may be after our last
+    // SPX bar). Else fall back to the trading-day calendar.
+    const realEntryForDTE = REAL_DATA?.by_date?.[openDate];
+    const shortExp = realEntryForDTE
+      ? (resolveExpFromQuotes(realEntryForDTE.quotes, openDate, params.shortDte, SHORT_DTE_TOL, params.dteFallback)
+         || resolveExpFromCalendar(data.dates, openDate, params.shortDte, SHORT_DTE_TOL, params.dteFallback))
+      : resolveExpFromCalendar(data.dates, openDate, params.shortDte, SHORT_DTE_TOL, params.dteFallback);
+    const longExp = realEntryForDTE
+      ? (resolveExpFromQuotes(realEntryForDTE.quotes, openDate, params.longDte, params.longDteTol, params.dteFallback)
+         || resolveExpFromCalendar(data.dates, openDate, params.longDte, params.longDteTol, params.dteFallback))
+      : resolveExpFromCalendar(data.dates, openDate, params.longDte, params.longDteTol, params.dteFallback);
     if (!shortExp || !longExp) { skipped.noDTE++; continue; }
 
     const shortDteActual = shortExp.dte;
