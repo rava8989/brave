@@ -41,8 +41,11 @@ EXIT_HHMM  = "12:00"
 
 
 def read_bar_at(csv_path, hhmm):
-    """Return the close at the 1-min bar whose timestamp ends in ' HH:MM:00'.
-    Falls back to nearest next bar if the exact minute is missing.
+    """Return the OPEN price of the 1-min bar whose timestamp is ' HH:MM:00'.
+    The open of the HH:MM bar is the price AT exactly HH:MM:00 (first tick of that minute),
+    which is what we want for an "entry at HH:MM" snapshot. Using close would give the
+    price at HH:(MM+1), off by one minute.
+    Falls back to the open of the first bar AT OR AFTER hhmm if exact minute is missing.
     """
     if not csv_path.exists():
         return None
@@ -55,7 +58,7 @@ def read_bar_at(csv_path, hhmm):
     for r in rows:
         if r.get("timestamp", "").endswith(target):
             try:
-                return float(r["close"])
+                return float(r["open"])
             except (KeyError, ValueError, TypeError):
                 return None
     # Fallback: first bar AT OR AFTER hhmm
@@ -68,7 +71,7 @@ def read_bar_at(csv_path, hhmm):
             continue
         if t >= target_t:
             try:
-                return float(r["close"])
+                return float(r["open"])
             except (KeyError, ValueError, TypeError):
                 return None
     return None
