@@ -566,15 +566,17 @@ body {
 <section class="strategy-banner">
   <div class="strategy-title">1/20 DTE Put Diagonal — Bullish Skewed</div>
   <div class="strategy-desc">
-    <strong>Entry</strong> — every trading day at <code>14:00 ET</code>: <strong>sell</strong> a 1 DTE put
-    <code>10 pts ITM</code>, <strong>buy</strong> a 20 DTE put <code>20 pts lower</code> than the short strike (10 pts OTM).
-    E.g. SPX at 6300 → sell 1 DTE 6310, buy 21 DTE 6290.
+    <strong>Setup</strong> — at <code>14:00 ET</code> every trading day, short a near-term put slightly in the money
+    and buy a longer-dated put below it. Default sizing: short 10 pts ITM, long 20 pts below that (roughly 10 pts OTM).
+    Example: SPX 6300 → sell 1 DTE 6310 put, buy ~21 DTE 6290 put.
     <br>
-    <strong>Management</strong> — hold overnight. Next day roll <strong>both legs</strong> out 1 day for a credit.
-    If a 1-day roll can't get a credit even with 10 pt strike adjustment, try a 2-day roll as close to price as possible.
+    <strong>Holding</strong> — carry the position overnight. The next session, roll the whole structure forward one day, aiming for a credit.
+    If a 1-day roll can't generate a credit even after nudging strikes ~10 pts, extend the roll to 2 days while staying close to price.
     <br>
-    <strong>Exit</strong> — typically hold until midday to capture theta decay from the now-0 DTE short,
-    then roll. P/L comes from the diagonal price rising (short decays faster than long) — roll cost/credit is just bookkeeping.
+    <strong>Closing</strong> — typically held into midday so the expiring short bleeds out most of its time value, then rolled.
+    Profit comes from the diagonal value widening because the short decays faster than the long; the rolls themselves are housekeeping.
+    <br><br>
+    <em style="color:var(--text3);font-size:11px">Strategy author: Mads</em>
   </div>
 </section>
 
