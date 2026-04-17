@@ -851,9 +851,8 @@ body {
             <th>SPX Exit</th>
             <th>VIX Entry</th>
             <th>VIX Exit</th>
-            <th>Short K</th>
-            <th>Long K</th>
-            <th>DTE (S/L)</th>
+            <th>Short K / Exp</th>
+            <th>Long K / Exp</th>
             <th>Diag Open</th>
             <th>Diag Close</th>
             <th>Qty</th>
@@ -1720,7 +1719,7 @@ function renderTradeLog(trades) {
   const body = document.getElementById('tradeTableBody');
   const countEl = document.getElementById('tradeLogCount');
   if (!trades.length) {
-    body.innerHTML = '<tr><td colspan="15" style="text-align:center;padding:24px;color:var(--text3)">No trades</td></tr>';
+    body.innerHTML = '<tr><td colspan="14" style="text-align:center;padding:24px;color:var(--text3)">No trades</td></tr>';
     countEl.textContent = '0 trades';
     return;
   }
@@ -1737,11 +1736,13 @@ function renderTradeLog(trades) {
       <td>${t.spotExit?.toFixed(2)  ?? '—'}</td>
       <td>${t.vixEntry?.toFixed(2)  ?? '—'}</td>
       <td>${t.vixExit?.toFixed(2)   ?? '—'}</td>
-      <td style="color:var(--red)">${t.shortStrike}</td>
-      <td style="color:var(--green)">${t.longStrike}</td>
-      <td style="color:var(--text3);font-size:10px;line-height:1.3">
-        ${t.shortDte ?? '—'} / ${t.longDteActual}
-        ${t.shortExpDate && t.longExpDate ? `<br><span style="font-size:9px;opacity:.75">${shortIsoDate(t.shortExpDate)} / ${shortIsoDate(t.longExpDate)}</span>` : ''}
+      <td style="color:var(--red);line-height:1.3">
+        ${t.shortStrike}
+        ${t.shortExpDate ? `<br><span style="font-size:9px;color:var(--text3);font-weight:400">${shortIsoDate(t.shortExpDate)} · ${t.shortDte ?? '—'}D</span>` : ''}
+      </td>
+      <td style="color:var(--green);line-height:1.3">
+        ${t.longStrike}
+        ${t.longExpDate ? `<br><span style="font-size:9px;color:var(--text3);font-weight:400">${shortIsoDate(t.longExpDate)} · ${t.longDteActual}D</span>` : ''}
       </td>
       <td>${t.diagOpen.toFixed(2)}</td>
       <td>${t.diagClose.toFixed(2)}</td>
