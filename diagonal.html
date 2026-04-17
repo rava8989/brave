@@ -846,7 +846,6 @@ body {
           <tr>
             <th>Open</th>
             <th>DOW</th>
-            <th>Close</th>
             <th>SPX Entry</th>
             <th>SPX Exit</th>
             <th>VIX Entry</th>
@@ -1723,7 +1722,7 @@ function renderTradeLog(trades) {
   const body = document.getElementById('tradeTableBody');
   const countEl = document.getElementById('tradeLogCount');
   if (!trades.length) {
-    body.innerHTML = '<tr><td colspan="14" style="text-align:center;padding:24px;color:var(--text3)">No trades</td></tr>';
+    body.innerHTML = '<tr><td colspan="13" style="text-align:center;padding:24px;color:var(--text3)">No trades</td></tr>';
     countEl.textContent = '0 trades';
     return;
   }
@@ -1735,7 +1734,6 @@ function renderTradeLog(trades) {
     <tr>
       <td style="font-weight:600;color:var(--text)">${t.openDate}</td>
       <td style="color:var(--accent);font-weight:600">${DOW_NAMES[t.dow] || '—'}</td>
-      <td>${t.closeDate}</td>
       <td>${t.spotEntry?.toFixed(2) ?? '—'}</td>
       <td>${t.spotExit?.toFixed(2)  ?? '—'}</td>
       <td>${t.vixEntry?.toFixed(2)  ?? '—'}</td>
