@@ -952,14 +952,43 @@ let DIAGONAL_DATA = null;
 let REAL_DATA = null;   // real bid/ask from Polygon, null if unavailable
 
 async function loadData() {
-  // Try real data first
+  // Real data is split per year (GitHub 100 MB per file limit).
+  // Fetch the index, then load each year's file in parallel.
   try {
-    const r = await fetch('./data/diagonal_real_data.json?t=' + Date.now(), { cache: 'no-cache' });
-    if (r.ok) {
-      const rd = await r.json();
-      if (rd.dates && rd.by_date) {
-        REAL_DATA = rd;
-        console.log(`[diagonal] REAL data loaded: ${rd.dates.length} dates with options quotes`);
+    const idxResp = await fetch('./data/diagonal_real_index.json?t=' + Date.now(), { cache: 'no-cache' });
+    if (idxResp.ok) {
+      const idx = await idxResp.json();
+      if (idx.years?.length) {
+        const yearFiles = await Promise.all(
+          idx.years.map(y =>
+            fetch(`./data/diagonal_real_${y}.json?t=${Date.now()}`, { cache: 'no-cache' })
+              .then(r => r.ok ? r.json() : null)
+              .catch(() => null)
+          )
+        );
+        // Merge into single REAL_DATA object
+        const merged = { dates: [], by_date: {} };
+        for (const y of yearFiles) {
+          if (y?.dates && y?.by_date) {
+            merged.dates.push(...y.dates);
+            Object.assign(merged.by_date, y.by_date);
+          }
+        }
+        merged.dates.sort();
+        if (merged.dates.length) {
+          REAL_DATA = merged;
+          console.log(`[diagonal] REAL data loaded: ${merged.dates.length} dates across ${idx.years.length} year files`);
+        }
+      }
+    } else {
+      // Fall back to legacy single file if index missing
+      const r = await fetch('./data/diagonal_real_data.json?t=' + Date.now(), { cache: 'no-cache' });
+      if (r.ok) {
+        const rd = await r.json();
+        if (rd.dates && rd.by_date) {
+          REAL_DATA = rd;
+          console.log(`[diagonal] REAL data (legacy single file): ${rd.dates.length} dates`);
+        }
       }
     }
   } catch (e) {

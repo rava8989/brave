@@ -83,9 +83,46 @@ def main():
     merged['generated_at'] = datetime.now().isoformat()
 
     total_quotes = sum(len(d['quotes']) for d in merged['by_date'].values())
-    OUTPUT.write_text(json.dumps(merged, separators=(',', ':')))
-    size_mb = OUTPUT.stat().st_size / 1024 / 1024
-    print(f'Wrote {OUTPUT.name}: {len(merged["dates"])} dates, {total_quotes} quotes, {size_mb:.1f} MB')
+
+    # Write split-by-year files (GitHub 100 MB limit per file)
+    # Filename pattern: data/diagonal_real_YYYY.json
+    # Also writes an index file listing the years, so browser knows what to fetch.
+    by_year = {}
+    for date in merged['dates']:
+        year = date[:4]
+        by_year.setdefault(year, {'dates': [], 'by_date': {}})
+        by_year[year]['dates'].append(date)
+        by_year[year]['by_date'][date] = merged['by_date'][date]
+
+    years_written = []
+    for year, data in sorted(by_year.items()):
+        path = ROOT / 'data' / f'diagonal_real_{year}.json'
+        data['year'] = year
+        data['generated_at'] = merged['generated_at']
+        path.write_text(json.dumps(data, separators=(',', ':')))
+        size_mb = path.stat().st_size / 1024 / 1024
+        print(f'  {path.name}: {len(data["dates"])} dates, {sum(len(q["quotes"]) for q in data["by_date"].values())} quotes, {size_mb:.1f} MB')
+        years_written.append(year)
+
+    # Index file so browser knows which years to fetch
+    index_path = ROOT / 'data' / 'diagonal_real_index.json'
+    index_path.write_text(json.dumps({
+        'years': years_written,
+        'source': 'polygon_advanced',
+        'generated_at': merged['generated_at'],
+    }, separators=(',', ':')))
+    print(f'  diagonal_real_index.json: {years_written}')
+
+    # Legacy single-file output kept for compatibility, but only written if <90 MB
+    legacy_size_check = sum((ROOT / 'data' / f'diagonal_real_{y}.json').stat().st_size for y in years_written) / 1024 / 1024
+    if legacy_size_check < 90:
+        OUTPUT.write_text(json.dumps(merged, separators=(',', ':')))
+        size_mb = OUTPUT.stat().st_size / 1024 / 1024
+        print(f'  {OUTPUT.name} (combined): {len(merged["dates"])} dates, {total_quotes} quotes, {size_mb:.1f} MB')
+    else:
+        if OUTPUT.exists():
+            OUTPUT.unlink()
+        print(f'  (skipped combined file: total {legacy_size_check:.1f} MB > 90 MB limit)')
 
 
 if __name__ == '__main__':
