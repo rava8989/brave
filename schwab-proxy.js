@@ -410,8 +410,14 @@ async function handleEOD(env, etNow) {
   if (vixOpen != null) fields.vixOpen = vixOpen;
   if (spxOpen != null) fields.spxOpen = spxOpen;
 
+  // wroteFields tells callers whether history_data.json was actually updated.
+  // Callers use this to decide if they should set `eod_done_<date>` — we only
+  // want to set it after a real write, otherwise a failed EOD (expired Schwab
+  // token + Stooq hiccup) locks out every later retry for the day.
+  let wroteFields = false;
   if (Object.keys(fields).length > 0) {
     await upsertHistoryGitHub(env, todayISO, fields);
+    wroteFields = true;
   }
 
   // Append today's signals to TRADES database in backtester.html (reuse cached fullSigs)
@@ -424,7 +430,7 @@ async function handleEOD(env, etNow) {
     }
   }
 
-  return { status: 'eod', date: todayISO, vixClose, spxClose, m8bfPL, trades: appendResult };
+  return { status: 'eod', date: todayISO, vixClose, spxClose, m8bfPL, wroteFields, trades: appendResult };
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -552,7 +558,19 @@ async function handleScheduled(env) {
 
   const etHour = etNow.getHours();
   const etMin = etNow.getMinutes();
-  const isEOD     = etHour === 16 && etMin >= 16 && etMin <= 25;
+  const todayISO = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
+
+  // EOD self-ping: fire on ANY cron tick after 16:16 ET when eod_done_<date> is
+  // unset. Previously only 16:16–16:25 ET triggered EOD — if Cloudflare dropped
+  // every tick in that 9-min window (as happened 2026-04-17, 4+ hours of cron
+  // silence), EOD stayed missing until something external hit /gex. With this
+  // widening, the dedicated 17:17 ET cron (and any `*/2` afternoon tick that
+  // makes it through) rescues the EOD write without needing a browser hit.
+  const afterEOD = (etHour === 16 && etMin >= 16) || etHour >= 17;
+  const eodKey = `eod_done_${todayISO}`;
+  const eodAlreadyDone = afterEOD ? await env.SIGNAL_KV.get(eodKey) : null;
+  const isEOD = afterEOD && !eodAlreadyDone;
+
   const isMarket  = (etHour > 9 || (etHour === 9 && etMin >= 30)) && etHour < 16;
 
   // Always poll Discord during market hours
@@ -564,6 +582,12 @@ async function handleScheduled(env) {
   // EOD cron: capture vixClose + spxClose + m8bfPL + backfill any missing m8bfWR
   if (isEOD) {
     const eodResult = await handleEOD(env, etNow);
+    // Only mark eod_done after real write. If Schwab token expired AND Stooq
+    // failed, fields object is empty — leaving the flag unset lets the next
+    // cron tick (or /gex hit) retry instead of silently giving up.
+    if (eodResult.wroteFields) {
+      await env.SIGNAL_KV.put(eodKey, 'done', { expirationTtl: 86400 });
+    }
     let backfillWR = {}, backfillPL = {};
     try { backfillWR = await backfillMissingWR(env); } catch(e) { backfillWR = { error: e.message }; }
     try { backfillPL = await backfillMissingPL(env); } catch(e) { backfillPL = { error: e.message }; }
@@ -586,8 +610,7 @@ async function handleScheduled(env) {
   }
 
   // ── Morning signal: retries every cron tick until sent ──
-  const todayISO_check = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
-  const morningDoneKey = `morning_signal_${todayISO_check}`;
+  const morningDoneKey = `morning_signal_${todayISO}`;
   const morningDone = await env.SIGNAL_KV.get(morningDoneKey);
   const preMarket = etHour < 9 || (etHour === 9 && etMin < 30);
 
@@ -730,7 +753,7 @@ async function handleScheduled(env) {
   } catch (e) { console.warn('[proxy]', e.message || e); }
 
   // 4b. Write vixOpen + spxOpen to history_data.json via GitHub API
-  const todayISO = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
+  // todayISO already declared at top of handleScheduled
   try {
     await upsertHistoryGitHub(env, todayISO, {
       vixOpen: vixToday,
@@ -2582,8 +2605,10 @@ export default {
         }
 
         // ── EOD fallback: fire from /gex any time after 4:16 PM ET on a weekday
-        // if EOD hasn't already completed for today. Covers cases where Cloudflare
-        // cron missed the 4:17 PM tick entirely (free-tier unreliability).
+        // if EOD hasn't already completed for today. Backs up the self-ping in
+        // handleScheduled for cases where every afternoon cron missed (rare but
+        // observed 2026-04-17 — 4+ hours of Cloudflare cron silence). Any browser
+        // hit on /gex resurrects the EOD write.
         const afterEOD = (etH === 16 && etM >= 16) || (etH >= 17 && etH < 24);
         const isEODWindow = dow >= 1 && dow <= 5 && afterEOD;
         if (isEODWindow) {
@@ -2593,9 +2618,15 @@ export default {
           if (!eodDone) {
             try {
               console.log('[gex] EOD not run yet — triggering from /gex');
-              await handleEOD(env, etNow);
-              // Only mark done AFTER handleEOD succeeds — otherwise retries stay unblocked
-              await env.SIGNAL_KV.put(eodKey, 'done', { expirationTtl: 86400 });
+              const r = await handleEOD(env, etNow);
+              // Only mark done after a real write. If Schwab expired + Stooq
+              // down, fields are empty — leaving the flag unset lets the next
+              // tick/hit retry.
+              if (r.wroteFields) {
+                await env.SIGNAL_KV.put(eodKey, 'done', { expirationTtl: 86400 });
+              } else {
+                console.warn('[gex] EOD ran but wrote no fields — leaving eod_done unset for retry');
+              }
             } catch (e) {
               console.warn('[gex] EOD fallback failed:', e.message || e);
             }
