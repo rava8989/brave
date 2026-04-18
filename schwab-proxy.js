@@ -44,302 +44,22 @@ function checkRateLimit(request) {
 }
 
 // ════════════════════════════════════════════════════════════════════
-// CALENDAR DATA (ported from index.html)
+// SIGNAL ENGINE — import from shared module (single source of truth).
+// NEVER inline signal logic here. ALL signal rules live in signal-engine.js.
+// Edit rules THERE so browser + worker + history page stay in sync.
 // ════════════════════════════════════════════════════════════════════
 
-const cpiSch   = ["January 13, 2026","February 11, 2026","March 11, 2026","April 10, 2026","May 12, 2026","June 10, 2026","July 14, 2026","August 12, 2026","September 11, 2026","October 14, 2026","November 10, 2026","December 10, 2026"];
-const fedSch   = ["January 28, 2026","March 18, 2026","April 29, 2026","June 17, 2026","July 29, 2026","September 16, 2026","October 28, 2026","December 9, 2026"];
-const opexSch  = ["January 16, 2026","February 20, 2026","March 20, 2026","April 17, 2026","May 15, 2026","June 18, 2026","July 17, 2026","August 21, 2026","September 18, 2026","October 16, 2026","November 20, 2026","December 18, 2026"];
-const holidays = ["January 1, 2026","January 19, 2026","February 16, 2026","April 3, 2026","May 25, 2026","June 19, 2026","July 3, 2026","September 7, 2026","November 26, 2026","December 25, 2026"];
-const vixSch   = ["January 21, 2026","February 18, 2026","March 18, 2026","April 15, 2026","May 19, 2026","June 17, 2026","July 22, 2026","August 19, 2026","September 16, 2026","October 21, 2026","November 18, 2026","December 16, 2026"];
+import {
+  cpiSch, fedSch, opexSch, holidays, vixSch, earningsSchedule, T,
+  toET, dateLong, todayLong,
+  isWkend, isHol, isTrade, nextTrade, prevTrade,
+  isTodayAfter, isTodayBefore, parseLong, schedInMonth,
+  isVixAfterOpexDay, isPostOpexMon, isLastTradeMo, isEomN, isFirstTradeMo, isFirstTradeMon,
+  m8Sched, m8Msg, ordinal, wdName, tradeWdLabel,
+  isEarningsDay, isNonAmznTslaEarningsDay, isDayAfterAnyEarnings,
+  calculateSignal,
+} from './signal-engine.js';
 
-const earningsSchedule = [
-  { date:"January 28, 2026",  company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:true },
-  { date:"January 28, 2026",  company:"Meta",      ticker:"META", timing:"AH", confirmed:true },
-  { date:"January 29, 2026",  company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:true },
-  { date:"February 4, 2026",  company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:true },
-  { date:"February 5, 2026",  company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:true },
-  { date:"February 26, 2026", company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:true },
-  { date:"April 23, 2026",    company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:false },
-  { date:"April 28, 2026",    company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:false },
-  { date:"April 29, 2026",    company:"Meta",      ticker:"META", timing:"AH", confirmed:true  },
-  { date:"April 30, 2026",    company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:false },
-  { date:"April 30, 2026",    company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:false },
-  { date:"May 20, 2026",      company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:true  },
-  { date:"July 23, 2026",     company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:false },
-  { date:"July 28, 2026",     company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:false },
-  { date:"July 29, 2026",     company:"Meta",      ticker:"META", timing:"AH", confirmed:false },
-  { date:"July 30, 2026",     company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:false },
-  { date:"July 30, 2026",     company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:false },
-  { date:"August 19, 2026",   company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:false },
-  { date:"October 22, 2026",  company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:false },
-  { date:"October 27, 2026",  company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:false },
-  { date:"October 28, 2026",  company:"Meta",      ticker:"META", timing:"AH", confirmed:false },
-  { date:"October 29, 2026",  company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:false },
-  { date:"October 29, 2026",  company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:false },
-  { date:"November 18, 2026", company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:false },
-];
-
-const T = {
-  DROP_GXBF: 0.65,
-  O2O_M8BF: 1.4, VIX_MAX_GXBF: 25, VIX_MAX_BOBF: 23,
-  SPX_GAP_THRESHOLD: 0.9,
-};
-
-// ════════════════════════════════════════════════════════════════════
-// DATE HELPERS (ported from index.html — uses ET dates)
-// ════════════════════════════════════════════════════════════════════
-
-function toET(d = new Date()) {
-  return new Date(d.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-}
-
-function dateLong(d) {
-  return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-}
-
-function todayLong(etDate) { return dateLong(etDate); }
-
-const isWkend = d => { const w = d.getDay(); return w === 0 || w === 6; };
-const isHol   = d => holidays.includes(dateLong(d));
-const isTrade = d => !isWkend(d) && !isHol(d);
-
-function nextTrade(d) { const n = new Date(d); do { n.setDate(n.getDate() + 1); } while (isWkend(n) || isHol(n)); return n; }
-function prevTrade(d) { const p = new Date(d); do { p.setDate(p.getDate() - 1); } while (isWkend(p) || isHol(p)); return p; }
-
-function isTodayAfter(ds, etDate) {
-  const d = new Date(ds); if (isNaN(d)) return false;
-  const a = nextTrade(d);
-  return a.getFullYear() === etDate.getFullYear() && a.getMonth() === etDate.getMonth() && a.getDate() === etDate.getDate();
-}
-function isTodayBefore(ds, etDate) {
-  const d = new Date(ds); if (isNaN(d)) return false;
-  const b = prevTrade(d);
-  return b.getFullYear() === etDate.getFullYear() && b.getMonth() === etDate.getMonth() && b.getDate() === etDate.getDate();
-}
-
-function parseLong(s) { const d = new Date(s); return isNaN(d) ? null : new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12); }
-function schedInMonth(list, ref) {
-  const y = ref.getFullYear(), m = ref.getMonth();
-  for (const s of list) { const d = parseLong(s); if (d && d.getFullYear() === y && d.getMonth() === m) return d; }
-  return null;
-}
-
-function isVixAfterOpexDay(ref) {
-  if (!vixSch.includes(todayLong(ref))) return false;
-  const vx = schedInMonth(vixSch, ref), op = schedInMonth(opexSch, ref);
-  if (!vx || !op) return false;
-  return vx > op;
-}
-
-const isPostOpexMon = (etDate) => opexSch.some(ds => isTodayAfter(ds, etDate)) && etDate.getDay() === 1;
-const isLastTradeMo = (d) => nextTrade(d).getMonth() !== d.getMonth();
-function isEomN(n, d) { const f = new Date(d.getFullYear(), d.getMonth() + 1, 1); let t = prevTrade(f); for (let i = 0; i < n; i++) t = prevTrade(t); return t.getFullYear() === d.getFullYear() && t.getMonth() === d.getMonth() && t.getDate() === d.getDate(); }
-const isFirstTradeMo = (d) => prevTrade(d).getMonth() !== d.getMonth();
-function isFirstTradeMon(d) {
-  return isFirstTradeMo(d) && d.getDay() === 1;
-}
-
-function m8Sched(dow) {
-  const blocked = ["10","25","35","40","65","80"];
-  const comboBans = {0:95,20:15,55:50,65:60,85:90};
-  switch (dow) {
-    case 1: return { t: "11:00", window: "11:00–11:30", blocked, comboBans };
-    case 2: return { t: "13:30", window: "13:30–14:00", blocked, comboBans };
-    case 3: return { t: "12:00", window: "12:00–12:30", blocked, comboBans };
-    case 4: return { t: "11:00", window: "11:00–11:30", blocked, comboBans };
-    case 5: return { t: "13:00", window: "13:00–13:30", blocked, comboBans };
-    default: return null;
-  }
-}
-function m8Msg(d) { const sc = m8Sched(d.getDay()); return sc ? `M8BF — Window ${sc.window}` : "M8BF"; }
-
-function ordinal(n) { const s = ["th", "st", "nd", "rd"], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); }
-function wdName(d) { return ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][d] || ""; }
-function tradeWdLabel(d) {
-  const t = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  const dow = t.getDay(), ms = new Date(t.getFullYear(), t.getMonth(), 1);
-  let c = 0;
-  for (let x = new Date(ms); x <= t; x.setDate(x.getDate() + 1)) { if (!isTrade(x)) continue; if (x.getDay() === dow) c++; }
-  if (!isTrade(t)) return `${wdName(dow)} (market closed)`;
-  return `${ordinal(c)} ${wdName(dow)}`;
-}
-
-function isEarningsDay(etDate) { return earningsSchedule.some(e => e.date === todayLong(etDate)); }
-function isNonAmznTslaEarningsDay(etDate) { return earningsSchedule.some(e => e.date === todayLong(etDate) && e.ticker !== 'AMZN' && e.ticker !== 'TSLA'); }
-function isDayAfterAnyEarnings(etDate) { return earningsSchedule.some(e => isTodayAfter(e.date, etDate)); }
-
-// ════════════════════════════════════════════════════════════════════
-// SIGNAL CALCULATION (ported from index.html calculateStrategy)
-// Win rate overrides default to unchecked (wr0=false, wr90=false)
-// ════════════════════════════════════════════════════════════════════
-
-function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate, prevWR = null }) {
-  const cpiDay = cpiSch.includes(todayLong(etDate));
-  const dow = etDate.getDay();
-  const isMon = dow === 1, isFri = dow === 5, isWed = dow === 3;
-  const nmDay = isFirstTradeMo(etDate), nmMon = isFirstTradeMon(etDate);
-  const fedDay = fedSch.includes(todayLong(etDate));
-  const opexDay = opexSch.includes(todayLong(etDate));
-  const postOpMon = isPostOpexMon(etDate);
-  const postOpDay = opexSch.some(ds => isTodayAfter(ds, etDate));
-  const eomDay = isLastTradeMo(etDate), eom1 = isEomN(1, etDate), eom2 = isEomN(2, etDate);
-  const vixExpDay = vixSch.includes(todayLong(etDate));
-  const opex1 = opexSch.some(ds => isTodayBefore(ds, etDate));
-  const earningsDay = isEarningsDay(etDate);
-
-  const o2o = (vixYOpen != null) ? vixYOpen - vixToday : NaN;
-  const oNight = vixYClose - vixToday;
-
-  const spxGapCancelsStrad = (spxGapPct !== null && spxGapPct !== undefined && Math.abs(spxGapPct) >= T.SPX_GAP_THRESHOLD);
-  const vixExpAfterOpex = isVixAfterOpexDay(etDate);
-  const nonAmznTslaEarn = isNonAmznTslaEarningsDay(etDate);
-  const m8bfBanned = eomDay || eom1 || opex1 || vixExpAfterOpex || nonAmznTslaEarn;
-
-  let rec = "", theme = "neutral", crossed = false, pmNote = false;
-  let blockT = "", blockD = "", entryT = "", badge = "";
-  let strikeInfo = null;
-  let cpiLongCall = false; // retained for compatibility (always false under new rule)
-
-  if (cpiDay) {
-    // CPI rule: ALL strategies are hard-blocked on CPI days. Zero exceptions.
-    // WR=0%, WR≥90%, overnight VIX direction — nothing can un-block this.
-    rec = "No trades (CPI day)";
-    theme = "block";
-    crossed = true;
-    blockT = "cpi-day";
-    blockD = "CPI day — all strategies blocked";
-    badge = "BLOCKED";
-    strikeInfo = null;
-  } else {
-    if (oNight > T.DROP_GXBF) {
-      if (vixToday >= T.VIX_MAX_GXBF) { rec = `No GXBF (VIX ${vixToday} ≥ ${T.VIX_MAX_GXBF})`; theme = "block"; crossed = true; blockT = "vix"; blockD = `VIX ${vixToday} ≥ ${T.VIX_MAX_GXBF}`; badge = "BLOCKED"; }
-      else { rec = `GXBF @ 9:36 AM`; theme = "gxbf"; entryT = "9:36 AM"; badge = "GXBF"; }
-    } else if (oNight > 0) {
-      rec = "Straddle @ 9:32 AM"; theme = "strad"; entryT = "9:32 AM"; badge = "STRADDLE";
-    } else {
-      rec = m8Msg(etDate); theme = "m8bf"; badge = "M8BF"; strikeInfo = m8Sched(dow); entryT = strikeInfo?.window || "";
-    }
-
-    if (rec.startsWith("M8BF")) {
-      if (eomDay) { rec = "No M8BF (EOM)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "M8BF not traded on EOM"; badge = "BLOCKED"; strikeInfo = null; }
-      else if (eom1) { rec = "No M8BF (EOM-1)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "M8BF not traded on EOM-1"; badge = "BLOCKED"; strikeInfo = null; }
-      else if (opex1) { rec = "No M8BF (day before OPEX)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "Skipped day before OPEX"; badge = "BLOCKED"; strikeInfo = null; }
-      else if (nonAmznTslaEarn) { rec = "No M8BF (earnings)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "Not traded on earnings days (except AMZN/TSLA)"; badge = "BLOCKED"; strikeInfo = null; }
-      else if (vixExpAfterOpex) { rec = "No M8BF (VIX exp day)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "VIX exp day when VIX exp falls after OPEX"; badge = "BLOCKED"; strikeInfo = null; }
-    }
-
-    if (nmDay && !isMon && (rec.startsWith("M8BF") || rec.startsWith("No M8BF") || rec.startsWith("Straddle") || rec.startsWith("GXBF") || rec.startsWith("No GXBF"))) { rec = "NM Straddle @ 9:32 AM"; theme = "strad"; crossed = false; blockT = ""; entryT = "9:32 AM"; badge = "NM STRADDLE"; strikeInfo = null; }
-    if (eomDay) { rec = "Straddle @ 9:32 AM (EOM)"; theme = "strad"; crossed = false; blockT = ""; entryT = "9:32 AM"; badge = "EOM STRADDLE"; strikeInfo = null; }
-    if (isWed && !fedDay && !m8bfBanned && !nmDay && rec.startsWith("Straddle")) { rec = m8Msg(etDate); theme = "m8bf"; badge = "M8BF"; strikeInfo = m8Sched(dow); entryT = strikeInfo?.window || ""; }
-    if (opexDay && rec.startsWith("Straddle")) { rec = "No Straddle (OPEX day)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "Straddle not on OPEX"; badge = "BLOCKED"; }
-    if (postOpMon && rec.startsWith("M8BF")) pmNote = true;
-
-  }
-
-  if (pmNote) rec += " (afternoon times preferred)";
-
-  // SPX gap cancels straddle — Straddle blocked, no M8BF fallback. WR=0% forced straddle is immune.
-  if (spxGapCancelsStrad && blockT !== '0%rule' && (rec === "Straddle @ 9:32 AM" || rec === "Straddle @ 9:32 AM (EOM)" || rec.startsWith("NM Straddle"))) {
-    const dir = spxGapPct > 0 ? '▲' : '▼';
-    rec = `No Straddle (SPX gap ${dir}${Math.abs(spxGapPct).toFixed(2)}%)`; theme = "block"; crossed = true; blockT = "gap"; blockD = `SPX gap ≥ ${T.SPX_GAP_THRESHOLD}%`; badge = "BLOCKED"; strikeInfo = null;
-  }
-
-  // o2o cancels straddle — Straddle blocked, no M8BF fallback. WR=0% forced straddle is immune.
-  if (o2o > T.O2O_M8BF && blockT !== '0%rule' && (rec === "Straddle @ 9:32 AM" || rec.startsWith("NM Straddle"))) {
-    rec = `No Straddle (o2o ${o2o.toFixed(1)} > ${T.O2O_M8BF})`; theme = "block"; crossed = true; blockT = "o2o"; blockD = `Open-to-open ${o2o.toFixed(1)} > ${T.O2O_M8BF}`; badge = "BLOCKED"; strikeInfo = null;
-  }
-
-  // WR=0% and WR>=90% are the STRONGEST overrides — trump gap, o2o, everything (except CPI/Fed)
-  if (prevWR != null) {
-    if (prevWR === 0 && !cpiDay && !fedDay) {
-      rec = "Straddle @ 9:32 AM"; theme = "strad"; crossed = false;
-      blockT = "0%rule"; entryT = "9:32 AM"; badge = "STRADDLE"; strikeInfo = null;
-    } else if (prevWR >= 90 && !cpiDay) {
-      const sc = m8Sched(dow);
-      rec = m8Msg(etDate); theme = "m8bf"; badge = "M8BF";
-      strikeInfo = sc; entryT = sc?.window || ""; blockT = "90%rule";
-    }
-  }
-
-  // OPEX+1 GXBF override — NOT on CPI days (CPI takes priority) and NOT when WR 0% or 90% forced the signal
-  if (postOpDay && !cpiDay && blockT !== '0%rule' && blockT !== '90%rule') {
-    const isM8 = rec.startsWith("M8BF"), isStr = rec.startsWith("Straddle") || rec.startsWith("NM Straddle");
-    if (isM8 || isStr) {
-      const vixOvernightPct = (vixToday - vixYClose) / vixYClose * 100;
-      if (vixToday >= T.VIX_MAX_GXBF) { rec = `No GXBF (VIX ${vixToday} ≥ ${T.VIX_MAX_GXBF})`; theme = "block"; crossed = true; pmNote = false; blockT = "vix"; blockD = `OPEX+1 GXBF blocked, VIX ${vixToday}`; badge = "BLOCKED"; strikeInfo = null; }
-      else if (vixOvernightPct >= 2) { rec = `No GXBF (VIX gapped up ${vixOvernightPct.toFixed(1)}% overnight)`; theme = "block"; crossed = true; pmNote = false; blockT = "vix"; blockD = `OPEX+1 GXBF blocked — VIX gap up ${vixOvernightPct.toFixed(1)}%`; badge = "BLOCKED"; strikeInfo = null; }
-      else { rec = "GXBF @ 9:36 AM (OPEX+1)"; theme = "gxbf"; crossed = false; pmNote = false; blockT = ""; entryT = "9:36 AM"; badge = "GXBF"; strikeInfo = null; }
-    }
-  }
-
-  // ── BOBF card logic ──
-  const bobfBlocks = [];
-  if (cpiDay) bobfBlocks.push("CPI day");
-  if (nmMon) bobfBlocks.push("NM Monday");
-  if (vixExpDay) bobfBlocks.push("VIX expiration");
-  if (opexDay) bobfBlocks.push("OPEX");
-  if (opex1) bobfBlocks.push("OPEX-1");
-  if (eom2) bobfBlocks.push("EOM-2");
-  if (eom1) bobfBlocks.push("EOM-1");
-  if (earningsDay) { const tickers = earningsSchedule.filter(e => e.date === todayLong(etDate)).map(e => e.ticker).join(','); bobfBlocks.push(`earnings (${tickers})`); }
-  if (vixToday > T.VIX_MAX_BOBF) bobfBlocks.push("high VIX");
-
-  let bobfRec, bobfBadge;
-  if (bobfBlocks.length) {
-    bobfRec = `No BOBF (${bobfBlocks.join(", ")})`;
-    bobfBadge = "BLOCKED";
-  } else {
-    bobfRec = isFri ? "BOBF (Friday version)" : "BOBF in play";
-    bobfBadge = isFri ? "FRIDAY VERSION" : "IN PLAY";
-  }
-
-  // ── Build dimmed card texts for inactive strategies ──
-  let m8bfText = rec, stradText = rec, gxbfText = rec;
-
-  if (cpiDay) {
-    // CPI day: all three strategy cards show blocked
-    m8bfText = `No M8BF (CPI day)`;
-    stradText = `No Straddle (CPI day)`;
-    gxbfText = `No GXBF (CPI day)`;
-  } else if (theme === 'm8bf') {
-    stradText = `No Straddle (${oNight <= 0 ? 'overnight VIX up' : oNight > T.DROP_GXBF ? 'overnight VIX drop > ' + T.DROP_GXBF : blockT === '90%rule' ? 'WR ≥ 90%' : 'non-CPI/Fed Wednesday'})`;
-    gxbfText = `No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;
-  } else if (theme === 'strad') {
-    // M8BF is independent — Straddle firing does not block M8BF
-    m8bfText = m8bfBanned ? (eomDay?`No M8BF (EOM)`:eom1?`No M8BF (EOM-1)`:opex1?`No M8BF (day before OPEX)`:nonAmznTslaEarn?`No M8BF (earnings)`:vixExpAfterOpex?`No M8BF (VIX exp day)`:`No M8BF`) : m8Msg(etDate);
-    gxbfText = `No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;
-  } else if (theme === 'gxbf') {
-    // M8BF is independent — GXBF does not block it
-    m8bfText = m8bfBanned ? (eomDay?`No M8BF (EOM)`:eom1?`No M8BF (EOM-1)`:opex1?`No M8BF (day before OPEX)`:nonAmznTslaEarn?`No M8BF (earnings)`:vixExpAfterOpex?`No M8BF (VIX exp day)`:`No M8BF`) : m8Msg(etDate);
-    stradText = `No Straddle (overnight VIX drop > ${T.DROP_GXBF})`;
-  } else if (theme === 'block') {
-    // keep rec as-is for the blocked card
-    if (rec.includes('M8BF')) {
-      stradText = `No Straddle (${oNight <= 0 ? 'overnight VIX up' : oNight > T.DROP_GXBF ? 'overnight VIX drop > ' + T.DROP_GXBF : blockT === '90%rule' ? 'WR ≥ 90%' : 'non-CPI/Fed Wednesday'})`;
-      gxbfText = `No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;
-    } else if (rec.includes('Straddle') || rec.includes('Trade')) {
-      m8bfText = `No M8BF`;
-      gxbfText = `No GXBF`;
-    } else if (rec.includes('GXBF')) {
-      // M8BF is independent — blocked GXBF does not block M8BF
-      m8bfText = m8bfBanned ? (eomDay?`No M8BF (EOM)`:eom1?`No M8BF (EOM-1)`:opex1?`No M8BF (day before OPEX)`:nonAmznTslaEarn?`No M8BF (earnings)`:vixExpAfterOpex?`No M8BF (VIX exp day)`:`No M8BF`) : m8Msg(etDate);
-      stradText = `No Straddle (overnight VIX drop > ${T.DROP_GXBF})`;
-    }
-  }
-
-  return {
-    rec, theme, crossed, badge, entryT, blockT, blockD, pmNote,
-    strikeInfo, cpiLongCall,
-    m8bfText, stradText, gxbfText,
-    bobfRec, bobfBadge, bobfBlocks,
-    oNight, o2o,
-    spxGapPct, spxGapCancelsStrad, m8bfBanned,
-    dayLabel: tradeWdLabel(etDate),
-    dateStr: todayLong(etDate),
-    cpiDay, fedDay, opexDay, postOpDay: opexSch.some(ds => isTodayAfter(ds, etDate)), eomDay,
-  };
-}
 
 // ════════════════════════════════════════════════════════════════════
 // DISCORD MESSAGE BUILDER (ported from index.html discordBuildMessage)
@@ -3001,21 +2721,24 @@ export default {
       }
 
       // ── GET /market/* ──
+      // Pass-through to Schwab market data API. If caller omits Authorization,
+      // worker auto-fetches a fresh token from KV (refreshes if needed).
       if (url.pathname.startsWith('/market/') && request.method === 'GET') {
         const subpath = url.pathname.slice('/market'.length);
-        // Allowlist: only permit safe read-only market data endpoints
         const ALLOWED = ['/pricehistory', '/quotes', '/chains', '/markets', '/instruments'];
         if (!ALLOWED.some(p => subpath.startsWith(p))) {
           return jsonResp({ error: 'Path not allowed' }, 403, corsHeaders);
         }
         const upstream = `https://api.schwabapi.com/marketdata/v1${subpath}${url.search}`;
 
-        const resp = await fetch(upstream, {
-          headers: {
-            'Authorization': request.headers.get('Authorization') || '',
-          },
-        });
+        // Use provided Authorization header, else auto-fetch from KV + refresh if expired
+        let authHeader = request.headers.get('Authorization');
+        if (!authHeader) {
+          const token = await getAccessToken(env);
+          authHeader = `Bearer ${token}`;
+        }
 
+        const resp = await fetch(upstream, { headers: { 'Authorization': authHeader } });
         const data = await resp.json();
         return jsonResp(data, resp.status, corsHeaders);
       }
