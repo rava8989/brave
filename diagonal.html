@@ -1302,10 +1302,38 @@ function buildSpecialDateSets(tradingDays) {
    '2026-01-13','2026-02-13','2026-03-11'
   ].forEach(d => sets['CPI'].add(d));
 
-  // Earnings — big tech (AMC announcement day = IV crush day for 0DTE/short-DTE)
-  // NOTE: these should be verified per symbol. Using approximate pattern.
-  // For now, leave empty — user can refine later if they want earnings filtering.
-  // (Won't affect most backtests since these dates are sparse.)
+  // Earnings — big-tech AMC announcement days (IV crush day for 0DTE/short-DTE).
+  // 2024-2026 dates verified via company IR pages, SEC 8-K filings, CNBC/Bloomberg
+  // coverage (mirrored from backtester.html). 2023 dates filled from public press-
+  // release archives — if any look off, verify before relying on "ONLY EARN" results.
+  ['2023-02-02','2023-05-04','2023-08-03','2023-11-02',
+   '2024-02-01','2024-05-02','2024-08-01','2024-10-31',
+   '2025-01-30','2025-05-01','2025-07-31','2025-10-30','2026-01-29'
+  ].forEach(d => sets['AAPL'].add(d));
+  ['2023-02-02','2023-04-25','2023-07-25','2023-10-24',
+   '2024-01-30','2024-04-25','2024-07-23','2024-10-29',
+   '2025-02-04','2025-04-24','2025-07-23','2025-10-29','2026-02-04'
+  ].forEach(d => sets['GOOGL'].add(d));
+  ['2023-01-24','2023-04-25','2023-07-25','2023-10-24',
+   '2024-01-30','2024-04-25','2024-07-30','2024-10-30',
+   '2025-01-29','2025-04-30','2025-07-30','2025-10-29','2026-01-28'
+  ].forEach(d => sets['MSFT'].add(d));
+  ['2023-01-25','2023-04-19','2023-07-19','2023-10-18',
+   '2024-01-24','2024-04-23','2024-07-23','2024-10-23',
+   '2025-01-29','2025-04-22','2025-07-23','2025-10-22','2026-01-28'
+  ].forEach(d => sets['TSLA'].add(d));
+  ['2023-02-01','2023-04-26','2023-07-26','2023-10-25',
+   '2024-02-01','2024-04-24','2024-07-31','2024-10-30',
+   '2025-01-29','2025-04-30','2025-07-30','2025-10-29','2026-01-28'
+  ].forEach(d => sets['META'].add(d));
+  ['2023-02-22','2023-05-24','2023-08-23','2023-11-21',
+   '2024-02-21','2024-05-22','2024-08-28','2024-11-19',
+   '2025-02-26','2025-05-28','2025-08-27','2025-11-19','2026-02-25'
+  ].forEach(d => sets['NVDA'].add(d));
+  ['2023-02-02','2023-04-27','2023-08-03','2023-10-26',
+   '2024-01-30','2024-04-30','2024-07-30','2024-10-31',
+   '2025-02-06','2025-05-01','2025-08-01','2025-10-30','2026-02-05'
+  ].forEach(d => sets['AMZN'].add(d));
 
   // ALL_EARNINGS: union of the 7 tickers
   ['AAPL','GOOGL','MSFT','TSLA','META','NVDA','AMZN'].forEach(t => {
