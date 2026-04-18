@@ -1535,8 +1535,11 @@ function runBacktestBS(data, params) {
     // Snap tolerance: short leg is usually near-money with $5 strikes, but long leg
     // (20+ DTE) is often only listed at $10 increments. Allow up to $5 snap so we
     // can use REAL quotes instead of falling back to Black-Scholes.
-    const shortTicker = realEntry?.quotes ? findTicker(realEntry.quotes, shortStrike, shortExp.date, 5) : null;
-    const longTicker  = realEntry?.quotes ? findTicker(realEntry.quotes, longStrike,  longExp.date,  5) : null;
+    // Always snap to the nearest listed strike — per user request, use the next
+    // available strike instead of falling back to Black-Scholes. $25 cap prevents
+    // truly broken cases (e.g. only one strike listed 300pts away).
+    const shortTicker = realEntry?.quotes ? findTicker(realEntry.quotes, shortStrike, shortExp.date, 25) : null;
+    const longTicker  = realEntry?.quotes ? findTicker(realEntry.quotes, longStrike,  longExp.date,  25) : null;
     const sEntry = shortTicker && realEntry?.quotes ? realEntry.quotes[shortTicker] : null;
     const lEntry = longTicker  && realEntry?.quotes ? realEntry.quotes[longTicker]  : null;
     const sExit  = shortTicker && realExit?.quotes  ? realExit.quotes[shortTicker]  : null;
