@@ -1349,13 +1349,24 @@ function sizePosition(equity, marginPerContract, params) {
 // ══════════════════════════════════════════════════════════════════════
 // Real quote lookup — find the contract ticker matching (strike, expiration)
 // ══════════════════════════════════════════════════════════════════════
-function findTicker(quotes, strike, expDate) {
+function findTicker(quotes, strike, expDate, snapTolerance = 0) {
   // Polygon ticker format: O:SPXW<YYMMDD>P<STRIKEx1000_zero_padded_8>
-  // e.g. O:SPXW260105P06840000 = SPXW put, 2026-01-05 expiration, $6840 strike
+  // First try an EXACT match. If snapTolerance > 0 and no exact match exists,
+  // snap to the nearest listed strike on the same expiration within tolerance.
+  // Far-dated SPXW expirations (20+ DTE) are often listed at $10 increments,
+  // so a target like 4445 may need to snap to 4440 or 4450.
+  let exact = null;
+  let nearest = null;
+  let nearestDist = Infinity;
   for (const t in quotes) {
     const q = quotes[t];
-    if (q.strike === strike && q.expiration === expDate) return t;
+    if (q.expiration !== expDate) continue;
+    if (q.strike === strike) { exact = t; break; }
+    const dist = Math.abs(q.strike - strike);
+    if (dist < nearestDist) { nearestDist = dist; nearest = t; }
   }
+  if (exact) return exact;
+  if (snapTolerance > 0 && nearestDist <= snapTolerance) return nearest;
   return null;
 }
 
@@ -1492,12 +1503,20 @@ function runBacktestBS(data, params) {
     let entrySource = 'BS', exitSource = 'BS';
     const realEntry = REAL_DATA?.by_date?.[openDate];
     const realExit  = REAL_DATA?.by_date?.[closeDate];
-    const shortTicker = realEntry?.quotes ? findTicker(realEntry.quotes, shortStrike, shortExp.date) : null;
-    const longTicker  = realEntry?.quotes ? findTicker(realEntry.quotes, longStrike,  longExp.date)  : null;
+    // Snap tolerance: short leg is usually near-money with $5 strikes, but long leg
+    // (20+ DTE) is often only listed at $10 increments. Allow up to $5 snap so we
+    // can use REAL quotes instead of falling back to Black-Scholes.
+    const shortTicker = realEntry?.quotes ? findTicker(realEntry.quotes, shortStrike, shortExp.date, 5) : null;
+    const longTicker  = realEntry?.quotes ? findTicker(realEntry.quotes, longStrike,  longExp.date,  5) : null;
     const sEntry = shortTicker && realEntry?.quotes ? realEntry.quotes[shortTicker] : null;
     const lEntry = longTicker  && realEntry?.quotes ? realEntry.quotes[longTicker]  : null;
     const sExit  = shortTicker && realExit?.quotes  ? realExit.quotes[shortTicker]  : null;
     const lExit  = longTicker  && realExit?.quotes  ? realExit.quotes[longTicker]   : null;
+
+    // If a strike was snapped, use the snapped (actually listed) strike for B-S,
+    // margin, and display so everything stays internally consistent.
+    const shortStrikeUsed = sEntry?.strike ?? shortStrike;
+    const longStrikeUsed  = lEntry?.strike ?? longStrike;
 
     // Reject garbage quotes: bid must be > 0 AND ask >= bid AND spread not insane.
     // Deep OTM puts with bid=0 / ask=0.05 are quoted but not realistically tradeable —
@@ -1511,8 +1530,8 @@ function runBacktestBS(data, params) {
       diagOpen = longMid - shortMid;
       entrySource = 'REAL';
     } else {
-      const shortMidIn = bsPut(spotEntry, shortStrike, T_short_entry, ivEntry, r);
-      const longMidIn  = bsPut(spotEntry, longStrike,  T_long_entry,  ivEntry, r);
+      const shortMidIn = bsPut(spotEntry, shortStrikeUsed, T_short_entry, ivEntry, r);
+      const longMidIn  = bsPut(spotEntry, longStrikeUsed,  T_long_entry,  ivEntry, r);
       diagOpen = longMidIn - shortMidIn;
     }
 
@@ -1523,8 +1542,8 @@ function runBacktestBS(data, params) {
       diagClose = longMid - shortMid;
       exitSource = 'REAL';
     } else {
-      const shortMidOut = bsPut(spotExit, shortStrike, T_short_exit, ivExit, r);
-      const longMidOut  = bsPut(spotExit, longStrike,  T_long_exit,  ivExit, r);
+      const shortMidOut = bsPut(spotExit, shortStrikeUsed, T_short_exit, ivExit, r);
+      const longMidOut  = bsPut(spotExit, longStrikeUsed,  T_long_exit,  ivExit, r);
       diagClose = longMidOut - shortMidOut;
     }
 
@@ -1534,7 +1553,7 @@ function runBacktestBS(data, params) {
     priceSourceCount[(entrySource === 'REAL' || exitSource === 'REAL') ? 'REAL' : 'BS']++;
 
     // Margin estimate: width × 100 (conservative upper bound for debit diagonal)
-    const marginPerContract = (shortStrike - longStrike) * 100;
+    const marginPerContract = (shortStrikeUsed - longStrikeUsed) * 100;
     const contracts = sizePosition(equity, marginPerContract, params);
     if (contracts < 1) { skipped.contracts0++; continue; }
 
@@ -1557,7 +1576,7 @@ function runBacktestBS(data, params) {
       spotExit:  Math.round(spotExit  * 100) / 100,
       vixEntry:  entry.vix_14,
       vixExit:   exit.vix_14,
-      shortStrike, longStrike,
+      shortStrike: shortStrikeUsed, longStrike: longStrikeUsed,
       longDteActual,
       shortDte: shortDteActual,
       shortExpDate: shortExp.date,
