@@ -51,18 +51,21 @@ HALF_DAYS = {
 # Note: we'll sanity-check against Polygon's market status endpoint later
 
 # ── Strike/DTE grid ───────────────────────────────────────────────────
-# Short leg strategy: spot + shortOffset (default +10), targets strikes spot-0 to spot+25
-# Long leg strategy:  short + longOffset (default +20), targets strikes spot+20 to spot+50
-# Fetch a generous grid so param tweaks don't require re-running.
-STRIKE_MIN_OFFSET = -30   # strikes start at spot - 30
-STRIKE_MAX_OFFSET = +60   # strikes end at spot + 60
+# WIDENED (2026-04-17): big overnight SPX moves can push strikes outside a
+# narrow grid. ±150 pts easily handles any realistic 1-day move so the exit
+# leg always finds real quotes (no B-S fallback for price continuity).
+STRIKE_MIN_OFFSET = -300  # strikes start at spot - 300 (handles big overnight moves)
+STRIKE_MAX_OFFSET = +300  # strikes end at spot + 300
 STRIKE_STEP = 5
 
-# DTE windows
-SHORT_DTE_MIN = 1
-SHORT_DTE_MAX = 5   # supports fallback up to 4 DTE (Fri before holiday)
-LONG_DTE_MIN = 15
-LONG_DTE_MAX = 25   # supports 20 ± 3 tolerance + extra margin
+# DTE windows (also slightly widened for tolerance)
+# IMPORTANT: SHORT_DTE_MIN=0 so on the EXIT day, the 1-DTE-from-entry contract
+# still shows up (it's 0 DTE on exit day, at 14:00 ET still 2 hrs before 16:00 expiry).
+# Without this, backtester exits always fall back to Black-Scholes for the short leg.
+SHORT_DTE_MIN = 0
+SHORT_DTE_MAX = 7    # short-leg fallback up to a week (holidays + weekends)
+LONG_DTE_MIN = 12
+LONG_DTE_MAX = 28    # 20 ± 8 window — supports parameter tweaks without refetch
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -91,18 +94,25 @@ def list_spxw_puts(as_of_date: str, dte_min: int, dte_max: int,
                    strike_min: float, strike_max: float):
     """Return list of SPXW put contract tickers in the given strike+DTE window.
     Filters out SPX monthly (AM-settled) — keeps only SPXW (PM-settled weeklies).
+
+    IMPORTANT: Polygon's contracts endpoint defaults expired=false, which
+    excludes any contract that has already expired by query time. For historical
+    backfills we need BOTH active and expired contracts — 0-DTE on past dates
+    are "expired" now. So we run the query twice (expired=false + expired=true)
+    and merge the results, deduplicated by ticker.
     """
     from datetime import date as _d
     d0 = _d.fromisoformat(as_of_date)
     exp_gte = (d0 + timedelta(days=dte_min)).isoformat()
     exp_lte = (d0 + timedelta(days=dte_max)).isoformat()
 
-    contracts = []
-    url = f'{BASE}/v3/reference/options/contracts'
-    params = {
+    # NOTE: Do NOT pass `as_of` together with expiration_date range + expired=true —
+    # Polygon silently returns 0 results in that combo. The ticker + expiration_date
+    # pair alone uniquely identifies the contract; as_of isn't needed for backfills.
+    contracts = {}
+    base_params = {
         'underlying_ticker': 'SPX',
         'contract_type': 'put',
-        'as_of': as_of_date,
         'expiration_date.gte': exp_gte,
         'expiration_date.lte': exp_lte,
         'strike_price.gte': strike_min,
@@ -110,25 +120,27 @@ def list_spxw_puts(as_of_date: str, dte_min: int, dte_max: int,
         'limit': 1000,
         'apiKey': API,
     }
-    while True:
-        r = requests.get(url, params=params)
-        data = r.json()
-        for c in data.get('results') or []:
-            # SPXW only — reject AM-settled monthlies
-            if c['ticker'].startswith('O:SPXW'):
-                contracts.append({
-                    'ticker': c['ticker'],
-                    'strike': c['strike_price'],
-                    'expiration': c['expiration_date'],
-                })
-        next_url = data.get('next_url')
-        if not next_url:
-            break
-        # next_url has the cursor already; re-append apiKey
-        url = next_url
-        params = {'apiKey': API}
 
-    return contracts
+    for expired_flag in ('false', 'true'):
+        url = f'{BASE}/v3/reference/options/contracts'
+        params = {**base_params, 'expired': expired_flag}
+        while True:
+            r = requests.get(url, params=params)
+            data = r.json()
+            for c in data.get('results') or []:
+                if c['ticker'].startswith('O:SPXW'):
+                    contracts[c['ticker']] = {
+                        'ticker': c['ticker'],
+                        'strike': c['strike_price'],
+                        'expiration': c['expiration_date'],
+                    }
+            next_url = data.get('next_url')
+            if not next_url:
+                break
+            url = next_url
+            params = {'apiKey': API}
+
+    return list(contracts.values())
 
 
 def fetch_quote_at(ticker: str, ts_ns: int):
@@ -225,6 +237,7 @@ def main():
     p.add_argument('--from', dest='from_date', help='Start date YYYY-MM-DD')
     p.add_argument('--to', dest='to_date', help='End date YYYY-MM-DD')
     p.add_argument('--force', action='store_true', help='Re-fetch days already cached')
+    p.add_argument('--reverse', action='store_true', help='Process newest dates first')
     args = p.parse_args()
 
     entries = load_dates_and_spots()
@@ -244,6 +257,10 @@ def main():
     if not args.force:
         entries = [(d, s) for d, s in entries
                    if not (OUTPUT_DIR / f'SPX_{d.replace("-","")}.json').exists()]
+
+    # Newest-first if requested
+    if args.reverse:
+        entries = list(reversed(entries))
 
     print(f'Processing {len(entries)} trading days with 4 concurrent days × 20 concurrent quotes...')
     t0 = time.time()
