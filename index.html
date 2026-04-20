@@ -612,6 +612,19 @@
       </div>
     </div>
 
+    <!-- CARD 5: Diagonal (companion — not part of Sigma 3) -->
+    <div class="scard" id="cardDiag" title="2/30 Put Diagonal — default config with VIX 50–80% dead zone excluded. See the '2/30 Put Diagonal' section below the calculator for full strategy details.">
+      <div class="scard-header">
+        <span class="scard-label">Diagonal <span style="font-weight:400;font-size:10px;opacity:.7;letter-spacing:normal;text-transform:none">· companion</span></span>
+        <span class="today-trade-pill" id="pillDiag" style="display:none;">▶ TODAY'S TRADE</span>
+        <span class="scard-badge" id="diagBadge">—</span>
+      </div>
+      <div class="scard-body">
+        <div class="scard-main" id="diagRec">Calculate to see signal</div>
+        <div class="scard-reason" id="diagReason"></div>
+      </div>
+    </div>
+
   </div>
 
   <!-- copy/print row -->
@@ -1226,6 +1239,9 @@
     document.getElementById('bobfRec').textContent='Calculate to see signal';
     document.getElementById('bobfBadge').textContent='—';
     document.getElementById('bobfReason').innerHTML = '';
+    document.getElementById('diagRec').textContent='Calculate to see signal';
+    document.getElementById('diagReason').textContent='';
+    document.getElementById('diagBadge').textContent='—';
     document.getElementById('strikeGridWrap').style.display='none';
     document.getElementById('spxGapWrap').style.display='none';
     document.getElementById('spxSep').style.display='none';
@@ -1238,6 +1254,7 @@
     document.getElementById('cardStrad').className='scard';
     document.getElementById('cardGxbf').className='scard';
     document.getElementById('cardBobf').className='scard';
+    document.getElementById('cardDiag').className='scard';
     setTodayTrade(null);
     ['cpiTag','fedTag','opexTag','postOpexTag','eomTag','openDiffNote','tagSep'].forEach(id=>document.getElementById(id).style.display='none');
   }
@@ -1260,6 +1277,7 @@
     const strad= document.getElementById('stradRec').textContent;
     const gxbf = document.getElementById('gxbfRec').textContent;
     const bobf = document.getElementById('bobfRec').textContent;
+    const diag = document.getElementById('diagRec').textContent;
     const grid = document.getElementById('strikeGrid');
     const strikes = grid ? Array.from(grid.children).map(p=>p.textContent).join('  ') : '';
     const date = document.getElementById('todayDate').textContent;
@@ -1275,6 +1293,7 @@
     inner += `Straddle │ ${strad}\n`;
     inner += `GXBF     │ ${gxbf}\n`;
     inner += `BOBF     │ ${bobf}\n`;
+    inner += `Diagonal │ ${diag}\n`;
 
     // Wrap in Discord code block — renders in monospace, stands out from regular text
     const txt = `\`\`\`\n${inner}\`\`\`\n*Not financial advice. For informational purposes only.*`;
@@ -1324,7 +1343,7 @@
       oEl.textContent='—';oNote.style.display='inline-flex';
       document.getElementById('resultDayLabel').textContent=tradeWdLabel();
       // clear any "today's trade" pill
-      ['pillM8bf','pillStrad','pillGxbf','pillBobf'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display='none';});
+      ['pillM8bf','pillStrad','pillGxbf','pillBobf','pillDiag'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display='none';});
       return;
     }
     // Not a CPI day — restore the normal calculator layout
@@ -1447,6 +1466,35 @@
       regimeEl.textContent = '…';
       regimeEl.className = 'mv regime-wait';
       regimeWrap.title = 'Waiting for today\'s VIX open + prior-day SPX close — connect Schwab and check back shortly after 9:30 AM ET.';
+    }
+
+    // ── DIAGONAL signal card (companion strategy — default: VIX 50–80% dead zone excluded) ──
+    // GO when VIX 20d percentile is in 0–50% (calm edge) or 80–100% (panic edge).
+    // SKIP when VIX 20d percentile is in the 50–80% dead band.
+    // Independent of Sigma 3 — does not read any of the M8BF/Straddle/GXBF/BOBF block flags.
+    const diagRec    = document.getElementById('diagRec');
+    const diagReason = document.getElementById('diagReason');
+    const diagBadge  = document.getElementById('diagBadge');
+    const cardDiag   = document.getElementById('cardDiag');
+    if(_vixPctToday !== null){
+      const vixDead = (_vixPctToday > 50 && _vixPctToday <= 80);
+      if(vixDead){
+        diagRec.textContent    = 'No Diagonal (VIX 50–80% dead zone)';
+        diagReason.textContent = `VIX 20-day percentile = ${_vixPctToday}% — inside the 50–80% "no-edge" band. Default filter skips this regime.`;
+        diagBadge.textContent  = 'SKIP';
+        cardDiag.className     = 'scard active-block';
+      } else {
+        const band = _vixPctToday <= 50 ? '0–50% (calm edge)' : '80–100% (panic edge)';
+        diagRec.textContent    = 'Do Diagonal @ 2:00 PM ET';
+        diagReason.textContent = `VIX 20-day percentile = ${_vixPctToday}% — ${band}, outside 50–80% dead band. Short 1 DTE SPXW put +30 pts ITM · long 30 DTE SPXW put −50 pts below short · ±5 pt tol. Half-days: 12:45 PM ET.`;
+        diagBadge.textContent  = '⏰ 14:00 ET';
+        cardDiag.className     = 'scard active-ok';
+      }
+    } else {
+      diagRec.textContent    = 'Waiting for VIX 20-day percentile…';
+      diagReason.textContent = 'Need today\'s VIX open + last 20 daily closes. Connect Schwab and check back after 9:30 AM ET.';
+      diagBadge.textContent  = '…';
+      cardDiag.className     = 'scard';
     }
 
     let rec="", theme="neutral", crossed=false, pmNote=false;
