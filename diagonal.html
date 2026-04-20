@@ -579,16 +579,15 @@ body {
     <br><br>
     <span style="color:var(--accent);font-size:11px;font-weight:600">
       ★ Best backtested config (2023‑01 → 2026‑04, real NBBO quotes only):
-      <code>sDTE=2, +30 ITM, lDTE=30, −50 below</code> →
-      total P/L <strong>$108,308</strong>, win rate <strong>61.8%</strong>, MaxDD <strong>$14,780</strong>, MAR <strong>7.33</strong>.
-      Loaded as defaults below. Beats the original 1/20 setup by <strong>+41% P/L</strong> with <strong>~½ the drawdown</strong>.
+      <code>sDTE=1, +30 ITM, lDTE=30, −50 below, VIX 50–80% excluded</code> →
+      total P/L <strong>$142,555</strong>, win rate <strong>60.9%</strong>, MaxDD <strong>$14,892</strong>, MAR <strong>9.57</strong>.
+      Loaded as defaults below (filter pre-selected). Beats the unfiltered setup by <strong>+$34k P/L</strong> with <strong>similar drawdown</strong>.
     </span>
     <br><br>
     <span style="color:#fcd34d;font-size:11px">
-      🧪 <strong>Filter tip</strong> — EXCLUDE the <code>VIX DEAD</code> pill (VIX ranks 50–80% vs last 20 days
-      <em>and</em> prior-day SPX |change| &lt; 0.5%). Research found this "dead zone" is where the strategy has
-      zero edge; skipping it historically boosts P/L noticeably with no extra drawdown. Use <code>VIX 50–80%</code>
-      for the broader band alone.
+      🧪 <strong>Filter tip</strong> — <code>VIX 50–80%</code> (VIX ranks mid-band vs last 20 days) is the preselected
+      default: skipping those days delivered the best MAR in testing. For a stricter subset try <code>VIX DEAD</code>
+      (VIX 50–80% <em>and</em> prior-day SPX |change| &lt; 0.5%) — fewer skips, still a boost.
     </span>
     <br><br>
     <span style="color:var(--text3);font-size:11px">
@@ -629,7 +628,7 @@ body {
 
   <div class="fg">
     <div class="fg-label">Short DTE</div>
-    <input type="number" class="num-input" id="shortDte" value="2" min="0" max="5">
+    <input type="number" class="num-input" id="shortDte" value="1" min="0" max="5">
   </div>
 
   <div class="fg">
@@ -1002,6 +1001,11 @@ document.querySelectorAll('#sdPills .tpill').forEach(p => {
     syncSpecialUI();
   });
 });
+
+// Preselect the best-backtested default filter: EXCLUDE the VIX 50–80% band.
+specialState.mode = 'exclude';
+specialState.active.add('VIX_MID');
+syncSpecialUI();
 
 // ══════════════════════════════════════════════════════════════════════
 // Tabs
