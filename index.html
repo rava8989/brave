@@ -124,6 +124,7 @@
     .mv{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:15px;color:var(--text);}
     .mv.up{color:#ef4444;} .mv.dn{color:#22c55e;}
     .mv.gap-up{color:#22c55e!important;} .mv.gap-dn{color:#ef4444!important;}
+    .mv.vix-edge{color:#22c55e;} .mv.vix-dead{color:#fcd34d;}
     .msep{color:var(--border);}
 
     /* TAGS */
@@ -459,6 +460,10 @@
     <div class="mi"><span class="ml">Open-to-Open</span><span class="mv" id="openDiffDisplay">—</span><span id="openDiffNote" class="tag tag-cpi" style="display:none;margin-left:5px;">ignored CPI</span></div>
     <span class="msep" id="spxSep" style="display:none;">|</span>
     <div class="mi" id="spxGapWrap" style="display:none;"><span class="ml">SPX Gap</span><span class="mv" id="spxGapDisplay">—</span></div>
+    <span class="msep" id="vixPctSep" style="display:none;">|</span>
+    <div class="mi" id="vixPct20Wrap" style="display:none;" title="Where today's VIX sits within the last 20 daily closes. 50–80% = 'dead zone' (Diagonal edge disappears). Outside that band = edge present.">
+      <span class="ml">VIX 20d %ile</span><span class="mv" id="vixPct20Display">—</span>
+    </div>
     <span class="msep" id="tagSep" style="display:none;">|</span>
     <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;">
       <span id="cpiTag"        class="tag tag-cpi"      style="display:none;">📊 CPI</span>
@@ -1086,6 +1091,8 @@
     document.getElementById('strikeGridWrap').style.display='none';
     document.getElementById('spxGapWrap').style.display='none';
     document.getElementById('spxSep').style.display='none';
+    document.getElementById('vixPct20Wrap').style.display='none';
+    document.getElementById('vixPctSep').style.display='none';
     document.getElementById('m8bfPatternNote').style.display='none';
     document.getElementById('cardM8bf').className='scard';
     document.getElementById('cardStrad').className='scard';
@@ -1245,6 +1252,25 @@
     } else {
       spxGapWrap.style.display='none';
       spxSepEl.style.display='none';
+    }
+
+    // ── VIX 20-day percentile (research: 50–80% band = diagonal dead zone) ──
+    const vixPctWrap=document.getElementById('vixPct20Wrap');
+    const vixPctSep =document.getElementById('vixPctSep');
+    const vixPctEl  =document.getElementById('vixPct20Display');
+    if(_vix20dCloses && _vix20dCloses.length >= 10 && !isNaN(vToday)){
+      const below = _vix20dCloses.filter(c => c < vToday).length;
+      const pct   = Math.round(100 * below / _vix20dCloses.length);
+      vixPctWrap.style.display='flex';
+      vixPctSep.style.display='inline';
+      vixPctEl.textContent = pct + '%';
+      vixPctEl.className = (pct > 50 && pct <= 80) ? 'mv vix-dead' : 'mv vix-edge';
+      vixPctWrap.title = (pct > 50 && pct <= 80)
+        ? `VIX today ${vToday} ranks ${pct}% in last 20 daily closes — DEAD ZONE (50–80%): Diagonal loses edge here.`
+        : `VIX today ${vToday} ranks ${pct}% in last 20 daily closes — EDGE: outside the 50–80% dead zone.`;
+    } else {
+      vixPctWrap.style.display='none';
+      vixPctSep.style.display='none';
     }
 
     let rec="", theme="neutral", crossed=false, pmNote=false;
@@ -1957,6 +1983,36 @@
       console.error('schwabFetchHistorical error:', e);
       schwabSetStatus('error', 'Data fetch failed: ' + e.message);
     }
+
+    // Also fetch 20-day VIX history for percentile display (non-blocking)
+    schwabFetchVix20dCloses().then(()=>calculateStrategy()).catch(e=>console.warn('[S3] VIX 20d:', e));
+  }
+
+  /* ── VIX 20-day percentile: fetch last ~30 daily closes, cache for UI ── */
+  let _vix20dCloses = null;  // array of prior daily closes, most recent last
+  async function schwabFetchVix20dCloses(){
+    const token = await schwabGetToken();
+    if(!token) return;
+    try{
+      // ~45 days of daily VIX candles — buffer for weekends/holidays, we need 20 trading days
+      const end = new Date();
+      const start = new Date(end); start.setDate(start.getDate() - 45);
+      const url = `${SCHWAB.proxy()}/market/pricehistory?symbol=%24VIX&periodType=month&period=2&frequencyType=daily&frequency=1&startDate=${start.getTime()}&endDate=${end.getTime()}&needExtendedHoursData=false`;
+      const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if(!resp.ok) throw new Error('HTTP ' + resp.status);
+      const data = await resp.json();
+      const candles = data?.candles;
+      if(!candles?.length) return;
+      candles.sort((a,b)=>a.datetime - b.datetime);
+      const todayStr = new Date().toDateString();
+      // Prior daily closes only (exclude today's incomplete candle)
+      const priors = candles
+        .filter(c => new Date(c.datetime).toDateString() !== todayStr)
+        .map(c => c.close)
+        .filter(v => v > 0);
+      // Keep last 20 (most recent 20 prior trading days)
+      _vix20dCloses = priors.slice(-20);
+    }catch(e){ console.warn('[S3] VIX 20d fetch:', e); }
   }
 
   function isTradingDay(date){
