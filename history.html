@@ -527,7 +527,7 @@ let barChart = null;
 let mcChart = null;
 let allocChart = null;
 let sortedRows = []; // module-level for tooltip reference
-const allocWeights = { m8bf:25, strad:25, gxbf:25, bobf:25 };
+const allocWeights = { m8bf:20, strad:20, gxbf:20, bobf:20, diagonal:20 };
 
 // ══════════════════════════════════════════════════════════════
 // THEME
@@ -1557,6 +1557,7 @@ function renderAllocation() {
     {key:'strad', label:'Straddle', color:'#22d3ee'},
     {key:'gxbf', label:'GXBF', color:'#2dd4bf'},
     {key:'bobf', label:'BOBF', color:'#fb923c'},
+    {key:'diagonal', label:'Diagonal', color:'#4ade80'},
   ];
 
   controls.innerHTML = strats.map(s =>
@@ -1580,7 +1581,7 @@ function updateAllocChart() {
   const sorted = rows.slice().sort((a,b) => a.date.localeCompare(b.date));
 
   // Build daily P/L per strategy
-  const stratPLs = {m8bf:[], strad:[], gxbf:[], bobf:[]};
+  const stratPLs = {m8bf:[], strad:[], gxbf:[], bobf:[], diagonal:[]};
   const dates = [];
   for (const row of sorted) {
     const s = row.signal || {};
@@ -1588,25 +1589,27 @@ function updateAllocChart() {
     const st = (s.stradRan && row.stradPL != null) ? row.stradPL : 0;
     const g = row.gxbfPL != null ? row.gxbfPL : 0;
     const b = (s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) ? row.bobfPL : 0;
-    if (m || st || g || b) {
-      stratPLs.m8bf.push(m); stratPLs.strad.push(st); stratPLs.gxbf.push(g); stratPLs.bobf.push(b);
+    const dg = row.diagPL != null ? row.diagPL : 0;
+    if (m || st || g || b || dg) {
+      stratPLs.m8bf.push(m); stratPLs.strad.push(st); stratPLs.gxbf.push(g); stratPLs.bobf.push(b); stratPLs.diagonal.push(dg);
       dates.push(row.date);
     }
   }
 
-  const totalWeight = (allocWeights.m8bf + allocWeights.strad + allocWeights.gxbf + allocWeights.bobf) || 1;
+  const totalWeight = (allocWeights.m8bf + allocWeights.strad + allocWeights.gxbf + allocWeights.bobf + allocWeights.diagonal) || 1;
   const w = {
     m8bf: allocWeights.m8bf / totalWeight,
     strad: allocWeights.strad / totalWeight,
     gxbf: allocWeights.gxbf / totalWeight,
     bobf: allocWeights.bobf / totalWeight,
+    diagonal: allocWeights.diagonal / totalWeight,
   };
 
   const weightedPLs = [];
   const cumData = [];
   let cum = 0;
   for (let i = 0; i < dates.length; i++) {
-    const wpl = w.m8bf * stratPLs.m8bf[i] + w.strad * stratPLs.strad[i] + w.gxbf * stratPLs.gxbf[i] + w.bobf * stratPLs.bobf[i];
+    const wpl = w.m8bf * stratPLs.m8bf[i] + w.strad * stratPLs.strad[i] + w.gxbf * stratPLs.gxbf[i] + w.bobf * stratPLs.bobf[i] + w.diagonal * stratPLs.diagonal[i];
     weightedPLs.push(wpl);
     cum += wpl;
     cumData.push(cum);
@@ -1629,7 +1632,7 @@ function updateAllocChart() {
   }
 
   const statsEl = document.getElementById('allocStats');
-  statsEl.innerHTML = `P/L: <span>$${Math.round(totalPL).toLocaleString()}</span> | Sharpe: <span>${sharpe.toFixed(2)}</span> | MaxDD: <span>$${Math.round(maxDD).toLocaleString()}</span> | Weights: <span>${allocWeights.m8bf}/${allocWeights.strad}/${allocWeights.gxbf}/${allocWeights.bobf}</span>`;
+  statsEl.innerHTML = `P/L: <span>$${Math.round(totalPL).toLocaleString()}</span> | Sharpe: <span>${sharpe.toFixed(2)}</span> | MaxDD: <span>$${Math.round(maxDD).toLocaleString()}</span> | Weights: <span>${allocWeights.m8bf}/${allocWeights.strad}/${allocWeights.gxbf}/${allocWeights.bobf}/${allocWeights.diagonal}</span>`;
 
   const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
   const tickColor = isDark ? '#94a3b8' : '#475569';
@@ -1666,15 +1669,16 @@ function optimizeAlloc() {
   const sorted = rows.slice().sort((a,b) => a.date.localeCompare(b.date));
 
   // Build daily P/L per strategy
-  const stratPLs = {m8bf:[], strad:[], gxbf:[], bobf:[]};
+  const stratPLs = {m8bf:[], strad:[], gxbf:[], bobf:[], diagonal:[]};
   for (const row of sorted) {
     const s = row.signal || {};
     const m = (s.m8bfRan && row.m8bfPL != null) ? row.m8bfPL : 0;
     const st = (s.stradRan && row.stradPL != null) ? row.stradPL : 0;
     const g = row.gxbfPL != null ? row.gxbfPL : 0;
     const b = (s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) ? row.bobfPL : 0;
-    if (m || st || g || b) {
-      stratPLs.m8bf.push(m); stratPLs.strad.push(st); stratPLs.gxbf.push(g); stratPLs.bobf.push(b);
+    const dg = row.diagPL != null ? row.diagPL : 0;
+    if (m || st || g || b || dg) {
+      stratPLs.m8bf.push(m); stratPLs.strad.push(st); stratPLs.gxbf.push(g); stratPLs.bobf.push(b); stratPLs.diagonal.push(dg);
     }
   }
 
@@ -1682,33 +1686,38 @@ function optimizeAlloc() {
   if (n < 2) return;
 
   let bestSharpe = -Infinity;
-  let bestW = {m8bf:25, strad:25, gxbf:25, bobf:25};
+  let bestW = {m8bf:20, strad:20, gxbf:20, bobf:20, diagonal:20};
 
-  // Brute force at 5% increments, sum = 100
-  for (let a = 0; a <= 100; a += 5) {
-    for (let b = 0; b <= 100 - a; b += 5) {
-      for (let c = 0; c <= 100 - a - b; c += 5) {
-        const d = 100 - a - b - c;
-        const wa = a/100, wb = b/100, wc = c/100, wd = d/100;
-        let sum = 0, sumSq = 0;
-        for (let i = 0; i < n; i++) {
-          const pl = wa * stratPLs.m8bf[i] + wb * stratPLs.strad[i] + wc * stratPLs.gxbf[i] + wd * stratPLs.bobf[i];
-          sum += pl;
-          sumSq += pl * pl;
-        }
-        const mean = sum / n;
-        const variance = sumSq / n - mean * mean;
-        const sharpe = variance > 0 ? mean / Math.sqrt(variance) : 0;
-        if (sharpe > bestSharpe) {
-          bestSharpe = sharpe;
-          bestW = {m8bf:a, strad:b, gxbf:c, bobf:d};
+  // Brute force at 10% increments over 5 strategies, sum = 100
+  // Quadruple loop over (m8bf, strad, gxbf, bobf); diagonal = remainder.
+  // Step 10 ⇒ C(14,4) = 1001 combinations, plenty fast.
+  const STEP = 10;
+  for (let a = 0; a <= 100; a += STEP) {
+    for (let b = 0; b <= 100 - a; b += STEP) {
+      for (let c = 0; c <= 100 - a - b; c += STEP) {
+        for (let d = 0; d <= 100 - a - b - c; d += STEP) {
+          const e = 100 - a - b - c - d;
+          const wa = a/100, wb = b/100, wc = c/100, wd = d/100, we = e/100;
+          let sum = 0, sumSq = 0;
+          for (let i = 0; i < n; i++) {
+            const pl = wa * stratPLs.m8bf[i] + wb * stratPLs.strad[i] + wc * stratPLs.gxbf[i] + wd * stratPLs.bobf[i] + we * stratPLs.diagonal[i];
+            sum += pl;
+            sumSq += pl * pl;
+          }
+          const mean = sum / n;
+          const variance = sumSq / n - mean * mean;
+          const sharpe = variance > 0 ? mean / Math.sqrt(variance) : 0;
+          if (sharpe > bestSharpe) {
+            bestSharpe = sharpe;
+            bestW = {m8bf:a, strad:b, gxbf:c, bobf:d, diagonal:e};
+          }
         }
       }
     }
   }
 
   // Apply best weights
-  for (const k of ['m8bf','strad','gxbf','bobf']) {
+  for (const k of ['m8bf','strad','gxbf','bobf','diagonal']) {
     allocWeights[k] = bestW[k];
     const slider = document.querySelector(`.alloc-slider[oninput*="${k}"]`);
     if (slider) slider.value = bestW[k];
