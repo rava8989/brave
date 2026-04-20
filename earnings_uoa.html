@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SPX-BF // Earnings UOA Backtester</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
+<script src="https://cdn.plot.ly/plotly-2.27.0.min.js" charset="utf-8"></script>
+<script src="earnings-engine.js"></script>
+<style>
+:root {
+  --bg:#f1f5f9; --bg2:#ffffff; --bg3:#f8fafc;
+  --border:#e2e8f0; --text:#1e293b; --text2:#475569; --text3:#94a3b8;
+  --accent:#6366f1; --accent2:#818cf8;
+  --green:#22c55e; --red:#ef4444; --amber:#f59e0b;
+  --shadow:0 1px 3px rgba(0,0,0,.07), 0 4px 16px rgba(0,0,0,.05);
+  --radius:12px; --radius-sm:8px;
+}
+[data-theme="dark"] {
+  --bg:#0f172a; --bg2:#1e293b; --bg3:#162032;
+  --border:#2d3f55; --text:#e2e8f0; --text2:#94a3b8; --text3:#475569;
+  --accent:#818cf8; --accent2:#6366f1;
+  --shadow:0 1px 3px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.2);
+}
+*, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
+body { font-family:'Inter',sans-serif; background:var(--bg); color:var(--text); font-size:13px; min-height:100vh; }
+
+/* Header */
+.header { display:flex; align-items:center; gap:16px; padding:13px 24px; background:var(--bg2); border-bottom:1px solid var(--border); position:sticky; top:0; z-index:100; box-shadow:var(--shadow); }
+.logo { font-family:'JetBrains Mono',monospace; font-size:15px; font-weight:700; color:var(--accent); }
+.logo span { color:var(--text3); font-weight:400; }
+.nav { display:flex; gap:4px; margin-left:auto; }
+.nav a { text-decoration:none; color:var(--text2); padding:6px 12px; border-radius:var(--radius-sm); font-size:12px; font-weight:500; }
+.nav a.active { background:var(--accent); color:white; }
+.nav a:hover:not(.active) { background:var(--bg3); color:var(--text); }
+.theme-btn { background:var(--bg3); border:1px solid var(--border); border-radius:var(--radius-sm); padding:6px 10px; cursor:pointer; color:var(--text); font-size:13px; }
+
+/* Layout */
+main { display:grid; grid-template-columns:320px 1fr; gap:16px; padding:16px; max-width:1600px; margin:0 auto; }
+.panel { background:var(--bg2); border:1px solid var(--border); border-radius:var(--radius); padding:16px; box-shadow:var(--shadow); }
+.panel h3 { font-size:11px; text-transform:uppercase; color:var(--text3); margin-bottom:12px; letter-spacing:.05em; font-weight:600; }
+.field { margin-bottom:14px; }
+.field label { display:block; font-size:11px; color:var(--text2); margin-bottom:4px; font-weight:500; }
+.field input, .field select { width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--bg3); color:var(--text); font-family:inherit; font-size:13px; }
+.field input[type="range"] { padding:0; }
+.field-row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.toggle { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--text2); cursor:pointer; padding:6px 0; }
+.toggle input[type="checkbox"] { width:auto; }
+
+/* Signal cards */
+.signal-cards { display:grid; gap:10px; margin-top:12px; }
+.scard { background:var(--bg3); border:1px solid var(--border); border-radius:var(--radius-sm); padding:10px 12px; }
+.scard-header { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+.scard-title { font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; flex:1; }
+.scard-desc { font-size:10px; color:var(--text3); margin-top:4px; line-height:1.3; }
+.scard-input { display:flex; gap:6px; margin-top:6px; align-items:center; }
+.scard-input label { font-size:10px; color:var(--text3); }
+.scard-input input { flex:1; padding:4px 8px; font-size:11px; font-family:'JetBrains Mono',monospace; }
+.scard.disabled { opacity:.5; }
+
+/* Run button */
+.run-btn { width:100%; padding:10px; background:var(--accent); color:white; border:none; border-radius:var(--radius-sm); font-weight:600; cursor:pointer; margin-top:8px; font-size:13px; }
+.run-btn:hover { background:var(--accent2); }
+.run-btn:disabled { opacity:.5; cursor:not-allowed; }
+
+/* Results */
+.kpi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px; margin-bottom:16px; }
+.kpi { background:var(--bg3); border:1px solid var(--border); border-radius:var(--radius-sm); padding:10px 12px; }
+.kpi-label { font-size:10px; text-transform:uppercase; color:var(--text3); letter-spacing:.05em; font-weight:600; }
+.kpi-value { font-family:'JetBrains Mono',monospace; font-size:18px; font-weight:700; margin-top:4px; }
+.kpi-value.green { color:var(--green); }
+.kpi-value.red { color:var(--red); }
+
+table { width:100%; border-collapse:collapse; font-size:12px; }
+th, td { padding:7px 10px; text-align:left; border-bottom:1px solid var(--border); }
+th { font-size:10px; text-transform:uppercase; letter-spacing:.05em; color:var(--text3); font-weight:600; background:var(--bg3); position:sticky; top:0; }
+td { font-family:'JetBrains Mono',monospace; }
+.num { text-align:right; font-family:'JetBrains Mono',monospace; }
+.pos { color:var(--green); }
+.neg { color:var(--red); }
+
+.section { margin-bottom:20px; }
+.section-title { font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:600; color:var(--text2); margin-bottom:10px; text-transform:uppercase; letter-spacing:.05em; }
+
+#chart { height:280px; background:var(--bg3); border-radius:var(--radius-sm); border:1px solid var(--border); }
+#tradeLog { max-height:360px; overflow:auto; background:var(--bg3); border:1px solid var(--border); border-radius:var(--radius-sm); }
+
+.empty { text-align:center; padding:60px 20px; color:var(--text3); font-size:13px; }
+.empty-title { font-size:16px; margin-bottom:6px; color:var(--text2); font-weight:500; }
+.status { font-size:11px; color:var(--text3); padding:6px 12px; background:var(--bg3); border-radius:var(--radius-sm); margin-bottom:12px; border:1px solid var(--border); }
+
+.badge { display:inline-block; padding:2px 7px; border-radius:8px; font-size:10px; font-family:'JetBrains Mono',monospace; font-weight:600; margin-right:4px; }
+.badge-long { background:rgba(34,197,94,.15); color:var(--green); }
+.badge-short { background:rgba(239,68,68,.15); color:var(--red); }
+.badge-sig { background:rgba(99,102,241,.15); color:var(--accent); }
+.badge-na { background:rgba(245,158,11,.15); color:var(--amber); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">SPX-BF <span>// Earnings UOA Backtester</span></div>
+  <div class="header-sep"></div>
+  <div class="header-meta" id="metaInfo">loading…</div>
+  <nav class="nav">
+    <a href="index.html">Main</a>
+    <a href="backtester.html">M8BF</a>
+    <a href="diagonal.html">Diagonal</a>
+    <a href="earnings_uoa.html" class="active">Earnings UOA</a>
+    <a href="history.html">History</a>
+  </nav>
+  <button class="theme-btn" onclick="toggleTheme()">◐</button>
+</div>
+
+<main>
+  <aside class="panel">
+    <h3>Filters</h3>
+
+    <div class="field">
+      <label>Universe</label>
+      <select id="universe">
+        <option value="all">All S&amp;P 500</option>
+        <option value="top100">Top 100 by event count</option>
+        <option value="custom">Custom (comma-separated)</option>
+      </select>
+      <input type="text" id="customTickers" placeholder="AAPL,MSFT,..." style="margin-top:6px; display:none;">
+    </div>
+
+    <div class="field">
+      <label>Date range</label>
+      <div class="field-row">
+        <input type="date" id="dateFrom">
+        <input type="date" id="dateTo">
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Hold period (trading days after event)</label>
+      <select id="holdDays">
+        <option value="1">1 day</option>
+        <option value="3" selected>3 days</option>
+        <option value="5">5 days</option>
+        <option value="10">10 days</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label>Trade direction</label>
+      <label class="toggle"><input type="checkbox" id="longOnCalls" checked> Long on call-heavy flow</label>
+      <label class="toggle"><input type="checkbox" id="shortOnPuts" checked> Short on put-heavy flow</label>
+    </div>
+
+    <div class="field">
+      <label>Combine signals</label>
+      <select id="combine">
+        <option value="any" selected>Fire if ANY enabled signal fires</option>
+        <option value="all">Fire only if ALL enabled signals fire</option>
+      </select>
+    </div>
+
+    <h3 style="margin-top:20px;">Signals</h3>
+    <div class="signal-cards" id="signalCards"></div>
+
+    <button class="run-btn" id="runBtn" onclick="run()">Run backtest</button>
+    <div class="status" id="status" style="margin-top:10px; display:none;"></div>
+  </aside>
+
+  <section class="panel">
+    <div id="results">
+      <div class="empty">
+        <div class="empty-title">Configure signals on the left and click Run backtest.</div>
+        <div>Each of the 4 UOA signals evaluates independently — per-signal breakdown shows which definition actually predicts post-earnings moves.</div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────
+let EVENTS = [];
+let UNIVERSE_TICKERS = new Set();
+
+// ── Theme toggle ──────────────────────────────────────────────────
+function toggleTheme() {
+  const root = document.documentElement;
+  root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark';
+  localStorage.setItem('theme', root.dataset.theme);
+}
+if (localStorage.getItem('theme')) document.documentElement.dataset.theme = localStorage.getItem('theme');
+
+// ── Build signal cards from engine config ─────────────────────────
+function buildSignalCards() {
+  const container = document.getElementById('signalCards');
+  container.innerHTML = '';
+  for (const [key, sig] of Object.entries(EarningsEngine.UOA_SIGNALS)) {
+    const defaults = EarningsEngine.DEFAULT_CONFIG[key];
+    const disabled = sig.unavailable;
+    const card = document.createElement('div');
+    card.className = 'scard' + (disabled ? ' disabled' : '');
+    card.innerHTML = `
+      <div class="scard-header">
+        <input type="checkbox" id="sig-${key}-enabled" ${defaults.enabled ? 'checked' : ''} ${disabled ? 'disabled' : ''}>
+        <span class="scard-title">${sig.label}</span>
+        ${disabled ? '<span class="badge badge-na">PR1 N/A</span>' : ''}
+      </div>
+      <div class="scard-desc">${sig.description}</div>
+      <div class="scard-input">
+        <label>≥</label>
+        <input type="number" id="sig-${key}-threshold" value="${defaults.threshold}" step="any" ${disabled ? 'disabled' : ''}>
+        <select id="sig-${key}-side" ${disabled ? 'disabled' : ''}>
+          <option value="both" selected>both</option>
+          <option value="call">call only</option>
+          <option value="put">put only</option>
+        </select>
+      </div>
+    `;
+    container.appendChild(card);
+  }
+}
+
+function readConfig() {
+  const config = {};
+  for (const key of Object.keys(EarningsEngine.UOA_SIGNALS)) {
+    config[key] = {
+      enabled: document.getElementById(`sig-${key}-enabled`).checked,
+      threshold: parseFloat(document.getElementById(`sig-${key}-threshold`).value) || 0,
+      side: document.getElementById(`sig-${key}-side`).value,
+    };
+  }
+  return config;
+}
+
+// ── Data load ─────────────────────────────────────────────────────
+async function loadData() {
+  setStatus('loading earnings index…');
+  const idx = await (await fetch('./data/earnings_uoa_index.json', { cache: 'no-cache' })).json();
+  const years = idx.years || [];
+  const sets = await Promise.all(years.map(y =>
+    fetch(`./data/earnings_uoa_${y}.json`, { cache: 'no-cache' }).then(r => r.json())
+  ));
+  let all = [];
+  for (const d of sets) all = all.concat(d.earnings_events || []);
+  all.sort((a, b) => a.report_date.localeCompare(b.report_date));
+  EVENTS = all;
+
+  const constituents = await fetch('./data/sp500_constituents.json', { cache: 'no-cache' }).then(r => r.json()).catch(() => null);
+  if (constituents) UNIVERSE_TICKERS = new Set(constituents.tickers);
+
+  EarningsEngine.annotateIvRank(EVENTS);
+
+  const first = EVENTS[0]?.report_date, last = EVENTS[EVENTS.length - 1]?.report_date;
+  document.getElementById('dateFrom').value = first;
+  document.getElementById('dateFrom').min = first;
+  document.getElementById('dateFrom').max = last;
+  document.getElementById('dateTo').value = last;
+  document.getElementById('dateTo').min = first;
+  document.getElementById('dateTo').max = last;
+  document.getElementById('metaInfo').textContent =
+    `${EVENTS.length.toLocaleString()} events · ${first} → ${last} · ${idx.generated_at?.slice(0,10) || ''}`;
+  setStatus('');
+}
+
+function setStatus(msg) {
+  const el = document.getElementById('status');
+  if (!msg) { el.style.display = 'none'; return; }
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+// ── Universe filter ───────────────────────────────────────────────
+function buildUniverseFn() {
+  const mode = document.getElementById('universe').value;
+  if (mode === 'custom') {
+    const raw = document.getElementById('customTickers').value;
+    const set = new Set(raw.split(',').map(s => s.trim().toUpperCase()).filter(Boolean));
+    return (t) => set.has(t);
+  }
+  if (mode === 'top100') {
+    const counts = {};
+    for (const e of EVENTS) counts[e.ticker] = (counts[e.ticker] || 0) + 1;
+    const top = new Set(Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 100).map(([t]) => t));
+    return (t) => top.has(t);
+  }
+  return () => true;
+}
+
+document.addEventListener('change', (e) => {
+  if (e.target.id === 'universe') {
+    document.getElementById('customTickers').style.display = e.target.value === 'custom' ? 'block' : 'none';
+  }
+});
+
+// ── Run ────────────────────────────────────────────────────────────
+function run() {
+  const config = readConfig();
+  const params = {
+    holdDays: parseInt(document.getElementById('holdDays').value),
+    longOnCalls: document.getElementById('longOnCalls').checked,
+    shortOnPuts: document.getElementById('shortOnPuts').checked,
+    combine: document.getElementById('combine').value,
+    dateFrom: document.getElementById('dateFrom').value,
+    dateTo: document.getElementById('dateTo').value,
+    universe: buildUniverseFn(),
+  };
+
+  setStatus(`running backtest over ${EVENTS.length.toLocaleString()} events…`);
+  requestAnimationFrame(() => {
+    const t0 = performance.now();
+    const res = EarningsEngine.evaluateBacktest(EVENTS, config, params);
+    const elapsed = Math.round(performance.now() - t0);
+    setStatus(`done in ${elapsed}ms`);
+    render(res, params);
+  });
+}
+
+// ── Render ─────────────────────────────────────────────────────────
+function render(res, params) {
+  const c = res.combined;
+  const kpiHtml = `
+    <div class="kpi-grid">
+      <div class="kpi"><div class="kpi-label">Trades</div><div class="kpi-value">${c.count.toLocaleString()}</div></div>
+      <div class="kpi"><div class="kpi-label">Win rate</div><div class="kpi-value ${c.winRate > .5 ? 'green' : 'red'}">${(c.winRate*100).toFixed(1)}%</div></div>
+      <div class="kpi"><div class="kpi-label">Avg move</div><div class="kpi-value ${c.avgMove > 0 ? 'green' : 'red'}">${(c.avgMove*100).toFixed(2)}%</div></div>
+      <div class="kpi"><div class="kpi-label">Sharpe</div><div class="kpi-value ${c.sharpe > 0 ? 'green' : 'red'}">${c.sharpe.toFixed(2)}</div></div>
+      <div class="kpi"><div class="kpi-label">Max DD</div><div class="kpi-value red">${(c.maxDD*100).toFixed(1)}%</div></div>
+      <div class="kpi"><div class="kpi-label">Profit factor</div><div class="kpi-value">${isFinite(c.profitFactor) ? c.profitFactor.toFixed(2) : '∞'}</div></div>
+    </div>
+  `;
+
+  const perSignalRows = Object.entries(EarningsEngine.UOA_SIGNALS).map(([k, sig]) => {
+    const s = res.perSignal[k];
+    return `<tr>
+      <td>${sig.label}</td>
+      <td class="num">${s.count.toLocaleString()}</td>
+      <td class="num ${s.winRate > .5 ? 'pos' : 'neg'}">${(s.winRate*100).toFixed(1)}%</td>
+      <td class="num ${s.avgMove > 0 ? 'pos' : 'neg'}">${(s.avgMove*100).toFixed(2)}%</td>
+      <td class="num">${s.sharpe.toFixed(2)}</td>
+      <td class="num">${isFinite(s.profitFactor) ? s.profitFactor.toFixed(2) : '∞'}</td>
+      <td class="num">${(s.maxDD*100).toFixed(1)}%</td>
+    </tr>`;
+  }).join('');
+
+  const tradeRows = c.trades.slice(-200).reverse().map(t => `
+    <tr>
+      <td>${t.report_date}</td>
+      <td>${t.ticker}</td>
+      <td><span class="badge ${t.direction === 'long' ? 'badge-long' : 'badge-short'}">${t.direction}</span></td>
+      <td>${(t.signals_fired || []).map(s => `<span class="badge badge-sig">${s}</span>`).join('')}</td>
+      <td class="num">${t.entry ? t.entry.toFixed(2) : '-'}</td>
+      <td class="num">${t.exit_close ? t.exit_close.toFixed(2) : '-'}</td>
+      <td class="num ${t.pnl_pct > 0 ? 'pos' : 'neg'}">${(t.pnl_pct*100).toFixed(2)}%</td>
+    </tr>
+  `).join('');
+
+  document.getElementById('results').innerHTML = `
+    ${kpiHtml}
+    <div class="section">
+      <div class="section-title">Per-signal breakdown</div>
+      <table>
+        <thead><tr><th>Signal</th><th class="num">Trades</th><th class="num">Win %</th><th class="num">Avg move</th><th class="num">Sharpe</th><th class="num">PF</th><th class="num">Max DD</th></tr></thead>
+        <tbody>${perSignalRows}</tbody>
+      </table>
+    </div>
+    <div class="section">
+      <div class="section-title">Equity curve (combined, ${params.holdDays}d hold)</div>
+      <div id="chart"></div>
+    </div>
+    <div class="section">
+      <div class="section-title">Last 200 trades</div>
+      <div id="tradeLog">
+        <table>
+          <thead><tr><th>Date</th><th>Ticker</th><th>Dir</th><th>Signals</th><th class="num">Entry</th><th class="num">Exit</th><th class="num">P&L</th></tr></thead>
+          <tbody>${tradeRows || '<tr><td colspan="7" class="empty">No trades in window.</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  if (c.curve && c.curve.length > 1) {
+    const layout = {
+      paper_bgcolor: 'transparent', plot_bgcolor: 'transparent',
+      font: { family: 'Inter, sans-serif', color: getComputedStyle(document.body).color, size: 11 },
+      margin: { t: 20, l: 50, r: 20, b: 40 },
+      xaxis: { gridcolor: 'rgba(128,128,128,.15)' },
+      yaxis: { gridcolor: 'rgba(128,128,128,.15)', title: 'Equity (mult of starting capital)' },
+      showlegend: false,
+    };
+    Plotly.newPlot('chart', [{
+      x: c.curve.map(p => p.date), y: c.curve.map(p => p.equity),
+      mode: 'lines', line: { color: getComputedStyle(document.body).getPropertyValue('--accent'), width: 2 },
+    }], layout, { displayModeBar: false, responsive: true });
+  }
+}
+
+// ── Boot ───────────────────────────────────────────────────────────
+buildSignalCards();
+loadData().catch(err => {
+  document.getElementById('results').innerHTML = `<div class="empty"><div class="empty-title">Load failed</div><div>${err.message}</div></div>`;
+  console.error(err);
+});
+</script>
+</body>
+</html>

@@ -31,6 +31,12 @@ BANNED_PATTERNS=(
   "No GXBF \\([^)]*${P_PRIORITY}|GXBF blocked-text must not name another strategy as having precedence"
   "No BOBF \\([^)]*${P_PRIORITY}|BOBF blocked-text must not name another strategy as having precedence"
 
+  # UOA signal independence (Volume/Premium/IV Rank/Blocks must each evaluate alone)
+  "No VOR \\([^)]*${P_PRIORITY}|VOR blocked-text must not name another UOA signal as having precedence"
+  "No Premium \\([^)]*${P_PRIORITY}|Premium blocked-text must not name another UOA signal as having precedence"
+  "No IV Rank \\([^)]*${P_PRIORITY}|IV Rank blocked-text must not name another UOA signal as having precedence"
+  "No Blocks \\([^)]*${P_PRIORITY}|Blocks blocked-text must not name another UOA signal as having precedence"
+
   # Backend code must use m8bfBanned, not theme, to decide M8BF blocking
   "sig\\.theme\\s*!==\\s*[\"']m8bf[\"']|Use sig.m8bfBanned for M8BF-blocked checks — theme is the primary rec, not a per-strategy status"
   "signal\\.theme\\s*!==\\s*[\"']m8bf[\"']|Use signal.m8bfBanned for M8BF-blocked checks — theme is the primary rec, not a per-strategy status"
