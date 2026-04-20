@@ -728,7 +728,7 @@ body {
 
     <div class="alloc-field">
       <label class="alloc-label" for="maxContracts">Max Contracts Per Trade</label>
-      <input type="number" class="alloc-input" id="maxContracts" value="1" min="1" max="1000" step="1">
+      <input type="number" class="alloc-input" id="maxContracts" value="100" min="1" max="1000" step="1">
     </div>
 
     <div class="alloc-field">
@@ -1356,13 +1356,15 @@ function applySpecialFilter(dates, specialSets, mode, activeCategories) {
 // ══════════════════════════════════════════════════════════════════════
 function sizePosition(equity, marginPerContract, params) {
   // Return contract count for this trade based on allocation rules.
-  // Order of precedence:
-  //   1. Hard user cap (params.contracts) — smallest value wins
-  //   2. Max contracts per trade cap
-  //   3. Max allocation amount cap (if set)
-  //   4. Margin % of equity (unless ignoreMargin)
+  // Two modes:
+  //   (A) Fixed mode  — params.ignoreMargin OR no valid margin:
+  //         size = sidebar "Contracts" input, capped by maxContracts
+  //   (B) Allocation mode (default):
+  //         size = floor((equity × marginPct / 100) / marginPerContract)
+  //         capped by maxAllocAmt (dollar cap) and maxContracts (hard ceiling)
+  //         Sidebar "Contracts" is IGNORED in allocation mode — otherwise a default
+  //         of 1 would silently lock every backtest to 1 contract regardless of equity.
   if (params.ignoreMargin || marginPerContract <= 0) {
-    // No valid margin → fall back to user caps only (avoid /0 → Infinity)
     return Math.max(0, Math.min(params.contracts, params.maxContracts));
   }
   const marginDollars = (equity * params.marginPct) / 100;
@@ -1370,9 +1372,8 @@ function sizePosition(equity, marginPerContract, params) {
     ? Math.min(marginDollars, params.maxAllocAmt)
     : marginDollars;
   const byMargin   = Math.floor(allocCap / marginPerContract);
-  const byUserCap  = params.contracts;
   const byHardCap  = params.maxContracts;
-  return Math.max(0, Math.min(byMargin, byUserCap, byHardCap));
+  return Math.max(0, Math.min(byMargin, byHardCap));
 }
 
 // ══════════════════════════════════════════════════════════════════════
