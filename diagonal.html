@@ -685,8 +685,8 @@ body {
       <button class="tpill" data-sd="FED">FED</button>
       <button class="tpill" data-sd="CPI">CPI</button>
       <button class="tpill" data-sd="VIX">VIX EXP</button>
-      <button class="tpill" data-sd="VIX_MID"  title="Entry days where VIX ranks 50–80% vs prior 20 daily closes (the 'dead-zone' band where the strategy loses its edge)">VIX 50–80%</button>
-      <button class="tpill" data-sd="VIX_DEAD" title="VIX 50–80% AND prior-day SPX moved less than 0.5% (the sharpest 'dead-zone' filter — most damage concentrated here)">VIX DEAD</button>
+      <button class="tpill" data-sd="VIX_MID"  title="Rank today's VIX against the last 20 trading days' VIX values. If it sits in the 50–80th percentile (elevated but not spiky — the 'uncomfortable middle'), skip the trade. Research shows this band averages -$117/trade while the rest of the distribution averages +$220/trade.">VIX 50–80%</button>
+      <button class="tpill" data-sd="VIX_DEAD" title="Tighter version of VIX 50–80%: only flag the day if VIX is in the 50–80% band AND yesterday's SPX moved less than 0.5%. This catches the purest 'no-edge' regime — elevated-but-not-spiky VIX plus a sleepy prior session with no directional follow-through. Skipping these days cuts MaxDD by ~26% in the backtest.">VIX DEAD</button>
       <button class="tpill" data-sd="AAPL">AAPL</button>
       <button class="tpill" data-sd="GOOGL">GOOGL</button>
       <button class="tpill" data-sd="MSFT">MSFT</button>
@@ -696,6 +696,59 @@ body {
       <button class="tpill" data-sd="AMZN">AMZN</button>
       <button class="tpill" data-sd="ALL_EARNINGS">ALL EARNINGS</button>
     </div>
+    <details style="margin-top:8px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:6px 10px">
+      <summary style="cursor:pointer;font-size:11px;color:var(--text2);font-weight:600">What do these filters mean?</summary>
+      <div style="font-size:11px;color:var(--text2);line-height:1.55;padding:8px 2px 2px">
+        <strong>Mode:</strong> pick <strong style="color:#ef4444">EXCLUDE</strong> to <em>skip</em> those days,
+        or <strong style="color:#22c55e">ONLY</strong> to trade <em>only</em> those days. Then click any pill(s) to activate.
+        <br><br>
+
+        <strong style="color:var(--accent)">Calendar filters</strong>
+        <ul style="margin:4px 0 0 16px;padding:0">
+          <li><strong>OPEX</strong> — monthly options expiration (3rd Friday). <strong>OPEX-1</strong> = day before, <strong>OPEX+1</strong> = day after.</li>
+          <li><strong>EOM</strong> — last trading day of the month. <strong>EOM-1</strong> = second-to-last.</li>
+          <li><strong>NM</strong> — first trading day of a new month.</li>
+          <li><strong>FED</strong> — FOMC rate-decision announcement days (typically Wednesday).</li>
+          <li><strong>CPI</strong> — monthly inflation report release (BLS, typically 8:30 AM ET).</li>
+          <li><strong>VIX EXP</strong> — monthly VIX futures/options expiration (Wednesday 2 days before OPEX).</li>
+          <li><strong>AAPL / GOOGL / MSFT / TSLA / META / NVDA / AMZN</strong> — single-ticker earnings report days (usually after-hours announcements).</li>
+          <li><strong>ALL EARNINGS</strong> — the union of all 7 Mag-7 earnings days above.</li>
+        </ul>
+
+        <br>
+        <strong style="color:#fcd34d">VIX regime filters</strong> <em style="color:var(--text3)">(data-derived, not calendar-based)</em>
+        <ul style="margin:4px 0 0 16px;padding:0">
+          <li>
+            <strong>VIX 50–80%</strong> — the <em>"VIX 20-day percentile"</em> filter.
+            Each day, we rank today's VIX against the last 20 trading days' VIX values (0% = lowest in 20 days, 100% = highest).
+            This pill flags days where that rank lands between 50 and 80 — the <strong>"uncomfortable middle"</strong>.
+            Not cheap enough to be complacent, not elevated enough to be panic — just ambiguous.
+            The diagonal has no edge here: in the backtest these days average <span style="color:#ef4444">−$117/trade</span>
+            while the rest of the distribution averages <span style="color:#22c55e">+$220/trade</span>.
+          </li>
+          <li style="margin-top:5px">
+            <strong>VIX DEAD</strong> — a tighter subset of VIX 50–80%.
+            Flags a day only if <em>both</em> conditions hold:
+            <ol style="margin:2px 0 0 18px;padding:0">
+              <li>VIX ranks 50–80% vs the prior 20 trading days (the "uncomfortable middle" above), <strong>AND</strong></li>
+              <li>Yesterday's SPX moved less than 0.5% in either direction (a "flat / sleepy" prior session).</li>
+            </ol>
+            This isolates the <strong>pure no-edge regime</strong>: elevated-but-not-spiky VIX plus no directional
+            follow-through from the prior day. In the backtest, skipping these ~100 days (out of 800+) increases total
+            P/L by ~$26K <em>and</em> cuts the max drawdown by ~26%. This is the single most powerful filter we've found.
+          </li>
+        </ul>
+
+        <br>
+        <span style="color:var(--text3)">
+          <strong>Why a "percentile" instead of a fixed VIX level?</strong>
+          VIX=18 means something very different in a calm month vs. a panic month. A relative rank adapts to
+          whatever regime the market is currently in — VIX=18 can be 95th-percentile in one environment and
+          5th-percentile in another. The edges (complacent or panicked, relative to recent norm) are profitable;
+          the ambiguous middle is where the strategy has no advantage.
+        </span>
+      </div>
+    </details>
   </div>
 
   <button class="run-btn" id="runBtn" disabled>RUN BACKTEST</button>

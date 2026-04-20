@@ -461,8 +461,8 @@
     <span class="msep" id="spxSep" style="display:none;">|</span>
     <div class="mi" id="spxGapWrap" style="display:none;"><span class="ml">SPX Gap</span><span class="mv" id="spxGapDisplay">—</span></div>
     <span class="msep" id="vixPctSep" style="display:none;">|</span>
-    <div class="mi" id="vixPct20Wrap" style="display:none;" title="Where today's VIX sits within the last 20 daily closes. 50–80% = 'dead zone' (Diagonal edge disappears). Outside that band = edge present.">
-      <span class="ml">VIX 20d %ile</span><span class="mv" id="vixPct20Display">—</span>
+    <div class="mi" id="vixPct20Wrap" style="display:none;" title="VIX 20-day percentile: ranks today's VIX against the last 20 trading days' VIX values. 0% = lowest in 20 days, 100% = highest. The 50–80% band is a 'no-edge' regime for short-premium diagonal strategies (research: -$117/trade avg there vs +$220 elsewhere). Outside that band = edge present. Click for full explanation.">
+      <span class="ml" style="cursor:help" onclick="document.getElementById('vixPctExplain').hidden=!document.getElementById('vixPctExplain').hidden">VIX 20d %ile</span><span class="mv" id="vixPct20Display">—</span>
     </div>
     <span class="msep" id="tagSep" style="display:none;">|</span>
     <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;">
@@ -477,6 +477,35 @@
       <span><span class="mv-legend-dot mv-legend-dn"></span>VIX down</span>
       <span><span class="mv-legend-dot mv-legend-up"></span>VIX up</span>
     </div>
+  </div>
+
+  <!-- VIX 20-day percentile — plain-English explainer (click the label to toggle) -->
+  <div id="vixPctExplain" hidden style="margin-bottom:12px;padding:10px 14px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);font-size:11px;color:var(--text2);line-height:1.55;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <strong style="color:var(--accent);font-size:12px">What is VIX 20-day percentile?</strong>
+      <span style="cursor:pointer;color:var(--text3);font-size:14px" onclick="document.getElementById('vixPctExplain').hidden=true">✕</span>
+    </div>
+    Rank today's VIX against the <strong>last 20 trading days</strong> of VIX values. <strong>0%</strong> = lowest in 20 days,
+    <strong>100%</strong> = highest.
+    <br><br>
+    <strong>Why a percentile instead of a fixed level?</strong> VIX=18 means something very different in a calm month vs. a
+    panic month. A rolling rank adapts to whatever regime the market is in.
+    <br><br>
+    <strong>What the bands mean (from diagonal backtest, 800+ trades):</strong>
+    <ul style="margin:4px 0 0 16px;padding:0">
+      <li><strong style="color:#22c55e">0–50% (calm edge)</strong> — VIX cheap vs recent norm. Premium sellers get paid.
+          ~+$170/trade, 65% WR.</li>
+      <li><strong style="color:#fcd34d">50–80% (dead zone)</strong> — elevated but not spiky. Ambiguous regime, no edge.
+          ~<span style="color:#ef4444">−$117/trade</span>, 56% WR.</li>
+      <li><strong style="color:#22c55e">80–100% (panic edge)</strong> — VIX near recent highs. Mean-reversion + skew crush pay you.
+          ~+$450/trade, 68% WR.</li>
+    </ul>
+    <br>
+    <strong>Reading the dashboard number:</strong>
+    <span style="color:#22c55e">green</span> = edge present (take the trade).
+    <span style="color:#fcd34d">yellow</span> = dead zone (consider skipping the diagonal today, especially if prior-day SPX was flat).
+    <br><br>
+    <span style="color:var(--text3)">The Diagonal backtester has a <strong>VIX DEAD</strong> filter that combines this percentile with a prior-day-flat check — see that page for the sharpest version.</span>
   </div>
 
   <!-- CPI DAY HARD BLOCK — replaces entire calculator on CPI days -->
