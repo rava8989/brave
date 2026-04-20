@@ -299,7 +299,7 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
     gxbfText = gxbfOwnText();
   } else if (theme === 'gxbf') {
     m8bfText = m8bfOwnText();
-    stradText = `No Straddle (overnight VIX drop > ${T.DROP_GXBF})`;
+    stradText = stradOwnText();
   } else if (theme === 'block') {
     if (rec.includes('M8BF')) {
       stradText = stradOwnText();
@@ -309,13 +309,19 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
       gxbfText = gxbfOwnText();
     } else if (rec.includes('GXBF')) {
       m8bfText = m8bfOwnText();
-      stradText = `No Straddle (overnight VIX drop > ${T.DROP_GXBF})`;
+      stradText = stradOwnText();
     }
   }
 
+  // m8bfStrikeInfo — independent of main strikeInfo, so consumers can show
+  // the M8BF banned-strike list even when the main signal was overridden
+  // (e.g. OPEX+1 GXBF auto-fire, which nulls the main strikeInfo).
+  // null when the M8BF's OWN status is blocked (CPI/m8bfBanned).
+  const m8bfStrikeInfo = (cpiDay || m8bfBanned) ? null : m8Sched(dow);
+
   return {
     rec, theme, crossed, badge, entryT, blockT, blockD, pmNote,
-    strikeInfo, cpiLongCall,
+    strikeInfo, m8bfStrikeInfo, cpiLongCall,
     m8bfText, stradText, gxbfText,
     bobfRec, bobfBadge, bobfBlocks,
     oNight, o2o,

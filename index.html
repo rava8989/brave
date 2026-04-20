@@ -1413,6 +1413,13 @@
       gxbfBadge.textContent=`⏰ ${entryT}`;
       gxbfRec.textContent=rec;
       gxbfReason.textContent='';
+    } else if(theme==='block' && rec.startsWith('No GXBF')){
+      // OPEX+1 GXBF override blocked (e.g., "No GXBF (VIX gapped up 7.8% overnight)")
+      // Show the specific block reason instead of falling back to generic message.
+      cardGxbf.className='scard active-block';
+      gxbfBadge.textContent='BLOCKED';
+      gxbfRec.innerHTML=`<span class="crossed">${rec}</span>`;
+      gxbfReason.innerHTML=blockD?`<span class="block-vix">⚠️ ${blockD}</span>`:'';
     } else if(!isNaN(vToday) && vToday >= T.VIX_MAX_GXBF){
       cardGxbf.className='scard active-block';
       gxbfBadge.textContent='BLOCKED';
