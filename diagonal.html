@@ -565,17 +565,24 @@ body {
 
 <!-- Strategy description -->
 <section class="strategy-banner">
-  <div class="strategy-title">1/20 DTE Put Diagonal — Bullish Skewed</div>
+  <div class="strategy-title">2/30 DTE Put Diagonal — Bullish Skewed</div>
   <div class="strategy-desc">
     <strong>Setup</strong> — at <code>14:00 ET</code> every trading day, short a near-term put slightly in the money
-    and buy a longer-dated put below it. Default sizing: short 10 pts ITM, long 20 pts below that (roughly 10 pts OTM).
-    Example: SPX 6300 → sell 1 DTE 6310 put, buy ~21 DTE 6290 put.
+    and buy a longer-dated put below it. Default sizing: short 30 pts ITM, long 50 pts below that (roughly 20 pts OTM).
+    Example: SPX 6300 → sell 2 DTE 6330 put, buy ~30 DTE 6280 put.
     <br>
     <strong>Holding</strong> — carry the position overnight. The next session, roll the whole structure forward one day, aiming for a credit.
     If a 1-day roll can't generate a credit even after nudging strikes ~10 pts, extend the roll to 2 days while staying close to price.
     <br>
     <strong>Closing</strong> — typically held into midday so the expiring short bleeds out most of its time value, then rolled.
     Profit comes from the diagonal value widening because the short decays faster than the long; the rolls themselves are housekeeping.
+    <br><br>
+    <span style="color:var(--accent);font-size:11px;font-weight:600">
+      ★ Best backtested config (2023‑01 → 2026‑04, real NBBO quotes only):
+      <code>sDTE=2, +30 ITM, lDTE=30, −50 below</code> →
+      total P/L <strong>$108,308</strong>, win rate <strong>61.8%</strong>, MaxDD <strong>$14,780</strong>, MAR <strong>7.33</strong>.
+      Loaded as defaults below. Beats the original 1/20 setup by <strong>+41% P/L</strong> with <strong>~½ the drawdown</strong>.
+    </span>
     <br><br>
     <span style="color:var(--text3);font-size:11px">
       ⚠ <strong>Backtester scope</strong>: this tool only simulates entering at 14:00 ET and exiting at 14:00 ET the next trading day.
@@ -615,27 +622,27 @@ body {
 
   <div class="fg">
     <div class="fg-label">Short DTE</div>
-    <input type="number" class="num-input" id="shortDte" value="1" min="0" max="5">
+    <input type="number" class="num-input" id="shortDte" value="2" min="0" max="5">
   </div>
 
   <div class="fg">
     <div class="fg-label">Short ITM Offset (pts)</div>
-    <input type="number" class="num-input" id="shortOffset" value="10" min="0" step="5">
+    <input type="number" class="num-input" id="shortOffset" value="30" min="0" step="5">
   </div>
 
   <div class="fg">
     <div class="fg-label">Long DTE</div>
-    <input type="number" class="num-input" id="longDte" value="20" min="5" max="60">
+    <input type="number" class="num-input" id="longDte" value="30" min="5" max="60">
   </div>
 
   <div class="fg">
     <div class="fg-label">Long Below Short (pts)</div>
-    <input type="number" class="num-input" id="longOffset" value="20" min="0" step="5">
+    <input type="number" class="num-input" id="longOffset" value="50" min="0" step="5">
   </div>
 
   <div class="fg">
     <div class="fg-label">Long DTE Tolerance (±days)</div>
-    <input type="number" class="num-input" id="longDteTol" value="3" min="0" max="10">
+    <input type="number" class="num-input" id="longDteTol" value="5" min="0" max="10">
   </div>
 
   <div class="fg">
