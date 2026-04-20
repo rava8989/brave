@@ -73,7 +73,12 @@ function buildDiscordMessage(signal, vixValues) {
   const sigColor  = text => isActive(text) ? GRN : isBlocked(text) ? RED : DIM;
 
   const m8bfDisplay = signal.m8bfText.replace(/^M8BF\s*[—-]\s*/, '').replace(/^M8BF$/, '—');
-  const strikes = (signal.strikeInfo && signal.theme === 'm8bf' && signal.strikeInfo.blocked) ? `Banned center strikes — skip these:  ${signal.strikeInfo.blocked.join('  ')}  Combo bans (T1 → center):  ${Object.entries(signal.strikeInfo.comboBans || {}).map(([k,v])=>`${k}→${v}`).join('  ')}` : '';
+  // Use m8bfStrikeInfo (independent of main signal) so strikes render on M8BF
+  // line even when main signal was overridden by OPEX+1 GXBF / blocked by gap up.
+  // Show only when M8BF's OWN status is active (m8bfText starts with "M8BF").
+  const si = signal.m8bfStrikeInfo;
+  const m8bfActiveOwn = signal.m8bfText && signal.m8bfText.startsWith('M8BF');
+  const strikes = (m8bfActiveOwn && si && si.blocked) ? `Banned center strikes — skip these:  ${si.blocked.join('  ')}  Combo bans (T1 → center):  ${Object.entries(si.comboBans || {}).map(([k,v])=>`${k}→${v}`).join('  ')}` : '';
   const m8bfReason = signal.blockT === 'hard' && signal.rec.includes('M8BF') ? signal.blockD : '';
 
   let inner = `${DIM}📅 ${signal.dateStr} — ${signal.dayLabel}${RST}\n`;
