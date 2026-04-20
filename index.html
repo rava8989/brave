@@ -712,6 +712,75 @@
     </ul>
 
     <hr class="divider">
+    <h3>2/30 Put Diagonal — Companion Strategy <span style="font-weight:400;font-size:12px;color:var(--text3)">(separate from Sigma 3; VIX-filtered default)</span></h3>
+    <p>
+      A <strong>SPXW put-diagonal spread</strong> that runs alongside the Sigma 3 bundle. Different instrument,
+      different DTE, and different trade windows — so it's largely <strong>uncorrelated</strong> with M8BF / Straddle /
+      GXBF / BOBF and stacks cleanly on top of them. Backtested <strong>2023-01 → 2026-04</strong> on real NBBO quotes
+      (SPXW chain via Polygon, SPX / VIX closes via Schwab).
+    </p>
+    <p class="muted-note" style="margin-top:4px">
+      Strategy author: <strong>Mads</strong>. Full interactive backtester:
+      <a href="./diagonal.html" style="color:var(--accent);text-decoration:underline">diagonal.html</a>.
+    </p>
+
+    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Structure (default)</h4>
+    <ul>
+      <li><strong>Short leg</strong> — sell a <strong>1 DTE SPXW put</strong> at a strike <strong>+30 pts above spot</strong>
+          (slightly in the money, rich theta). Strike tolerance ±5 pts.</li>
+      <li><strong>Long leg</strong> — buy a <strong>30 DTE SPXW put</strong> at a strike <strong>−50 pts below the short</strong>
+          (roughly 20 pts OTM from spot). Strike tolerance ±5 pts. Expiration tolerance ±5 DTE.</li>
+      <li><strong>Bullish-skewed net</strong> — deltas partially offset, but the ITM short put dominates so the structure
+          is mildly long delta. Profit comes from the <strong>short leg decaying faster than the long leg</strong>
+          (different DTE = different theta rates), not from direction.</li>
+      <li><strong>Example</strong> — SPX 6300 → sell the 1 DTE 6330 put, buy the ~30 DTE 6280 put.</li>
+    </ul>
+
+    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Timing</h4>
+    <ul>
+      <li><strong>Entry</strong> — <code>14:00 ET</code> every trading day (<code>12:45 ET</code> on early-close half-days).</li>
+      <li><strong>Holding</strong> — carry overnight. The short leg expires next session; theta bleed is the engine.</li>
+      <li><strong>Exit / roll</strong> — next day at <strong>14:00 ET</strong>, close the expiring short and roll the whole structure
+          forward one day for a credit. If a 1-day roll can't clear a credit even after nudging strikes ~10 pts, extend to a
+          2-day roll while staying close to price.</li>
+      <li><strong>Backtest simplification</strong> — the public backtester opens a brand-new position each day and closes it
+          at the next 14:00 ET snapshot. No rolling, no mid-trade adjustments. Live execution differs.</li>
+    </ul>
+
+    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">VIX Dead-Zone Filter <span style="font-weight:400;color:var(--text3);font-size:11px">(default ON — "no dead VIX")</span></h4>
+    <ul>
+      <li>Compute today's <strong>VIX 20-day rolling percentile</strong> — where does today's VIX open rank against the
+          last 20 trading days? Ready by 9:30 AM ET; no intraday data needed.</li>
+      <li><strong>Skip the trade</strong> if the percentile lands in the <strong>50–80% band</strong> (the "uncomfortable
+          middle" — elevated but not spiky). Historically the strategy has <em>no edge</em> there.</li>
+      <li><strong>Trade normally</strong> if the percentile is in <strong>0–50%</strong> (calm → cheap vol sellers get paid)
+          or <strong>80–100%</strong> (panic → mean-reversion + skew crush pay).</li>
+      <li>This filter is the <strong>default version</strong> of the strategy on this site — the one plotted on the
+          historical backtester and the one counted in the default-diagonal equity line. All references to
+          "diagonal P/L" in the UI use this filtered version unless noted otherwise.</li>
+    </ul>
+
+    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Backtested Performance (filtered, 2023-01 → 2026-04)</h4>
+    <ul>
+      <li><strong>Total P/L</strong> — <span style="color:#22c55e;font-weight:600">$142,555</span></li>
+      <li><strong>Win rate</strong> — <strong>60.9%</strong></li>
+      <li><strong>Max drawdown</strong> — <span style="color:#f87171">$14,892</span></li>
+      <li><strong>MAR ratio</strong> — <strong>9.57</strong> (P/L ÷ MaxDD — standout risk-adjusted return)</li>
+      <li><strong>Uplift vs. unfiltered</strong> — VIX dead-zone skip adds <strong>+$34K</strong> with essentially the same drawdown.</li>
+      <li><strong>Stacked with Sigma 3</strong> — adds roughly <strong>+$48K/year</strong> to the combined equity curve
+          for only <strong>~$4.5K</strong> of additional drawdown. Most days where Diagonal wins, Sigma is flat, and vice versa.</li>
+    </ul>
+
+    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">What it is <em>not</em></h4>
+    <ul>
+      <li><strong>Not 0DTE</strong> — both legs carry overnight (1 DTE short + 30 DTE long).</li>
+      <li><strong>Not a credit spread</strong> — it's a long-calendar-style diagonal; different DTEs, different strikes.</li>
+      <li><strong>Not part of Sigma 3</strong> — separate sizing and separate signals. It does not displace M8BF / Straddle / GXBF / BOBF.</li>
+      <li><strong>Not blocked by CPI, earnings, or OPEX</strong> — the strategy trades every session except VIX-dead-zone days
+          (the filter is the <em>only</em> default skip rule).</li>
+    </ul>
+
+    <hr class="divider">
     <p>Last 2 digits win rate — AM vs PM. Avoid low win rate strikes.</p>
     <div class="strategy-image"><img src="./last.jpg" alt="Last 2 digits" loading="lazy" /></div>
 
@@ -731,6 +800,7 @@
     <hr class="divider">
     <h3>Recent Changes</h3>
     <ul>
+      <li><strong>2/30 Put Diagonal documented as a companion strategy</strong> — separate from Sigma 3, runs at 14:00 ET daily with a VIX 50–80% dead-zone skip. Default config backtested at $142,555 / 60.9% WR / $14,892 MaxDD / MAR 9.57 (2023-01 → 2026-04). See the new "2/30 Put Diagonal" section above for full structure, timing, and filter rules.</li>
       <li><strong>GXBF on OPEX+1 blocked when VIX gaps up ≥ 2% overnight</strong> — if today's VIX open is ≥ 2% above yesterday's VIX close, the automatic OPEX+1 GXBF signal is suppressed entirely.</li>
       <li><strong>SPX gap ≥ 0.9% cancels Straddle only</strong> — when the absolute SPX gap (today's open vs yesterday's close) is ≥ 0.9%, any Straddle or NM Straddle signal is cancelled. No effect on M8BF or GXBF. Gap and o2o have zero connection to butterfly.</li>
       <li><strong>o2o &gt; 1.4 cancels Straddle only (except EOM)</strong> — when the open-to-open VIX drop exceeds 1.4, any Straddle or NM Straddle signal is cancelled. Does not apply on EOM days. No effect on M8BF or GXBF.</li>
