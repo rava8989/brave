@@ -17,8 +17,8 @@
       --accent:#6366f1; --accent2:#818cf8;
       --shadow:0 1px 3px rgba(0,0,0,.08),0 4px 16px rgba(0,0,0,.06);
       --radius:12px; --radius-sm:8px;
-      --col-m8bf:#7c3aed; --col-strad:#0891b2; --col-gxbf:#0891b2; --col-block:#dc2626;
-      --col-m8bf-bg:#ede9fe; --col-strad-bg:#cffafe; --col-gxbf-bg:#cffafe; --col-block-bg:#fee2e2;
+      --col-m8bf:#7c3aed; --col-strad:#0891b2; --col-gxbf:#0891b2; --col-diag:#16a34a; --col-block:#dc2626;
+      --col-m8bf-bg:#ede9fe; --col-strad-bg:#cffafe; --col-gxbf-bg:#cffafe; --col-diag-bg:#dcfce7; --col-block-bg:#fee2e2;
     }
     [data-theme="dark"] {
       --bg:#0f172a; --bg2:#1e293b; --bg3:#162032;
@@ -26,8 +26,8 @@
       --text:#e2e8f0; --text2:#94a3b8; --text3:#475569;
       --accent:#818cf8; --accent2:#6366f1;
       --shadow:0 1px 3px rgba(0,0,0,.3),0 4px 16px rgba(0,0,0,.25);
-      --col-m8bf:#a78bfa; --col-strad:#22d3ee; --col-gxbf:#22d3ee; --col-block:#f87171;
-      --col-m8bf-bg:#1e1340; --col-strad-bg:#0c2233; --col-gxbf-bg:#0c2233; --col-block-bg:#2d0e0e;
+      --col-m8bf:#a78bfa; --col-strad:#22d3ee; --col-gxbf:#22d3ee; --col-diag:#4ade80; --col-block:#f87171;
+      --col-m8bf-bg:#1e1340; --col-strad-bg:#0c2233; --col-gxbf-bg:#0c2233; --col-diag-bg:#0f2d1a; --col-block-bg:#2d0e0e;
     }
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
     body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;transition:background .2s,color .2s;}
@@ -216,6 +216,7 @@
     <div class="strat-pill active" data-strat="strad" onclick="toggleStrat('strad')" ondblclick="soloStrat('strad')">Straddle</div>
     <div class="strat-pill active" data-strat="gxbf" onclick="toggleStrat('gxbf')" ondblclick="soloStrat('gxbf')">GXBF</div>
     <div class="strat-pill active" data-strat="bobf" onclick="toggleStrat('bobf')" ondblclick="soloStrat('bobf')">BOBF</div>
+    <div class="strat-pill active" data-strat="diagonal" onclick="toggleStrat('diagonal')" ondblclick="soloStrat('diagonal')" title="2/30 put-diagonal — sDTE=1, +30 ITM, lDTE=30, −50 below, VIX 50–80% excluded (default)">Diagonal</div>
   </div>
 
   <div class="filter-bar" id="filterBar">
@@ -513,7 +514,7 @@ let rows = [];
 let sortCol = null;
 let sortAsc = true;
 let currentMonths = 0;
-const activeStrats = { m8bf:true, strad:true, gxbf:true, bobf:true };
+const activeStrats = { m8bf:true, strad:true, gxbf:true, bobf:true, diagonal:true };
 let soloKey = null;
 let activeDays = {1:true,2:true,3:true,4:true,5:true};
 let vixRegime = 'all';
@@ -568,8 +569,9 @@ function soloStrat(key) {
 }
 
 function updatePillStates() {
-  for (const k of ['m8bf','strad','gxbf','bobf']) {
+  for (const k of ['m8bf','strad','gxbf','bobf','diagonal']) {
     const el = document.querySelector(`.strat-pill[data-strat="${k}"]`);
+    if (!el) continue;
     el.classList.toggle('active', activeStrats[k]);
     el.classList.toggle('inactive', !activeStrats[k]);
     el.classList.toggle('solo', soloKey === k);
@@ -680,6 +682,7 @@ function getRowPL(row) {
   if (activeStrats.strad && s.stradRan && row.stradPL != null) { pl += row.stradPL; hasTrade = true; }
   if (activeStrats.gxbf && row.gxbfPL != null) { pl += row.gxbfPL; hasTrade = true; }
   if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) { pl += row.bobfPL; hasTrade = true; }
+  if (activeStrats.diagonal && row.diagPL != null) { pl += row.diagPL; hasTrade = true; }
   return hasTrade ? pl : null;
 }
 
@@ -691,6 +694,7 @@ function computeStats(visibleRows) {
     if (activeStrats.strad && s.stradRan && row.stradPL != null) pls.push(row.stradPL);
     if (activeStrats.gxbf && row.gxbfPL != null) pls.push(row.gxbfPL);
     if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) pls.push(row.bobfPL);
+    if (activeStrats.diagonal && row.diagPL != null) pls.push(row.diagPL);
   }
   if (!pls.length) return null;
 
@@ -732,6 +736,7 @@ function computeStats(visibleRows) {
     if (activeStrats.strad && s.stradRan && row.stradPL != null) cum += row.stradPL;
     if (activeStrats.gxbf && row.gxbfPL != null) cum += row.gxbfPL;
     if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) cum += row.bobfPL;
+    if (activeStrats.diagonal && row.diagPL != null) cum += row.diagPL;
     if (cum > peak) peak = cum;
     const dd = peak - cum;
     if (dd > maxDD) maxDD = dd;
@@ -885,6 +890,7 @@ async function init() {
         stradPL: cur.date in STRAD_PL ? STRAD_PL[cur.date] : (cur.stradPL != null ? cur.stradPL : null),
         gxbfPL: cur.date in GXBF_PL ? GXBF_PL[cur.date] : (cur.gxbfPL != null ? cur.gxbfPL : null),
         bobfPL: cur.bobfPL != null ? cur.bobfPL : null,
+        diagPL: cur.diagPL != null ? cur.diagPL : null,
         prevWR: prevWR != null ? prevWR : null,
         signal,
       });
@@ -919,6 +925,7 @@ const cols = [
   { key:'stradPL',     label:'Straddle',   type:'stratPL' },
   { key:'gxbfPL',      label:'GXBF',       type:'stratPL' },
   { key:'bobfPL',      label:'BOBF',       type:'stratPL' },
+  { key:'diagPL',      label:'Diagonal',   type:'stratPL' },
   { key:'totalPL',     label:'Total',      type:'stratPL' },
 ];
 
@@ -930,12 +937,14 @@ function getValue(row, col) {
     case 'stradPL': return row.signal?.stradRan && row.stradPL != null ? row.stradPL : -Infinity;
     case 'gxbfPL': return row.gxbfPL != null ? row.gxbfPL : -Infinity;
     case 'bobfPL': return row.signal?.bobfBadge !== 'BLOCKED' ? (row.bobfPL != null ? row.bobfPL : 0.1) : -Infinity;
+    case 'diagPL': return row.diagPL != null ? row.diagPL : -Infinity;
     case 'totalPL': {
       const s = row.signal || {}; let t = 0;
       if (activeStrats.m8bf && s.m8bfRan && row.m8bfPL != null) t += row.m8bfPL;
       if (activeStrats.strad && s.stradRan && row.stradPL != null) t += row.stradPL;
       if (activeStrats.gxbf && row.gxbfPL != null) t += row.gxbfPL;
       if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) t += row.bobfPL;
+      if (activeStrats.diagonal && row.diagPL != null) t += row.diagPL;
       return t;
     }
     default: return row[col.key];
@@ -976,7 +985,7 @@ function renderTable() {
   });
   h += '</tr></thead><tbody>';
 
-  let totM8=0, totStrad=0, totGxbf=0, totBobf=0;
+  let totM8=0, totStrad=0, totGxbf=0, totBobf=0, totDiag=0;
 
   const todayStr = new Date().toISOString().slice(0, 10);
   const dash = '<td style="color:var(--text3);text-align:center">—</td>';
@@ -996,18 +1005,20 @@ function renderTable() {
     h += `<td style="font-weight:700;${row.m8bfWR!=null?(row.m8bfWR>=90?'color:#22c55e':row.m8bfWR<25?'color:#ef4444':'color:var(--text)'):'color:var(--text3)'}">${row.m8bfWR!=null?row.m8bfWR+'%':'—'}</td>`;
 
     if (isFuture) {
-      h += dash + dash + dash + dash + dash;
+      h += dash + dash + dash + dash + dash + dash;
     } else {
       h += stratCell(s.m8bfRan, row.m8bfPL);
       h += stratCell(s.stradRan && row.stradPL != null, row.stradPL);
       h += stratCell(activeStrats.gxbf && row.gxbfPL != null, row.gxbfPL);
       h += stratCell(activeStrats.bobf && s.bobfBadge !== 'BLOCKED', row.bobfPL);
+      h += stratCell(activeStrats.diagonal && row.diagPL != null, row.diagPL);
 
       let dayTotal = 0, hasDayTrade = false;
       if (activeStrats.m8bf && s.m8bfRan && row.m8bfPL != null) { dayTotal += row.m8bfPL; hasDayTrade = true; }
       if (activeStrats.strad && s.stradRan && row.stradPL != null) { dayTotal += row.stradPL; hasDayTrade = true; }
       if (activeStrats.gxbf && row.gxbfPL != null) { dayTotal += row.gxbfPL; hasDayTrade = true; }
       if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) { dayTotal += row.bobfPL; hasDayTrade = true; }
+      if (activeStrats.diagonal && row.diagPL != null) { dayTotal += row.diagPL; hasDayTrade = true; }
       if (hasDayTrade) {
         const cls = dayTotal > 0 ? 'val-pos' : dayTotal < 0 ? 'val-neg' : 'val-zero';
         h += `<td class="${cls}" style="font-weight:700">$${dayTotal.toLocaleString()}</td>`;
@@ -1021,14 +1032,15 @@ function renderTable() {
     if (activeStrats.strad && s.stradRan && row.stradPL != null) totStrad += row.stradPL;
     if (activeStrats.gxbf && row.gxbfPL != null) totGxbf += row.gxbfPL;
     if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) totBobf += row.bobfPL;
+    if (activeStrats.diagonal && row.diagPL != null) totDiag += row.diagPL;
   }
 
   const fc = (v, active) => active ? `<td class="${valClass(v)}" style="font-weight:700">$${Math.round(v).toLocaleString()}</td>` : '<td style="color:var(--text3);text-align:center">—</td>';
   h += '</tbody><tfoot><tr>';
   h += '<td colspan="9" style="text-align:right;font-family:Inter,sans-serif;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text2)">TOTAL</td>';
-  const totAll = (activeStrats.m8bf ? totM8 : 0) + (activeStrats.strad ? totStrad : 0) + (activeStrats.gxbf ? totGxbf : 0) + (activeStrats.bobf ? totBobf : 0);
-  h += fc(totM8, activeStrats.m8bf) + fc(totStrad, activeStrats.strad) + fc(totGxbf, activeStrats.gxbf) + fc(totBobf, activeStrats.bobf);
-  const anyActive = activeStrats.m8bf || activeStrats.strad || activeStrats.gxbf || activeStrats.bobf;
+  const totAll = (activeStrats.m8bf ? totM8 : 0) + (activeStrats.strad ? totStrad : 0) + (activeStrats.gxbf ? totGxbf : 0) + (activeStrats.bobf ? totBobf : 0) + (activeStrats.diagonal ? totDiag : 0);
+  h += fc(totM8, activeStrats.m8bf) + fc(totStrad, activeStrats.strad) + fc(totGxbf, activeStrats.gxbf) + fc(totBobf, activeStrats.bobf) + fc(totDiag, activeStrats.diagonal);
+  const anyActive = activeStrats.m8bf || activeStrats.strad || activeStrats.gxbf || activeStrats.bobf || activeStrats.diagonal;
   h += anyActive ? `<td class="${valClass(totAll)}" style="font-weight:700">$${Math.round(totAll).toLocaleString()}</td>` : `<td style="color:var(--text3);text-align:center">—</td>`;
   h += '</tr></tfoot></table></div>';
   document.getElementById('content').innerHTML = h;
@@ -1071,8 +1083,8 @@ function renderChart() {
 
 
 
-  const dates=[], cumM8=[], cumStrad=[], cumGxbf=[], cumBobf=[], cumAll=[], ddAll=[];
-  let rm=0, rs=0, rg=0, rb=0, peak=0;
+  const dates=[], cumM8=[], cumStrad=[], cumGxbf=[], cumBobf=[], cumDiag=[], cumAll=[], ddAll=[];
+  let rm=0, rs=0, rg=0, rb=0, rd=0, peak=0;
 
   // Win/loss scatter data
   const winX=[], winY=[], lossX=[], lossY=[], athX=[], athY=[];
@@ -1086,10 +1098,11 @@ function renderChart() {
     if (activeStrats.strad && s.stradRan && row.stradPL != null) { rs += row.stradPL; dayPL += row.stradPL; }
     if (activeStrats.gxbf && row.gxbfPL != null) { rg += row.gxbfPL; dayPL += row.gxbfPL; }
     if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) { rb += row.bobfPL; dayPL += row.bobfPL; }
+    if (activeStrats.diagonal && row.diagPL != null) { rd += row.diagPL; dayPL += row.diagPL; }
 
-    const total = rm+rs+rg+rb;
+    const total = rm+rs+rg+rb+rd;
     dates.push(row.date);
-    cumM8.push(rm); cumStrad.push(rs); cumGxbf.push(rg); cumBobf.push(rb);
+    cumM8.push(rm); cumStrad.push(rs); cumGxbf.push(rg); cumBobf.push(rb); cumDiag.push(rd);
     cumAll.push(total);
 
     if (total > peak) peak = total;
@@ -1145,6 +1158,7 @@ function renderChart() {
     { label:'Straddle', data:cumStrad, borderColor:'#22d3ee', backgroundColor:'rgba(34,211,238,.1)',  tension:.3, borderWidth:2, pointRadius:0, pointHitRadius:6, hidden:!activeStrats.strad, yAxisID:'y' },
     { label:'GXBF',     data:cumGxbf,  borderColor:'#2dd4bf', backgroundColor:'rgba(45,212,191,.1)',  tension:.3, borderWidth:2, pointRadius:0, pointHitRadius:6, hidden:!activeStrats.gxbf, yAxisID:'y' },
     { label:'BOBF',     data:cumBobf,  borderColor:'#fb923c', backgroundColor:'rgba(251,146,60,.1)',  tension:.3, borderWidth:2, pointRadius:0, pointHitRadius:6, hidden:!activeStrats.bobf, yAxisID:'y' },
+    { label:'Diagonal', data:cumDiag,  borderColor:'#4ade80', backgroundColor:'rgba(74,222,128,.1)',  tension:.3, borderWidth:2, pointRadius:0, pointHitRadius:6, hidden:!activeStrats.diagonal, yAxisID:'y' },
     { label:'Combined', data:cumAll,   borderColor: isDark?'#e2e8f0':'#1e293b', backgroundColor: isDark?'rgba(226,232,240,.08)':'rgba(30,41,59,.08)', tension:.3, borderWidth:2.5, pointRadius:0, pointHitRadius:6, borderDash:[6,3], yAxisID:'y' },
     // Drawdown overlay
     { label:'Drawdown', data:ddAll, borderColor:'rgba(239,68,68,.6)', backgroundColor:'rgba(239,68,68,.15)', fill:'origin', tension:.3, borderWidth:1, pointRadius:0, pointHitRadius:4, yAxisID:'y2' },
@@ -1157,7 +1171,7 @@ function renderChart() {
   ];
 
   if (spyData) {
-    datasets.splice(5, 0, {
+    datasets.splice(6, 0, {
       label:'SPY Benchmark', data:spyData, borderColor:'#9ca3af', backgroundColor:'transparent',
       tension:.3, borderWidth:1.5, pointRadius:0, pointHitRadius:6, borderDash:[4,4], yAxisID:'y'
     });
