@@ -36,9 +36,19 @@ polygon.env
 !data/diagonal_real_2024.json
 !data/diagonal_real_2025.json
 !data/diagonal_real_2026.json
+# Allow the UOA earnings backtester datasets (browser fetches them)
+!data/earnings_uoa_index.json
+!data/earnings_uoa_2023.json
+!data/earnings_uoa_2024.json
+!data/earnings_uoa_2025.json
+!data/earnings_uoa_2026.json
+!data/earnings_calendar.json
+!data/sp500_constituents.json
 # Allow the build scripts so the datasets can be regenerated
 !build_diagonal_data.py
 !build_diagonal_real_data.py
 !fetch_polygon_spx.py
+!build_earnings_universe.py
+!build_earnings_uoa_data.py
 # Allow shared signal engine module (loaded by browser + worker)
 !signal-engine.js
