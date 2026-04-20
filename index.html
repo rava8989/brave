@@ -125,6 +125,9 @@
     .mv.up{color:#ef4444;} .mv.dn{color:#22c55e;}
     .mv.gap-up{color:#22c55e!important;} .mv.gap-dn{color:#ef4444!important;}
     .mv.vix-edge{color:#22c55e;} .mv.vix-dead{color:#fcd34d;}
+    .mv.regime-edge{color:#22c55e;background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.35);padding:2px 8px;border-radius:10px;font-size:12px;}
+    .mv.regime-dead{color:#fcd34d;background:rgba(252,211,77,.12);border:1px solid rgba(252,211,77,.4);padding:2px 8px;border-radius:10px;font-size:12px;}
+    .mv.regime-wait{color:var(--text3);background:rgba(148,163,184,.12);border:1px solid rgba(148,163,184,.3);padding:2px 8px;border-radius:10px;font-size:12px;}
     .msep{color:var(--border);}
 
     /* TAGS */
@@ -464,6 +467,11 @@
     <div class="mi" id="vixPct20Wrap" style="display:none;" title="VIX 20-day percentile: ranks today's VIX against the last 20 trading days' VIX values. 0% = lowest in 20 days, 100% = highest. The 50–80% band is a 'no-edge' regime for short-premium diagonal strategies (research: -$117/trade avg there vs +$220 elsewhere). Outside that band = edge present. Click for full explanation.">
       <span class="ml" style="cursor:help" onclick="document.getElementById('vixPctExplain').hidden=!document.getElementById('vixPctExplain').hidden">VIX 20d %ile</span><span class="mv" id="vixPct20Display">—</span>
     </div>
+    <span class="msep" id="regimeSep" style="display:none;">|</span>
+    <div class="mi" id="regimeWrap" style="display:none;" title="Diagonal-strategy regime check (ready by 9:30 AM ET — well before 14:00 entry). DEAD = VIX ranks 50–80% vs last 20 days AND yesterday's SPX moved less than 0.5%. EDGE = any other combo. DEAD days historically cost the strategy ~$26K in P/L and ~26% of max drawdown across the backtest — this is the sharpest skip filter we have.">
+      <span class="ml" style="cursor:help" onclick="document.getElementById('regimeExplain').hidden=!document.getElementById('regimeExplain').hidden">Diagonal Regime</span>
+      <span class="mv" id="regimeDisplay">—</span>
+    </div>
     <span class="msep" id="tagSep" style="display:none;">|</span>
     <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;">
       <span id="cpiTag"        class="tag tag-cpi"      style="display:none;">📊 CPI</span>
@@ -506,6 +514,37 @@
     <span style="color:#fcd34d">yellow</span> = dead zone (consider skipping the diagonal today, especially if prior-day SPX was flat).
     <br><br>
     <span style="color:var(--text3)">The Diagonal backtester has a <strong>VIX DEAD</strong> filter that combines this percentile with a prior-day-flat check — see that page for the sharpest version.</span>
+  </div>
+
+  <!-- Diagonal Regime — plain-English explainer (click the label to toggle) -->
+  <div id="regimeExplain" hidden style="margin-bottom:12px;padding:10px 14px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);font-size:11px;color:var(--text2);line-height:1.55;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <strong style="color:var(--accent);font-size:12px">What does "Diagonal Regime" mean?</strong>
+      <span style="cursor:pointer;color:var(--text3);font-size:14px" onclick="document.getElementById('regimeExplain').hidden=true">✕</span>
+    </div>
+    A simple <strong>go / no-go</strong> check for the 2/30 put-diagonal trade (entry 14:00 ET). Ready by
+    <strong>9:30 AM ET</strong> — well before the noon deadline.
+    <br><br>
+    <strong>Two possible states:</strong>
+    <ul style="margin:4px 0 0 16px;padding:0">
+      <li>
+        <strong style="color:#22c55e">✓ EDGE</strong> — normal trading conditions for the diagonal.
+        At least one of the two "bad regime" conditions is false.
+      </li>
+      <li style="margin-top:5px">
+        <strong style="color:#fcd34d">⚠ DEAD</strong> — both conditions true at the same time:
+        <ol style="margin:2px 0 0 18px;padding:0">
+          <li>Today's VIX ranks <strong>50–80%</strong> of its last-20-day range (the "uncomfortable middle"), <strong>AND</strong></li>
+          <li>Yesterday's SPX closed within <strong>±0.5%</strong> of the day before (a "flat / sleepy" prior session).</li>
+        </ol>
+        Historically these days have <em>no edge</em> — skipping them in backtest added ~$26K P/L and cut max drawdown
+        by ~26%. Consider sitting out.
+      </li>
+    </ul>
+    <br>
+    <strong>Why you can trust it by 9:30 AM:</strong> everything the check needs is known at the open —
+    today's VIX open print, yesterday's SPX close, and day-before-yesterday's SPX close. Nothing depends
+    on intraday data.
   </div>
 
   <!-- CPI DAY HARD BLOCK — replaces entire calculator on CPI days -->
@@ -1122,6 +1161,8 @@
     document.getElementById('spxSep').style.display='none';
     document.getElementById('vixPct20Wrap').style.display='none';
     document.getElementById('vixPctSep').style.display='none';
+    document.getElementById('regimeWrap').style.display='none';
+    document.getElementById('regimeSep').style.display='none';
     document.getElementById('m8bfPatternNote').style.display='none';
     document.getElementById('cardM8bf').className='scard';
     document.getElementById('cardStrad').className='scard';
@@ -1287,9 +1328,11 @@
     const vixPctWrap=document.getElementById('vixPct20Wrap');
     const vixPctSep =document.getElementById('vixPctSep');
     const vixPctEl  =document.getElementById('vixPct20Display');
+    let _vixPctToday = null;  // cached for the regime block below
     if(_vix20dCloses && _vix20dCloses.length >= 10 && !isNaN(vToday)){
       const below = _vix20dCloses.filter(c => c < vToday).length;
       const pct   = Math.round(100 * below / _vix20dCloses.length);
+      _vixPctToday = pct;
       vixPctWrap.style.display='flex';
       vixPctSep.style.display='inline';
       vixPctEl.textContent = pct + '%';
@@ -1300,6 +1343,40 @@
     } else {
       vixPctWrap.style.display='none';
       vixPctSep.style.display='none';
+    }
+
+    // ── Diagonal-strategy regime check (VIX DEAD filter) ──
+    // DEAD = VIX 20d pct in (50,80] AND |yesterday's SPX %chg| < 0.5
+    // Ready by 9:30 AM ET — all inputs (20d VIX, yesterday/day-before-yesterday SPX close) are available at market open.
+    const regimeWrap = document.getElementById('regimeWrap');
+    const regimeSep  = document.getElementById('regimeSep');
+    const regimeEl   = document.getElementById('regimeDisplay');
+    if(_vixPctToday !== null && _spxPriorDayChgPct !== null){
+      const inDeadBand = (_vixPctToday > 50 && _vixPctToday <= 80);
+      const priorFlat  = Math.abs(_spxPriorDayChgPct) < 0.5;
+      const isDead     = inDeadBand && priorFlat;
+      regimeWrap.style.display = 'flex';
+      regimeSep.style.display  = 'inline';
+      const priorDir = _spxPriorDayChgPct > 0 ? '+' : '';
+      if(isDead){
+        regimeEl.textContent = '⚠ DEAD';
+        regimeEl.className = 'mv regime-dead';
+        regimeWrap.title = `DEAD ZONE: VIX 20d percentile = ${_vixPctToday}% (in 50–80% band) AND yesterday's SPX moved ${priorDir}${_spxPriorDayChgPct.toFixed(2)}% (< 0.5% = flat). Historically this combo has no edge for the diagonal — consider skipping.`;
+      } else {
+        regimeEl.textContent = '✓ EDGE';
+        regimeEl.className = 'mv regime-edge';
+        const reasons = [];
+        if(!inDeadBand) reasons.push(`VIX 20d percentile = ${_vixPctToday}% (outside 50–80% dead band)`);
+        if(!priorFlat)  reasons.push(`yesterday's SPX moved ${priorDir}${_spxPriorDayChgPct.toFixed(2)}% (≥ 0.5% = directional)`);
+        regimeWrap.title = `EDGE present — ${reasons.join(' · ')}. Diagonal trade has its normal edge today.`;
+      }
+    } else {
+      // Not enough data yet — show a waiting state so user knows it's coming
+      regimeWrap.style.display = 'flex';
+      regimeSep.style.display  = 'inline';
+      regimeEl.textContent = '…';
+      regimeEl.className = 'mv regime-wait';
+      regimeWrap.title = 'Waiting for today\'s VIX open + prior-day SPX close — connect Schwab and check back shortly after 9:30 AM ET.';
     }
 
     let rec="", theme="neutral", crossed=false, pmNote=false;
@@ -2013,8 +2090,11 @@
       schwabSetStatus('error', 'Data fetch failed: ' + e.message);
     }
 
-    // Also fetch 20-day VIX history for percentile display (non-blocking)
-    schwabFetchVix20dCloses().then(()=>calculateStrategy()).catch(e=>console.warn('[S3] VIX 20d:', e));
+    // Also fetch 20-day VIX history + prior-day SPX change (non-blocking)
+    Promise.all([
+      schwabFetchVix20dCloses(),
+      schwabFetchSpxPriorDayChg(),
+    ]).then(()=>calculateStrategy()).catch(e=>console.warn('[S3] regime fetch:', e));
   }
 
   /* ── VIX 20-day percentile: fetch last ~30 daily closes, cache for UI ── */
@@ -2042,6 +2122,34 @@
       // Keep last 20 (most recent 20 prior trading days)
       _vix20dCloses = priors.slice(-20);
     }catch(e){ console.warn('[S3] VIX 20d fetch:', e); }
+  }
+
+  /* ── Prior-day SPX change % — needed for the VIX DEAD regime check ── */
+  let _spxPriorDayChgPct = null;  // yesterday's SPX close vs day-before-yesterday's close, %
+  async function schwabFetchSpxPriorDayChg(){
+    const token = await schwabGetToken();
+    if(!token) return;
+    try{
+      const end = new Date();
+      const start = new Date(end); start.setDate(start.getDate() - 10);
+      const url = `${SCHWAB.proxy()}/market/pricehistory?symbol=%24SPX&periodType=month&period=1&frequencyType=daily&frequency=1&startDate=${start.getTime()}&endDate=${end.getTime()}&needExtendedHoursData=false`;
+      const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if(!resp.ok) throw new Error('HTTP ' + resp.status);
+      const data = await resp.json();
+      const candles = data?.candles;
+      if(!candles?.length) return;
+      candles.sort((a,b)=>a.datetime - b.datetime);
+      const todayStr = new Date().toDateString();
+      // Prior daily closes only (exclude today's incomplete candle)
+      const priors = candles
+        .filter(c => new Date(c.datetime).toDateString() !== todayStr)
+        .map(c => c.close)
+        .filter(v => v > 0);
+      if(priors.length < 2) return;
+      const yClose   = priors[priors.length - 1];
+      const yyClose  = priors[priors.length - 2];
+      _spxPriorDayChgPct = ((yClose - yyClose) / yyClose) * 100;
+    }catch(e){ console.warn('[S3] SPX prior-day fetch:', e); }
   }
 
   function isTradingDay(date){
