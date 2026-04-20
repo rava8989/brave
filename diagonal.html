@@ -584,6 +584,13 @@ body {
       Loaded as defaults below. Beats the original 1/20 setup by <strong>+41% P/L</strong> with <strong>~½ the drawdown</strong>.
     </span>
     <br><br>
+    <span style="color:#fcd34d;font-size:11px">
+      🧪 <strong>Filter tip</strong> — EXCLUDE the <code>VIX DEAD</code> pill (VIX ranks 50–80% vs last 20 days
+      <em>and</em> prior-day SPX |change| &lt; 0.5%). Research found this "dead zone" is where the strategy has
+      zero edge; skipping it historically boosts P/L noticeably with no extra drawdown. Use <code>VIX 50–80%</code>
+      for the broader band alone.
+    </span>
+    <br><br>
     <span style="color:var(--text3);font-size:11px">
       ⚠ <strong>Backtester scope</strong>: this tool only simulates entering at 14:00 ET and exiting at 14:00 ET the next trading day.
       No rolling, no strike adjustments, no mid-trade management — every day is opened as a brand-new position.
@@ -678,6 +685,8 @@ body {
       <button class="tpill" data-sd="FED">FED</button>
       <button class="tpill" data-sd="CPI">CPI</button>
       <button class="tpill" data-sd="VIX">VIX EXP</button>
+      <button class="tpill" data-sd="VIX_MID"  title="Entry days where VIX ranks 50–80% vs prior 20 daily closes (the 'dead-zone' band where the strategy loses its edge)">VIX 50–80%</button>
+      <button class="tpill" data-sd="VIX_DEAD" title="VIX 50–80% AND prior-day SPX moved less than 0.5% (the sharpest 'dead-zone' filter — most damage concentrated here)">VIX DEAD</button>
       <button class="tpill" data-sd="AAPL">AAPL</button>
       <button class="tpill" data-sd="GOOGL">GOOGL</button>
       <button class="tpill" data-sd="MSFT">MSFT</button>
@@ -1245,10 +1254,11 @@ function _thirdFriday(y, m) {
   }
 }
 
-function buildSpecialDateSets(tradingDays) {
+function buildSpecialDateSets(tradingDays, byDate = null) {
   // Port of backtester.html special-date builder.
   const sets = {};
   ['OPEX','OPEX-1','OPEX+1','EOM','EOM-1','NM','FED','CPI','VIX',
+   'VIX_MID','VIX_DEAD',
    'AAPL','GOOGL','MSFT','TSLA','META','NVDA','AMZN','ALL_EARNINGS'].forEach(k => sets[k] = new Set());
 
   const OPEX_OVERRIDES = { '2025-04-18': '2025-04-17' };  // Good Friday
@@ -1346,6 +1356,37 @@ function buildSpecialDateSets(tradingDays) {
   ['AAPL','GOOGL','MSFT','TSLA','META','NVDA','AMZN'].forEach(t => {
     sets[t].forEach(d => sets['ALL_EARNINGS'].add(d));
   });
+
+  // ── VIX 20-day percentile bands ──
+  // VIX_MID  = today's VIX ranks 50–80% within prior 20 trading days' VIX values
+  // VIX_DEAD = VIX_MID AND prior-day SPX |change| < 0.5%
+  // Both use the entry-time (14:00) VIX/SPX snapshot so ranks match apples-to-apples
+  // with what the strategy would have seen live.
+  if (byDate) {
+    const validDays = tradingDays.filter(d => {
+      const r = byDate[d];
+      return r && typeof r.vix_14 === 'number' && r.vix_14 > 0;
+    });
+    for (let i = 20; i < validDays.length; i++) {
+      const today  = validDays[i];
+      const vToday = byDate[today].vix_14;
+      let below = 0;
+      for (let j = i - 20; j < i; j++) if (byDate[validDays[j]].vix_14 < vToday) below++;
+      const pct = (100 * below) / 20;
+      if (pct > 50 && pct <= 80) {
+        sets['VIX_MID'].add(today);
+        // VIX_DEAD: also requires prior-day SPX |change| < 0.5%
+        const dPrev  = validDays[i - 1];
+        const dPrev2 = validDays[i - 2];
+        const sPrev  = byDate[dPrev]?.spot_14;
+        const sPrev2 = byDate[dPrev2]?.spot_14;
+        if (sPrev && sPrev2) {
+          const priorChgPct = (100 * (sPrev - sPrev2)) / sPrev2;
+          if (Math.abs(priorChgPct) < 0.5) sets['VIX_DEAD'].add(today);
+        }
+      }
+    }
+  }
 
   return sets;
 }
@@ -1478,7 +1519,7 @@ function runBacktestBS(data, params) {
   let priceSourceCount = { REAL: 0, BS: 0 };
 
   // Special-day filter on the candidate date list
-  const special = buildSpecialDateSets(data.dates);
+  const special = buildSpecialDateSets(data.dates, data.by_date);
   let candidates = data.dates.filter(d => d >= params.from && d <= params.to);
   candidates = applySpecialFilter(candidates, special, params.specialMode, params.specialActive);
 
