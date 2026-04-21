@@ -611,18 +611,24 @@ body {
   </div>
 
   <div class="fg">
-    <div class="fg-label">Entry Time (ET)<span style="font-size:9px;color:var(--text3);margin-left:4px">🔒 locked</span></div>
+    <div class="fg-label">Entry Time (ET)</div>
     <div class="fg-row">
-      <input type="time" class="time-input" id="entryTime" value="14:00" disabled
-             title="Locked — we only have 2:00 PM ET snapshots right now. Intraday data coming later.">
+      <select class="time-input" id="entryTime" title="SPX snapshot time used for entry + exit.">
+        <option value="13:00">13:00</option>
+        <option value="13:15">13:15</option>
+        <option value="13:30">13:30</option>
+        <option value="13:45">13:45</option>
+        <option value="14:00" selected>14:00</option>
+        <option value="14:15">14:15</option>
+      </select>
     </div>
   </div>
 
   <div class="fg">
-    <div class="fg-label">Exit Time (ET, next day)<span style="font-size:9px;color:var(--text3);margin-left:4px">🔒 locked</span></div>
+    <div class="fg-label">Exit Time (ET, next day)<span style="font-size:9px;color:var(--text3);margin-left:4px">follows entry</span></div>
     <div class="fg-row">
       <input type="time" class="time-input" id="exitTime" value="14:00" disabled
-             title="Locked — we only have 2:00 PM ET snapshots right now. Intraday data coming later.">
+             title="Exit time mirrors the entry time (same HH:MM on the next trading day).">
     </div>
   </div>
 
@@ -1023,11 +1029,46 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 // Data loader — tries REAL options data first, falls back to B-S approximation
 // ══════════════════════════════════════════════════════════════════════
 let DIAGONAL_DATA = null;
-let REAL_DATA = null;   // real bid/ask from Polygon, null if unavailable
+let REAL_DATA = null;           // flattened view for currently-selected entry time
+let REAL_DATA_MULTI = null;     // raw multi-time dataset: {dates, by_date[d].by_time[HHMM]}
+let SELECTED_ENTRY_TIME = '14:00';
+
+async function fetchGzJson(url) {
+  // Fetch a gzipped JSON file and decompress via native DecompressionStream.
+  // Throws on any failure so the caller can fall back.
+  const r = await fetch(url, { cache: 'no-cache' });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const ds = new DecompressionStream('gzip');
+  const stream = r.body.pipeThrough(ds);
+  const text = await new Response(stream).text();
+  return JSON.parse(text);
+}
+
+function flattenRealData(multi, entryTime) {
+  // Project the multi-time dataset down to the shape the existing consumer
+  // code expects: by_date[date].{spot, vix, quotes, target_time_et}.
+  // Only includes dates that have a snapshot at the selected entryTime.
+  if (!multi?.by_date) return null;
+  const flat = { dates: [], by_date: {}, times: multi.times || [] };
+  for (const d of multi.dates || []) {
+    const entry = multi.by_date[d];
+    const ts = entry?.by_time?.[entryTime];
+    if (!ts) continue;
+    flat.dates.push(d);
+    flat.by_date[d] = {
+      spot: ts.spot,
+      vix: ts.vix,
+      quotes: ts.quotes,
+      target_time_et: entryTime,
+    };
+  }
+  return flat;
+}
 
 async function loadData() {
-  // Real data is split per year (GitHub 100 MB per file limit).
-  // Fetch the index, then load each year's file in parallel.
+  // Real data: one gzipped JSON per year, each keyed by date → by_time → HH:MM.
+  // We load all years in parallel, merge into REAL_DATA_MULTI, then flatten
+  // into REAL_DATA based on the currently-selected entry time.
   try {
     const idxResp = await fetch('./data/diagonal_real_index.json?t=' + Date.now(), { cache: 'no-cache' });
     if (idxResp.ok) {
@@ -1035,13 +1076,11 @@ async function loadData() {
       if (idx.years?.length) {
         const yearFiles = await Promise.all(
           idx.years.map(y =>
-            fetch(`./data/diagonal_real_${y}.json?t=${Date.now()}`, { cache: 'no-cache' })
-              .then(r => r.ok ? r.json() : null)
+            fetchGzJson(`./data/diagonal_real_${y}.json.gz?t=${Date.now()}`)
               .catch(() => null)
           )
         );
-        // Merge into single REAL_DATA object
-        const merged = { dates: [], by_date: {} };
+        const merged = { dates: [], by_date: {}, times: idx.times || ['14:00'] };
         for (const y of yearFiles) {
           if (y?.dates && y?.by_date) {
             merged.dates.push(...y.dates);
@@ -1050,18 +1089,9 @@ async function loadData() {
         }
         merged.dates.sort();
         if (merged.dates.length) {
-          REAL_DATA = merged;
-          console.log(`[diagonal] REAL data loaded: ${merged.dates.length} dates across ${idx.years.length} year files`);
-        }
-      }
-    } else {
-      // Fall back to legacy single file if index missing
-      const r = await fetch('./data/diagonal_real_data.json?t=' + Date.now(), { cache: 'no-cache' });
-      if (r.ok) {
-        const rd = await r.json();
-        if (rd.dates && rd.by_date) {
-          REAL_DATA = rd;
-          console.log(`[diagonal] REAL data (legacy single file): ${rd.dates.length} dates`);
+          REAL_DATA_MULTI = merged;
+          REAL_DATA = flattenRealData(merged, SELECTED_ENTRY_TIME);
+          console.log(`[diagonal] REAL data loaded: ${merged.dates.length} dates × ${merged.times.length} timestamps, flattened to ${REAL_DATA.dates.length} dates at ${SELECTED_ENTRY_TIME}`);
         }
       }
     }
@@ -2042,6 +2072,20 @@ async function doRun() {
 }
 
 document.getElementById('runBtn').addEventListener('click', doRun);
+
+// Entry-time dropdown — re-flatten REAL_DATA for the newly selected snapshot time.
+// Exit time mirrors entry time (same HH:MM on the next trading day).
+document.getElementById('entryTime').addEventListener('change', (ev) => {
+  SELECTED_ENTRY_TIME = ev.target.value;
+  document.getElementById('exitTime').value = SELECTED_ENTRY_TIME;
+  if (REAL_DATA_MULTI) {
+    REAL_DATA = flattenRealData(REAL_DATA_MULTI, SELECTED_ENTRY_TIME);
+    const n = REAL_DATA?.dates?.length || 0;
+    console.log(`[diagonal] entry time → ${SELECTED_ENTRY_TIME} (${n} dates have a snapshot)`);
+  }
+  // Re-run backtest if we already have data loaded
+  if (DIAGONAL_DATA) doRun();
+});
 
 // Equity scale radio — re-render on change
 document.querySelectorAll('input[name="equityScale"]').forEach(r => {

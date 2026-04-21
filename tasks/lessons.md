@@ -57,3 +57,61 @@ They must stay identical. When fixing signal logic in one, fix it in the other
 immediately in the same commit. history.html has a third copy for the backtester.
 
 Any signal logic change = touch all 3: schwab-proxy.js + index.html + history.html
+
+---
+
+## When copying a styled pattern to a new sibling, sweep ALL per-item selectors
+
+When adding a new item to a repeating pattern (pill, card, chip, tab, etc.), a
+single `[data-key="foo"]` / `[data-strat="foo"]` / `#foo-bar` CSS rule often
+controls the visual identity (bg + border + color). Grep for ALL per-item
+selectors in the stylesheet, not just the most obvious one.
+
+Example miss: added `<div class="strat-pill" data-strat="diagonal">` + JS +
+equity-chart color, but forgot `.strat-pill[data-strat="diagonal"]{...}` in the
+CSS block. Result: pill rendered as a plain transparent element while every
+other sibling was a colored pill.
+
+Rule: after adding a new instance of a styled sibling, grep the CSS for the
+sibling's base class and verify every `[data-*]` / `:nth-child` / variant rule
+has a matching entry for the new key.
+
+---
+
+## Signal-card text is descriptive, not imperative
+
+Never write card text as an instruction: "Do Diagonal", "Take the trade",
+"Buy X". That reads like financial advice. This is an information UI, not an
+advisor. Mirror how existing cards phrase the GO state — they are names of
+what is active today, not commands: `M8BF`, `Straddle`, `GXBF`, `BOBF`,
+`Diagonal @ 2:00 PM ET`, `EOM Straddle — 9:32 AM`. Badges carry the timing
+verb-free (`⏰ 14:00 ET`, `📅 NM — 9:32 AM`). Blocked states say `No X (reason)`
+— also descriptive, not imperative ("Skip X" would be imperative too).
+
+When adding a new card, check the new text side-by-side against existing cards
+before committing. If your text starts with a verb ("Do", "Take", "Enter",
+"Buy", "Sell"), rewrite it.
+
+---
+
+## Stale plan files are NOT active work — check git/file state first
+
+When the system surfaces a plan from `~/.claude/plans/*.md` with "continue if
+relevant," that plan may be from any prior session, including ones already
+completed, abandoned, or never approved by the current user's intent.
+
+Before executing ANY surfaced plan:
+1. Grep the repo for the exact changes the plan describes — if the code
+   already matches the plan's "after" state, the plan is DONE. Delete it
+   and do NOT start editing.
+2. Check the user's most recent real message. If the plan topic is
+   unrelated to what the user was actually discussing, it's stale context.
+   Acknowledge and drop it — don't silently pivot.
+3. Never re-execute work that is already present. Re-editing history_data.json,
+   re-removing rules, or re-deploying worker code when the target state is
+   already live creates churn, noise, and user frustration.
+
+(Caught 2026-04-20 — jumped on a stale "Remove M8BF Day After Earnings Block"
+plan from days earlier. All target changes were already committed; user hadn't
+mentioned the topic in over a week. Started reading files to "execute" work
+that was long done.)
