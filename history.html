@@ -3,6 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
   <title>Σ3 — Historical Signals</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -821,7 +824,7 @@ const STRAD_PL ={"2026-03-11":-1300,"2026-02-27":-1120,"2026-02-12":9600,"2026-0
 
 async function init() {
   try {
-    const resp = await fetch('history_data.json');
+    const resp = await fetch('history_data.json?v=' + Date.now(), { cache: 'no-store' });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const raw = await resp.json();
 
@@ -1479,8 +1482,8 @@ function renderCorrelation() {
   if (!sorted.length) { card.style.display='none'; return; }
   card.style.display = '';
 
-  const strats = ['m8bf','strad','gxbf','bobf'];
-  const stratLabels = {m8bf:'M8BF', strad:'Straddle', gxbf:'GXBF', bobf:'BOBF'};
+  const strats = ['m8bf','strad','gxbf','bobf','diagonal'];
+  const stratLabels = {m8bf:'M8BF', strad:'Straddle', gxbf:'GXBF', bobf:'BOBF', diagonal:'Diagonal'};
 
   // Build daily P/L by strategy
   const dailyPL = {};
@@ -1491,6 +1494,10 @@ function renderCorrelation() {
     if (s.stradRan && row.stradPL != null) dailyPL.strad[row.date] = row.stradPL;
     if (row.gxbfPL != null) dailyPL.gxbf[row.date] = row.gxbfPL;
     if (s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) dailyPL.bobf[row.date] = row.bobfPL;
+    // Diagonal: diagPL is null on VIX 50-80% dead-zone days (filtered) or no-data days.
+    // A non-null value means the strategy actually traded — matches convention
+    // used by allocation optimizer and equity chart.
+    if (row.diagPL != null) dailyPL.diagonal[row.date] = row.diagPL;
   }
 
   function pearson(a, b) {
