@@ -613,7 +613,7 @@ body {
   <div class="fg">
     <div class="fg-label">Entry Time (ET)</div>
     <div class="fg-row">
-      <select class="time-input" id="entryTime" title="SPX snapshot time used for entry + exit.">
+      <select class="time-input" id="entryTime" title="SPX snapshot time used to price the entry leg.">
         <option value="13:00">13:00</option>
         <option value="13:15">13:15</option>
         <option value="13:30">13:30</option>
@@ -625,10 +625,16 @@ body {
   </div>
 
   <div class="fg">
-    <div class="fg-label">Exit Time (ET, next day)<span style="font-size:9px;color:var(--text3);margin-left:4px">follows entry</span></div>
+    <div class="fg-label">Exit Time (ET, next day)</div>
     <div class="fg-row">
-      <input type="time" class="time-input" id="exitTime" value="14:00" disabled
-             title="Exit time mirrors the entry time (same HH:MM on the next trading day).">
+      <select class="time-input" id="exitTime" title="SPX snapshot time used to price the exit leg on the next trading day.">
+        <option value="13:00">13:00</option>
+        <option value="13:15">13:15</option>
+        <option value="13:30">13:30</option>
+        <option value="13:45">13:45</option>
+        <option value="14:00" selected>14:00</option>
+        <option value="14:15">14:15</option>
+      </select>
     </div>
   </div>
 
@@ -1029,9 +1035,10 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 // Data loader — tries REAL options data first, falls back to B-S approximation
 // ══════════════════════════════════════════════════════════════════════
 let DIAGONAL_DATA = null;
-let REAL_DATA = null;           // flattened view for currently-selected entry time
+let REAL_DATA = null;           // flattened view for currently-selected (entry, exit) time pair
 let REAL_DATA_MULTI = null;     // raw multi-time dataset: {dates, by_date[d].by_time[HHMM]}
 let SELECTED_ENTRY_TIME = '14:00';
+let SELECTED_EXIT_TIME  = '14:00';
 
 async function fetchGzJson(url) {
   // Fetch a gzipped JSON file and decompress via native DecompressionStream.
@@ -1044,22 +1051,28 @@ async function fetchGzJson(url) {
   return JSON.parse(text);
 }
 
-function flattenRealData(multi, entryTime) {
-  // Project the multi-time dataset down to the shape the existing consumer
-  // code expects: by_date[date].{spot, vix, quotes, target_time_et}.
-  // Only includes dates that have a snapshot at the selected entryTime.
+function flattenRealData(multi, entryTime, exitTime) {
+  // Project the multi-time dataset into a per-date record that carries BOTH
+  // sides of the round-trip: entry-time quotes (used when this date is the
+  // openDate) and exit-time quotes (used when this date is the closeDate).
+  // A date is included if at least one side has a snapshot.
   if (!multi?.by_date) return null;
   const flat = { dates: [], by_date: {}, times: multi.times || [] };
   for (const d of multi.dates || []) {
     const entry = multi.by_date[d];
-    const ts = entry?.by_time?.[entryTime];
-    if (!ts) continue;
+    const tsEntry = entry?.by_time?.[entryTime];
+    const tsExit  = entry?.by_time?.[exitTime];
+    if (!tsEntry && !tsExit) continue;
     flat.dates.push(d);
     flat.by_date[d] = {
-      spot: ts.spot,
-      vix: ts.vix,
-      quotes: ts.quotes,
+      // Entry side — used when this date is the openDate of a trade
+      spot:   tsEntry?.spot ?? tsExit?.spot ?? null,
+      vix:    tsEntry?.vix  ?? tsExit?.vix  ?? null,
+      quotes: tsEntry?.quotes ?? null,
       target_time_et: entryTime,
+      // Exit side — used when this date is the closeDate of a trade
+      quotes_exit: tsExit?.quotes ?? null,
+      exit_time_et: exitTime,
     };
   }
   return flat;
@@ -1090,8 +1103,8 @@ async function loadData() {
         merged.dates.sort();
         if (merged.dates.length) {
           REAL_DATA_MULTI = merged;
-          REAL_DATA = flattenRealData(merged, SELECTED_ENTRY_TIME);
-          console.log(`[diagonal] REAL data loaded: ${merged.dates.length} dates × ${merged.times.length} timestamps, flattened to ${REAL_DATA.dates.length} dates at ${SELECTED_ENTRY_TIME}`);
+          REAL_DATA = flattenRealData(merged, SELECTED_ENTRY_TIME, SELECTED_EXIT_TIME);
+          console.log(`[diagonal] REAL data loaded: ${merged.dates.length} dates × ${merged.times.length} timestamps, flattened to ${REAL_DATA.dates.length} dates at entry=${SELECTED_ENTRY_TIME} / exit=${SELECTED_EXIT_TIME}`);
         }
       }
     }
@@ -1678,8 +1691,12 @@ function runBacktestBS(data, params) {
     const longTicker  = realEntry?.quotes ? findTicker(realEntry.quotes, longStrike,  longExp.date,  25) : null;
     const sEntry = shortTicker && realEntry?.quotes ? realEntry.quotes[shortTicker] : null;
     const lEntry = longTicker  && realEntry?.quotes ? realEntry.quotes[longTicker]  : null;
-    const sExit  = shortTicker && realExit?.quotes  ? realExit.quotes[shortTicker]  : null;
-    const lExit  = longTicker  && realExit?.quotes  ? realExit.quotes[longTicker]   : null;
+    // Exit uses the closeDate quotes at the selected EXIT time (may differ from entry time).
+    // flattenRealData stores them under `quotes_exit`; fall back to `quotes` for any legacy
+    // data shape.
+    const exitQuotes = realExit?.quotes_exit || realExit?.quotes;
+    const sExit  = shortTicker && exitQuotes ? exitQuotes[shortTicker] : null;
+    const lExit  = longTicker  && exitQuotes ? exitQuotes[longTicker]  : null;
 
     // If a strike was snapped, use the snapped (actually listed) strike for B-S,
     // margin, and display so everything stays internally consistent.
@@ -2073,18 +2090,26 @@ async function doRun() {
 
 document.getElementById('runBtn').addEventListener('click', doRun);
 
-// Entry-time dropdown — re-flatten REAL_DATA for the newly selected snapshot time.
-// Exit time mirrors entry time (same HH:MM on the next trading day).
+// Entry and exit time dropdowns are INDEPENDENT — user can open at 13:00 and close
+// at 14:15 the next day, or any combination of the 6 available snapshots. Each
+// change re-flattens REAL_DATA against both times and re-runs the backtest.
+function reflattenAndRerun(reason) {
+  if (REAL_DATA_MULTI) {
+    REAL_DATA = flattenRealData(REAL_DATA_MULTI, SELECTED_ENTRY_TIME, SELECTED_EXIT_TIME);
+    const n = REAL_DATA?.dates?.length || 0;
+    console.log(`[diagonal] ${reason} → entry=${SELECTED_ENTRY_TIME} / exit=${SELECTED_EXIT_TIME} (${n} dates)`);
+  }
+  if (DIAGONAL_DATA) doRun();
+}
+
 document.getElementById('entryTime').addEventListener('change', (ev) => {
   SELECTED_ENTRY_TIME = ev.target.value;
-  document.getElementById('exitTime').value = SELECTED_ENTRY_TIME;
-  if (REAL_DATA_MULTI) {
-    REAL_DATA = flattenRealData(REAL_DATA_MULTI, SELECTED_ENTRY_TIME);
-    const n = REAL_DATA?.dates?.length || 0;
-    console.log(`[diagonal] entry time → ${SELECTED_ENTRY_TIME} (${n} dates have a snapshot)`);
-  }
-  // Re-run backtest if we already have data loaded
-  if (DIAGONAL_DATA) doRun();
+  reflattenAndRerun('entry time');
+});
+
+document.getElementById('exitTime').addEventListener('change', (ev) => {
+  SELECTED_EXIT_TIME = ev.target.value;
+  reflattenAndRerun('exit time');
 });
 
 // Equity scale radio — re-render on change
