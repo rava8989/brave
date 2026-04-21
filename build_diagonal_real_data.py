@@ -41,7 +41,7 @@ POLYGON_DIR = ROOT / 'data' / 'polygon'
 VIX_DIR = ROOT / 'data' / 'vix'
 BS_DATA = ROOT / 'data' / 'diagonal_bs_data.json'
 
-TIMES = ['13:00', '13:15', '13:30', '13:45', '14:00', '14:15']
+TIMES = ['12:00', '12:15', '12:30', '12:45', '13:00', '13:15', '13:30', '13:45', '14:00', '14:15', '14:30', '14:45']
 
 
 def vix_from_csv(date_iso: str, hhmm: str) -> float | None:
