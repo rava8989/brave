@@ -1,5 +1,49 @@
 # Lessons Learned
 
+## Rotating refresh_tokens need a single source of truth (2026-04-21)
+
+Schwab rotates `refresh_token` on every successful refresh and instantly
+invalidates the previous one. Any OAuth design where more than one client
+holds a copy of `refresh_token` and can initiate a refresh will race:
+whoever rotates first kicks everyone else into 401.
+
+The system had three rotating clients — Cloudflare Worker cron, browser tab,
+Windows Python scraper. Disconnects were a daily occurrence.
+
+**Fix:** exactly one party holds `refresh_token` (the Worker, in KV). All
+other clients request an `access_token` from that party. Bonus: retry-on-
+stale inside the owner itself for cross-isolate races — if Schwab 400s on
+refresh because another isolate already rotated, re-read KV and use the
+winner instead of erroring.
+
+**Watch for this pattern elsewhere:** any time the same secret rotates on
+server side and multiple clients cache it, assume race-to-invalidate.
+Centralize.
+
+---
+
+## Decompressed JSON > 512 MB silently fails `JSON.parse` in V8 (2026-04-21)
+
+V8 caps string length at ~512 MB (UTF-16 chars). When a gzipped dataset
+decompresses into a single JS string larger than this and the fetch is
+wrapped in `Promise.all(...).catch(() => null)`, the failure vanishes — no
+console error, just `null` for that chunk.
+
+**Symptoms:** dataset loads "work" but coverage is mysteriously lower than
+expected. Only files under ~500 MB decompressed actually materialize.
+
+**Fix options (cheapest first):**
+- Split the gz file into smaller chunks so each decompressed chunk fits.
+- Stream-parse JSON with a streaming parser (don't materialize as a single
+  string).
+- Switch the transport to newline-delimited JSON (one object per line) and
+  parse per-line.
+
+**Always log chunk failures explicitly** rather than swallowing in `.catch()`
+— a `Promise.all` with silent failures is a trap.
+
+---
+
 ## CRITICAL: Strategies are completely independent — never connect them
 
 **Violated multiple times. Do not repeat.**
