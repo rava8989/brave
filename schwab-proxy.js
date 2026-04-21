@@ -151,6 +151,23 @@ async function getAccessToken(env, forceRefresh = false) {
               body,
             });
 
+            // Retry-on-stale: Schwab 400s when the refresh_token has already
+            // been rotated by another Worker isolate (or an external client
+            // that still talks to Schwab directly). In that case, re-read KV
+            // — whichever client won will have written the new tokens — and
+            // return that access token. This is the cross-isolate counterpart
+            // to the in-isolate _tokenRefreshPromise mutex.
+            if (resp.status === 400) {
+              const freshRaw = await env.SIGNAL_KV.get('schwab_tokens');
+              if (freshRaw) {
+                const fresh = JSON.parse(freshRaw);
+                if (fresh.refresh !== tokens.refresh && Date.now() < fresh.expiry - 60000) {
+                  console.warn('[proxy] Token refresh lost race; using winner from KV');
+                  return fresh.access;
+                }
+              }
+            }
+
             if (!resp.ok) throw new Error('Token refresh HTTP ' + resp.status);
             const data = await resp.json();
             if (!data.access_token) throw new Error('Token refresh failed: ' + (data.error_description || JSON.stringify(data)));
@@ -2720,6 +2737,27 @@ export default {
         if (discord_config) await env.SIGNAL_KV.put('discord_config', JSON.stringify(discord_config));
 
         return jsonResp({ ok: true, synced: Object.keys(json) }, 200, corsHeaders);
+      }
+
+      // ── GET /access-token ──
+      // Central token source for browser + Python scraper. The Worker is the
+      // only party that rotates Schwab's refresh_token; other clients call
+      // here and get a valid access_token without ever touching refresh_token
+      // themselves. This eliminates the 3-way rotation race that was kicking
+      // every client into 401 hell.
+      if (url.pathname === '/access-token' && request.method === 'GET') {
+        const accTokenSecret = request.headers.get('X-Sync-Secret');
+        if (!accTokenSecret || accTokenSecret !== env.SYNC_SECRET) {
+          return jsonResp({ error: 'Unauthorized' }, 401, corsHeaders);
+        }
+        try {
+          const token = await getAccessToken(env);
+          const tokensRaw = await env.SIGNAL_KV.get('schwab_tokens');
+          const expiry = tokensRaw ? JSON.parse(tokensRaw).expiry : null;
+          return jsonResp({ access_token: token, expiry }, 200, corsHeaders);
+        } catch (e) {
+          return jsonResp({ error: e.message }, 500, corsHeaders);
+        }
       }
 
       // ── POST /token ──

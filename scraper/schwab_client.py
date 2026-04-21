@@ -19,6 +19,13 @@ APP_KEY      = os.getenv("SCHWAB_APP_KEY")
 APP_SECRET   = os.getenv("SCHWAB_APP_SECRET")
 REDIRECT_URI = os.getenv("SCHWAB_REDIRECT_URI", "https://rava8989.github.io/brave/live.html")
 
+# Proxy settings — when set, ALL token refreshes go through the Worker instead
+# of talking to Schwab's /v1/oauth/token directly. This is the single-source-of-
+# truth fix for the 3-way refresh_token rotation race (worker cron + browser +
+# this scraper all used to rotate independently, invalidating each other).
+PROXY_URL   = (os.getenv("SCHWAB_PROXY_URL") or "").rstrip("/")
+SYNC_SECRET = os.getenv("SCHWAB_SYNC_SECRET") or ""
+
 AUTH_URL   = "https://api.schwabapi.com/v1/oauth/authorize"
 TOKEN_URL  = "https://api.schwabapi.com/v1/oauth/token"
 QUOTES_URL = "https://api.schwabapi.com/marketdata/v1/quotes"
@@ -81,11 +88,57 @@ def refresh_tokens(refresh_token: str) -> dict:
 
 # ── Public interface ───────────────────────────────────────────────────────────
 
+# Local cache for tokens fetched via the Worker proxy. Avoids hammering the
+# Worker on every quote — we know how long Schwab access tokens live.
+_proxy_cache: dict = {"access_token": None, "expires_at": 0.0}
+
+
+def _fetch_from_proxy() -> str:
+    """Ask the Worker for a current access token (it owns refresh in KV)."""
+    resp = requests.get(
+        f"{PROXY_URL}/access-token",
+        headers={"X-Sync-Secret": SYNC_SECRET},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    access = data.get("access_token")
+    if not access:
+        raise RuntimeError(f"Proxy returned no access_token: {data}")
+    # `expiry` is epoch-ms from the Worker; fall back to 29 min if missing.
+    expiry_ms = data.get("expiry")
+    expires_at = (expiry_ms / 1000.0) if expiry_ms else (time.time() + 29 * 60)
+    _proxy_cache["access_token"] = access
+    _proxy_cache["expires_at"]   = expires_at
+    return access
+
+
 def get_access_token() -> str:
-    """Return a valid access token, refreshing if needed."""
+    """Return a valid access token, refreshing if needed.
+
+    Preferred path: fetch from Worker (`SCHWAB_PROXY_URL` + `SCHWAB_SYNC_SECRET`
+    set). The Worker is the single source of truth for Schwab tokens — it owns
+    the refresh_token in KV and rotates it atomically. This eliminates the
+    3-way race between this scraper, the Worker cron, and the browser.
+
+    Fallback path: if proxy isn't configured, refresh directly against Schwab
+    using `tokens.json`. This path is only used for one-off local dev or if the
+    Worker is unreachable.
+    """
+    if PROXY_URL and SYNC_SECRET:
+        # Reuse cached token until 60s before expiry
+        if _proxy_cache["access_token"] and time.time() < _proxy_cache["expires_at"] - 60:
+            return _proxy_cache["access_token"]
+        return _fetch_from_proxy()
+
+    # ── Fallback: direct Schwab refresh (legacy path) ──
     tokens = _load_tokens()
     if not tokens:
-        raise RuntimeError("No tokens found. Run schwab_auth.py first.")
+        raise RuntimeError(
+            "No tokens found and SCHWAB_PROXY_URL not set. "
+            "Either set SCHWAB_PROXY_URL + SCHWAB_SYNC_SECRET in .env "
+            "(preferred) or run schwab_auth.py for local-only mode."
+        )
 
     saved_at   = tokens.get("saved_at", 0)
     expires_in = tokens.get("expires_in", 1800)   # default 30 min
