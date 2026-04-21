@@ -1959,7 +1959,10 @@
         expiry:        Date.now() + (data.expires_in * 1000),
         refreshExpiry: Date.now() + (7 * 24 * 60 * 60 * 1000), // 7 days
       });
-      syncToWorker(); // push tokens to Worker KV for cron
+      // Initial seed: push tokens + creds + discord_config to KV. From here
+      // on, the Worker owns refresh rotation — later syncToWorker() calls
+      // must NOT push schwab_tokens (would clobber KV with stale sessionStorage).
+      syncToWorker({ includeTokens: true });
       schwabSetStatus('connected', 'Schwab connected ✓');
       await schwabFetchHistorical();
       schwabScheduleStream();
@@ -1970,32 +1973,32 @@
     return true;
   }
 
-  /* ── Step 3: Refresh access token silently ── */
+  /* ── Step 3: Pull fresh access token from Worker ──
+     Worker owns the refresh_token (single source of truth in KV) and
+     rotates it against Schwab. Browser never rotates it — that's what
+     used to cause the 3-way race where cron/Python/browser each held a
+     stale refresh_token and kept invalidating each other. */
   async function schwabRefreshToken(){
     const c = SC.creds(), t = SC.tokens();
     const proxy = SCHWAB.proxy();
-    if(!c||!t?.refresh||!proxy) return false;
+    if(!c||!proxy) return false;
     try{
       const secret = localStorage.getItem('sc_syncSecret');
-      const resp = await fetch(`${proxy}/token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Sync-Secret': secret },
-        body: JSON.stringify({
-          app_key:       c.appKey,
-          grant_type:    'refresh_token',
-          refresh_token: t.refresh,
-        }),
+      const resp = await fetch(`${proxy}/access-token`, {
+        method: 'GET',
+        headers: { 'X-Sync-Secret': secret },
       });
       if(!resp.ok) throw new Error('HTTP ' + resp.status);
       const data = await resp.json();
-      if(!data.access_token) throw new Error('Refresh failed');
+      if(!data.access_token) throw new Error('No access_token in response');
+      // Preserve refresh + refreshExpiry — browser holds them only for the
+      // one-time initial sync to KV; Worker is authoritative from here on.
       SC.set('tokens', {
         access:        data.access_token,
-        refresh:       data.refresh_token || t.refresh,
-        expiry:        Date.now() + (data.expires_in * 1000),
-        refreshExpiry: t.refreshExpiry,
+        refresh:       t?.refresh || null,
+        expiry:        data.expiry || (Date.now() + 29*60*1000),
+        refreshExpiry: t?.refreshExpiry || (Date.now() + 7*24*60*60*1000),
       });
-      syncToWorker(); // push refreshed tokens to Worker KV
       return true;
     } catch(e){
       console.warn('[S3] schwabRefreshToken:', e);
@@ -2003,8 +2006,12 @@
     }
   }
 
-  /* ── Sync tokens/creds/discord to Worker KV for cron ── */
-  async function syncToWorker(){
+  /* ── Sync creds/discord to Worker KV for cron ──
+     `schwab_tokens` is ONLY pushed with {includeTokens:true}, which is the
+     one-time seed from schwabHandleCallback. Any later push would risk
+     clobbering the Worker's authoritative refresh_token (rotated by cron)
+     with a stale value from this tab's sessionStorage. */
+  async function syncToWorker(opts = {}){
     const proxy = SCHWAB.proxy();
     const secret = localStorage.getItem('sc_syncSecret');
     if(!proxy||!secret){
@@ -2012,7 +2019,9 @@
       return;
     }
     const payload = {};
-    const t = SC.tokens(); if(t) payload.schwab_tokens = t;
+    if(opts.includeTokens){
+      const t = SC.tokens(); if(t) payload.schwab_tokens = t;
+    }
     const c = SC.creds();  if(c) payload.schwab_creds = { appKey: c.appKey };
     const dc = DC.get('config'); if(dc) payload.discord_config = dc;
     if(!Object.keys(payload).length) return;
@@ -2031,7 +2040,10 @@
     }catch(e){ console.error('[S3] syncToWorker failed:', e); }
   }
 
-  /* ── Manual re-sync with visible feedback ── */
+  /* ── Manual re-sync with visible feedback ──
+     Used when the user clicks "Re-sync" — treats this tab's sessionStorage
+     as the fresh source (e.g. they just re-authenticated), so schwab_tokens
+     IS pushed. For routine syncing from stale tabs, syncToWorker() is used. */
   async function resyncToWorker(){
     const btn = document.getElementById('schwabResyncBtn');
     const origText = btn.textContent;
