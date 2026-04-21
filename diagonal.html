@@ -614,6 +614,10 @@ body {
     <div class="fg-label">Entry Time (ET)</div>
     <div class="fg-row">
       <select class="time-input" id="entryTime" title="SPX snapshot time used to price the entry leg.">
+        <option value="09:45">09:45</option>
+        <option value="10:00">10:00</option>
+        <option value="11:30">11:30</option>
+        <option value="11:45">11:45</option>
         <option value="12:00">12:00</option>
         <option value="12:15">12:15</option>
         <option value="12:30">12:30</option>
@@ -626,6 +630,10 @@ body {
         <option value="14:15">14:15</option>
         <option value="14:30">14:30</option>
         <option value="14:45">14:45</option>
+        <option value="15:00">15:00</option>
+        <option value="15:15">15:15</option>
+        <option value="15:30">15:30</option>
+        <option value="15:45">15:45</option>
       </select>
     </div>
   </div>
@@ -634,6 +642,10 @@ body {
     <div class="fg-label">Exit Time (ET, next day)</div>
     <div class="fg-row">
       <select class="time-input" id="exitTime" title="SPX snapshot time used to price the exit leg on the next trading day.">
+        <option value="09:45">09:45</option>
+        <option value="10:00">10:00</option>
+        <option value="11:30">11:30</option>
+        <option value="11:45">11:45</option>
         <option value="12:00">12:00</option>
         <option value="12:15">12:15</option>
         <option value="12:30">12:30</option>
@@ -646,6 +658,10 @@ body {
         <option value="14:15">14:15</option>
         <option value="14:30">14:30</option>
         <option value="14:45">14:45</option>
+        <option value="15:00">15:00</option>
+        <option value="15:15">15:15</option>
+        <option value="15:30">15:30</option>
+        <option value="15:45">15:45</option>
       </select>
     </div>
   </div>
@@ -1125,32 +1141,47 @@ function flattenRealData(multi, entryTime, exitTime) {
 }
 
 async function loadData() {
-  // Real data: one gzipped JSON per year, each keyed by date → by_time → HH:MM.
-  // We load all years in parallel, merge into REAL_DATA_MULTI, then flatten
-  // into REAL_DATA based on the currently-selected entry time.
+  // Real data: one gzipped JSON per half-year (2024_H1, 2024_H2, …), each
+  // keyed by date → by_time → HH:MM. Per-year files got too large: with 20
+  // timestamps the decompressed JSON hit ~820 MB, past V8's ~512 MB max string
+  // length, so `JSON.parse(text)` silently failed. Half-year chunks decompress
+  // to ~400 MB — comfortably under the limit.
+  //
+  // The index lists actual filenames (idx.files); we fetch them in parallel
+  // and merge. Each chunk failure is isolated so one bad file doesn't break
+  // the whole dataset. Backward-compat: if the old `idx.years` format is
+  // still in place, fall back to per-year filenames.
   try {
     const idxResp = await fetch('./data/diagonal_real_index.json?t=' + Date.now(), { cache: 'no-cache' });
     if (idxResp.ok) {
       const idx = await idxResp.json();
-      if (idx.years?.length) {
-        const yearFiles = await Promise.all(
-          idx.years.map(y =>
-            fetchGzJson(`./data/diagonal_real_${y}.json.gz?t=${Date.now()}`)
-              .catch(() => null)
+      const files = idx.files?.length
+        ? idx.files
+        : (idx.years || []).map(y => `diagonal_real_${y}.json.gz`);
+      if (files.length) {
+        const chunks = await Promise.all(
+          files.map(fname =>
+            fetchGzJson(`./data/${fname}?t=${Date.now()}`)
+              .catch(err => {
+                console.warn(`[diagonal] failed to load ${fname}:`, err.message);
+                return null;
+              })
           )
         );
         const merged = { dates: [], by_date: {}, times: idx.times || ['14:00'] };
-        for (const y of yearFiles) {
-          if (y?.dates && y?.by_date) {
-            merged.dates.push(...y.dates);
-            Object.assign(merged.by_date, y.by_date);
+        let loadedCount = 0;
+        for (const c of chunks) {
+          if (c?.dates && c?.by_date) {
+            merged.dates.push(...c.dates);
+            Object.assign(merged.by_date, c.by_date);
+            loadedCount++;
           }
         }
         merged.dates.sort();
         if (merged.dates.length) {
           REAL_DATA_MULTI = merged;
           REAL_DATA = flattenRealData(merged, SELECTED_ENTRY_TIME, SELECTED_EXIT_TIME);
-          console.log(`[diagonal] REAL data loaded: ${merged.dates.length} dates × ${merged.times.length} timestamps, flattened to ${REAL_DATA.dates.length} dates at entry=${SELECTED_ENTRY_TIME} / exit=${SELECTED_EXIT_TIME}`);
+          console.log(`[diagonal] REAL data loaded: ${loadedCount}/${files.length} chunks, ${merged.dates.length} dates × ${merged.times.length} timestamps, flattened to ${REAL_DATA.dates.length} dates at entry=${SELECTED_ENTRY_TIME} / exit=${SELECTED_EXIT_TIME}`);
         }
       }
     }
