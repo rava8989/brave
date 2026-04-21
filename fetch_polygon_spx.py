@@ -3,29 +3,56 @@ Fetch real SPX options bid/ask from Polygon for the diagonal backtester.
 
 For each trading day:
   - Use existing spot_14 (or spot_12 on half-days) from diagonal_bs_data.json
+    OR derive spot from data/spx/SPX_YYYYMMDD.csv when --time is set
   - Find SPXW put contracts in a strike+DTE grid around the strategy
-  - Fetch bid/ask at 14:00 ET (or 12:45 ET on half-days)
-  - Save per-day JSON to data/polygon/SPX_YYYYMMDD.json
+  - Fetch bid/ask at the target time ET
+  - Save per-day JSON to data/polygon/SPX_YYYYMMDD[_HHMM].json
 
 HARD RULES (from user):
   1. SPXW only — no AM-settled SPX monthlies (filter by root_symbol)
-  2. Half-days use 12:45 ET instead of 14:00 ET
-  3. Entry and exit are both at the target time on consecutive trading days
+  2. Half-days use 12:45 ET instead of 14:00 ET (no --time override)
+  3. When --time > 12:45 is specified, half-days are SKIPPED (market closed)
+  4. Entry and exit are both at the target time on consecutive trading days
 
 Usage:
-  python3 fetch_polygon_spx.py                    # full backfill
-  python3 fetch_polygon_spx.py --date 2026-01-02  # single day (test)
-  python3 fetch_polygon_spx.py --from 2026-01-01  # from a specific date
+  python3 fetch_polygon_spx.py                       # full backfill @ 14:00 (12:45 half-days)
+  python3 fetch_polygon_spx.py --date 2026-01-02     # single day (test)
+  python3 fetch_polygon_spx.py --from 2026-01-01     # from a specific date
+  python3 fetch_polygon_spx.py --time 13:45          # alt-time snapshot → SPX_YYYYMMDD_1345.json
+  python3 fetch_polygon_spx.py --time 14:15 --from 2025-01-01
 """
+from __future__ import annotations  # for `str | None` on Python 3.9
 import os
 import sys
 import json
 import time
 import argparse
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+
+# ── Pooled HTTP session with retry/backoff ────────────────────────────
+# Running 6 parallel processes × many workers hammers the local DNS resolver
+# with fresh connections. A shared Session reuses TCP connections + DNS
+# lookups via urllib3's connection pool, and the Retry adapter transparently
+# recovers from transient DNS / 429 / 5xx failures.
+_retry = Retry(
+    total=5,
+    connect=5,
+    read=5,
+    backoff_factor=0.5,            # sleeps 0, 0.5, 1, 2, 4, 8 seconds between tries
+    status_forcelist=(429, 500, 502, 503, 504),
+    raise_on_status=False,
+)
+_adapter = HTTPAdapter(pool_connections=16, pool_maxsize=32, max_retries=_retry)
+SESSION = requests.Session()
+SESSION.mount('https://', _adapter)
+SESSION.mount('http://', _adapter)
+HTTP_TIMEOUT = 30  # seconds per request
 
 # ── Load .env ─────────────────────────────────────────────────────────
 ROOT = Path(__file__).resolve().parent
@@ -65,7 +92,10 @@ STRIKE_STEP = 5
 SHORT_DTE_MIN = 0
 SHORT_DTE_MAX = 7    # short-leg fallback up to a week (holidays + weekends)
 LONG_DTE_MIN = 12
-LONG_DTE_MAX = 28    # 20 ± 8 window — supports parameter tweaks without refetch
+# WIDENED 2026-04-20: default lDTE=30 means entry needs DTE 30, exit needs DTE 29.
+# Previously capped at 28 — was silently truncating the long leg. Bumped to 35 to
+# cover 30 DTE entry + exit + ±5 slack for parameter tweaks / SPXW expiry calendar.
+LONG_DTE_MAX = 35    # 30 + 5 slack — covers entry=30 DTE, exit=29 DTE, and tweaks
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -86,8 +116,40 @@ def et_to_utc_ns(date_iso: str, hhmm: str) -> int:
     return int(dt.astimezone(timezone.utc).timestamp() * 1e9)
 
 
-def target_time_et(date_iso: str) -> str:
+def target_time_et(date_iso: str, override: str | None = None) -> str:
+    """Default: 14:00 ET (12:45 on half-days). Override forces an explicit HH:MM.
+    Caller is responsible for skipping half-days when override > '12:45'."""
+    if override:
+        return override
     return '12:45' if date_iso in HALF_DAYS else '14:00'
+
+
+def spot_from_spx_csv(date_iso: str, hhmm: str) -> float | None:
+    """Derive spot price at exact minute from data/spx/SPX_YYYYMMDD.csv.
+    Returns the OPEN of the HH:MM:00 bar — matches the existing convention
+    where spot_14 in diagonal_bs_data.json equals the OPEN of the 14:00 bar."""
+    csv_path = ROOT / 'data' / 'spx' / f'SPX_{date_iso.replace("-", "")}.csv'
+    if not csv_path.exists():
+        return None
+    target = f'{date_iso} {hhmm}:00,'
+    try:
+        with open(csv_path) as f:
+            f.readline()  # skip header
+            for line in f:
+                if line.startswith(target):
+                    return float(line.split(',')[1])
+    except Exception:
+        return None
+    return None
+
+
+def output_path_for(date_iso: str, time_override: str | None) -> Path:
+    """Return output JSON path. With --time, filename gets _HHMM suffix so
+    the default (14:00/12:45) file remains untouched and backward-compatible."""
+    stem = f'SPX_{date_iso.replace("-", "")}'
+    if time_override:
+        stem += '_' + time_override.replace(':', '')
+    return OUTPUT_DIR / f'{stem}.json'
 
 
 def list_spxw_puts(as_of_date: str, dte_min: int, dte_max: int,
@@ -125,7 +187,7 @@ def list_spxw_puts(as_of_date: str, dte_min: int, dte_max: int,
         url = f'{BASE}/v3/reference/options/contracts'
         params = {**base_params, 'expired': expired_flag}
         while True:
-            r = requests.get(url, params=params)
+            r = SESSION.get(url, params=params, timeout=HTTP_TIMEOUT)
             data = r.json()
             for c in data.get('results') or []:
                 if c['ticker'].startswith('O:SPXW'):
@@ -144,14 +206,19 @@ def list_spxw_puts(as_of_date: str, dte_min: int, dte_max: int,
 
 
 def fetch_quote_at(ticker: str, ts_ns: int):
-    """Return {bid, ask, ts_ns} NBBO quote at or just before ts_ns, else None."""
-    r = requests.get(f'{BASE}/v3/quotes/{ticker}', params={
-        'timestamp.lte': ts_ns,
-        'order': 'desc',
-        'limit': 1,
-        'apiKey': API,
-    })
-    results = r.json().get('results') or []
+    """Return {bid, ask, ts_ns} NBBO quote at or just before ts_ns, else None.
+    Returns None (not raises) on connection failure after retries exhaust —
+    the caller filters these out so one bad ticker doesn't fail a whole day."""
+    try:
+        r = SESSION.get(f'{BASE}/v3/quotes/{ticker}', params={
+            'timestamp.lte': ts_ns,
+            'order': 'desc',
+            'limit': 1,
+            'apiKey': API,
+        }, timeout=HTTP_TIMEOUT)
+        results = r.json().get('results') or []
+    except Exception:
+        return None
     if not results:
         return None
     q = results[0]
@@ -166,8 +233,8 @@ def fetch_quote_at(ticker: str, ts_ns: int):
 # PER-DAY FETCHER
 # ══════════════════════════════════════════════════════════════════════
 
-def fetch_day(date_iso: str, spot: float) -> dict:
-    hhmm = target_time_et(date_iso)
+def fetch_day(date_iso: str, spot: float, time_override: str | None = None) -> dict:
+    hhmm = target_time_et(date_iso, time_override)
     ts_ns = et_to_utc_ns(date_iso, hhmm)
 
     strike_min = spot + STRIKE_MIN_OFFSET
@@ -193,7 +260,9 @@ def fetch_day(date_iso: str, spot: float) -> dict:
             }
         return None
 
-    with ThreadPoolExecutor(max_workers=20) as ex:
+    # max_workers reduced 20→12 to relieve DNS/TCP contention when multiple
+    # --time processes run in parallel. Pairs with the SESSION adapter above.
+    with ThreadPoolExecutor(max_workers=12) as ex:
         for result in ex.map(fetch_one, all_contracts.items()):
             if result:
                 ticker, data = result
@@ -213,21 +282,41 @@ def fetch_day(date_iso: str, spot: float) -> dict:
 # MAIN
 # ══════════════════════════════════════════════════════════════════════
 
-def load_dates_and_spots():
-    """Read existing diagonal_bs_data.json for the date list and spot prices."""
+def load_dates_and_spots(time_override: str | None = None):
+    """Read existing diagonal_bs_data.json for the date list and spot prices.
+
+    - No --time:  use spot_14 (or spot_12 on half-days) from diagonal_bs_data.json
+    - --time HH:MM: derive spot from data/spx/SPX_*.csv at that exact minute,
+      and SKIP half-days when HH:MM > 12:45 (market is closed).
+    """
     path = ROOT / 'data' / 'diagonal_bs_data.json'
     data = json.loads(path.read_text())
     dates = data['dates']
     by_date = data['by_date']
-    # Return list of (date, spot). Use spot_14 normally, or spot_12 for half-days.
     result = []
+    skipped_halfdays = 0
+    missing_csv = 0
     for d in dates:
-        entry = by_date.get(d) or {}
-        spot = entry.get('spot_14') if d not in HALF_DAYS else entry.get('spot_12')
-        if spot is None:
-            spot = entry.get('spot_14') or entry.get('spot_12')  # fallback
+        if time_override:
+            # Half-day handling: market closes at 13:00, snapshot possible only ≤ 12:45
+            if d in HALF_DAYS and time_override > '12:45':
+                skipped_halfdays += 1
+                continue
+            spot = spot_from_spx_csv(d, time_override)
+            if spot is None:
+                missing_csv += 1
+        else:
+            entry = by_date.get(d) or {}
+            spot = entry.get('spot_14') if d not in HALF_DAYS else entry.get('spot_12')
+            if spot is None:
+                spot = entry.get('spot_14') or entry.get('spot_12')  # fallback
         if spot is not None:
             result.append((d, spot))
+    if time_override:
+        if skipped_halfdays:
+            print(f'Skipped {skipped_halfdays} half-days (market closed before {time_override}).')
+        if missing_csv:
+            print(f'Skipped {missing_csv} dates with no SPX 1-min CSV or no bar at {time_override}.')
     return result
 
 
@@ -238,14 +327,27 @@ def main():
     p.add_argument('--to', dest='to_date', help='End date YYYY-MM-DD')
     p.add_argument('--force', action='store_true', help='Re-fetch days already cached')
     p.add_argument('--reverse', action='store_true', help='Process newest dates first')
+    p.add_argument('--time', default=None,
+                   help='Snapshot time HH:MM ET (default: 14:00 / 12:45 on half-days). '
+                        'Overrides the default and writes to SPX_YYYYMMDD_HHMM.json. '
+                        'Half-days are skipped when HH:MM > 12:45.')
     args = p.parse_args()
 
-    entries = load_dates_and_spots()
+    if args.time:
+        # Validate HH:MM format
+        try:
+            hh, mm = args.time.split(':')
+            assert len(hh) == 2 and len(mm) == 2 and 0 <= int(hh) < 24 and 0 <= int(mm) < 60
+        except Exception:
+            print(f'Invalid --time format "{args.time}". Use HH:MM (e.g., 13:45).')
+            sys.exit(1)
+
+    entries = load_dates_and_spots(args.time)
 
     if args.date:
         entries = [(d, s) for d, s in entries if d == args.date]
         if not entries:
-            print(f'Date {args.date} not found in diagonal_bs_data.json')
+            print(f'Date {args.date} not found in diagonal_bs_data.json (or filtered out for --time).')
             sys.exit(1)
     else:
         if args.from_date:
@@ -256,22 +358,24 @@ def main():
     # Filter already-fetched days (unless --force)
     if not args.force:
         entries = [(d, s) for d, s in entries
-                   if not (OUTPUT_DIR / f'SPX_{d.replace("-","")}.json').exists()]
+                   if not output_path_for(d, args.time).exists()]
 
     # Newest-first if requested
     if args.reverse:
         entries = list(reversed(entries))
 
-    print(f'Processing {len(entries)} trading days with 4 concurrent days × 20 concurrent quotes...')
+    tag = f' @ {args.time} ET' if args.time else ' @ default time'
+    print(f'Processing {len(entries)} trading days{tag} '
+          f'with 4 concurrent days × 12 concurrent quotes (pooled session + retries)...')
     t0 = time.time()
     total_quotes = 0
     completed = 0
 
     def process_one(item):
         date_iso, spot = item
-        out_path = OUTPUT_DIR / f'SPX_{date_iso.replace("-","")}.json'
+        out_path = output_path_for(date_iso, args.time)
         try:
-            day = fetch_day(date_iso, spot)
+            day = fetch_day(date_iso, spot, args.time)
             out_path.write_text(json.dumps(day, separators=(',', ':')))
             return date_iso, spot, day['target_time_et'], day['quotes_count'], None
         except Exception as e:

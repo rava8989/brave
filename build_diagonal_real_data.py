@@ -1,128 +1,182 @@
 """
-Merge per-day Polygon quote files + existing spot/VIX data into one JSON
-that the diagonal.html backtester consumes.
+Merge per-day Polygon quote files (all 6 intraday timestamps) + VIX 1-min bars
+into one gzipped JSON per year that the diagonal.html backtester consumes.
 
 Input:
-  data/polygon/SPX_YYYYMMDD.json — per-day quote files from fetch_polygon_spx.py
-  data/diagonal_bs_data.json    — existing spot/VIX snapshots
+  data/polygon/SPX_YYYYMMDD.json       — 14:00 default snapshot
+  data/polygon/SPX_YYYYMMDD_HHMM.json  — intraday (13:00, 13:15, 13:30, 13:45, 14:15)
+  data/vix/VIX_YYYYMMDD.csv            — 1-min VIX bars (for exact-timestamp lookup)
+  data/diagonal_bs_data.json           — legacy spot/VIX snapshots (fallback)
 
 Output:
-  data/diagonal_real_data.json  — combined dataset:
+  data/diagonal_real_YYYY.json.gz — gzipped per-year data:
     {
-      dates: [...],
-      by_date: {
+      "year": "2024",
+      "dates": [...],
+      "times": ["13:00","13:15","13:30","13:45","14:00","14:15"],
+      "by_date": {
         "YYYY-MM-DD": {
-          spot: 6830.94,
-          vix: 15.06,
-          target_time_et: "14:00",
-          quotes: {
-            "O:SPXW260105P06840000": {
-              strike: 6840,
-              expiration: "2026-01-05",
-              bid: 22.4,
-              ask: 22.6
-            },
-            ...
+          "by_time": {
+            "13:00": { "spot": 4700.3, "vix": 13.65, "quotes": {...} },
+            "14:00": { "spot": 4705.1, "vix": 13.58, "quotes": {...} }
           }
         }
       }
     }
+  data/diagonal_real_index.json — lists years + times available
 
-Missing days (no Polygon fetch yet) are skipped. Re-run after more data arrives.
+Size constraint: GitHub's hard per-file limit is 100 MB. Gzipping the JSON
+brings each year file down to ~50–60 MB with all 6 timestamps included.
 """
-import os
+from __future__ import annotations
+
 import json
+import gzip
+import os
 from pathlib import Path
+from datetime import datetime
 
 ROOT = Path(__file__).resolve().parent
 POLYGON_DIR = ROOT / 'data' / 'polygon'
+VIX_DIR = ROOT / 'data' / 'vix'
 BS_DATA = ROOT / 'data' / 'diagonal_bs_data.json'
-OUTPUT = ROOT / 'data' / 'diagonal_real_data.json'
+
+TIMES = ['13:00', '13:15', '13:30', '13:45', '14:00', '14:15']
+
+
+def vix_from_csv(date_iso: str, hhmm: str) -> float | None:
+    """Look up VIX close from data/vix/VIX_YYYYMMDD.csv at exact HH:MM timestamp.
+
+    Returns None if file missing or timestamp not found. Uses close (4th column).
+    """
+    csv_path = VIX_DIR / f'VIX_{date_iso.replace("-", "")}.csv'
+    if not csv_path.exists():
+        return None
+    target = f'{date_iso} {hhmm}:00,'
+    try:
+        with open(csv_path) as f:
+            f.readline()  # header
+            for line in f:
+                if line.startswith(target):
+                    # timestamp,open,high,low,close
+                    parts = line.rstrip('\n').split(',')
+                    if len(parts) >= 5:
+                        return float(parts[4])
+                    return None
+    except Exception:
+        return None
+    return None
+
+
+def snapshot_path(date_iso: str, hhmm: str) -> Path:
+    """File path for a given (date, timestamp) snapshot."""
+    if hhmm == '14:00':
+        return POLYGON_DIR / f'SPX_{date_iso.replace("-", "")}.json'
+    return POLYGON_DIR / f'SPX_{date_iso.replace("-", "")}_{hhmm.replace(":", "")}.json'
 
 
 def main():
-    # Load existing spot/VIX data
     bs = json.loads(BS_DATA.read_text())
 
-    merged = {'dates': [], 'by_date': {}, 'generated_at': None, 'source': 'polygon_advanced'}
+    # Discover all dates we have at least one snapshot for
+    by_year = {}   # year -> {dates, by_date}
+    dates_seen = set()
 
     for date_iso in bs['dates']:
         bs_entry = bs['by_date'].get(date_iso) or {}
-        poly_path = POLYGON_DIR / f'SPX_{date_iso.replace("-","")}.json'
+        by_time = {}
 
-        if not poly_path.exists():
-            continue  # skip days we haven't fetched yet
+        for hhmm in TIMES:
+            poly = snapshot_path(date_iso, hhmm)
+            if not poly.exists():
+                continue
+            try:
+                data = json.loads(poly.read_text())
+            except Exception:
+                continue
+            quotes = data.get('quotes') or {}
+            if not quotes:
+                continue
+            spot = data.get('spot')
+            if spot is None:
+                continue
 
-        poly = json.loads(poly_path.read_text())
+            # VIX: exact timestamp from 1-min CSV, fall back to legacy BS data
+            vix = vix_from_csv(date_iso, hhmm)
+            if vix is None:
+                if hhmm == '12:45':
+                    vix = bs_entry.get('vix_12') or bs_entry.get('vix_14')
+                else:
+                    vix = bs_entry.get('vix_14') or bs_entry.get('vix_12')
 
-        # Spot: prefer Polygon's recorded spot (consistent with target time)
-        spot = poly.get('spot')
-        target_time = poly.get('target_time_et', '14:00')
+            by_time[hhmm] = {
+                'spot': spot,
+                'vix': vix,
+                'quotes': quotes,
+            }
 
-        # VIX: pull from existing BS data at matching time slot
-        # target_time=14:00 → vix_14; target_time=12:45 → vix_12 (closest we have)
-        if target_time == '12:45':
-            vix = bs_entry.get('vix_12') or bs_entry.get('vix_14')
-        else:
-            vix = bs_entry.get('vix_14') or bs_entry.get('vix_12')
+        if not by_time:
+            continue
 
-        quotes = poly.get('quotes') or {}
-        if not quotes:
-            continue  # skip days with no usable quotes
-
-        merged['dates'].append(date_iso)
-        merged['by_date'][date_iso] = {
-            'spot': spot,
-            'vix': vix,
-            'target_time_et': target_time,
-            'quotes': quotes,
-        }
-
-    merged['dates'].sort()
-    from datetime import datetime
-    merged['generated_at'] = datetime.now().isoformat()
-
-    total_quotes = sum(len(d['quotes']) for d in merged['by_date'].values())
-
-    # Write split-by-year files (GitHub 100 MB limit per file)
-    # Filename pattern: data/diagonal_real_YYYY.json
-    # Also writes an index file listing the years, so browser knows what to fetch.
-    by_year = {}
-    for date in merged['dates']:
-        year = date[:4]
+        year = date_iso[:4]
         by_year.setdefault(year, {'dates': [], 'by_date': {}})
-        by_year[year]['dates'].append(date)
-        by_year[year]['by_date'][date] = merged['by_date'][date]
+        by_year[year]['dates'].append(date_iso)
+        by_year[year]['by_date'][date_iso] = {'by_time': by_time}
+        dates_seen.add(date_iso)
 
+    # Write one gzipped file per year
+    generated_at = datetime.now().isoformat()
     years_written = []
+    total_quotes = 0
     for year, data in sorted(by_year.items()):
-        path = ROOT / 'data' / f'diagonal_real_{year}.json'
+        data['dates'].sort()
         data['year'] = year
-        data['generated_at'] = merged['generated_at']
-        path.write_text(json.dumps(data, separators=(',', ':')))
-        size_mb = path.stat().st_size / 1024 / 1024
-        print(f'  {path.name}: {len(data["dates"])} dates, {sum(len(q["quotes"]) for q in data["by_date"].values())} quotes, {size_mb:.1f} MB')
+        data['times'] = TIMES
+        data['generated_at'] = generated_at
+        data['source'] = 'polygon_advanced_multi_time'
+
+        path = ROOT / 'data' / f'diagonal_real_{year}.json.gz'
+        raw = json.dumps(data, separators=(',', ':')).encode('utf-8')
+        with gzip.open(path, 'wb', compresslevel=9) as f:
+            f.write(raw)
+
+        gz_mb = path.stat().st_size / 1024 / 1024
+        uncompressed_mb = len(raw) / 1024 / 1024
+        day_quote_count = sum(
+            len(ts['quotes'])
+            for d in data['by_date'].values()
+            for ts in d['by_time'].values()
+        )
+        total_quotes += day_quote_count
+        print(f'  {path.name}: {len(data["dates"])} dates, {day_quote_count:,} quotes '
+              f'({uncompressed_mb:.1f} MB → {gz_mb:.1f} MB gz, '
+              f'compression {uncompressed_mb/gz_mb:.1f}x)')
         years_written.append(year)
 
-    # Index file so browser knows which years to fetch
+    # Write index
     index_path = ROOT / 'data' / 'diagonal_real_index.json'
     index_path.write_text(json.dumps({
         'years': years_written,
-        'source': 'polygon_advanced',
-        'generated_at': merged['generated_at'],
+        'times': TIMES,
+        'source': 'polygon_advanced_multi_time',
+        'encoding': 'gzip',
+        'generated_at': generated_at,
     }, separators=(',', ':')))
-    print(f'  diagonal_real_index.json: {years_written}')
+    print(f'  diagonal_real_index.json: years={years_written} times={TIMES}')
 
-    # Legacy single-file output kept for compatibility, but only written if <90 MB
-    legacy_size_check = sum((ROOT / 'data' / f'diagonal_real_{y}.json').stat().st_size for y in years_written) / 1024 / 1024
-    if legacy_size_check < 90:
-        OUTPUT.write_text(json.dumps(merged, separators=(',', ':')))
-        size_mb = OUTPUT.stat().st_size / 1024 / 1024
-        print(f'  {OUTPUT.name} (combined): {len(merged["dates"])} dates, {total_quotes} quotes, {size_mb:.1f} MB')
-    else:
-        if OUTPUT.exists():
-            OUTPUT.unlink()
-        print(f'  (skipped combined file: total {legacy_size_check:.1f} MB > 90 MB limit)')
+    # Delete legacy non-gz files so there's no ambiguity about what's authoritative
+    for year in years_written:
+        legacy = ROOT / 'data' / f'diagonal_real_{year}.json'
+        if legacy.exists():
+            legacy.unlink()
+            print(f'  removed legacy {legacy.name}')
+
+    legacy_single = ROOT / 'data' / 'diagonal_real_data.json'
+    if legacy_single.exists():
+        legacy_single.unlink()
+        print(f'  removed legacy {legacy_single.name}')
+
+    print(f'Done. {len(dates_seen)} dates, {total_quotes:,} total quotes.')
 
 
 if __name__ == '__main__':
