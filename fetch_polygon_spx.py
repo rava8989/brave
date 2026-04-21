@@ -48,7 +48,7 @@ _retry = Retry(
     status_forcelist=(429, 500, 502, 503, 504),
     raise_on_status=False,
 )
-_adapter = HTTPAdapter(pool_connections=16, pool_maxsize=32, max_retries=_retry)
+_adapter = HTTPAdapter(pool_connections=64, pool_maxsize=256, max_retries=_retry)
 SESSION = requests.Session()
 SESSION.mount('https://', _adapter)
 SESSION.mount('http://', _adapter)
@@ -260,9 +260,9 @@ def fetch_day(date_iso: str, spot: float, time_override: str | None = None) -> d
             }
         return None
 
-    # max_workers reduced 20→12 to relieve DNS/TCP contention when multiple
-    # --time processes run in parallel. Pairs with the SESSION adapter above.
-    with ThreadPoolExecutor(max_workers=12) as ex:
+    # max_workers=32 for Advanced plan solo runs (pool_maxsize=256 in adapter).
+    # Historical: 20→12 when multiple --time procs ran in parallel (DNS contention).
+    with ThreadPoolExecutor(max_workers=32) as ex:
         for result in ex.map(fetch_one, all_contracts.items()):
             if result:
                 ticker, data = result
@@ -366,7 +366,7 @@ def main():
 
     tag = f' @ {args.time} ET' if args.time else ' @ default time'
     print(f'Processing {len(entries)} trading days{tag} '
-          f'with 4 concurrent days × 12 concurrent quotes (pooled session + retries)...')
+          f'with 8 concurrent days × 32 concurrent quotes (pooled session + retries)...')
     t0 = time.time()
     total_quotes = 0
     completed = 0
@@ -381,7 +381,7 @@ def main():
         except Exception as e:
             return date_iso, spot, '', 0, str(e)
 
-    with ThreadPoolExecutor(max_workers=4) as ex:
+    with ThreadPoolExecutor(max_workers=8) as ex:
         futures = {ex.submit(process_one, item): item for item in entries}
         for fut in as_completed(futures):
             date_iso, spot, tt, n, err = fut.result()
