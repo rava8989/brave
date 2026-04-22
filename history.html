@@ -732,8 +732,11 @@ function computeStats(visibleRows) {
   const expectancy = (winPct/100 * avgWinner) + ((1-winPct/100) * avgLoser);
 
   // Max drawdown + Calmar
+  // maxDDPct is computed against the running peak at the time of the worst
+  // drawdown (classic equity-curve definition). No starting-equity baseline is
+  // assumed — this is peak-based %, not account-based %.
   const sorted = visibleRows.slice().sort((a,b) => a.date.localeCompare(b.date));
-  let cum = 0, peak = 0, maxDD = 0;
+  let cum = 0, peak = 0, maxDD = 0, peakAtMaxDD = 0;
   for (const row of sorted) {
     const s = row.signal || {};
     if (activeStrats.m8bf && s.m8bfRan && row.m8bfPL != null) cum += row.m8bfPL;
@@ -743,8 +746,9 @@ function computeStats(visibleRows) {
     if (activeStrats.diagonal && row.diagPL != null) cum += row.diagPL;
     if (cum > peak) peak = cum;
     const dd = peak - cum;
-    if (dd > maxDD) maxDD = dd;
+    if (dd > maxDD) { maxDD = dd; peakAtMaxDD = peak; }
   }
+  const maxDDPct = peakAtMaxDD > 0 ? (maxDD / peakAtMaxDD) * 100 : 0;
 
   // Calmar: annualized return / maxDD
   const tradingDays = sorted.length || 1;
@@ -771,7 +775,7 @@ function computeStats(visibleRows) {
   activeLossStreak = curLossStreak;
 
   return {
-    totalPL, maxDD, winPct, sharpe, sortino, profitFactor, totalTrades,
+    totalPL, maxDD, maxDDPct, winPct, sharpe, sortino, profitFactor, totalTrades,
     avgPerTrade, avgWinner, avgLoser, maxWinner, maxLoser, winners: wins.length,
     expectancy, calmar, maxWinStreak, maxLossStreak, activeWinStreak, activeLossStreak
   };
@@ -790,7 +794,7 @@ function fillStatsGrid(grid, stats) {
   const fmt = v => '$' + Math.round(v).toLocaleString();
   const cards = [
     { label:'P/L',            value: fmt(stats.totalPL),                  cls: stats.totalPL >= 0 ? 'card-green' : 'card-red' },
-    { label:'Max Drawdown',   value: fmt(stats.maxDD),                    cls: 'card-red' },
+    { label:'Max Drawdown',   value: `${fmt(stats.maxDD)} <span style="font-size:0.7em;opacity:.75;font-weight:500">(${stats.maxDDPct.toFixed(1)}% of peak)</span>`, cls: 'card-red' },
     { label:'Win %',          value: stats.winPct.toFixed(1) + '%',       cls: 'card-green' },
     { label:'Sharpe',         value: stats.sharpe.toFixed(2),             cls: '' },
     { label:'Sortino',        value: stats.sortino.toFixed(2),            cls: '' },
@@ -1630,17 +1634,18 @@ function updateAllocChart() {
   const variance = n > 0 ? weightedPLs.reduce((s,v) => s + (v - mean) ** 2, 0) / n : 0;
   const sharpe = variance > 0 ? mean / Math.sqrt(variance) : 0;
 
-  let peak = 0, maxDD = 0;
+  let peak = 0, maxDD = 0, peakAtMaxDD = 0;
   cum = 0;
   for (const pl of weightedPLs) {
     cum += pl;
     if (cum > peak) peak = cum;
     const dd = peak - cum;
-    if (dd > maxDD) maxDD = dd;
+    if (dd > maxDD) { maxDD = dd; peakAtMaxDD = peak; }
   }
+  const maxDDPct = peakAtMaxDD > 0 ? (maxDD / peakAtMaxDD) * 100 : 0;
 
   const statsEl = document.getElementById('allocStats');
-  statsEl.innerHTML = `P/L: <span>$${Math.round(totalPL).toLocaleString()}</span> | Sharpe: <span>${sharpe.toFixed(2)}</span> | MaxDD: <span>$${Math.round(maxDD).toLocaleString()}</span> | Weights: <span>${allocWeights.m8bf}/${allocWeights.strad}/${allocWeights.gxbf}/${allocWeights.bobf}/${allocWeights.diagonal}</span>`;
+  statsEl.innerHTML = `P/L: <span>$${Math.round(totalPL).toLocaleString()}</span> | Sharpe: <span>${sharpe.toFixed(2)}</span> | MaxDD: <span>$${Math.round(maxDD).toLocaleString()} (${maxDDPct.toFixed(1)}%)</span> | Weights: <span>${allocWeights.m8bf}/${allocWeights.strad}/${allocWeights.gxbf}/${allocWeights.bobf}/${allocWeights.diagonal}</span>`;
 
   const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
   const tickColor = isDark ? '#94a3b8' : '#475569';
@@ -1778,7 +1783,7 @@ function renderRisk() {
   }));
 
   // === DRAWDOWN ANALYSIS ===
-  let cum = 0, peak = 0, maxDD = 0;
+  let cum = 0, peak = 0, maxDD = 0, peakAtMaxDD = 0;
   let ddStart = null, ddStartDate = '', maxDDStart = '', maxDDEnd = '';
   let currentDDDays = 0, maxDDDays = 0;
   const drawdowns = []; // collect all drawdowns
@@ -1802,6 +1807,7 @@ function renderRisk() {
       const dd = peak - cum;
       if (dd > maxDD) {
         maxDD = dd;
+        peakAtMaxDD = peak;
         maxDDStart = thisDDStart;
         maxDDEnd = row.date;
         maxDDDays = currentDDDays;
@@ -1809,6 +1815,7 @@ function renderRisk() {
     }
   }
   if (inDD) drawdowns.push({ days: currentDDDays, depth: peak - cum, start: thisDDStart, end: sorted[sorted.length-1].date });
+  const maxDDPct = peakAtMaxDD > 0 ? (maxDD / peakAtMaxDD) * 100 : 0;
 
   const avgDDDays = drawdowns.length ? Math.round(drawdowns.reduce((s,d) => s + d.days, 0) / drawdowns.length) : 0;
   const top3DD = drawdowns.sort((a,b) => b.depth - a.depth).slice(0, 3);
@@ -1853,7 +1860,7 @@ function renderRisk() {
   // Drawdown analysis
   html += `<div class="risk-section">
     <div class="risk-section-title">Drawdown Analysis</div>
-    <div class="risk-row"><span class="risk-label">Max Drawdown</span><span class="risk-value red">$${Math.round(maxDD).toLocaleString()}</span></div>
+    <div class="risk-row"><span class="risk-label">Max Drawdown</span><span class="risk-value red">$${Math.round(maxDD).toLocaleString()} <span style="opacity:.75;font-weight:500">(${maxDDPct.toFixed(1)}% of peak)</span></span></div>
     <div class="risk-row"><span class="risk-label">Max DD Period</span><span class="risk-value">${maxDDStart} → ${maxDDEnd}</span></div>
     <div class="risk-row"><span class="risk-label">Max DD Duration</span><span class="risk-value">${maxDDDays} trading days</span></div>
     <div class="risk-row"><span class="risk-label">Avg DD Duration</span><span class="risk-value">${avgDDDays} trading days</span></div>
