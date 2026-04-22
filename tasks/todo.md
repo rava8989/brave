@@ -127,3 +127,67 @@ access token.
 ## Review
 
 _Filled in post-verify._
+
+---
+
+# Fix slow diagonal backtester page load (per-time bundle shard)
+
+## Root cause
+
+`diagonal.html` `loadData()` was fetching 7 half-year bundles on every page
+load — 329 MB gzipped / 3.1 GB decompressed / 35 M quote rows. Each bundle
+carried ALL 20 intraday snapshots (09:45 → 15:45), but only 2 are actually
+read per run (the entry + exit time the user selected). 18/20 = **90% of
+every download was wasted**. On a 50 Mbps connection the bundles alone took
+~55 s to download, plus 30–60 s of main-thread blocking for gunzip + JSON.parse.
+
+## Fix (per-(half, time) shard)
+
+New layout: each bundle holds ONE timestamp's snapshots for half of a year,
+so the browser can fetch only the two timestamps actually selected.
+
+- [x] Write `split_diagonal_bundles.py` — one-shot splitter that reads the 7
+      existing per-half all-times bundles and emits 7 × 20 = 140 per-(half,
+      time) bundles. Verified quote counts match (35,086,158 in → 35,086,158
+      out). No re-scrape needed.
+- [x] Rewrite `build_diagonal_real_data.py` to emit the new per-(half, time)
+      format going forward — future scrapes will produce the sharded layout
+      directly.
+- [x] Update `data/diagonal_real_index.json` to `format: per_time_v2` with
+      `halves[]`, `times[]`, and `file_template`.
+- [x] Rewrite `diagonal.html` `loadData()` — new fast path fetches only
+      `SELECTED_ENTRY_TIME` + `SELECTED_EXIT_TIME` across halves on first load
+      (14 files ≈ 32 MB gz instead of 329 MB). Legacy fallback retained.
+- [x] Add `fetchTimeAcrossHalves(time)` + `mergeBundle(bundle)` for
+      incremental loading into `REAL_DATA_MULTI.by_date[d].by_time[HHMM]`.
+      `LOADED_TIMES` Set tracks which timestamps are already cached in memory.
+- [x] Make `reflattenAndRerun` async: when the user changes the entry or exit
+      dropdown, if the new time hasn't been fetched yet, pull 7 half files for
+      it (button label → `LOADING TIME…`), merge, then reflatten + rerun.
+- [x] Update Python port `compute_diagonal_pnl.py` `load_bundles()` to read
+      the new format — `times` param defaults to entry+exit (14 files) but
+      accepts any subset. Legacy all-times-per-half fallback kept.
+- [x] Delete the 7 old `diagonal_real_YYYY_H{1,2}.json.gz` bundles (314 MB)
+      — replaced by 140 per-(half, time) files totaling 320 MB (same data).
+- [x] Verify end-to-end: `compute_diagonal_pnl.py` on new data layout
+      produces **541 trades / +$181,427 / 63.4% WR / 100% REAL NBBO** —
+      byte-identical to baseline.
+
+## Review
+
+- **Initial load size dropped 10×**: 329 MB → 32 MB. Time savings are
+  network-bound — ~6 s on 50 Mbps vs ~55 s on the old layout.
+- **Per-file size small enough to stay comfortably under V8's 512 MB max
+  string length**: ~20 MB decompressed each (was ~400 MB per half-year
+  bundle). No risk of silent JSON.parse failures.
+- **Total bytes on disk barely changed**: 314 MB → 320 MB (~2% growth from
+  per-file gzip dictionary overhead). Acceptable tradeoff for the 10× load
+  speedup.
+- **Python port load speedup verified**: 2-times (14 files) load = **3.6 s**;
+  all-20-times (140 files) load = **256 s**. The default path is ~70× faster.
+- **P/L baseline preserved exactly**: post-shard port ran 541 trades /
+  $181,427 — identical to the pre-shard baseline. No behavior change.
+- **Time-selector changes now lazy-load**: changing entry or exit time in the
+  UI fetches the new timestamp's 7 half files (~16 MB) only if not already
+  cached. Button label shows `LOADING TIME…` during the fetch.
+

@@ -1,5 +1,33 @@
 # Lessons Learned
 
+## Shard data along the axis the consumer actually queries (2026-04-22)
+
+Diagonal backtester bundles were laid out per-half-year with ALL 20 intraday
+timestamps in each file. Result: every page load downloaded 329 MB gz /
+3.1 GB decompressed, even though the backtester only reads 2 of the 20
+timestamps (entry_time + exit_time). 90% of the payload was wasted on every
+single run. Dataset was sharded along the wrong axis — by time period (which
+the consumer does want all of) instead of by timestamp (which the consumer
+only needs 2 of).
+
+**Fix:** shard by BOTH axes. Per-(half-year, time) gives 7 × 20 = 140 small
+files, ~2.4 MB gz each. Initial load fetches 7 halves × 2 times = 14 files
+≈ 32 MB. Time-selector changes lazy-load 7 more files each. 10× reduction in
+initial load size. Python port sees ~70× speedup on the default-times path
+(3.6 s vs 256 s).
+
+**Pattern to catch:** when a multi-axis dataset is bundled along only one
+axis and the consumer filters heavily on another, bundle along both. The
+guiding question isn't "how big should each file be" but "which slice is the
+smallest unit the consumer ever reads?" — that's the natural shard granularity.
+Lazy-loading additional slices on demand costs nothing if it's rare.
+
+**Co-benefit:** smaller per-file decompressed size (~20 MB) sits far under
+V8's 512 MB string limit, eliminating another class of silent-parse-failure
+risk.
+
+---
+
 ## When porting a filter that uses a percentile boundary, pipe through the EXACT same source data, not "similar enough" data (2026-04-22)
 
 The JS diagonal backtester computes VIX_MID (50–80% percentile vs prior 20 days)

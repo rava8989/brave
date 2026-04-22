@@ -1,45 +1,46 @@
 """
-Merge per-day Polygon quote files (all 6 intraday timestamps) + VIX 1-min bars
-into one gzipped JSON per year that the diagonal.html backtester consumes.
+Merge per-day Polygon quote files (all 20 intraday timestamps) + VIX 1-min bars
+into per-(half-year, time) gzipped JSON files that the diagonal.html
+backtester consumes. Each file carries ONE timestamp's snapshot for half of a
+year, so the browser can load only the two times the user selected (entry +
+exit) instead of all 20.
 
 Input:
   data/polygon/SPX_YYYYMMDD.json       — 14:00 default snapshot
-  data/polygon/SPX_YYYYMMDD_HHMM.json  — intraday (13:00, 13:15, 13:30, 13:45, 14:15)
+  data/polygon/SPX_YYYYMMDD_HHMM.json  — intraday (other 19 timestamps)
   data/vix/VIX_YYYYMMDD.csv            — 1-min VIX bars (for exact-timestamp lookup)
-  data/diagonal_bs_data.json           — legacy spot/VIX snapshots (fallback)
+  data/diagonal_bs_data.json           — legacy VIX snapshots (fallback)
 
 Output:
-  data/diagonal_real_YYYY_H1.json.gz (Jan–Jun) and
-  data/diagonal_real_YYYY_H2.json.gz (Jul–Dec) — gzipped per-half-year data:
+  data/diagonal_real_YYYY_H{1,2}_t{HHMM}.json.gz — 7 halves × 20 times = 140 files
     {
-      "year": "2024",
-      "half": "H1",
-      "dates": [...],
-      "times": ["13:00","13:15","13:30","13:45","14:00","14:15"],
+      "year": "2024", "half": "H1", "time": "14:00",
+      "dates": ["2024-01-02", ...],
       "by_date": {
-        "YYYY-MM-DD": {
-          "by_time": {
-            "13:00": { "spot": 4700.3, "vix": 13.65, "quotes": {...} },
-            "14:00": { "spot": 4705.1, "vix": 13.58, "quotes": {...} }
-          }
-        }
+        "2024-01-02": { "spot": 4739.34, "vix": 13.22, "quotes": {...} }
       }
     }
-  data/diagonal_real_index.json — lists files + times available:
-    { "files": ["diagonal_real_2023_H1.json.gz", ...], "times": [...] }
+  data/diagonal_real_index.json — format, halves, times, file template:
+    {
+      "format": "per_time_v2",
+      "halves": ["2023_H1", "2023_H2", ...],
+      "times": ["09:45", "10:00", ..., "15:45"],
+      "file_template": "diagonal_real_{half}_t{time_compact}.json.gz"
+    }
 
-Size constraints:
-  • GitHub's hard per-file limit is 100 MB.
-  • V8's max string length is ~512 MB (UTF-16 chars). Decompressed per-year JSON
-    with 20 timestamps hits ~820 MB, which silently fails `JSON.parse(text)` in
-    the browser. Splitting per half-year keeps each chunk ~400 MB decompressed,
-    well under the limit, and each gz stays ~40–45 MB (far under GitHub's cap).
+Why per-(half, time) sharding:
+  • Old layout (per-half, all 20 times in one file) made the browser download
+    ~329 MB gz / 3.1 GB decompressed on every page load, even though only two
+    timestamps (entry + exit) are actually read. Load times were 60+ seconds.
+  • New layout: initial load fetches 7 halves × 2 times = 14 files ≈ 32 MB gz.
+    Changing the time selector lazy-loads 7 more files on demand (~17 MB).
+  • Per-file size: ~2.4 MB gz / ~20 MB decompressed. Well under GitHub's 100 MB
+    per-file limit and V8's ~512 MB max string length.
 """
 from __future__ import annotations
 
 import json
 import gzip
-import os
 from pathlib import Path
 from datetime import datetime
 
@@ -47,6 +48,7 @@ ROOT = Path(__file__).resolve().parent
 POLYGON_DIR = ROOT / 'data' / 'polygon'
 VIX_DIR = ROOT / 'data' / 'vix'
 BS_DATA = ROOT / 'data' / 'diagonal_bs_data.json'
+DATA_DIR = ROOT / 'data'
 
 TIMES = ['09:45', '10:00', '11:30', '11:45',
          '12:00', '12:15', '12:30', '12:45',
@@ -95,15 +97,16 @@ def half_of(date_iso: str) -> str:
 def main():
     bs = json.loads(BS_DATA.read_text())
 
-    # Discover all dates we have at least one snapshot for.
-    # Group by (year, half) so decompressed per-chunk JSON stays under V8's
-    # ~512 MB max string length (which 20-timestamp per-year files blew past).
-    by_half = {}   # (year, half) -> {dates, by_date}
-    dates_seen = set()
+    # Bucket snapshots by (year, half, time) → list of (date, payload) records
+    # payload = {spot, vix, quotes}
+    # After assembly we write one gz file per (year, half, time).
+    buckets: dict[tuple[str, str, str], dict] = {}
+    dates_seen: set[str] = set()
 
     for date_iso in bs['dates']:
         bs_entry = bs['by_date'].get(date_iso) or {}
-        by_time = {}
+        year = date_iso[:4]
+        half = half_of(date_iso)
 
         for hhmm in TIMES:
             poly = snapshot_path(date_iso, hhmm)
@@ -120,7 +123,6 @@ def main():
             if spot is None:
                 continue
 
-            # VIX: exact timestamp from 1-min CSV, fall back to legacy BS data
             vix = vix_from_csv(date_iso, hhmm)
             if vix is None:
                 if hhmm == '12:45':
@@ -128,80 +130,85 @@ def main():
                 else:
                     vix = bs_entry.get('vix_14') or bs_entry.get('vix_12')
 
-            by_time[hhmm] = {
+            key = (year, half, hhmm)
+            buckets.setdefault(key, {'dates': [], 'by_date': {}})
+            buckets[key]['dates'].append(date_iso)
+            buckets[key]['by_date'][date_iso] = {
                 'spot': spot,
                 'vix': vix,
                 'quotes': quotes,
             }
+            dates_seen.add(date_iso)
 
-        if not by_time:
-            continue
-
-        year = date_iso[:4]
-        half = half_of(date_iso)
-        key = (year, half)
-        by_half.setdefault(key, {'dates': [], 'by_date': {}})
-        by_half[key]['dates'].append(date_iso)
-        by_half[key]['by_date'][date_iso] = {'by_time': by_time}
-        dates_seen.add(date_iso)
-
-    # Write one gzipped file per (year, half)
+    # Write one gzipped file per (year, half, time)
     generated_at = datetime.now().isoformat()
-    files_written = []
+    halves_seen: list[str] = []
+    times_seen: set[str] = set()
+    files_written = 0
     total_quotes = 0
-    for (year, half), data in sorted(by_half.items()):
-        data['dates'].sort()
-        data['year'] = year
-        data['half'] = half
-        data['times'] = TIMES
-        data['generated_at'] = generated_at
-        data['source'] = 'polygon_advanced_multi_time'
+    total_gz_bytes = 0
 
-        filename = f'diagonal_real_{year}_{half}.json.gz'
-        path = ROOT / 'data' / filename
-        raw = json.dumps(data, separators=(',', ':')).encode('utf-8')
+    for (year, half, hhmm), payload in sorted(buckets.items()):
+        half_key = f'{year}_{half}'
+        if half_key not in halves_seen:
+            halves_seen.append(half_key)
+        times_seen.add(hhmm)
+
+        payload['dates'].sort()
+        payload['year'] = year
+        payload['half'] = half
+        payload['time'] = hhmm
+        payload['generated_at'] = generated_at
+        payload['source'] = 'polygon_advanced_multi_time'
+
+        time_compact = hhmm.replace(':', '')
+        filename = f'diagonal_real_{half_key}_t{time_compact}.json.gz'
+        path = DATA_DIR / filename
+        raw = json.dumps(payload, separators=(',', ':')).encode('utf-8')
         with gzip.open(path, 'wb', compresslevel=9) as f:
             f.write(raw)
 
-        gz_mb = path.stat().st_size / 1024 / 1024
-        uncompressed_mb = len(raw) / 1024 / 1024
-        day_quote_count = sum(
-            len(ts['quotes'])
-            for d in data['by_date'].values()
-            for ts in d['by_time'].values()
-        )
-        total_quotes += day_quote_count
-        print(f'  {filename}: {len(data["dates"])} dates, {day_quote_count:,} quotes '
-              f'({uncompressed_mb:.1f} MB → {gz_mb:.1f} MB gz, '
-              f'compression {uncompressed_mb/gz_mb:.1f}x)')
-        files_written.append(filename)
+        gz_bytes = path.stat().st_size
+        total_gz_bytes += gz_bytes
+        q = sum(len(v['quotes']) for v in payload['by_date'].values())
+        total_quotes += q
+        files_written += 1
+        if files_written % 20 == 0 or files_written <= 3:
+            print(f'  [{files_written}] {filename}: '
+                  f'{len(payload["dates"])} dates, {q:,} quotes, '
+                  f'{gz_bytes/1024/1024:.2f} MB gz')
 
-    # Write index — list actual filenames so the browser doesn't need to know
-    # anything about the halving scheme.
-    index_path = ROOT / 'data' / 'diagonal_real_index.json'
+    # Write index — halves + times + template so the browser can derive the
+    # per-file URLs without listing all 140 filenames.
+    times_sorted = sorted(times_seen)
+    index_path = DATA_DIR / 'diagonal_real_index.json'
     index_path.write_text(json.dumps({
-        'files': files_written,
-        'times': TIMES,
+        'format': 'per_time_v2',
+        'halves': halves_seen,
+        'times': times_sorted,
+        'file_template': 'diagonal_real_{half}_t{time_compact}.json.gz',
         'source': 'polygon_advanced_multi_time',
         'encoding': 'gzip',
         'generated_at': generated_at,
     }, separators=(',', ':')))
-    print(f'  diagonal_real_index.json: {len(files_written)} files, times={TIMES}')
 
-    # Delete legacy per-year and non-gz files so there's no ambiguity about
-    # what's authoritative. Covers old whole-year output from previous runs.
-    data_dir = ROOT / 'data'
-    for legacy in list(data_dir.glob('diagonal_real_[0-9][0-9][0-9][0-9].json')) + \
-                  list(data_dir.glob('diagonal_real_[0-9][0-9][0-9][0-9].json.gz')):
+    # Remove legacy all-times-per-half and per-year files.
+    for legacy in (
+        list(DATA_DIR.glob('diagonal_real_[0-9][0-9][0-9][0-9].json')) +
+        list(DATA_DIR.glob('diagonal_real_[0-9][0-9][0-9][0-9].json.gz')) +
+        list(DATA_DIR.glob('diagonal_real_[0-9][0-9][0-9][0-9]_H[12].json.gz'))
+    ):
         legacy.unlink()
         print(f'  removed legacy {legacy.name}')
 
-    legacy_single = data_dir / 'diagonal_real_data.json'
+    legacy_single = DATA_DIR / 'diagonal_real_data.json'
     if legacy_single.exists():
         legacy_single.unlink()
         print(f'  removed legacy {legacy_single.name}')
 
-    print(f'Done. {len(dates_seen)} dates, {total_quotes:,} total quotes.')
+    print(f'\nWrote {files_written} files, {total_gz_bytes/1024/1024:.1f} MB gz total')
+    print(f'{len(halves_seen)} halves × {len(times_sorted)} times')
+    print(f'{len(dates_seen)} dates, {total_quotes:,} total quotes')
 
 
 if __name__ == '__main__':

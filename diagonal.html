@@ -1116,6 +1116,8 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 let DIAGONAL_DATA = null;
 let REAL_DATA = null;           // flattened view for currently-selected (entry, exit) time pair
 let REAL_DATA_MULTI = null;     // raw multi-time dataset: {dates, by_date[d].by_time[HHMM]}
+let REAL_INDEX = null;          // loaded diagonal_real_index.json — has halves[], times[], file_template
+let LOADED_TIMES = new Set();   // which HH:MM buckets have been fetched+merged into REAL_DATA_MULTI
 let HALFDAY_CLOSE = {};         // {date: spx_close} for half-day sessions missing from REAL_DATA
                                 // (e.g. day-before-July-4, day-after-Thanksgiving, Christmas Eve).
                                 // Used for exact intrinsic settlement when a short leg expires on
@@ -1168,52 +1170,125 @@ function flattenRealData(multi, entryTime, exitTime) {
   return flat;
 }
 
+// Merge a per-(half, time) bundle into REAL_DATA_MULTI.by_date[d].by_time[time].
+// Creates per-date record / by_time dict if absent. Never overwrites an already
+// present (date, time) — bundles are sharded so collisions only happen on
+// accidental double-load, in which case skipping is the safe thing.
+function mergeBundle(bundle) {
+  if (!bundle || !bundle.by_date || !bundle.time) return 0;
+  if (!REAL_DATA_MULTI) {
+    REAL_DATA_MULTI = { dates: [], by_date: {}, times: [] };
+  }
+  const t = bundle.time;
+  if (!REAL_DATA_MULTI.times.includes(t)) REAL_DATA_MULTI.times.push(t);
+  let added = 0;
+  for (const d of bundle.dates || []) {
+    const snap = bundle.by_date[d];
+    if (!snap) continue;
+    if (!REAL_DATA_MULTI.by_date[d]) {
+      REAL_DATA_MULTI.by_date[d] = { by_time: {} };
+      REAL_DATA_MULTI.dates.push(d);
+    }
+    const bt = REAL_DATA_MULTI.by_date[d].by_time;
+    if (!bt[t]) {
+      bt[t] = snap;   // snap already has {spot, vix, quotes}
+      added++;
+    }
+  }
+  return added;
+}
+
+// Fetch every half for a given time (7 files per time). Uses REAL_INDEX's
+// halves + file_template. Parallelized; failures on a single half are isolated.
+async function fetchTimeAcrossHalves(time) {
+  if (!REAL_INDEX) return 0;
+  if (LOADED_TIMES.has(time)) return 0;
+  const halves = REAL_INDEX.halves || [];
+  const tmpl = REAL_INDEX.file_template || 'diagonal_real_{half}_t{time_compact}.json.gz';
+  const timeCompact = time.replace(':', '');
+  const urls = halves.map(h =>
+    './data/' + tmpl
+      .replace('{half}', h)
+      .replace('{time_compact}', timeCompact)
+      .replace('{time}', time)
+  );
+  const t0 = performance.now();
+  const bundles = await Promise.all(
+    urls.map((u, i) =>
+      fetchGzJson(u).catch(err => {
+        console.warn(`[diagonal] failed to load ${urls[i]}:`, err.message);
+        return null;
+      })
+    )
+  );
+  let added = 0, ok = 0;
+  for (const b of bundles) {
+    if (b) { added += mergeBundle(b); ok++; }
+  }
+  if (ok) LOADED_TIMES.add(time);
+  // Keep dates sorted + deduped so flattenRealData's iteration is deterministic.
+  if (REAL_DATA_MULTI) {
+    REAL_DATA_MULTI.dates = Array.from(new Set(REAL_DATA_MULTI.dates)).sort();
+  }
+  const ms = Math.round(performance.now() - t0);
+  console.log(`[diagonal] fetched time=${time}: ${ok}/${halves.length} halves, +${added} date-slots in ${ms} ms`);
+  return added;
+}
+
 async function loadData() {
-  // Real data: one gzipped JSON per half-year (2024_H1, 2024_H2, …), each
-  // keyed by date → by_time → HH:MM. Per-year files got too large: with 20
-  // timestamps the decompressed JSON hit ~820 MB, past V8's ~512 MB max string
-  // length, so `JSON.parse(text)` silently failed. Half-year chunks decompress
-  // to ~400 MB — comfortably under the limit.
+  // Real data layout (per_time_v2): one gzipped JSON per (half-year, time).
+  // 7 halves × 20 times = 140 small files (~2.4 MB gz each). Initial load
+  // fetches only the 2 times the user has selected (entry + exit) across all
+  // halves = 14 files ≈ 32 MB gz. Time-selector changes lazy-load additional
+  // times on demand.
   //
-  // The index lists actual filenames (idx.files); we fetch them in parallel
-  // and merge. Each chunk failure is isolated so one bad file doesn't break
-  // the whole dataset. Backward-compat: if the old `idx.years` format is
-  // still in place, fall back to per-year filenames.
+  // The old layout (all 20 times in one per-half file, 7 × ~47 MB gz) forced
+  // 329 MB of downloads on every page load even though 90% of the payload
+  // (18/20 timestamps) was never read.
   try {
     // No cache-buster: `cache: 'no-cache'` triggers a conditional GET, so the
-    // browser sees a 304 when the file hasn't changed and reuses its local copy
-    // (saves ~290 MB per reload). A real file change flips the ETag and the
-    // full body downloads automatically.
+    // browser sees 304s on unchanged files and reuses local copies.
     const idxResp = await fetch('./data/diagonal_real_index.json', { cache: 'no-cache' });
     if (idxResp.ok) {
-      const idx = await idxResp.json();
-      const files = idx.files?.length
-        ? idx.files
-        : (idx.years || []).map(y => `diagonal_real_${y}.json.gz`);
-      if (files.length) {
-        const chunks = await Promise.all(
-          files.map(fname =>
-            fetchGzJson(`./data/${fname}`)
-              .catch(err => {
+      REAL_INDEX = await idxResp.json();
+      // New per_time_v2 format — fetch only the two needed timestamps
+      if (REAL_INDEX.format === 'per_time_v2' && REAL_INDEX.halves?.length) {
+        // Dedupe in case entry === exit
+        const needed = Array.from(new Set([SELECTED_ENTRY_TIME, SELECTED_EXIT_TIME]));
+        await Promise.all(needed.map(t => fetchTimeAcrossHalves(t)));
+        if (REAL_DATA_MULTI && REAL_DATA_MULTI.dates.length) {
+          REAL_DATA = flattenRealData(REAL_DATA_MULTI, SELECTED_ENTRY_TIME, SELECTED_EXIT_TIME);
+          console.log(`[diagonal] REAL data loaded: ${REAL_DATA_MULTI.dates.length} dates × ${REAL_DATA_MULTI.times.length} loaded timestamps, flattened to ${REAL_DATA.dates.length} dates at entry=${SELECTED_ENTRY_TIME} / exit=${SELECTED_EXIT_TIME}`);
+        }
+      } else {
+        // Legacy fallback: old index with all-times-per-half files
+        const files = REAL_INDEX.files?.length
+          ? REAL_INDEX.files
+          : (REAL_INDEX.years || []).map(y => `diagonal_real_${y}.json.gz`);
+        if (files.length) {
+          const chunks = await Promise.all(
+            files.map(fname =>
+              fetchGzJson(`./data/${fname}`).catch(err => {
                 console.warn(`[diagonal] failed to load ${fname}:`, err.message);
                 return null;
               })
-          )
-        );
-        const merged = { dates: [], by_date: {}, times: idx.times || ['14:00'] };
-        let loadedCount = 0;
-        for (const c of chunks) {
-          if (c?.dates && c?.by_date) {
-            merged.dates.push(...c.dates);
-            Object.assign(merged.by_date, c.by_date);
-            loadedCount++;
+            )
+          );
+          const merged = { dates: [], by_date: {}, times: REAL_INDEX.times || ['14:00'] };
+          let loadedCount = 0;
+          for (const c of chunks) {
+            if (c?.dates && c?.by_date) {
+              merged.dates.push(...c.dates);
+              Object.assign(merged.by_date, c.by_date);
+              loadedCount++;
+            }
           }
-        }
-        merged.dates.sort();
-        if (merged.dates.length) {
-          REAL_DATA_MULTI = merged;
-          REAL_DATA = flattenRealData(merged, SELECTED_ENTRY_TIME, SELECTED_EXIT_TIME);
-          console.log(`[diagonal] REAL data loaded: ${loadedCount}/${files.length} chunks, ${merged.dates.length} dates × ${merged.times.length} timestamps, flattened to ${REAL_DATA.dates.length} dates at entry=${SELECTED_ENTRY_TIME} / exit=${SELECTED_EXIT_TIME}`);
+          merged.dates.sort();
+          if (merged.dates.length) {
+            REAL_DATA_MULTI = merged;
+            REAL_DATA = flattenRealData(merged, SELECTED_ENTRY_TIME, SELECTED_EXIT_TIME);
+            console.log(`[diagonal] REAL data loaded (legacy): ${loadedCount}/${files.length} chunks, ${merged.dates.length} dates × ${merged.times.length} timestamps`);
+          }
         }
       }
     }
@@ -2249,9 +2324,27 @@ async function doRun() {
 document.getElementById('runBtn').addEventListener('click', doRun);
 
 // Entry and exit time dropdowns are INDEPENDENT — user can open at 13:00 and close
-// at 14:15 the next day, or any combination of the 6 available snapshots. Each
-// change re-flattens REAL_DATA against both times and re-runs the backtest.
-function reflattenAndRerun(reason) {
+// at 14:15 the next day, or any combination of the 20 available snapshots. Each
+// change lazy-loads the new timestamp's per-half bundles (if not already cached),
+// then re-flattens REAL_DATA against both times and re-runs the backtest.
+async function reflattenAndRerun(reason) {
+  // If the newly selected time hasn't been fetched yet, pull it in before
+  // reflattening. This covers BOTH entryTime and exitTime changes — whichever
+  // times are currently selected but not yet in LOADED_TIMES get fetched.
+  if (REAL_INDEX?.format === 'per_time_v2') {
+    const missing = [SELECTED_ENTRY_TIME, SELECTED_EXIT_TIME]
+      .filter(t => t && !LOADED_TIMES.has(t));
+    if (missing.length) {
+      const btn = document.getElementById('runBtn');
+      const prevLabel = btn?.textContent;
+      if (btn) { btn.disabled = true; btn.textContent = 'LOADING TIME…'; }
+      try {
+        await Promise.all(Array.from(new Set(missing)).map(t => fetchTimeAcrossHalves(t)));
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = prevLabel || 'RUN BACKTEST'; }
+      }
+    }
+  }
   if (REAL_DATA_MULTI) {
     REAL_DATA = flattenRealData(REAL_DATA_MULTI, SELECTED_ENTRY_TIME, SELECTED_EXIT_TIME);
     const n = REAL_DATA?.dates?.length || 0;
