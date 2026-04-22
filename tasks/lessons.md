@@ -1,5 +1,31 @@
 # Lessons Learned
 
+## Expired legs need intrinsic settlement, not Black-Scholes (2026-04-21)
+
+Diagonal backtester had 11/815 trades (1.3%) falling back to BS on exit because
+the short leg ticker was missing from next-day quotes. The cause was NOT a data
+gap — the short had **already expired and settled** before the exit time. A
+1DTE short entered Friday expires Monday; when closeDate rolls to Tuesday (or
+Wednesday over a holiday), the Monday-expired ticker is gone. Polygon correctly
+stops listing expired contracts.
+
+**Fix:** for an expired leg, use `max(strike - SPX_close_on_exp_date, 0)` as
+the exit value. This is mathematically EXACT (SPXW is PM-settled at SPX close),
+not an approximation — strictly better than BS.
+
+**Data gap:** half-day sessions (day before July 4, day after Thanksgiving,
+Christmas Eve — 8 dates in 2023-2025) are missing from the per-time snapshot
+dataset because quotes were only scraped at bucket times 09:45–15:45 and the
+half-day market closes at 13:00. Added `data/spx_halfday_close.json` as a
+lightweight supplement to cover intrinsic settlement on those dates.
+
+**Pattern to watch:** whenever option pricing uses BS as a fallback for
+"missing exit quote," first check: **did the leg expire?** If so, intrinsic
+settlement is exact, not a fallback. BS should only cover the alive-but-bad-
+quote case.
+
+---
+
 ## UI time selectors must propagate to every pricing/display call site (2026-04-21)
 
 The diagonal backtester had an `entryTime` / `exitTime` selector (09:45…15:45).

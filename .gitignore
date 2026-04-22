@@ -34,6 +34,11 @@ polygon.env
 # Allow the precomputed diagonal backtester datasets (browser fetches them)
 !data/diagonal_bs_data.json
 !data/diagonal_real_index.json
+# Half-day SPX closes (8 dates in 2023-2025 — day before July 4th, day after
+# Thanksgiving, Christmas Eve). Used for exact intrinsic settlement when a
+# diagonal's short leg expires on one of these days and closeDate rolls
+# across a holiday (so the short ticker is gone from next-day quotes).
+!data/spx_halfday_close.json
 # Multi-timestamp per-half-year files are gzipped (each ~40 MB, well under
 # GitHub's 100 MB cap; split in half so decompressed JSON stays under V8's
 # ~512 MB max string length).

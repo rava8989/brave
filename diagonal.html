@@ -1099,6 +1099,10 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 let DIAGONAL_DATA = null;
 let REAL_DATA = null;           // flattened view for currently-selected (entry, exit) time pair
 let REAL_DATA_MULTI = null;     // raw multi-time dataset: {dates, by_date[d].by_time[HHMM]}
+let HALFDAY_CLOSE = {};         // {date: spx_close} for half-day sessions missing from REAL_DATA
+                                // (e.g. day-before-July-4, day-after-Thanksgiving, Christmas Eve).
+                                // Used for exact intrinsic settlement when a short leg expires on
+                                // one of these days and the closeDate is the next trading day.
 // Initial state comes from the DOM dropdowns so the JS can't drift from the
 // selected option (e.g. HTML default changes to 09:45 but JS still reads 14:00,
 // causing spot/vix to be pulled from the wrong time bucket on first run).
@@ -1198,6 +1202,19 @@ async function loadData() {
     }
   } catch (e) {
     console.warn('[diagonal] real data not available:', e.message);
+  }
+
+  // Half-day closes (early-close trading days missing from the per-time snapshot
+  // dataset). Used to price expired shorts exactly when their expiration falls
+  // on a half-day and closeDate is the next full trading day.
+  try {
+    const hdResp = await fetch('./data/spx_halfday_close.json', { cache: 'no-cache' });
+    if (hdResp.ok) {
+      HALFDAY_CLOSE = await hdResp.json() || {};
+      console.log(`[diagonal] half-day closes loaded: ${Object.keys(HALFDAY_CLOSE).length} dates`);
+    }
+  } catch (e) {
+    console.warn('[diagonal] half-day closes not available:', e.message);
   }
 
   // Always load B-S data for spot/VIX reference + fallback pricing
@@ -1812,17 +1829,40 @@ function runBacktestBS(data, params) {
       diagOpen = longMidIn - shortMidIn;
     }
 
-    // EXIT: use real mid if both legs have sane quotes on closeDate, else B-S
-    if (quoteOk(sExit) && quoteOk(lExit)) {
-      const shortMid = (sExit.bid + sExit.ask) / 2;
-      const longMid  = (lExit.bid + lExit.ask) / 2;
-      diagClose = longMid - shortMid;
-      exitSource = 'REAL';
-    } else {
-      const shortMidOut = bsPut(spotExit, shortStrikeUsed, T_short_exit, ivExit, r);
-      const longMidOut  = bsPut(spotExit, longStrikeUsed,  T_long_exit,  ivExit, r);
-      diagClose = longMidOut - shortMidOut;
-    }
+    // EXIT: price each leg independently. Preference order:
+    //   1. REAL quote at exit time (bid/ask passes quoteOk)
+    //   2. INTRINSIC settlement — when a leg expired strictly before closeDate
+    //      (e.g. Fri→Tue roll across Mon holiday: Mon-exp short already settled).
+    //      This is mathematically EXACT (SPXW is PM-settled at SPX close), not an
+    //      approximation — strictly more accurate than B-S for expired legs.
+    //   3. B-S — last resort (leg still alive but quote is garbage)
+    const spxCloseOn = (date) => {
+      // 1. Half-day sessions (July 3rd eve, day after Thanksgiving, Christmas Eve)
+      //    are not in REAL_DATA_MULTI — use the pre-extracted half-day close file.
+      if (HALFDAY_CLOSE[date] != null) return HALFDAY_CLOSE[date];
+      // 2. Full trading days: use last available bucket as close proxy (15:45 is
+      //    15 min before 16:00 SPXW PM settlement; close enough for intrinsic).
+      const bt = REAL_DATA_MULTI?.by_date?.[date]?.by_time;
+      if (!bt) return null;
+      for (const t of ['15:45','15:30','15:15','15:00','14:45','14:30','14:15','14:00']) {
+        if (bt[t]?.spot != null) return bt[t].spot;
+      }
+      return null;
+    };
+    const legExitPrice = (quote, strike, expDate, T, bsSpot, bsIV) => {
+      if (quoteOk(quote)) return { mid: (quote.bid + quote.ask) / 2, real: true };
+      if (expDate < closeDate) {
+        const spxAtExp = spxCloseOn(expDate);
+        if (spxAtExp != null) {
+          return { mid: Math.max(strike - spxAtExp, 0), real: true };
+        }
+      }
+      return { mid: bsPut(bsSpot, strike, T, bsIV, r), real: false };
+    };
+    const sExitRes = legExitPrice(sExit, shortStrikeUsed, shortExp.date, T_short_exit, spotExit, ivExit);
+    const lExitRes = legExitPrice(lExit, longStrikeUsed,  longExp.date,  T_long_exit,  spotExit, ivExit);
+    diagClose = lExitRes.mid - sExitRes.mid;
+    if (sExitRes.real && lExitRes.real) exitSource = 'REAL';
 
     // Combined source label: REAL (both), BS (neither), REAL/BS (entry real, exit BS), BS/REAL (entry BS, exit real)
     const priceSource = entrySource === exitSource ? entrySource : `${entrySource}/${exitSource}`;
