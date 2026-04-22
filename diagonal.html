@@ -1099,8 +1099,11 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 let DIAGONAL_DATA = null;
 let REAL_DATA = null;           // flattened view for currently-selected (entry, exit) time pair
 let REAL_DATA_MULTI = null;     // raw multi-time dataset: {dates, by_date[d].by_time[HHMM]}
-let SELECTED_ENTRY_TIME = '14:00';
-let SELECTED_EXIT_TIME  = '14:00';
+// Initial state comes from the DOM dropdowns so the JS can't drift from the
+// selected option (e.g. HTML default changes to 09:45 but JS still reads 14:00,
+// causing spot/vix to be pulled from the wrong time bucket on first run).
+let SELECTED_ENTRY_TIME = document.getElementById('entryTime')?.value || '14:00';
+let SELECTED_EXIT_TIME  = document.getElementById('exitTime')?.value  || '14:00';
 
 async function fetchGzJson(url) {
   // Fetch a gzipped JSON file and decompress via native DecompressionStream.
@@ -1128,11 +1131,15 @@ function flattenRealData(multi, entryTime, exitTime) {
     flat.dates.push(d);
     flat.by_date[d] = {
       // Entry side — used when this date is the openDate of a trade
-      spot:   tsEntry?.spot ?? tsExit?.spot ?? null,
-      vix:    tsEntry?.vix  ?? tsExit?.vix  ?? null,
+      spot:   tsEntry?.spot ?? null,
+      vix:    tsEntry?.vix  ?? null,
       quotes: tsEntry?.quotes ?? null,
       target_time_et: entryTime,
       // Exit side — used when this date is the closeDate of a trade
+      // Carry exit-time spot/vix too so the backtester can price at the
+      // user-selected exit time (not hardcoded 14:00).
+      spot_exit:   tsExit?.spot   ?? null,
+      vix_exit:    tsExit?.vix    ?? null,
       quotes_exit: tsExit?.quotes ?? null,
       exit_time_et: exitTime,
     };
@@ -1152,7 +1159,11 @@ async function loadData() {
   // the whole dataset. Backward-compat: if the old `idx.years` format is
   // still in place, fall back to per-year filenames.
   try {
-    const idxResp = await fetch('./data/diagonal_real_index.json?t=' + Date.now(), { cache: 'no-cache' });
+    // No cache-buster: `cache: 'no-cache'` triggers a conditional GET, so the
+    // browser sees a 304 when the file hasn't changed and reuses its local copy
+    // (saves ~290 MB per reload). A real file change flips the ETag and the
+    // full body downloads automatically.
+    const idxResp = await fetch('./data/diagonal_real_index.json', { cache: 'no-cache' });
     if (idxResp.ok) {
       const idx = await idxResp.json();
       const files = idx.files?.length
@@ -1161,7 +1172,7 @@ async function loadData() {
       if (files.length) {
         const chunks = await Promise.all(
           files.map(fname =>
-            fetchGzJson(`./data/${fname}?t=${Date.now()}`)
+            fetchGzJson(`./data/${fname}`)
               .catch(err => {
                 console.warn(`[diagonal] failed to load ${fname}:`, err.message);
                 return null;
@@ -1191,7 +1202,7 @@ async function loadData() {
 
   // Always load B-S data for spot/VIX reference + fallback pricing
   try {
-    const resp = await fetch('./data/diagonal_bs_data.json?t=' + Date.now(), { cache: 'no-cache' });
+    const resp = await fetch('./data/diagonal_bs_data.json', { cache: 'no-cache' });
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const d = await resp.json();
     if (!d.dates || !d.by_date) throw new Error('Invalid data format');
@@ -1706,16 +1717,23 @@ function runBacktestBS(data, params) {
     const closeDate = nextTradingDay(data.dates, openDate);
     if (!closeDate) { skipped.noNextDay++; continue; }
 
-    const entry = data.by_date[openDate];
-    const exit  = data.by_date[closeDate];
-    if (!entry?.spot_14 || !entry?.vix_14 || !exit?.spot_14 || !exit?.vix_14) {
+    const entry = data.by_date[openDate] || {};
+    const exit  = data.by_date[closeDate] || {};
+    // REAL_DATA carries per-time spot+VIX at the user-selected entry/exit times.
+    // Prefer those over the BS file's hardcoded 14:00 snapshot so that picking
+    // entry=09:45 / exit=15:45 actually prices and displays at those times.
+    const realEntry = REAL_DATA?.by_date?.[openDate];
+    const realExit  = REAL_DATA?.by_date?.[closeDate];
+
+    const spotEntry = realEntry?.spot      ?? entry.spot_14;
+    const vixEntryN = realEntry?.vix       ?? entry.vix_14;
+    const spotExit  = realExit?.spot_exit  ?? exit.spot_14;
+    const vixExitN  = realExit?.vix_exit   ?? exit.vix_14;
+    if (!spotEntry || !vixEntryN || !spotExit || !vixExitN) {
       skipped.noExitData++; continue;
     }
-
-    const spotEntry = entry.spot_14;
-    const ivEntry   = entry.vix_14 / 100;   // VIX is annualized % → decimal
-    const spotExit  = exit.spot_14;
-    const ivExit    = exit.vix_14 / 100;
+    const ivEntry = vixEntryN / 100;   // VIX is annualized % → decimal
+    const ivExit  = vixExitN  / 100;
 
     // Strikes: short = spot + shortOffset ITM (10 ITM), long = short - longOffset (10 OTM)
     // e.g. spot=6830, shortOffset=10 → short=6840; longOffset=20 → long=6820 (10 pts OTM)
@@ -1726,13 +1744,12 @@ function runBacktestBS(data, params) {
     // When REAL data is loaded, prefer the listed contracts in the quotes (handles
     // dates past our spot-data range — long leg expirations may be after our last
     // SPX bar). Else fall back to the trading-day calendar.
-    const realEntryForDTE = REAL_DATA?.by_date?.[openDate];
-    const shortExp = realEntryForDTE
-      ? (resolveExpFromQuotes(realEntryForDTE.quotes, openDate, params.shortDte, SHORT_DTE_TOL, params.dteFallback)
+    const shortExp = realEntry
+      ? (resolveExpFromQuotes(realEntry.quotes, openDate, params.shortDte, SHORT_DTE_TOL, params.dteFallback)
          || resolveExpFromCalendar(data.dates, openDate, params.shortDte, SHORT_DTE_TOL, params.dteFallback))
       : resolveExpFromCalendar(data.dates, openDate, params.shortDte, SHORT_DTE_TOL, params.dteFallback);
-    const longExp = realEntryForDTE
-      ? (resolveExpFromQuotes(realEntryForDTE.quotes, openDate, params.longDte, params.longDteTol, params.dteFallback)
+    const longExp = realEntry
+      ? (resolveExpFromQuotes(realEntry.quotes, openDate, params.longDte, params.longDteTol, params.dteFallback)
          || resolveExpFromCalendar(data.dates, openDate, params.longDte, params.longDteTol, params.dteFallback))
       : resolveExpFromCalendar(data.dates, openDate, params.longDte, params.longDteTol, params.dteFallback);
     if (!shortExp || !longExp) { skipped.noDTE++; continue; }
@@ -1756,8 +1773,6 @@ function runBacktestBS(data, params) {
     // If either side is missing, fall back to Black-Scholes for that side only.
     let diagOpen, diagClose;
     let entrySource = 'BS', exitSource = 'BS';
-    const realEntry = REAL_DATA?.by_date?.[openDate];
-    const realExit  = REAL_DATA?.by_date?.[closeDate];
     // Snap tolerance: short leg is usually near-money with $5 strikes, but long leg
     // (20+ DTE) is often only listed at $10 increments. Allow up to $5 snap so we
     // can use REAL quotes instead of falling back to Black-Scholes.
@@ -1836,8 +1851,8 @@ function runBacktestBS(data, params) {
       dow: weekdayFromISO(openDate),                 // 0=Mon..4=Fri
       spotEntry: Math.round(spotEntry * 100) / 100,
       spotExit:  Math.round(spotExit  * 100) / 100,
-      vixEntry:  entry.vix_14,
-      vixExit:   exit.vix_14,
+      vixEntry:  vixEntryN,
+      vixExit:   vixExitN,
       shortStrike: shortStrikeUsed, longStrike: longStrikeUsed,
       longDteActual,
       shortDte: shortDteActual,
