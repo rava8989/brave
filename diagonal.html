@@ -616,7 +616,7 @@ body {
       <select class="time-input" id="entryTime" title="SPX snapshot time used to price the entry leg.">
         <option value="09:45">09:45</option>
         <option value="10:00">10:00</option>
-        <option value="11:30">11:30</option>
+        <option value="11:30" selected>11:30</option>
         <option value="11:45">11:45</option>
         <option value="12:00">12:00</option>
         <option value="12:15">12:15</option>
@@ -626,7 +626,7 @@ body {
         <option value="13:15">13:15</option>
         <option value="13:30">13:30</option>
         <option value="13:45">13:45</option>
-        <option value="14:00" selected>14:00</option>
+        <option value="14:00">14:00</option>
         <option value="14:15">14:15</option>
         <option value="14:30">14:30</option>
         <option value="14:45">14:45</option>
@@ -654,14 +654,14 @@ body {
         <option value="13:15">13:15</option>
         <option value="13:30">13:30</option>
         <option value="13:45">13:45</option>
-        <option value="14:00" selected>14:00</option>
+        <option value="14:00">14:00</option>
         <option value="14:15">14:15</option>
         <option value="14:30">14:30</option>
         <option value="14:45">14:45</option>
         <option value="15:00">15:00</option>
         <option value="15:15">15:15</option>
         <option value="15:30">15:30</option>
-        <option value="15:45">15:45</option>
+        <option value="15:45" selected>15:45</option>
       </select>
     </div>
   </div>
@@ -1076,8 +1076,10 @@ document.querySelectorAll('#sdPills .tpill').forEach(p => {
   });
 });
 
-// Preselect the best-backtested default filter: EXCLUDE the VIX 50–80% band.
+// Preselect the best-backtested default filter: EXCLUDE OPEX-1 (weakest-edge
+// day of the OPEX cycle) + VIX 50-80% band (uncomfortable-middle regime).
 specialState.mode = 'exclude';
+specialState.active.add('OPEX-1');
 specialState.active.add('VIX_MID');
 syncSpecialUI();
 
@@ -1851,11 +1853,20 @@ function runBacktestBS(data, params) {
     };
     const legExitPrice = (quote, strike, expDate, T, bsSpot, bsIV) => {
       if (quoteOk(quote)) return { mid: (quote.bid + quote.ask) / 2, real: true };
+      // (a) Leg expired strictly before exit → exact settlement intrinsic.
       if (expDate < closeDate) {
         const spxAtExp = spxCloseOn(expDate);
         if (spxAtExp != null) {
           return { mid: Math.max(strike - spxAtExp, 0), real: true };
         }
+      }
+      // (b) Leg expires TODAY, quote is near-worthless (bid=0 ask≤$0.50).
+      //     This is the market literally saying "this expires at zero." The
+      //     original quoteOk rejected bid=0 as "garbage," but for a contract
+      //     expiring in minutes it's correctly showing near-zero value.
+      //     Use the ask/2 midpoint — the realistic exit fill is <$0.25.
+      if (expDate === closeDate && quote && quote.ask != null && quote.ask <= 0.50 && (quote.bid ?? 0) === 0) {
+        return { mid: quote.ask / 2, real: true };
       }
       return { mid: bsPut(bsSpot, strike, T, bsIV, r), real: false };
     };
