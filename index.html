@@ -1250,6 +1250,9 @@
     document.getElementById('cardBobf').className='scard';
     document.getElementById('cardDiag').className='scard';
     setTodayTrade(null);
+    // Diagonal pill is independent of setTodayTrade — reset it explicitly
+    const _pillDiagReset = document.getElementById('pillDiag');
+    if (_pillDiagReset) _pillDiagReset.style.display = 'none';
     ['cpiTag','fedTag','opexTag','postOpexTag','eomTag','openDiffNote','tagSep'].forEach(id=>document.getElementById(id).style.display='none');
   }
 
@@ -1462,33 +1465,74 @@
       regimeWrap.title = 'Waiting for today\'s VIX open + prior-day SPX close — connect Schwab and check back shortly after 9:30 AM ET.';
     }
 
-    // ── DIAGONAL signal card (companion strategy — default: OPEX-1 + EOM + NM + VIX 50–80% + ALL-EARNINGS excluded) ──
-    // GO when VIX 20d percentile is in 0–50% (calm edge) or 80–100% (panic edge).
-    // SKIP when VIX 20d percentile is in the 50–80% dead band.
-    // Independent of Sigma 3 — does not read any of the M8BF/Straddle/GXBF/BOBF block flags.
+    // ── DIAGONAL signal card — companion strategy, full default 5-filter stack ──
+    // Priority: OPEX-1 > EOM > NM > ALL_EARNINGS > VIX_MID (50–80%) > GO.
+    // Mirrors compute_diagonal_pnl.py DEFAULT_PARAMS.special_active exactly.
+    // CPI is intentionally NOT in the stack (matches the backtester) — the
+    // whole signalStack is hidden on CPI day anyway, so this card isn't shown.
+    // Independent of Sigma 3 — does not read any M8BF/Straddle/GXBF/BOBF flags.
     const diagRec    = document.getElementById('diagRec');
     const diagReason = document.getElementById('diagReason');
     const diagBadge  = document.getElementById('diagBadge');
     const cardDiag   = document.getElementById('cardDiag');
-    if(_vixPctToday !== null){
-      const vixDead = (_vixPctToday > 50 && _vixPctToday <= 80);
-      if(vixDead){
-        diagRec.textContent    = 'No Diagonal (VIX 50–80% dead zone)';
-        diagReason.textContent = `VIX 20-day percentile = ${_vixPctToday}% — inside the 50–80% "no-edge" band. Default filter skips this regime. (Default stack also excludes OPEX-1, EOM, NM, and mega-cap earnings days.)`;
-        diagBadge.textContent  = 'SKIP';
-        cardDiag.className     = 'scard active-block';
-      } else {
-        const band = _vixPctToday <= 50 ? '0–50% (calm edge)' : '80–100% (panic edge)';
-        diagRec.textContent    = 'Diagonal @ 11:30 AM ET';
-        diagReason.textContent = `VIX 20-day percentile = ${_vixPctToday}% — ${band}, outside 50–80% dead band. Short 1 DTE SPXW put +10 pts ITM · long 30 DTE SPXW put −20 pts below short · ±5 pt tol. Entry 11:30 ET · Exit 15:45 ET next day. Default stack also skips OPEX-1, EOM, NM, and mega-cap earnings.`;
-        diagBadge.textContent  = '⏰ 11:30 ET';
-        cardDiag.className     = 'scard active-ok';
-      }
+    const pillDiag   = document.getElementById('pillDiag');
+
+    let _diagSkip = null;  // { code, title, reason }
+    if (opex1) {
+      _diagSkip = {
+        code: 'OPEX-1',
+        title: 'No Diagonal (day before OPEX)',
+        reason: 'Day before monthly OPEX — pin/gamma noise. Default filter skips this day.',
+      };
+    } else if (eomDay) {
+      _diagSkip = {
+        code: 'EOM',
+        title: 'No Diagonal (EOM)',
+        reason: 'Last trading day of month — month-end rebalancing flow creates noisy reprice. Default filter skips.',
+      };
+    } else if (nmDay) {
+      _diagSkip = {
+        code: 'NM',
+        title: 'No Diagonal (NM)',
+        reason: 'First trading day of month — gap risk dominates theta burn. Default filter skips.',
+      };
+    } else if (earningsDay) {
+      const ers = earningsSchedule
+        .filter(e => e.date === todayLong())
+        .map(e => `${e.ticker} ${e.timing}`)
+        .join(', ');
+      _diagSkip = {
+        code: 'EARN',
+        title: `No Diagonal (earnings: ${ers})`,
+        reason: `Mega-cap earnings day (${ers}) — overnight gap risk. Default filter skips.`,
+      };
+    } else if (_vixPctToday !== null && _vixPctToday > 50 && _vixPctToday <= 80) {
+      _diagSkip = {
+        code: 'VIX_MID',
+        title: 'No Diagonal (VIX 50–80% dead zone)',
+        reason: `VIX 20-day percentile = ${_vixPctToday}% — inside the 50–80% "no-edge" band. Default filter skips.`,
+      };
+    }
+
+    if (_diagSkip) {
+      diagRec.textContent    = _diagSkip.title;
+      diagReason.textContent = _diagSkip.reason;
+      diagBadge.textContent  = 'SKIP';
+      cardDiag.className     = 'scard active-block';
+      if (pillDiag) pillDiag.style.display = 'none';
+    } else if (_vixPctToday !== null) {
+      const band = _vixPctToday <= 50 ? '0–50% (calm edge)' : '80–100% (panic edge)';
+      diagRec.textContent    = 'Diagonal @ 11:30 AM ET';
+      diagReason.textContent = `VIX 20-day percentile = ${_vixPctToday}% — ${band}. Short 1 DTE SPXW put +10 pts ITM · long 30 DTE SPXW put −20 pts below short · ±5 pt tol. Entry 11:30 ET · Exit 15:45 ET next day. Default filters (OPEX-1, EOM, NM, earnings) all clear today.`;
+      diagBadge.textContent  = '⏰ 11:30 ET';
+      cardDiag.className     = 'scard active-ok';
+      if (pillDiag) pillDiag.style.display = '';
     } else {
       diagRec.textContent    = 'Waiting for VIX 20-day percentile…';
-      diagReason.textContent = 'Need today\'s VIX open + last 20 daily closes. Connect Schwab and check back after 9:30 AM ET.';
+      diagReason.textContent = 'Calendar filters all clear, but need today\'s VIX open + last 20 daily closes to confirm regime. Connect Schwab and check back after 9:30 AM ET.';
       diagBadge.textContent  = '…';
       cardDiag.className     = 'scard';
+      if (pillDiag) pillDiag.style.display = 'none';
     }
 
     let rec="", theme="neutral", crossed=false, pmNote=false;
@@ -2498,6 +2542,7 @@
     const strad = document.getElementById('stradRec').textContent;
     const gxbf  = document.getElementById('gxbfRec').textContent;
     const bobf  = document.getElementById('bobfRec').textContent;
+    const diag  = document.getElementById('diagRec').textContent;
     const grid  = document.getElementById('strikeGrid');
     const strikes = grid ? Array.from(grid.children).map(p=>p.textContent).join('  ') : '';
     const date  = document.getElementById('todayDate').textContent;
@@ -2533,6 +2578,10 @@
     inner += `${sigColor(strad)}Straddle │ ${strad}${RST}\n`;
     inner += `${sigColor(gxbf)}GXBF     │ ${gxbf}${RST}\n`;
     inner += `${sigColor(bobf)}BOBF     │ ${bobf}${RST}\n`;
+    // Diagonal (companion — 10 ITM / 20 wide, 5-filter stack)
+    if (diag && notCalc(diag)) {
+      inner += `${sigColor(diag)}Diagonal │ ${diag}${RST}\n`;
+    }
 
     // Pattern notes
     const patternEl = document.getElementById('m8bfPatternNote');

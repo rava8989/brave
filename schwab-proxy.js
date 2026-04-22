@@ -91,6 +91,10 @@ function buildDiscordMessage(signal, vixValues) {
   inner += `${sigColor(signal.stradText)}Straddle │ ${signal.stradText}${RST}\n`;
   inner += `${sigColor(signal.gxbfText)}GXBF     │ ${signal.gxbfText}${RST}\n`;
   inner += `${sigColor(signal.bobfRec)}BOBF     │ ${signal.bobfRec}${RST}\n`;
+  // Diagonal (companion — 10 ITM / 20 wide, 5-filter stack)
+  if (signal.diagText) {
+    inner += `${sigColor(signal.diagText)}Diagonal │ ${signal.diagText}${RST}\n`;
+  }
 
   // VIX values
   inner += `${DIM}${'─'.repeat(34)}${RST}\n`;
@@ -783,8 +787,10 @@ async function handleScheduled(env) {
     });
   } catch (e) { console.warn('[proxy]', e.message || e); }
 
-  // 4c. Fetch previous day's m8bfWR from history_data.json
+  // 4c. Fetch previous day's m8bfWR + last-20 vixClose from history_data.json.
+  //     vixPct20d is required for the diagonal filter (VIX_MID 50–80% dead zone).
   let prevWR = null;
+  let vixPct20d = null;
   try {
     const histResp = await fetch(
       `https://raw.githubusercontent.com/rava8989/brave/main/history_data.json?t=${Date.now()}`,
@@ -800,8 +806,21 @@ async function handleScheduled(env) {
         prevWR = parseFloat(sorted[0].m8bfWR);
         console.log(`[proxy] prevWR = ${prevWR}% (from ${sorted[0].date})`);
       }
+
+      // Pull the last 20 prior vixClose values (newest last) for the diagonal
+      // regime filter. Matches index.html _vix20dCloses semantics exactly.
+      const vix20 = histData
+        .filter(r => r.date < todayISO && r.vixClose != null && r.vixClose > 0)
+        .sort((a, b) => a.date.localeCompare(b.date))
+        .slice(-20)
+        .map(r => parseFloat(r.vixClose));
+      if (vix20.length >= 10 && !isNaN(vixToday)) {
+        const below = vix20.filter(c => c < vixToday).length;
+        vixPct20d = Math.round(100 * below / vix20.length);
+        console.log(`[proxy] vixPct20d = ${vixPct20d}% (vixToday=${vixToday} vs last ${vix20.length} closes)`);
+      }
     }
-  } catch (e) { console.warn('[proxy] prevWR fetch failed:', e.message || e); }
+  } catch (e) { console.warn('[proxy] history fetch failed:', e.message || e); }
 
   // 5. Calculate signal
   const signal = calculateSignal({
@@ -811,6 +830,7 @@ async function handleScheduled(env) {
     spxGapPct,
     etDate: etNow,
     prevWR,
+    vixPct20d,
   });
 
   // 6. Build Discord message
