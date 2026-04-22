@@ -26,20 +26,10 @@ schwab-proxy.js
 requirements.txt
 CLAUDE.md
 
-# Scraper — secrets and local cache (NEVER commit these)
-scraper/.env
-scraper/tokens.json
-scraper/data/
-scraper/__pycache__/
-
 # Polygon API credentials — NEVER commit
 .env
 polygon.env
 *.env
-
-# Allow scraper Python source files (no secrets in them)
-!scraper/*.py
-!scraper/requirements.txt
 
 # Allow the precomputed diagonal backtester datasets (browser fetches them)
 !data/diagonal_bs_data.json

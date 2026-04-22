@@ -1,5 +1,27 @@
 # Lessons Learned
 
+## UI time selectors must propagate to every pricing/display call site (2026-04-21)
+
+The diagonal backtester had an `entryTime` / `exitTime` selector (09:45…15:45).
+The flattening layer (`flattenRealData`) honored it for *quotes*, but the pricing
+loop hardcoded `entry.spot_14` / `entry.vix_14` for spot + VIX regardless of the
+user's selection. Result: picking 09:45 priced legs and displayed "SPX ENTRY"
+using 14:00 spot — strikes came out 50+ pts off from what the selected time
+actually was.
+
+**Fix:** prefer per-time values carried in REAL_DATA (`.spot`, `.vix`,
+`.spot_exit`, `.vix_exit` — set by `flattenRealData` from the selected times),
+fall back to BS 14:00 only when real data is missing. The trade record's
+`vixEntry`/`vixExit` must use the same time-selected values, not the BS 14:00
+fields, or the trade log shows the wrong VIX too.
+
+**Pattern to catch:** when you add a time-selector UI, grep every site that
+reads `.spot_<HH>` / `.vix_<HH>` (or any hardcoded-time field). Those are all
+load-bearing — each one needs to route through the selected time or the UI
+lies.
+
+---
+
 ## Rotating refresh_tokens need a single source of truth (2026-04-21)
 
 Schwab rotates `refresh_token` on every successful refresh and instantly
