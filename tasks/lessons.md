@@ -1,5 +1,61 @@
 # Lessons Learned
 
+## When porting a filter that uses a percentile boundary, pipe through the EXACT same source data, not "similar enough" data (2026-04-22)
+
+The JS diagonal backtester computes VIX_MID (50–80% percentile vs prior 20 days)
+using `diagonal_bs_data.json` → `by_date[d].vix_14`. The Python port used the
+gzipped bundle's `by_time['14:00'].vix` instead — same nominal concept ("14:00
+VIX"), but the two files are built from different Schwab samples and drift by
+0.01–0.25 on 468 / 816 days. Most days the drift doesn't matter, but the 50–80%
+band has sharp boundaries: a 0.05 VIX shift at the right position flips a day
+in/out of the band.
+
+**Symptom:** full backtest on identical config produced **the same trade count
+by coincidence** (259 / 259) but **$24K different total P/L** ($77,355 port vs
+$101,495 JS). Extremes matched exactly (max winner $8,920, max loser -$5,953),
+average per-trade differed by ~$93. Looked like "small systematic pricing bias";
+was actually "same count, but 7 different trades in each list."
+
+**Why the ports disagreed:** `VIX_MID` membership differed by a handful of days.
+Excluding a different date set changes WHICH trades get into the backtest, not
+how many. If the two shifted sets happen to have similar cardinalities, trade
+counts stay identical while the trade LIST drifts.
+
+**Fix:** port must read the same file the reference implementation reads for
+any boundary-sensitive classification. Loaded `diagonal_bs_data.json` and
+passed `bs_data=bs` into `run_backtest`. All stats now match JS to the dollar.
+
+**Pattern to catch:** when a port is "close but off by a small systematic
+amount" and the extreme values match exactly, suspect set-membership drift in a
+filter, not pricing math. Diff the filter SETS first, not individual trade
+prices.
+
+---
+
+## Range-split fetches need contiguous ranges, or the gap silently breaks users (2026-04-21)
+
+The Polygon scraper split fetches into SHORT `[0, SHORT_DTE_MAX=7]` and LONG
+`[LONG_DTE_MIN=12, 35]`, leaving a silent gap at DTE `[8, 11]`. The intent was
+continuous coverage `[0,35]`, but anyone configuring `longDte=12` landed in
+the gap on *exit day* (12 DTE entry → 11 DTE exit) — exit ticker missing,
+forced Black-Scholes. Symptom: backtester reported 58% BS fallback for that
+one specific config while every other config ran at 99.8% real.
+
+**Fix (two-part):**
+1. Close the gap in the scraper: `LONG_DTE_MIN` 12 → 8, giving
+   `[0,7] ∪ [8,35] = [0,35]`.
+2. Backfill existing snapshot files with a targeted scraper
+   (`backfill_polygon_dte_gap.py`) that adds only the missing DTE 8-11
+   tickers, additive merge, idempotent, per-date one-shot contract listing.
+
+**Pattern:** any time a fetch is parameter-sliced for performance, verify the
+slices tile completely. Silent gaps masquerade as "this one config is bad."
+Always diagnose by asking which *parameter value* triggers the bad behavior
+— if it's a narrow band, suspect a gap in the upstream data, not the
+downstream code.
+
+---
+
 ## Expired legs need intrinsic settlement, not Black-Scholes (2026-04-21)
 
 Diagonal backtester had 11/815 trades (1.3%) falling back to BS on exit because

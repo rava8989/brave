@@ -91,7 +91,12 @@ STRIKE_STEP = 5
 # Without this, backtester exits always fall back to Black-Scholes for the short leg.
 SHORT_DTE_MIN = 0
 SHORT_DTE_MAX = 7    # short-leg fallback up to a week (holidays + weekends)
-LONG_DTE_MIN = 12
+# LONG_DTE_MIN lowered from 12 → 8 (2026-04-21).
+# Previously there was a silent gap at DTE [8,11]: short window stopped at 7,
+# long started at 12. A diagonal with longDte=12 lands in the gap on EXIT day
+# (12 DTE entry → 11 DTE exit), losing the real quote and forcing BS. Closing
+# the gap with LONG_DTE_MIN=8 gives continuous coverage [0,7] ∪ [8,35] = [0,35].
+LONG_DTE_MIN = 8
 # WIDENED 2026-04-20: default lDTE=30 means entry needs DTE 30, exit needs DTE 29.
 # Previously capped at 28 — was silently truncating the long leg. Bumped to 35 to
 # cover 30 DTE entry + exit + ±5 slack for parameter tweaks / SPXW expiry calendar.
