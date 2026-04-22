@@ -3,6 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<!-- v2026-04-22: 1/30 DTE, 11:30/15:45, OPEX-1 + VIX 50-80% + ALL EARNINGS -->
 <title>SPX-BF // Diagonal Backtester</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -565,34 +569,42 @@ body {
 
 <!-- Strategy description -->
 <section class="strategy-banner">
-  <div class="strategy-title">2/30 DTE Put Diagonal — Bullish Skewed</div>
+  <div class="strategy-title">1/30 DTE Put Diagonal — Bullish Skewed</div>
   <div class="strategy-desc">
-    <strong>Setup</strong> — at <code>14:00 ET</code> every trading day, short a near-term put slightly in the money
+    <strong>Setup</strong> — enter at <code>11:30 ET</code>, exit at <code>15:45 ET</code> the next trading day. Short a near-term put slightly in the money
     and buy a longer-dated put below it. Default sizing: short 30 pts ITM, long 50 pts below that (roughly 20 pts OTM).
-    Example: SPX 6300 → sell 2 DTE 6330 put, buy ~30 DTE 6280 put.
+    Example: SPX 6300 → sell 1 DTE 6330 put, buy ~30 DTE 6280 put.
     <br>
     <strong>Holding</strong> — carry the position overnight. The next session, roll the whole structure forward one day, aiming for a credit.
     If a 1-day roll can't generate a credit even after nudging strikes ~10 pts, extend the roll to 2 days while staying close to price.
     <br>
-    <strong>Closing</strong> — typically held into midday so the expiring short bleeds out most of its time value, then rolled.
+    <strong>Closing</strong> — held into late afternoon (<code>15:45 ET</code>) so the expiring short bleeds out nearly all of its time value, then rolled.
     Profit comes from the diagonal value widening because the short decays faster than the long; the rolls themselves are housekeeping.
     <br><br>
     <span style="color:var(--accent);font-size:11px;font-weight:600">
       ★ Best backtested config (2023‑01 → 2026‑04, real NBBO quotes only):
-      <code>sDTE=1, +30 ITM, lDTE=30, −50 below, VIX 50–80% excluded</code> →
-      total P/L <strong>$142,555</strong>, win rate <strong>60.9%</strong>, MaxDD <strong>$14,892</strong>, MAR <strong>9.57</strong>.
-      Loaded as defaults below (filter pre-selected). Beats the unfiltered setup by <strong>+$34k P/L</strong> with <strong>similar drawdown</strong>.
+      <code>entry 11:30, exit 15:45, sDTE=1, +30 ITM, lDTE=30, −50 below, OPEX‑1 + VIX 50–80% + ALL EARNINGS excluded</code>
+      → 549 trades, total P/L <strong>+$157,677</strong>, win rate <strong>62.5%</strong>, MaxDD <strong>$22,884</strong>, MAR <strong>2.09</strong>, 100% real NBBO quotes.
+      Loaded as defaults below (filters pre-selected). Tighter window + earnings skip keeps the edge intact while avoiding the worst overnight-gap days.
     </span>
     <br><br>
     <span style="color:#fcd34d;font-size:11px">
-      🧪 <strong>Filter tip</strong> — <code>VIX 50–80%</code> (VIX ranks mid-band vs last 20 days) is the preselected
-      default: skipping those days delivered the best MAR in testing. For a stricter subset try <code>VIX DEAD</code>
-      (VIX 50–80% <em>and</em> prior-day SPX |change| &lt; 0.5%) — fewer skips, still a boost.
+      🧪 <strong>Filter stack</strong> — <code>OPEX-1</code> (day before monthly OPEX — weakest-edge day of the cycle),
+      <code>VIX 50–80%</code> (uncomfortable-middle regime; avg −$117/trade there vs +$220 elsewhere), and
+      <code>ALL EARNINGS</code> (skip any AAPL/GOOGL/MSFT/TSLA/META/NVDA/AMZN report day — overnight-gap risk).
+      All three are active by default in <strong>EXCLUDE</strong> mode.
     </span>
     <br><br>
     <span style="color:var(--text3);font-size:11px">
-      ⚠ <strong>Backtester scope</strong>: this tool only simulates entering at 14:00 ET and exiting at 14:00 ET the next trading day.
-      No rolling, no strike adjustments, no mid-trade management — every day is opened as a brand-new position.
+      ⚠ <strong>Backtester scope</strong> — what this tool does / does NOT model:
+      <br>
+      <strong>Does</strong>: open a fresh diagonal at the selected entry time (default <code>11:30 ET</code>), close it at the selected exit time the next trading day (default <code>15:45 ET</code>), price both legs from real Polygon NBBO bid/ask snapshots.
+      Data coverage: <strong>2023‑01‑03 → 2026‑04‑16</strong>, 816 trading days, 20 selectable intraday buckets (<code>09:45</code> → <code>15:45</code>), SPXW puts ±300 pts around spot, <strong>DTE 0–35 continuous</strong> (100% real quote coverage on the default config, 0% Black‑Scholes fallback).
+      Expired short legs settle to exact intrinsic (SPXW is PM‑settled at SPX close), not Black‑Scholes.
+      <br>
+      <strong>Does NOT</strong>: no rolling, no strike adjustments, no mid‑trade management, no theta/delta hedging, no slippage past mid, no commissions — every day opens a brand‑new position and closes it flat.
+      Sizing is fixed at 1 contract by default; equity compounding is only engaged if you flip off <em>Ignore margin</em> in the sidebar.
+      Live execution with rolls can and will differ from these numbers.
     </span>
     <br>
     <em style="color:var(--text3);font-size:11px">Strategy author: Mads</em>
@@ -839,7 +851,7 @@ body {
   <div class="empty-state" id="emptyState">
     <div class="empty-title">Framework ready — no data yet</div>
     <div class="empty-desc">
-      Once SPX puts historical chain data is loaded (2:00 PM ET entry snapshot + next-day 2:00 PM ET exit snapshot for each trading day, across 1&nbsp;DTE to 25&nbsp;DTE, strikes ±100 pts around ATM), this page will compute results using the parameters above.
+      Once SPX puts historical chain data is loaded (11:30 ET entry snapshot + next-day 15:45 ET exit snapshot for each trading day, across 0&nbsp;DTE to 35&nbsp;DTE, strikes ±300 pts around ATM), this page will compute results using the parameters above.
       <br><br>
       Drop your data file at <code>./data/diagonal/SPX_YYYYMMDD.csv</code> or adapt the loader in <code>diagonal.html</code> to your format.
     </div>
@@ -1077,10 +1089,13 @@ document.querySelectorAll('#sdPills .tpill').forEach(p => {
 });
 
 // Preselect the best-backtested default filter: EXCLUDE OPEX-1 (weakest-edge
-// day of the OPEX cycle) + VIX 50-80% band (uncomfortable-middle regime).
+// day of the OPEX cycle) + VIX 50-80% band (uncomfortable-middle regime) +
+// ALL EARNINGS (skip trading around any mega-cap earnings release — overnight
+// gap risk makes the short leg's overnight premium burn unreliable).
 specialState.mode = 'exclude';
 specialState.active.add('OPEX-1');
 specialState.active.add('VIX_MID');
+specialState.active.add('ALL_EARNINGS');
 syncSpecialUI();
 
 // ══════════════════════════════════════════════════════════════════════

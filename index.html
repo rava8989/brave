@@ -468,7 +468,7 @@
       <span class="ml" style="cursor:help" onclick="document.getElementById('vixPctExplain').hidden=!document.getElementById('vixPctExplain').hidden">VIX 20d %ile</span><span class="mv" id="vixPct20Display">—</span>
     </div>
     <span class="msep" id="regimeSep" style="display:none;">|</span>
-    <div class="mi" id="regimeWrap" style="display:none;" title="Diagonal-strategy regime check (ready by 9:30 AM ET — well before 14:00 entry). DEAD = VIX ranks 50–80% vs last 20 days AND yesterday's SPX moved less than 0.5%. EDGE = any other combo. DEAD days historically cost the strategy ~$26K in P/L and ~26% of max drawdown across the backtest — this is the sharpest skip filter we have.">
+    <div class="mi" id="regimeWrap" style="display:none;" title="Diagonal-strategy regime check (ready by 9:30 AM ET — well before the 11:30 ET entry). DEAD = VIX ranks 50–80% vs last 20 days AND yesterday's SPX moved less than 0.5%. EDGE = any other combo. DEAD days historically cost the strategy ~$26K in P/L and ~26% of max drawdown across the backtest — this is the sharpest skip filter we have.">
       <span class="ml" style="cursor:help" onclick="document.getElementById('regimeExplain').hidden=!document.getElementById('regimeExplain').hidden">Diagonal Regime</span>
       <span class="mv" id="regimeDisplay">—</span>
     </div>
@@ -522,8 +522,8 @@
       <strong style="color:var(--accent);font-size:12px">What does "Diagonal Regime" mean?</strong>
       <span style="cursor:pointer;color:var(--text3);font-size:14px" onclick="document.getElementById('regimeExplain').hidden=true">✕</span>
     </div>
-    A simple <strong>go / no-go</strong> check for the 2/30 put-diagonal trade (entry 14:00 ET). Ready by
-    <strong>9:30 AM ET</strong> — well before the noon deadline.
+    A simple <strong>go / no-go</strong> check for the 1/30 put-diagonal trade (entry 11:30 ET, exit 15:45 ET next day). Ready by
+    <strong>9:30 AM ET</strong> — well before the 11:30 entry.
     <br><br>
     <strong>Two possible states:</strong>
     <ul style="margin:4px 0 0 16px;padding:0">
@@ -613,7 +613,7 @@
     </div>
 
     <!-- CARD 5: Diagonal (companion — not part of Sigma 3) -->
-    <div class="scard" id="cardDiag" title="2/30 Put Diagonal — default config with VIX 50–80% dead zone excluded. See the '2/30 Put Diagonal' section below the calculator for full strategy details.">
+    <div class="scard" id="cardDiag" title="1/30 Put Diagonal — default config with OPEX-1, VIX 50–80% dead zone, and ALL-EARNINGS days excluded. Entry 11:30 ET, exit 15:45 ET next day. See the '1/30 Put Diagonal' section below the calculator for full strategy details.">
       <div class="scard-header">
         <span class="scard-label">Diagonal <span style="font-weight:400;font-size:10px;opacity:.7;letter-spacing:normal;text-transform:none">· companion</span></span>
         <span class="today-trade-pill" id="pillDiag" style="display:none;">▶ TODAY'S TRADE</span>
@@ -725,7 +725,7 @@
     </ul>
 
     <hr class="divider">
-    <h3>2/30 Put Diagonal — Companion Strategy <span style="font-weight:400;font-size:12px;color:var(--text3)">(separate from Sigma 3; VIX-filtered default)</span></h3>
+    <h3>1/30 Put Diagonal — Companion Strategy <span style="font-weight:400;font-size:12px;color:var(--text3)">(separate from Sigma 3; OPEX-1 + VIX + Earnings filtered default)</span></h3>
     <p>
       A <strong>SPXW put-diagonal spread</strong> that runs alongside the Sigma 3 bundle. Different instrument,
       different DTE, and different trade windows — so it's largely <strong>uncorrelated</strong> with M8BF / Straddle /
@@ -751,37 +751,27 @@
 
     <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Timing</h4>
     <ul>
-      <li><strong>Entry</strong> — <code>14:00 ET</code> every trading day (<code>12:45 ET</code> on early-close half-days).</li>
+      <li><strong>Entry</strong> — <code>11:30 ET</code> every trading day.</li>
       <li><strong>Holding</strong> — carry overnight. The short leg expires next session; theta bleed is the engine.</li>
-      <li><strong>Exit / roll</strong> — next day at <strong>14:00 ET</strong>, close the expiring short and roll the whole structure
-          forward one day for a credit. If a 1-day roll can't clear a credit even after nudging strikes ~10 pts, extend to a
-          2-day roll while staying close to price.</li>
-      <li><strong>Backtest simplification</strong> — the public backtester opens a brand-new position each day and closes it
-          at the next 14:00 ET snapshot. No rolling, no mid-trade adjustments. Live execution differs.</li>
+      <li><strong>Exit / roll</strong> — next day at <strong>15:45 ET</strong>, close the expiring short (almost all of its time value bled out by then)
+          and roll the whole structure forward one day for a credit. If a 1-day roll can't clear a credit even after nudging strikes ~10 pts,
+          extend to a 2-day roll while staying close to price.</li>
+      <li><strong>Backtest simplification</strong> — the public backtester opens a brand-new position at 11:30 ET each day and closes it
+          at the next day's 15:45 ET snapshot. No rolling, no mid-trade adjustments. Live execution differs.</li>
     </ul>
 
-    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">VIX Dead-Zone Filter <span style="font-weight:400;color:var(--text3);font-size:11px">(default ON — "no dead VIX")</span></h4>
+    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Default Filter Stack <span style="font-weight:400;color:var(--text3);font-size:11px">(all three excluded)</span></h4>
     <ul>
-      <li>Compute today's <strong>VIX 20-day rolling percentile</strong> — where does today's VIX open rank against the
-          last 20 trading days? Ready by 9:30 AM ET; no intraday data needed.</li>
-      <li><strong>Skip the trade</strong> if the percentile lands in the <strong>50–80% band</strong> (the "uncomfortable
-          middle" — elevated but not spiky). Historically the strategy has <em>no edge</em> there.</li>
-      <li><strong>Trade normally</strong> if the percentile is in <strong>0–50%</strong> (calm → cheap vol sellers get paid)
-          or <strong>80–100%</strong> (panic → mean-reversion + skew crush pay).</li>
-      <li>This filter is the <strong>default version</strong> of the strategy on this site — the one plotted on the
+      <li><strong>OPEX-1</strong> — skip the trading day immediately before monthly OPEX. Historically the weakest-edge day of the OPEX cycle.</li>
+      <li><strong>VIX 50-80% (dead zone)</strong> — skip days where today's VIX 20-day rolling percentile lands in the 50–80% band
+          (the "uncomfortable middle" — elevated but not spiky). Historically the strategy has <em>no edge</em> there;
+          trade normally in 0–50% (calm → cheap vol sellers get paid) or 80–100% (panic → mean-reversion + skew crush pay).
+          Percentile is ready by 9:30 AM ET; no intraday data needed.</li>
+      <li><strong>ALL EARNINGS</strong> — skip any day with an AAPL / GOOGL / MSFT / TSLA / META / NVDA / AMZN earnings release.
+          Overnight-gap risk makes the short leg's premium burn unreliable on these days.</li>
+      <li>This filter stack is the <strong>default version</strong> of the strategy on this site — the one plotted on the
           historical backtester and the one counted in the default-diagonal equity line. All references to
           "diagonal P/L" in the UI use this filtered version unless noted otherwise.</li>
-    </ul>
-
-    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Backtested Performance (filtered, 2023-01 → 2026-04)</h4>
-    <ul>
-      <li><strong>Total P/L</strong> — <span style="color:#22c55e;font-weight:600">$142,555</span></li>
-      <li><strong>Win rate</strong> — <strong>60.9%</strong></li>
-      <li><strong>Max drawdown</strong> — <span style="color:#f87171">$14,892</span></li>
-      <li><strong>MAR ratio</strong> — <strong>9.57</strong> (P/L ÷ MaxDD — standout risk-adjusted return)</li>
-      <li><strong>Uplift vs. unfiltered</strong> — VIX dead-zone skip adds <strong>+$34K</strong> with essentially the same drawdown.</li>
-      <li><strong>Stacked with Sigma 3</strong> — adds roughly <strong>+$48K/year</strong> to the combined equity curve
-          for only <strong>~$4.5K</strong> of additional drawdown. Most days where Diagonal wins, Sigma is flat, and vice versa.</li>
     </ul>
 
     <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">What it is <em>not</em></h4>
@@ -789,8 +779,7 @@
       <li><strong>Not 0DTE</strong> — both legs carry overnight (1 DTE short + 30 DTE long).</li>
       <li><strong>Not a credit spread</strong> — it's a long-calendar-style diagonal; different DTEs, different strikes.</li>
       <li><strong>Not part of Sigma 3</strong> — separate sizing and separate signals. It does not displace M8BF / Straddle / GXBF / BOBF.</li>
-      <li><strong>Not blocked by CPI, earnings, or OPEX</strong> — the strategy trades every session except VIX-dead-zone days
-          (the filter is the <em>only</em> default skip rule).</li>
+      <li><strong>Not blocked by CPI or FED</strong> — the default filter stack only skips OPEX-1, VIX 50-80%, and mega-cap earnings days.</li>
     </ul>
 
     <hr class="divider">
@@ -813,7 +802,7 @@
     <hr class="divider">
     <h3>Recent Changes</h3>
     <ul>
-      <li><strong>2/30 Put Diagonal documented as a companion strategy</strong> — separate from Sigma 3, runs at 14:00 ET daily with a VIX 50–80% dead-zone skip. Default config backtested at $142,555 / 60.9% WR / $14,892 MaxDD / MAR 9.57 (2023-01 → 2026-04). See the new "2/30 Put Diagonal" section above for full structure, timing, and filter rules.</li>
+      <li><strong>1/30 Put Diagonal documented as a companion strategy</strong> — separate from Sigma 3, enters at 11:30 ET and exits 15:45 ET next day. Default filter stack excludes OPEX-1, VIX 50–80%, and ALL-EARNINGS days. See the "1/30 Put Diagonal" section above for full structure, timing, and filter rules.</li>
       <li><strong>GXBF on OPEX+1 blocked when VIX gaps up ≥ 2% overnight</strong> — if today's VIX open is ≥ 2% above yesterday's VIX close, the automatic OPEX+1 GXBF signal is suppressed entirely.</li>
       <li><strong>SPX gap ≥ 0.9% cancels Straddle only</strong> — when the absolute SPX gap (today's open vs yesterday's close) is ≥ 0.9%, any Straddle or NM Straddle signal is cancelled. No effect on M8BF or GXBF. Gap and o2o have zero connection to butterfly.</li>
       <li><strong>o2o &gt; 1.4 cancels Straddle only (except EOM)</strong> — when the open-to-open VIX drop exceeds 1.4, any Straddle or NM Straddle signal is cancelled. Does not apply on EOM days. No effect on M8BF or GXBF.</li>
@@ -1468,7 +1457,7 @@
       regimeWrap.title = 'Waiting for today\'s VIX open + prior-day SPX close — connect Schwab and check back shortly after 9:30 AM ET.';
     }
 
-    // ── DIAGONAL signal card (companion strategy — default: VIX 50–80% dead zone excluded) ──
+    // ── DIAGONAL signal card (companion strategy — default: OPEX-1 + VIX 50–80% + ALL-EARNINGS excluded) ──
     // GO when VIX 20d percentile is in 0–50% (calm edge) or 80–100% (panic edge).
     // SKIP when VIX 20d percentile is in the 50–80% dead band.
     // Independent of Sigma 3 — does not read any of the M8BF/Straddle/GXBF/BOBF block flags.
@@ -1480,14 +1469,14 @@
       const vixDead = (_vixPctToday > 50 && _vixPctToday <= 80);
       if(vixDead){
         diagRec.textContent    = 'No Diagonal (VIX 50–80% dead zone)';
-        diagReason.textContent = `VIX 20-day percentile = ${_vixPctToday}% — inside the 50–80% "no-edge" band. Default filter skips this regime.`;
+        diagReason.textContent = `VIX 20-day percentile = ${_vixPctToday}% — inside the 50–80% "no-edge" band. Default filter skips this regime. (Default stack also excludes OPEX-1 and mega-cap earnings days.)`;
         diagBadge.textContent  = 'SKIP';
         cardDiag.className     = 'scard active-block';
       } else {
         const band = _vixPctToday <= 50 ? '0–50% (calm edge)' : '80–100% (panic edge)';
-        diagRec.textContent    = 'Diagonal @ 2:00 PM ET';
-        diagReason.textContent = `VIX 20-day percentile = ${_vixPctToday}% — ${band}, outside 50–80% dead band. Short 1 DTE SPXW put +30 pts ITM · long 30 DTE SPXW put −50 pts below short · ±5 pt tol. Half-days: 12:45 PM ET.`;
-        diagBadge.textContent  = '⏰ 14:00 ET';
+        diagRec.textContent    = 'Diagonal @ 11:30 AM ET';
+        diagReason.textContent = `VIX 20-day percentile = ${_vixPctToday}% — ${band}, outside 50–80% dead band. Short 1 DTE SPXW put +30 pts ITM · long 30 DTE SPXW put −50 pts below short · ±5 pt tol. Entry 11:30 ET · Exit 15:45 ET next day. Default stack also skips OPEX-1 and mega-cap earnings.`;
+        diagBadge.textContent  = '⏰ 11:30 ET';
         cardDiag.className     = 'scard active-ok';
       }
     } else {
