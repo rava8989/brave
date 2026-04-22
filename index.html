@@ -613,7 +613,7 @@
     </div>
 
     <!-- CARD 5: Diagonal (companion — not part of Sigma 3) -->
-    <div class="scard" id="cardDiag" title="1/30 Put Diagonal — default config with OPEX-1, VIX 50–80% dead zone, and ALL-EARNINGS days excluded. Entry 11:30 ET, exit 15:45 ET next day. See the '1/30 Put Diagonal' section below the calculator for full strategy details.">
+    <div class="scard" id="cardDiag" title="1/30 Put Diagonal — default config (short 10 ITM, long 20 below) with OPEX-1, EOM, NM, VIX 50–80% dead zone, and ALL-EARNINGS days excluded. Entry 11:30 ET, exit 15:45 ET next day. See the '1/30 Put Diagonal' section below the calculator for full strategy details.">
       <div class="scard-header">
         <span class="scard-label">Diagonal <span style="font-weight:400;font-size:10px;opacity:.7;letter-spacing:normal;text-transform:none">· companion</span></span>
         <span class="today-trade-pill" id="pillDiag" style="display:none;">▶ TODAY'S TRADE</span>
@@ -725,7 +725,7 @@
     </ul>
 
     <hr class="divider">
-    <h3>1/30 Put Diagonal — Companion Strategy <span style="font-weight:400;font-size:12px;color:var(--text3)">(separate from Sigma 3; OPEX-1 + VIX + Earnings filtered default)</span></h3>
+    <h3>1/30 Put Diagonal — Companion Strategy <span style="font-weight:400;font-size:12px;color:var(--text3)">(separate from Sigma 3; OPEX-1 + EOM + NM + VIX + Earnings filtered default)</span></h3>
     <p>
       A <strong>SPXW put-diagonal spread</strong> that runs alongside the Sigma 3 bundle. Different instrument,
       different DTE, and different trade windows — so it's largely <strong>uncorrelated</strong> with M8BF / Straddle /
@@ -739,14 +739,17 @@
 
     <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Structure (default)</h4>
     <ul>
-      <li><strong>Short leg</strong> — sell a <strong>1 DTE SPXW put</strong> at a strike <strong>+30 pts above spot</strong>
+      <li><strong>Short leg</strong> — sell a <strong>1 DTE SPXW put</strong> at a strike <strong>+10 pts above spot</strong>
           (slightly in the money, rich theta). Strike tolerance ±5 pts.</li>
-      <li><strong>Long leg</strong> — buy a <strong>30 DTE SPXW put</strong> at a strike <strong>−50 pts below the short</strong>
-          (roughly 20 pts OTM from spot). Strike tolerance ±5 pts. Expiration tolerance ±5 DTE.</li>
+      <li><strong>Long leg</strong> — buy a <strong>30 DTE SPXW put</strong> at a strike <strong>−20 pts below the short</strong>
+          (roughly 10 pts OTM from spot). Strike tolerance ±5 pts. Expiration tolerance ±5 DTE.</li>
       <li><strong>Bullish-skewed net</strong> — deltas partially offset, but the ITM short put dominates so the structure
           is mildly long delta. Profit comes from the <strong>short leg decaying faster than the long leg</strong>
           (different DTE = different theta rates), not from direction.</li>
-      <li><strong>Example</strong> — SPX 6300 → sell the 1 DTE 6330 put, buy the ~30 DTE 6280 put.</li>
+      <li><strong>Why conservative sizing</strong> — at 10 ITM / 20 wide, theoretical max loss ≈ debit + width ≈ $2-3K/contract.
+          Going deeper ITM (30+) or wider (50+) removes the short's extrinsic cushion and scales max loss to $8-13K+ per
+          contract on a big overnight gap. The narrow setup keeps the tail risk bounded.</li>
+      <li><strong>Example</strong> — SPX 6300 → sell the 1 DTE 6310 put, buy the ~30 DTE 6290 put.</li>
     </ul>
 
     <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Timing</h4>
@@ -760,9 +763,11 @@
           at the next day's 15:45 ET snapshot. No rolling, no mid-trade adjustments. Live execution differs.</li>
     </ul>
 
-    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Default Filter Stack <span style="font-weight:400;color:var(--text3);font-size:11px">(all three excluded)</span></h4>
+    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Default Filter Stack <span style="font-weight:400;color:var(--text3);font-size:11px">(all five excluded)</span></h4>
     <ul>
       <li><strong>OPEX-1</strong> — skip the trading day immediately before monthly OPEX. Historically the weakest-edge day of the OPEX cycle.</li>
+      <li><strong>EOM</strong> — skip the last trading day of the month. Month-end rebalancing flow creates noisy reprice behavior that weakens the short-decay edge.</li>
+      <li><strong>NM</strong> — skip the first trading day of the month. NM overlaps the Straddle/auto-flow day and the overnight gap risk dominates theta burn.</li>
       <li><strong>VIX 50-80% (dead zone)</strong> — skip days where today's VIX 20-day rolling percentile lands in the 50–80% band
           (the "uncomfortable middle" — elevated but not spiky). Historically the strategy has <em>no edge</em> there;
           trade normally in 0–50% (calm → cheap vol sellers get paid) or 80–100% (panic → mean-reversion + skew crush pay).
@@ -779,7 +784,7 @@
       <li><strong>Not 0DTE</strong> — both legs carry overnight (1 DTE short + 30 DTE long).</li>
       <li><strong>Not a credit spread</strong> — it's a long-calendar-style diagonal; different DTEs, different strikes.</li>
       <li><strong>Not part of Sigma 3</strong> — separate sizing and separate signals. It does not displace M8BF / Straddle / GXBF / BOBF.</li>
-      <li><strong>Not blocked by CPI or FED</strong> — the default filter stack only skips OPEX-1, VIX 50-80%, and mega-cap earnings days.</li>
+      <li><strong>Not blocked by CPI or FED</strong> — the default filter stack only skips OPEX-1, EOM, NM, VIX 50-80%, and mega-cap earnings days.</li>
     </ul>
 
     <hr class="divider">
@@ -802,7 +807,7 @@
     <hr class="divider">
     <h3>Recent Changes</h3>
     <ul>
-      <li><strong>1/30 Put Diagonal documented as a companion strategy</strong> — separate from Sigma 3, enters at 11:30 ET and exits 15:45 ET next day. Default filter stack excludes OPEX-1, VIX 50–80%, and ALL-EARNINGS days. See the "1/30 Put Diagonal" section above for full structure, timing, and filter rules.</li>
+      <li><strong>1/30 Put Diagonal documented as a companion strategy</strong> — separate from Sigma 3, enters at 11:30 ET and exits 15:45 ET next day. Default sizing tightened to <strong>+10 ITM / −20 below</strong> (was +30 / −50) to cap tail risk at ~$2-3K/contract. Filter stack excludes OPEX-1, EOM, NM, VIX 50–80%, and ALL-EARNINGS days. See the "1/30 Put Diagonal" section above for full structure, timing, and filter rules.</li>
       <li><strong>GXBF on OPEX+1 blocked when VIX gaps up ≥ 2% overnight</strong> — if today's VIX open is ≥ 2% above yesterday's VIX close, the automatic OPEX+1 GXBF signal is suppressed entirely.</li>
       <li><strong>SPX gap ≥ 0.9% cancels Straddle only</strong> — when the absolute SPX gap (today's open vs yesterday's close) is ≥ 0.9%, any Straddle or NM Straddle signal is cancelled. No effect on M8BF or GXBF. Gap and o2o have zero connection to butterfly.</li>
       <li><strong>o2o &gt; 1.4 cancels Straddle only (except EOM)</strong> — when the open-to-open VIX drop exceeds 1.4, any Straddle or NM Straddle signal is cancelled. Does not apply on EOM days. No effect on M8BF or GXBF.</li>
@@ -1457,7 +1462,7 @@
       regimeWrap.title = 'Waiting for today\'s VIX open + prior-day SPX close — connect Schwab and check back shortly after 9:30 AM ET.';
     }
 
-    // ── DIAGONAL signal card (companion strategy — default: OPEX-1 + VIX 50–80% + ALL-EARNINGS excluded) ──
+    // ── DIAGONAL signal card (companion strategy — default: OPEX-1 + EOM + NM + VIX 50–80% + ALL-EARNINGS excluded) ──
     // GO when VIX 20d percentile is in 0–50% (calm edge) or 80–100% (panic edge).
     // SKIP when VIX 20d percentile is in the 50–80% dead band.
     // Independent of Sigma 3 — does not read any of the M8BF/Straddle/GXBF/BOBF block flags.
@@ -1469,13 +1474,13 @@
       const vixDead = (_vixPctToday > 50 && _vixPctToday <= 80);
       if(vixDead){
         diagRec.textContent    = 'No Diagonal (VIX 50–80% dead zone)';
-        diagReason.textContent = `VIX 20-day percentile = ${_vixPctToday}% — inside the 50–80% "no-edge" band. Default filter skips this regime. (Default stack also excludes OPEX-1 and mega-cap earnings days.)`;
+        diagReason.textContent = `VIX 20-day percentile = ${_vixPctToday}% — inside the 50–80% "no-edge" band. Default filter skips this regime. (Default stack also excludes OPEX-1, EOM, NM, and mega-cap earnings days.)`;
         diagBadge.textContent  = 'SKIP';
         cardDiag.className     = 'scard active-block';
       } else {
         const band = _vixPctToday <= 50 ? '0–50% (calm edge)' : '80–100% (panic edge)';
         diagRec.textContent    = 'Diagonal @ 11:30 AM ET';
-        diagReason.textContent = `VIX 20-day percentile = ${_vixPctToday}% — ${band}, outside 50–80% dead band. Short 1 DTE SPXW put +30 pts ITM · long 30 DTE SPXW put −50 pts below short · ±5 pt tol. Entry 11:30 ET · Exit 15:45 ET next day. Default stack also skips OPEX-1 and mega-cap earnings.`;
+        diagReason.textContent = `VIX 20-day percentile = ${_vixPctToday}% — ${band}, outside 50–80% dead band. Short 1 DTE SPXW put +10 pts ITM · long 30 DTE SPXW put −20 pts below short · ±5 pt tol. Entry 11:30 ET · Exit 15:45 ET next day. Default stack also skips OPEX-1, EOM, NM, and mega-cap earnings.`;
         diagBadge.textContent  = '⏰ 11:30 ET';
         cardDiag.className     = 'scard active-ok';
       }

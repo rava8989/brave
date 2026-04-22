@@ -6,7 +6,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<!-- v2026-04-22: 1/30 DTE, 11:30/15:45, OPEX-1 + VIX 50-80% + ALL EARNINGS -->
+<!-- v2026-04-22b: 1/30 DTE, 11:30/15:45, +10 ITM, -20 below, OPEX-1 + EOM + NM + VIX 50-80% + ALL EARNINGS -->
 <title>SPX-BF // Diagonal Backtester</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -572,8 +572,8 @@ body {
   <div class="strategy-title">1/30 DTE Put Diagonal — Bullish Skewed</div>
   <div class="strategy-desc">
     <strong>Setup</strong> — enter at <code>11:30 ET</code>, exit at <code>15:45 ET</code> the next trading day. Short a near-term put slightly in the money
-    and buy a longer-dated put below it. Default sizing: short 30 pts ITM, long 50 pts below that (roughly 20 pts OTM).
-    Example: SPX 6300 → sell 1 DTE 6330 put, buy ~30 DTE 6280 put.
+    and buy a longer-dated put below it. Default sizing: short 10 pts ITM, long 20 pts below that (roughly 10 pts OTM).
+    Example: SPX 6300 → sell 1 DTE 6310 put, buy ~30 DTE 6290 put.
     <br>
     <strong>Holding</strong> — carry the position overnight. The next session, roll the whole structure forward one day, aiming for a credit.
     If a 1-day roll can't generate a credit even after nudging strikes ~10 pts, extend the roll to 2 days while staying close to price.
@@ -583,23 +583,25 @@ body {
     <br><br>
     <span style="color:var(--accent);font-size:11px;font-weight:600">
       ★ Best backtested config (2023‑01 → 2026‑04, real NBBO quotes only):
-      <code>entry 11:30, exit 15:45, sDTE=1, +30 ITM, lDTE=30, −50 below, OPEX‑1 + VIX 50–80% + ALL EARNINGS excluded</code>
-      → 541 trades, total P/L <strong>+$181,427</strong>, win rate <strong>63.4%</strong>, MaxDD <strong>$17,238</strong>, MAR <strong>4.42</strong>, 100% real NBBO quotes.
-      Loaded as defaults below (filters pre-selected). Tighter window + earnings skip keeps the edge intact while avoiding the worst overnight-gap days.
+      <code>entry 11:30, exit 15:45, sDTE=1, +10 ITM, lDTE=30, −20 below, OPEX‑1 + EOM + NM + VIX 50–80% + ALL EARNINGS excluded</code>
+      → 493 trades, total P/L <strong>+$134,836</strong>, win rate <strong>67.5%</strong>, MaxDD <strong>$14,296</strong>, MAR <strong>9.43</strong>, worst trade <strong>−$5,043</strong>, 100% real NBBO quotes.
+      Loaded as defaults below (filters pre-selected). Conservative sizing (10 ITM / 20 wide instead of 30 / 50) caps overnight‑gap tail risk at roughly debit + width ≈ $2–3K/contract, trading a bit of absolute P/L for a 2× better MAR and lower MaxDD.
     </span>
     <br><br>
     <span style="color:#fcd34d;font-size:11px">
       🧪 <strong>Filter stack</strong> — <code>OPEX-1</code> (day before monthly OPEX — weakest-edge day of the cycle),
+      <code>EOM</code> (last trading day of month — noisy month-end reprice),
+      <code>NM</code> (first trading day of month — gap risk, NM Straddle day),
       <code>VIX 50–80%</code> (uncomfortable-middle regime; avg −$117/trade there vs +$220 elsewhere), and
       <code>ALL EARNINGS</code> (skip any AAPL/GOOGL/MSFT/TSLA/META/NVDA/AMZN report day — overnight-gap risk).
-      All three are active by default in <strong>EXCLUDE</strong> mode.
+      All five are active by default in <strong>EXCLUDE</strong> mode.
     </span>
     <br><br>
     <span style="color:var(--text3);font-size:11px">
       ⚠ <strong>Backtester scope</strong> — what this tool does / does NOT model:
       <br>
       <strong>Does</strong>: open a fresh diagonal at the selected entry time (default <code>11:30 ET</code>), close it at the selected exit time the next trading day (default <code>15:45 ET</code>), price both legs from real Polygon NBBO bid/ask snapshots.
-      Data coverage: <strong>2023‑01‑03 → 2026‑04‑16</strong>, 816 trading days, 20 selectable intraday buckets (<code>09:45</code> → <code>15:45</code>), SPXW puts ±300 pts around spot, <strong>DTE 0–35 continuous</strong> (100% real quote coverage on the default config, 0% Black‑Scholes fallback).
+      Data coverage: <strong>2023‑01‑03 → 2026‑04‑22</strong>, 820 trading days, 20 selectable intraday buckets (<code>09:45</code> → <code>15:45</code>), SPXW puts ±300 pts around spot, <strong>DTE 0–35 continuous</strong> (100% real quote coverage on the default config, 0% Black‑Scholes fallback).
       Expired short legs settle to exact intrinsic (SPXW is PM‑settled at SPX close), not Black‑Scholes.
       <br>
       <strong>Does NOT</strong>: no rolling, no strike adjustments, no mid‑trade management, no theta/delta hedging, no slippage past mid, no commissions — every day opens a brand‑new position and closes it flat.
@@ -694,7 +696,7 @@ body {
 
   <div class="fg">
     <div class="fg-label">Short ITM Offset (pts)</div>
-    <input type="number" class="num-input" id="shortOffset" value="30" min="0" step="5">
+    <input type="number" class="num-input" id="shortOffset" value="10" min="0" step="5">
   </div>
 
   <div class="fg">
@@ -729,7 +731,7 @@ body {
 
   <div class="fg">
     <div class="fg-label">Long Below Short (pts)</div>
-    <input type="number" class="num-input" id="longOffset" value="50" min="0" step="5">
+    <input type="number" class="num-input" id="longOffset" value="20" min="0" step="5">
   </div>
 
   <div class="fg">
@@ -1088,12 +1090,16 @@ document.querySelectorAll('#sdPills .tpill').forEach(p => {
   });
 });
 
-// Preselect the best-backtested default filter: EXCLUDE OPEX-1 (weakest-edge
-// day of the OPEX cycle) + VIX 50-80% band (uncomfortable-middle regime) +
-// ALL EARNINGS (skip trading around any mega-cap earnings release — overnight
-// gap risk makes the short leg's overnight premium burn unreliable).
+// Preselect the best-backtested default filter stack in EXCLUDE mode:
+//   OPEX-1   — weakest-edge day of the OPEX cycle
+//   EOM      — last trading day of month (month-end volatility, noisy opens)
+//   NM       — first trading day of month (NM Straddle day; gap risk + reprice)
+//   VIX_MID  — VIX 50-80% uncomfortable-middle regime (no-edge band)
+//   ALL_EARN — any AAPL/GOOGL/MSFT/TSLA/META/NVDA/AMZN earnings day
 specialState.mode = 'exclude';
 specialState.active.add('OPEX-1');
+specialState.active.add('EOM');
+specialState.active.add('NM');
 specialState.active.add('VIX_MID');
 specialState.active.add('ALL_EARNINGS');
 syncSpecialUI();
