@@ -157,7 +157,7 @@ export function isDayAfterAnyEarnings(etDate) { return earningsSchedule.some(e =
 // Consumed by: schwab-proxy.js, index.html, history.html
 // ════════════════════════════════════════════════════════════════════
 
-export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate, prevWR = null }) {
+export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate, prevWR = null, vixPct20d = null }) {
   const cpiDay = cpiSch.includes(todayLong(etDate));
   const dow = etDate.getDay();
   const isMon = dow === 1, isFri = dow === 5, isWed = dow === 3;
@@ -319,11 +319,53 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
   // null when the M8BF's OWN status is blocked (CPI/m8bfBanned).
   const m8bfStrikeInfo = (cpiDay || m8bfBanned) ? null : m8Sched(dow);
 
+  // ── DIAGONAL (companion strategy) — default 5-filter stack ──
+  // Mirrors compute_diagonal_pnl.py DEFAULT_PARAMS.special_active exactly.
+  // Priority (calendar filters first, then regime):
+  //   OPEX-1 > EOM > NM > ALL_EARNINGS > VIX_MID (50–80%)
+  // CPI intentionally NOT in the filter stack — matches the backtester.
+  // Entry 11:30 ET · exit 15:45 ET · 1/30 DTE · short +10 ITM · long −20 below · ±5 pt tol.
+  let diagText, diagBadge = '…', diagGo = false, diagSkipCode = null;
+  if (opex1) {
+    diagSkipCode = 'OPEX-1';
+    diagText = 'No Diagonal (OPEX-1)';
+    diagBadge = 'SKIP';
+  } else if (eomDay) {
+    diagSkipCode = 'EOM';
+    diagText = 'No Diagonal (EOM)';
+    diagBadge = 'SKIP';
+  } else if (nmDay) {
+    diagSkipCode = 'NM';
+    diagText = 'No Diagonal (NM)';
+    diagBadge = 'SKIP';
+  } else if (earningsDay) {
+    const tickers = earningsSchedule.filter(e => e.date === todayLong(etDate)).map(e => e.ticker).join(',');
+    diagSkipCode = 'EARN';
+    diagText = `No Diagonal (earnings: ${tickers})`;
+    diagBadge = 'SKIP';
+  } else if (vixPct20d !== null && vixPct20d !== undefined && vixPct20d > 50 && vixPct20d <= 80) {
+    diagSkipCode = 'VIX_MID';
+    diagText = `No Diagonal (VIX 20d ${vixPct20d}% — dead zone)`;
+    diagBadge = 'SKIP';
+  } else if (vixPct20d === null || vixPct20d === undefined) {
+    // Enough calendar filters cleared but no VIX percentile yet — waiting state.
+    diagText = 'Diagonal pending VIX 20d data';
+    diagBadge = '…';
+  } else {
+    // All five filters cleared → GO.
+    diagGo = true;
+    const band = vixPct20d <= 50 ? 'calm' : 'panic';
+    diagText = `Diagonal @ 11:30 ET (VIX 20d ${vixPct20d}% — ${band} edge)`;
+    diagBadge = '⏰ 11:30 ET';
+  }
+
   return {
     rec, theme, crossed, badge, entryT, blockT, blockD, pmNote,
     strikeInfo, m8bfStrikeInfo, cpiLongCall,
     m8bfText, stradText, gxbfText,
     bobfRec, bobfBadge, bobfBlocks,
+    // Diagonal (companion — independent of Sigma 3)
+    diagText, diagBadge, diagGo, diagSkipCode, vixPct20d,
     oNight, o2o,
     spxGapPct, spxGapCancelsStrad, m8bfBanned,
     dayLabel: tradeWdLabel(etDate),
