@@ -2787,7 +2787,10 @@
       const allWR = rows.map(r => parseFloat(r.m8bfWR)).filter(w => !isNaN(w));
       const baselineWR = allWR.length ? allWR.reduce((a,b)=>a+b,0) / allWR.length : 55;
 
-      // wrOn(predicate) → { wr, delta, n } or null if sample too small
+      // wrOn(predicate) → { wr, delta, n } or null. Two gates:
+      //   1. sample size < 3 → skip (too noisy to report)
+      //   2. |avg − baseline| < 10pp → skip (within noise band, not noteworthy)
+      const NOTE_DELTA_MIN_PP = 10;
       function wrOn(predicate) {
         const wrs = [];
         for (const r of rows) {
@@ -2795,9 +2798,10 @@
           const w = parseFloat(r.m8bfWR);
           if (!isNaN(w)) wrs.push(w);
         }
-        if (wrs.length < 3) return null;         // sample too small — skip note
+        if (wrs.length < 3) return null;
         const avg = wrs.reduce((a,b)=>a+b,0) / wrs.length;
         const delta = avg - baselineWR;
+        if (Math.abs(delta) < NOTE_DELTA_MIN_PP) return null;
         const sign = delta >= 0 ? '+' : '';
         return { wr: avg.toFixed(1), delta: sign + delta.toFixed(1), n: wrs.length };
       }
