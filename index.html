@@ -743,10 +743,10 @@
     <hr class="divider">
     <h3>1/25 Put Diagonal — Companion Strategy <span style="font-weight:400;font-size:12px;color:var(--text3)">(separate from Sigma 3; OPEX-1 + NM + VIX 50–80% + AAPL/MSFT/TSLA/META earnings filtered default)</span></h3>
     <p>
-      A <strong>SPXW put-diagonal spread</strong> that runs alongside the Sigma 3 bundle. Different instrument,
+      A <strong>SPX put-diagonal spread</strong> that runs alongside the Sigma 3 bundle. Different instrument,
       different DTE, and different trade windows — so it's largely <strong>uncorrelated</strong> with M8BF / Straddle /
       GXBF / BOBF and stacks cleanly on top of them. Backtested <strong>2023-01 → 2026-04</strong> on real NBBO quotes
-      (SPXW chain via Polygon, SPX / VIX closes via Schwab).
+      (SPX chain via Polygon, SPX / VIX closes via Schwab).
     </p>
     <p class="muted-note" style="margin-top:4px">
       Strategy author: <strong>Mads</strong>. Full interactive backtester:
@@ -755,9 +755,9 @@
 
     <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Structure (default)</h4>
     <ul>
-      <li><strong>Short leg</strong> — sell a <strong>1 DTE SPXW put</strong> at a strike <strong>+10 pts above spot</strong>
+      <li><strong>Short leg</strong> — sell a <strong>1 DTE SPX put</strong> at a strike <strong>+10 pts above spot</strong>
           (slightly in the money, rich theta). Strike tolerance ±5 pts.</li>
-      <li><strong>Long leg</strong> — buy a <strong>25 DTE SPXW put</strong> at a strike <strong>−20 pts below the short</strong>
+      <li><strong>Long leg</strong> — buy a <strong>25 DTE SPX put</strong> at a strike <strong>−20 pts below the short</strong>
           (roughly 10 pts OTM from spot). Strike tolerance ±5 pts. Expiration tolerance ±5 DTE.</li>
       <li><strong>Bullish-skewed net</strong> — deltas partially offset, but the ITM short put dominates so the structure
           is mildly long delta. Profit comes from the <strong>short leg decaying faster than the long leg</strong>
@@ -1518,7 +1518,7 @@
       if (pillDiag) pillDiag.style.display = 'none';
     } else if (_diagSig.diagGo) {
       diagRec.textContent    = _diagSig.diagText;
-      diagReason.textContent = 'Short 1 DTE SPXW put +10 pts ITM · long 25 DTE SPXW put −20 pts below short · ±5 pt tol. Entry anywhere in the 12:30–15:00 ET window; exit at the same clock time on the next trading day (24-hour hold, entry time = exit time). All 7 default filters (OPEX-1, NM, VIX 20d, AAPL/MSFT/TSLA/META earnings) clear today.';
+      diagReason.textContent = 'Short 1 DTE SPX put +10 pts ITM · long 25 DTE SPX put −20 pts below short · ±5 pt tol. Entry anywhere in the 12:30–15:00 ET window; exit at the same clock time on the next trading day (24-hour hold, entry time = exit time). All 7 default filters (OPEX-1, NM, VIX 20d, AAPL/MSFT/TSLA/META earnings) clear today.';
       diagBadge.textContent  = _diagSig.diagBadge;
       cardDiag.className     = 'scard active-ok';
       if (pillDiag) pillDiag.style.display = '';
@@ -2734,7 +2734,6 @@
       const daysDiff = (new Date() - new Date(last.date + 'T12:00:00')) / 86400000;
 
       function longToISO(s) {
-        // Append noon to avoid UTC midnight timezone shift (same pattern as parseLong)
         const d = new Date(s + ' 12:00:00');
         if (isNaN(d)) return null;
         return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -2757,126 +2756,228 @@
       }
       const isTodayBeforeTW = () => twISO.has(dateToISO(nextTrade(new Date())));
       const isTodayAfterTW  = () => twISO.has(dateToISO(prevTrade(new Date())));
-      // NM+1: today is 2nd trading day of month (yesterday was first)
       const isNMplus1 = () => isFirstTradeMo(prevTrade(new Date()));
 
-      // VIX today open from form
+      // ── LIVE HISTORICAL STATS ──────────────────────────────────────────
+      // Every note below is computed from the 411-day history_data.json on
+      // each page load — no hardcoded averages. The n=N suffix is honest
+      // about sample size (earnings buckets have only 6-10 samples each so
+      // individual ticker numbers are noisy — that's the data, not a bug).
+      const byDateISO = Object.fromEntries(rows.map(r => [r.date, r]));
+      const isoDates = rows.map(r => r.date);           // sorted ascending
+      const isoIdx   = Object.fromEntries(isoDates.map((d,i) => [d,i]));
+      const prevTradeISO = d => { const i = isoIdx[d]; return (i != null && i > 0) ? isoDates[i-1] : null; };
+      const nextTradeISO = d => { const i = isoIdx[d]; return (i != null && i < isoDates.length-1) ? isoDates[i+1] : null; };
+      const isFirstTradeMoISO = d => { const p = prevTradeISO(d); return !p || p.slice(0,7) !== d.slice(0,7); };
+      const isLastTradeMoISO  = d => { const n = nextTradeISO(d); return !n || n.slice(0,7) !== d.slice(0,7); };
+      const isNM1ISO = d => { const p = prevTradeISO(d); return p && isFirstTradeMoISO(p); };
+
+      // Schedule sets in ISO form for fast lookup
+      const opexISO = new Set(opexSch.map(longToISO).filter(Boolean));
+      const fedISO  = new Set(fedSch.map(longToISO).filter(Boolean));
+      const vixExpISO = new Set(vixSch.map(longToISO).filter(Boolean));
+      const earnISO = {};  // {TSLA: Set([...]), ...}
+      earningsSchedule.forEach(e => {
+        const iso = longToISO(e.date); if (!iso) return;
+        if (!earnISO[e.ticker]) earnISO[e.ticker] = new Set();
+        earnISO[e.ticker].add(iso);
+      });
+
+      // Baseline m8bfWR avg across all days with data
+      const allWR = rows.map(r => parseFloat(r.m8bfWR)).filter(w => !isNaN(w));
+      const baselineWR = allWR.length ? allWR.reduce((a,b)=>a+b,0) / allWR.length : 55;
+
+      // wrOn(predicate) → { wr, delta, n } or null if sample too small
+      function wrOn(predicate) {
+        const wrs = [];
+        for (const r of rows) {
+          if (!predicate(r)) continue;
+          const w = parseFloat(r.m8bfWR);
+          if (!isNaN(w)) wrs.push(w);
+        }
+        if (wrs.length < 3) return null;         // sample too small — skip note
+        const avg = wrs.reduce((a,b)=>a+b,0) / wrs.length;
+        const delta = avg - baselineWR;
+        const sign = delta >= 0 ? '+' : '';
+        return { wr: avg.toFixed(1), delta: sign + delta.toFixed(1), n: wrs.length };
+      }
+      // tag(label, s) returns "<label> <wr>% (<delta>pp vs avg, n=<n>)" or null
+      function tag(s) {
+        return s ? `${s.wr}% (${s.delta}pp vs avg, n=${s.n})` : null;
+      }
+
+      // Predicate helpers
+      const pOpex     = r => opexISO.has(r.date);
+      const pFed      = r => fedISO.has(r.date);
+      const pVixExp   = r => vixExpISO.has(r.date);
+      const pEom      = r => isLastTradeMoISO(r.date);
+      const pNM1      = r => isNM1ISO(r.date);
+      const pEarn     = t => r => earnISO[t] && earnISO[t].has(r.date);
+      const pDayAfter = pred => r => { const p = prevTradeISO(r.date); return p && pred(byDateISO[p]); };
+      const pDayBefore= pred => r => { const n = nextTradeISO(r.date); return n && pred(byDateISO[n]); };
+
       const todayVix = parseFloat(document.getElementById('todayOpen')?.value);
 
       // === TODAY IS A SPECIAL DAY ===
       if (isOpex()) {
         if (!isNaN(todayVix) && todayVix < 18) {
-          notes.push(`Today is OPEX with VIX below 18 — M8BF historically averages 74.5% on OPEX + low-VIX days (+19.5% above avg).`);
+          const s = wrOn(r => pOpex(r) && r.vixOpen != null && parseFloat(r.vixOpen) < 18);
+          if (s) notes.push(`Today is OPEX with VIX below 18 — M8BF historically averages ${tag(s)}.`);
         } else {
-          notes.push(`Today is OPEX — M8BF historically averages 93.3% (+29.3% above avg).`);
+          const s = wrOn(pOpex);
+          if (s) notes.push(`Today is OPEX — M8BF historically averages ${tag(s)}.`);
         }
       }
-      if (isFed())         notes.push(`Today is a FED day — M8BF historically averages 55.6% (-8.4% below avg).`);
-      if (isLastTradeMo()) notes.push(`Today is EOM (last trading day of month) — M8BF historically averages 33.3% (-30.7% below avg).`);
-      if (isVixExp())      notes.push(`Today is VIX expiry — M8BF historically averages 60.0% (-4.0% below avg).`);
-      if (isNMplus1())     notes.push(`Today is the 2nd trading day of the month — M8BF historically averages 38.5% (-25.5% below avg).`);
+      { const s = wrOn(pFed);    if (isFed()         && s) notes.push(`Today is a FED day — M8BF historically averages ${tag(s)}.`); }
+      { const s = wrOn(pEom);    if (isLastTradeMo() && s) notes.push(`Today is EOM (last trading day of month) — M8BF historically averages ${tag(s)}.`); }
+      { const s = wrOn(pVixExp); if (isVixExp()      && s) notes.push(`Today is VIX expiry — M8BF historically averages ${tag(s)}.`); }
+      { const s = wrOn(pNM1);    if (isNMplus1()     && s) notes.push(`Today is the 2nd trading day of the month — M8BF historically averages ${tag(s)}.`); }
 
       earningsSchedule.filter(e => e.date === todayLong()).forEach(e => {
-        const map = {
-          GOOGL:{ wr:'100%',  diff:'+36.0%' },
-          MSFT: { wr:'19.2%', diff:'-44.8%' },
-          META: { wr:'19.2%', diff:'-44.8%' },
-          AAPL: { wr:'36.5%', diff:'-27.5%' },
-          AMZN: { wr:'66.7%', diff:'+2.7%'  },
-          NVDA: { wr:'28.6%', diff:'-35.4%' },
-          TSLA: { wr:'66.7%', diff:'+2.7%'  },
-        };
-        const info = map[e.ticker];
-        if (info) notes.push(`Today is ${e.company} earnings — M8BF historically averages ${info.wr} on ${e.ticker} earnings days (${info.diff} vs avg).`);
+        const s = wrOn(pEarn(e.ticker));
+        if (s) notes.push(`Today is ${e.company} earnings — M8BF historically averages ${tag(s)} on ${e.ticker} earnings days.`);
       });
 
       // VIX open level today
       if (!isNaN(todayVix)) {
-        if (todayVix >= 30)      notes.push(`VIX opened at ${todayVix.toFixed(1)} today — M8BF historically averages 39.7% on days VIX opens 30+ (-15.3% below avg).`);
-        else if (todayVix >= 25) notes.push(`VIX opened at ${todayVix.toFixed(1)} today — M8BF historically averages 43.9% on days VIX opens 25-30 (-11.1% below avg).`);
+        if (todayVix >= 30) {
+          const s = wrOn(r => r.vixOpen != null && parseFloat(r.vixOpen) >= 30);
+          if (s) notes.push(`VIX opened at ${todayVix.toFixed(1)} today — M8BF averages ${tag(s)} when VIX opens ≥30.`);
+        } else if (todayVix >= 25) {
+          const s = wrOn(r => r.vixOpen != null && parseFloat(r.vixOpen) >= 25 && parseFloat(r.vixOpen) < 30);
+          if (s) notes.push(`VIX opened at ${todayVix.toFixed(1)} today — M8BF averages ${tag(s)} when VIX opens 25-30.`);
+        }
       }
 
       // === TOMORROW IS A SPECIAL DAY ===
-      if (fedSch.some(isTodayBefore))  notes.push(`Tomorrow is a FED day — M8BF historically averages 72.7% the day before Fed decisions (+8.7% above avg).`);
-      if (opexSch.some(isTodayBefore)) notes.push(`Tomorrow is OPEX — M8BF historically averages 50.0% the day before OPEX (-14.0% below avg).`);
-      if (isTodayBeforeTW())           notes.push(`Tomorrow is Triple Witching — M8BF historically averages 33.5% the day before Triple Witching (-21.5% below avg).`);
+      { const s = wrOn(pDayBefore(pFed));  if (fedSch.some(isTodayBefore)  && s) notes.push(`Tomorrow is a FED day — M8BF averages ${tag(s)} the day before Fed decisions.`); }
+      { const s = wrOn(pDayBefore(pOpex)); if (opexSch.some(isTodayBefore) && s) notes.push(`Tomorrow is OPEX — M8BF averages ${tag(s)} the day before OPEX.`); }
+      { const s = wrOn(pDayBefore(r => twISO.has(r.date))); if (isTodayBeforeTW() && s) notes.push(`Tomorrow is Triple Witching — M8BF averages ${tag(s)} the day before TW.`); }
 
       earningsSchedule.filter(e => isTodayBefore(e.date)).forEach(e => {
-        const good = { MSFT:'71.1%', META:'71.1%', TSLA:'69.8%' };
-        const bad  = { AMZN:'16.5%', AAPL:'19.2%', NVDA:'42.9%' };
-        if (good[e.ticker]) {
-          notes.push(`Tomorrow is ${e.company} earnings — M8BF historically averages ${good[e.ticker]} the day before ${e.ticker} earnings.`);
-        } else if (bad[e.ticker]) {
-          notes.push(`Tomorrow is ${e.company} earnings — M8BF historically averages ${bad[e.ticker]} the day before ${e.ticker} earnings.`);
-        }
+        const s = wrOn(pDayBefore(pEarn(e.ticker)));
+        if (s) notes.push(`Tomorrow is ${e.company} earnings — M8BF averages ${tag(s)} the day before ${e.ticker} earnings.`);
       });
 
       // === YESTERDAY WAS A SPECIAL DAY ===
       if (daysDiff <= 3) {
-        if (isTodayAfterTW()) notes.push(`Yesterday was Triple Witching — M8BF historically averages 47.6% the day after (-7.4% below avg).`);
-        if (opexSch.some(isTodayAfter)) notes.push(`Yesterday was OPEX — M8BF historically averages 73.3% the day after OPEX (+9.3% above avg). HIGH CONFIDENCE.`);
+        { const s = wrOn(pDayAfter(r => twISO.has(r.date))); if (isTodayAfterTW() && s) notes.push(`Yesterday was Triple Witching — M8BF averages ${tag(s)} the day after TW.`); }
+        { const s = wrOn(pDayAfter(pOpex)); if (opexSch.some(isTodayAfter) && s) notes.push(`Yesterday was OPEX — M8BF averages ${tag(s)} the day after OPEX.`); }
 
         const lastD = new Date(last.date + 'T12:00:00');
-        if (isFirstTradeMo(lastD)) notes.push(`Yesterday was the first trading day of the month — M8BF historically averages 66.2% the day after (+11.2% above avg).`);
+        if (isFirstTradeMo(lastD)) {
+          const s = wrOn(pDayAfter(r => isFirstTradeMoISO(r.date)));
+          if (s) notes.push(`Yesterday was the first trading day of the month — M8BF averages ${tag(s)} the day after.`);
+        }
 
         earningsSchedule.filter(e => longToISO(e.date) === last.date).forEach(e => {
-          const map = {
-            TSLA: { wr:'69.6%', diff:'+14.6%' },
-            AMZN: { wr:'66.4%', diff:'+11.4%' },
-            NVDA: { wr:'60.5%', diff:'+5.5%'  },
-            MSFT: { wr:'36.5%', diff:'-18.5%' },
-            META: { wr:'36.5%', diff:'-18.5%' },
-            GOOGL:{ wr:'16.5%', diff:'-38.5%' },
-            AAPL: { wr:'38.4%', diff:'-16.6%' },
-          };
-          const info = map[e.ticker];
-          if (info) notes.push(`Yesterday was ${e.company} earnings — M8BF historically averages ${info.wr} the day after ${e.ticker} earnings (${info.diff} vs avg).`);
+          const s = wrOn(pDayAfter(pEarn(e.ticker)));
+          if (s) notes.push(`Yesterday was ${e.company} earnings — M8BF averages ${tag(s)} the day after ${e.ticker} earnings.`);
         });
 
         // 0% last session
         if (parseFloat(last.m8bfWR) === 0) {
-          notes.push(`Last session (${last.date}) was 0% win rate — historically the next day averages 33.1% (-21.9% below avg).`);
+          const s = wrOn(pDayAfter(r => parseFloat(r.m8bfWR) === 0));
+          if (s) notes.push(`Last session (${last.date}) was 0% win rate — next-day average is ${tag(s)}.`);
         }
 
         // VIX close tiers
         if (last.vixClose) {
           const vc = parseFloat(last.vixClose);
-          if (vc >= 30)      notes.push(`VIX closed at ${vc.toFixed(1)} last session — M8BF historically averages 39.7% the next day when prior VIX close ≥30 (-15.3% below avg).`);
-          else if (vc >= 25) notes.push(`VIX closed at ${vc.toFixed(1)} last session — M8BF historically averages 43.9% the next day when prior VIX close 25-30 (-11.1% below avg).`);
+          if (vc >= 30) {
+            const s = wrOn(pDayAfter(r => r.vixClose != null && parseFloat(r.vixClose) >= 30));
+            if (s) notes.push(`VIX closed at ${vc.toFixed(1)} last session — next-day M8BF averages ${tag(s)} when prior VIX close ≥30.`);
+          } else if (vc >= 25) {
+            const s = wrOn(pDayAfter(r => r.vixClose != null && parseFloat(r.vixClose) >= 25 && parseFloat(r.vixClose) < 30));
+            if (s) notes.push(`VIX closed at ${vc.toFixed(1)} last session — next-day M8BF averages ${tag(s)} when prior VIX close 25-30.`);
+          }
         }
 
         // VIX intraday change yesterday
+        const vixIntra = r => {
+          if (!r || r.vixOpen == null || r.vixClose == null) return null;
+          const vo = parseFloat(r.vixOpen), vc = parseFloat(r.vixClose);
+          return (vc - vo) / vo * 100;
+        };
         if (last.vixOpen && last.vixClose) {
-          const vi = (parseFloat(last.vixClose) - parseFloat(last.vixOpen)) / parseFloat(last.vixOpen) * 100;
-          if (vi >= 10)       notes.push(`VIX spiked ${vi.toFixed(1)}% intraday last session — M8BF historically averages 42.1% the next day when VIX rises 10%+ in a day (-12.9% below avg).`);
-          else if (vi >= 5)   notes.push(`VIX rose ${vi.toFixed(1)}% intraday last session — M8BF historically averages 48.2% the next day when VIX rises 5-10% in a day (-6.8% below avg).`);
-          else if (vi <= -10) notes.push(`VIX dropped ${Math.abs(vi).toFixed(1)}% intraday last session — M8BF historically averages 48.9% the next day when VIX drops 10%+ in a day (-6.1% below avg).`);
+          const vi = vixIntra(last);
+          if (vi >= 10) {
+            const s = wrOn(pDayAfter(r => { const v = vixIntra(r); return v != null && v >= 10; }));
+            if (s) notes.push(`VIX spiked ${vi.toFixed(1)}% intraday last session — next-day M8BF averages ${tag(s)} when VIX rises 10%+.`);
+          } else if (vi >= 5) {
+            const s = wrOn(pDayAfter(r => { const v = vixIntra(r); return v != null && v >= 5 && v < 10; }));
+            if (s) notes.push(`VIX rose ${vi.toFixed(1)}% intraday last session — next-day M8BF averages ${tag(s)} when VIX rises 5-10%.`);
+          } else if (vi <= -10) {
+            const s = wrOn(pDayAfter(r => { const v = vixIntra(r); return v != null && v <= -10; }));
+            if (s) notes.push(`VIX dropped ${Math.abs(vi).toFixed(1)}% intraday last session — next-day M8BF averages ${tag(s)} when VIX drops 10%+.`);
+          }
         }
 
         // SPX daily return
+        const spxRet = r => {
+          if (!r || r.spxOpen == null || r.spxClose == null) return null;
+          const so = parseFloat(r.spxOpen), sc = parseFloat(r.spxClose);
+          return (sc - so) / so * 100;
+        };
         if (last.spxOpen && last.spxClose) {
-          const sr = (parseFloat(last.spxClose) - parseFloat(last.spxOpen)) / parseFloat(last.spxOpen) * 100;
-          if (sr <= -2)        notes.push(`SPX fell ${Math.abs(sr).toFixed(1)}% last session — M8BF historically averages 29.1% the next day after a 2%+ SPX down day (-25.9% below avg).`);
-          else if (sr <= -1)   notes.push(`SPX fell ${Math.abs(sr).toFixed(1)}% last session — M8BF historically averages 39.7% the next day after a 1-2% SPX down day (-15.3% below avg).`);
-          else if (sr >= 1 && sr < 2) notes.push(`SPX rose ${sr.toFixed(1)}% last session — M8BF historically averages 48.7% the next day after a 1-2% SPX up day (-6.3% below avg).`);
+          const sr = spxRet(last);
+          if (sr <= -2) {
+            const s = wrOn(pDayAfter(r => { const x = spxRet(r); return x != null && x <= -2; }));
+            if (s) notes.push(`SPX fell ${Math.abs(sr).toFixed(1)}% last session — next-day M8BF averages ${tag(s)} after a 2%+ SPX down day.`);
+          } else if (sr <= -1) {
+            const s = wrOn(pDayAfter(r => { const x = spxRet(r); return x != null && x > -2 && x <= -1; }));
+            if (s) notes.push(`SPX fell ${Math.abs(sr).toFixed(1)}% last session — next-day M8BF averages ${tag(s)} after a 1-2% SPX down day.`);
+          } else if (sr >= 1 && sr < 2) {
+            const s = wrOn(pDayAfter(r => { const x = spxRet(r); return x != null && x >= 1 && x < 2; }));
+            if (s) notes.push(`SPX rose ${sr.toFixed(1)}% last session — next-day M8BF averages ${tag(s)} after a 1-2% SPX up day.`);
+          }
         }
 
-        // SPX 3-day trend
+        // SPX 3-day trend (3 consecutive up/down close-vs-open sessions immediately prior)
         if (rows.length >= 3) {
           const r3 = rows.slice(-3);
           const spxUp3   = r3.every(r => r.spxOpen && r.spxClose && parseFloat(r.spxClose) > parseFloat(r.spxOpen));
           const spxDown3 = r3.every(r => r.spxOpen && r.spxClose && parseFloat(r.spxClose) < parseFloat(r.spxOpen));
-          if (spxUp3)   notes.push(`SPX has closed up 3 sessions in a row — M8BF historically averages 62.1% the next day (+7.1% above avg).`);
-          if (spxDown3) notes.push(`SPX has closed down 3 sessions in a row — M8BF historically averages 43.0% the next day (-12.0% below avg).`);
+          // predicate: date d has 3 prior trading days all up/down
+          const streakBack = (d, dir) => {
+            let cur = d;
+            for (let i = 0; i < 3; i++) {
+              const p = prevTradeISO(cur); if (!p) return false;
+              const rp = byDateISO[p];
+              if (!rp || rp.spxOpen == null || rp.spxClose == null) return false;
+              const up = parseFloat(rp.spxClose) > parseFloat(rp.spxOpen);
+              const dn = parseFloat(rp.spxClose) < parseFloat(rp.spxOpen);
+              if (dir === 'up' && !up) return false;
+              if (dir === 'down' && !dn) return false;
+              cur = p;
+            }
+            return true;
+          };
+          if (spxUp3)   { const s = wrOn(r => streakBack(r.date, 'up'));   if (s) notes.push(`SPX closed up 3 sessions in a row — next-day M8BF averages ${tag(s)}.`); }
+          if (spxDown3) { const s = wrOn(r => streakBack(r.date, 'down')); if (s) notes.push(`SPX closed down 3 sessions in a row — next-day M8BF averages ${tag(s)}.`); }
         }
 
-        // VIX 3-day trend (need 4 rows for 3 consecutive moves)
+        // VIX 3-day close trend
         if (rows.length >= 4) {
           const r4 = rows.slice(-4);
           const vixFalling = r4.every((r, i) => i === 0 || (r.vixClose && r4[i-1].vixClose && parseFloat(r.vixClose) < parseFloat(r4[i-1].vixClose)));
           const vixRising  = r4.every((r, i) => i === 0 || (r.vixClose && r4[i-1].vixClose && parseFloat(r.vixClose) > parseFloat(r4[i-1].vixClose)));
-          if (vixFalling) notes.push(`VIX has closed lower 3 sessions in a row — M8BF historically averages 60.6% the next day (+5.6% above avg).`);
-          if (vixRising)  notes.push(`VIX has closed higher 3 sessions in a row — M8BF historically averages 49.8% the next day (-5.2% below avg).`);
+          const vixStreakBack = (d, dir) => {
+            // 3 consecutive close moves in `dir` immediately prior (needs 4 closes)
+            const seq = [d];
+            for (let i = 0; i < 4; i++) { const p = prevTradeISO(seq[seq.length-1]); if (!p) return false; seq.push(p); }
+            // seq[0]=today, seq[1..4]=4 priors. compare (seq[1]-seq[2]), (seq[2]-seq[3]), (seq[3]-seq[4])
+            for (let i = 1; i < 4; i++) {
+              const a = byDateISO[seq[i]], b = byDateISO[seq[i+1]];
+              if (!a || !b || a.vixClose == null || b.vixClose == null) return false;
+              const delta = parseFloat(a.vixClose) - parseFloat(b.vixClose);
+              if (dir === 'down' && !(delta < 0)) return false;
+              if (dir === 'up'   && !(delta > 0)) return false;
+            }
+            return true;
+          };
+          if (vixFalling) { const s = wrOn(r => vixStreakBack(r.date, 'down')); if (s) notes.push(`VIX closed lower 3 sessions in a row — next-day M8BF averages ${tag(s)}.`); }
+          if (vixRising)  { const s = wrOn(r => vixStreakBack(r.date, 'up'));   if (s) notes.push(`VIX closed higher 3 sessions in a row — next-day M8BF averages ${tag(s)}.`); }
         }
       }
 

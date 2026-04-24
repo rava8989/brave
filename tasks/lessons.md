@@ -1,5 +1,41 @@
 # Lessons Learned
 
+## Never hardcode historical statistics — compute live from source data (2026-04-24)
+
+The M8BF signal message rendered ~47 hardcoded statistical claims like
+"Alphabet earnings — M8BF historically averages 16.5% the day after GOOGL
+earnings (-38.5% vs avg)." The user asked me to verify the GOOGL number. It
+was wildly wrong: actual GOOGL day-after average is 57.2% (+1.4pp vs avg,
+n=6). On audit, nearly every hardcoded stat was stale, some with reversed
+directionality (e.g., "2nd trading day" was shown as 38.5% but real is 70.8%),
+and hardcoded baselines (55.0% or 64.0%) didn't match the real baseline
+(55.77%).
+
+**Root cause:** a human (or a prior Claude) computed these values once from
+history, pasted literals into the template, and neither the data nor the map
+updated together. Data drift + stale map = plausible-looking wrong output that
+silently ships in a trading signal.
+
+**Fix:** delete every hardcoded average. Build a `wrOn(predicate)` helper that
+computes `{wr, delta, n}` from `history_data.json` on each page load, and
+rewrite every note as `tag(wrOn(pred))` with an honest `n=N` sample-size
+suffix. `wrOn` returns null if n<3, which suppresses noisy notes entirely
+instead of stating a two-sample "average."
+
+**Pattern to catch:** if a file contains a lookup map whose keys are dates or
+tickers and whose values are statistics, that map is a ticking bug. The
+moment the underlying data moves, the map lies. Always compute stats from the
+same source of truth the rest of the app reads. If that's too slow for a hot
+path, memoize with a cache key tied to the data's mtime or hash — never a
+literal.
+
+**Co-lesson:** show `n=N` whenever you render an average. A user who sees
+"n=3" reads it as "don't trust this much"; a user who sees no sample size
+reads a three-sample result as authoritative. The audit found stats with n=3
+rendered with the same confidence as stats with n=66.
+
+---
+
 ## Shard data along the axis the consumer actually queries (2026-04-22)
 
 Diagonal backtester bundles were laid out per-half-year with ALL 20 intraday
