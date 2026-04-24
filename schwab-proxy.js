@@ -715,16 +715,70 @@ async function handleScheduled(env) {
     return { status: 'discord_poll', discord: discordResult, gex: gexResult, time: `${etHour}:${String(etMin).padStart(2,'0')} ET` };
   }
 
+  // ── Stuck-claim self-heal + notify ──
+  // Claims carry a timestamp suffix (claim:<uuid>:<ms>). If we find one >2 min
+  // old here (post-9:30 ET) it means the previous tick crashed between claim
+  // and 'sent' — the handler either threw inside the try/catch at scheduled()
+  // or quietly ran out of wall-clock. Short-TTL (300s) auto-expires within 5 min,
+  // but we self-heal faster and DM a warning so the silence isn't silent.
+  if (morningDone && morningDone.startsWith('claim:')) {
+    const parts = morningDone.split(':');
+    const claimTsMs = parseInt(parts[2] || '0', 10);
+    const ageMs = claimTsMs ? Date.now() - claimTsMs : 0;
+    if (claimTsMs && ageMs > 120_000) {
+      const ageS = Math.round(ageMs / 1000);
+      console.warn(`[proxy] Stuck claim detected (age ${ageS}s) — clearing and notifying`);
+      await env.SIGNAL_KV.delete(morningDoneKey);
+      // Fire-and-forget Discord notification
+      try {
+        const dcRaw = await env.SIGNAL_KV.get('discord_config');
+        if (dcRaw) {
+          const dc = JSON.parse(dcRaw);
+          if (dc.proxyUrl && dc.channelId) {
+            const errHeaders = { 'Content-Type': 'application/json' };
+            if (env.PROXY_SECRET) errHeaders['Authorization'] = `Bearer ${env.PROXY_SECRET}`;
+            await fetch(dc.proxyUrl, {
+              method: 'POST',
+              headers: errHeaders,
+              body: JSON.stringify({
+                userId: dc.channelId,
+                message: `⚠️ **Stuck morning claim** (${ageS}s old) — cleared, retrying this tick.`,
+              }),
+            });
+          }
+        }
+      } catch (notifyErr) {
+        console.warn('[proxy] stuck-claim notify failed:', notifyErr.message || notifyErr);
+      }
+      // Fall through: acquire a fresh claim below
+    } else if (claimTsMs && ageMs <= 120_000) {
+      // Another tick owns a fresh claim — don't stomp it
+      return {
+        status: 'claim_in_flight',
+        claim: morningDone,
+        age_ms: ageMs,
+        time: `${etHour}:${String(etMin).padStart(2,'0')} ET`,
+      };
+    }
+    // If claimTsMs === 0 (legacy value without timestamp) we also fall through;
+    // short TTL will age it out on its own.
+  }
+
   // ── Claim the slot BEFORE doing slow API work ──
   // Concurrent cron ticks can pass the gate above before any of them writes,
   // because the slot claim used to live ~30s later (after VIX/SPX fetches).
   // We write a unique token, wait for KV to propagate, then verify our token won.
+  //
+  // TTL is 300s (5 min), not 86400s: zombie claims auto-expire within one cron
+  // window instead of blocking a whole trading day. The 'sent' marker below
+  // still uses 86400s so successful signals don't re-fire.
   const claimToken = crypto.randomUUID();
-  await env.SIGNAL_KV.put(morningDoneKey, `claim:${claimToken}`, { expirationTtl: 86400 });
+  const claimValue = `claim:${claimToken}:${Date.now()}`;
+  await env.SIGNAL_KV.put(morningDoneKey, claimValue, { expirationTtl: 300 });
   await new Promise(r => setTimeout(r, 1500)); // let concurrent ticks also write
   const claimCheck = await env.SIGNAL_KV.get(morningDoneKey, { cacheTtl: 30 });
-  if (claimCheck !== `claim:${claimToken}`) {
-    console.log(`[proxy] Lost claim race (saw ${claimCheck}, mine was ${claimToken}) — skipping`);
+  if (claimCheck !== claimValue) {
+    console.log(`[proxy] Lost claim race (saw ${claimCheck}, mine was ${claimValue}) — skipping`);
     return { status: 'duplicate_skipped', claimWinner: claimCheck, time: `${etHour}:${String(etMin).padStart(2,'0')} ET` };
   }
 
@@ -2687,6 +2741,141 @@ export default {
         }, 200, publicCors);
       } catch (e) {
         return jsonResp({ error: e.message }, 500, publicCors);
+      }
+    }
+
+    // ── GET /health ── Unified public health check for uptime monitoring.
+    // Returns a structured view of every critical subsystem (morning signal,
+    // EOD, Schwab refresh, cron liveness, GEX freshness). The `alarming`
+    // boolean flips true whenever any subsystem is degraded, with specific
+    // reasons in `alerts[]`. Designed to be polled every 5-10 min by an
+    // external uptime monitor so silent failures surface before the user
+    // notices Discord stayed quiet.
+    if (url.pathname === '/health' && request.method === 'GET') {
+      const publicCors = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Max-Age': '86400',
+      };
+      try {
+        const now = Date.now();
+        const etNow = toET(new Date(now));
+        const etH = etNow.getHours();
+        const etM = etNow.getMinutes();
+        const dow = etNow.getDay();
+        const todayISO = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
+        const isWeekday = dow >= 1 && dow <= 5;
+        const postOpen = etH > 9 || (etH === 9 && etM >= 32);  // +2 min grace
+        const postClose = etH > 16 || (etH === 16 && etM >= 16);
+        const inMarketHours = isWeekday && ((etH === 9 && etM >= 30) || (etH >= 10 && etH < 16));
+
+        // Fetch all KV keys in parallel
+        const [morningRaw, eodRaw, schwabRaw, lastRunRaw, gexRaw] = await Promise.all([
+          env.SIGNAL_KV.get(`morning_signal_${todayISO}`),
+          env.SIGNAL_KV.get(`eod_done_${todayISO}`),
+          env.SIGNAL_KV.get('schwab_refresh_state'),
+          env.SIGNAL_KV.get('last_run'),
+          env.SIGNAL_KV.get('gex_current'),
+        ]);
+
+        const alerts = [];
+
+        // ── Morning signal state ──
+        let morningState = null;
+        let morningClaimAgeS = null;
+        let morningStuck = false;
+        if (morningRaw === 'sent') {
+          morningState = 'sent';
+        } else if (morningRaw && morningRaw.startsWith('claim:')) {
+          morningState = 'claim';
+          const parts = morningRaw.split(':');
+          const ts = parseInt(parts[2] || '0', 10);
+          if (ts) {
+            morningClaimAgeS = Math.round((now - ts) / 1000);
+            if (morningClaimAgeS > 120) morningStuck = true;
+          }
+        }
+        if (isWeekday && postOpen && !postClose && morningState !== 'sent') {
+          alerts.push(morningStuck ? 'morning_signal_stuck' : 'morning_signal_not_sent');
+        }
+
+        // ── EOD state ──
+        if (isWeekday && postClose && eodRaw !== 'done') {
+          alerts.push('eod_not_done');
+        }
+
+        // ── Schwab refresh ──
+        const schwab = schwabRaw ? JSON.parse(schwabRaw) : null;
+        const schwabSuccessMs = schwab?.lastSuccess || 0;
+        const schwabMinutesSinceSuccess = schwabSuccessMs ? Math.round((now - schwabSuccessMs) / 60000) : null;
+        if (schwab && schwab.ok === false && (schwab.consecutiveErrors || 0) >= 3) {
+          alerts.push('schwab_refresh_degraded');
+        }
+
+        // ── Cron liveness via last_run ──
+        const lastRun = lastRunRaw ? JSON.parse(lastRunRaw) : null;
+        const lastRunMs = lastRun?.date ? Date.parse(lastRun.date) : 0;
+        const lastRunAgeS = lastRunMs ? Math.round((now - lastRunMs) / 1000) : null;
+        // Cron fires every 2 min during market hours — 10 min without a run = stall
+        if (inMarketHours && (lastRunAgeS === null || lastRunAgeS > 600)) {
+          alerts.push('cron_stalled');
+        }
+
+        // ── GEX freshness ──
+        // gexData.updatedAt is written as an ISO string by handleGEXUpdate,
+        // so parse it to ms before doing clock math.
+        let gexUpdatedAtIso = null;
+        let gexAgeS = null;
+        try {
+          if (gexRaw) {
+            const g = JSON.parse(gexRaw);
+            gexUpdatedAtIso = g.updatedAt || null;
+            const ms = gexUpdatedAtIso ? (
+              typeof gexUpdatedAtIso === 'number' ? gexUpdatedAtIso : Date.parse(gexUpdatedAtIso)
+            ) : 0;
+            if (ms && !Number.isNaN(ms)) gexAgeS = Math.round((now - ms) / 1000);
+          }
+        } catch { /* ignore malformed JSON */ }
+        if (inMarketHours && (gexAgeS === null || gexAgeS > 600)) {
+          alerts.push('gex_stale');
+        }
+
+        const alarming = alerts.length > 0;
+        return jsonResp({
+          now,
+          todayISO,
+          etTime: `${etH}:${String(etM).padStart(2,'0')} ET`,
+          isWeekday,
+          inMarketHours,
+          morning_signal: {
+            state: morningState,
+            raw: morningRaw,
+            claim_age_s: morningClaimAgeS,
+            stuck: morningStuck,
+          },
+          eod_done: eodRaw === 'done',
+          schwab_refresh: schwab ? {
+            ok: schwab.ok,
+            consecutiveErrors: schwab.consecutiveErrors || 0,
+            minutesSinceSuccess: schwabMinutesSinceSuccess,
+            msg: schwab.msg,
+          } : { state: 'never_recorded' },
+          last_run: lastRun ? {
+            status: lastRun.status,
+            date: lastRun.date,
+            age_s: lastRunAgeS,
+          } : null,
+          gex: {
+            available: !!gexRaw,
+            updatedAt: gexUpdatedAtIso,
+            age_s: gexAgeS,
+          },
+          alarming,
+          alerts,
+        }, 200, publicCors);
+      } catch (e) {
+        return jsonResp({ error: e.message, alarming: true, alerts: ['health_endpoint_threw'] }, 500, publicCors);
       }
     }
 
