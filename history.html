@@ -237,7 +237,7 @@
     <div class="strat-pill active" data-strat="strad" onclick="toggleStrat('strad')" ondblclick="soloStrat('strad')">Straddle</div>
     <div class="strat-pill active" data-strat="gxbf" onclick="toggleStrat('gxbf')" ondblclick="soloStrat('gxbf')">GXBF</div>
     <div class="strat-pill active" data-strat="bobf" onclick="toggleStrat('bobf')" ondblclick="soloStrat('bobf')">BOBF</div>
-    <div class="strat-pill active" data-strat="diagonal" onclick="toggleStrat('diagonal')" ondblclick="soloStrat('diagonal')" title="1/25 put-diagonal — entry 12:30 ET, exit 12:30 ET next day (24-hour hold, one diagonal active at a time); sDTE=1, +10 ITM, lDTE=25, −20 below; OPEX-1 + NM + VIX 50–80% + AAPL/MSFT/TSLA/META earnings excluded (default)">Diagonal</div>
+    <div class="strat-pill active" data-strat="diagonal" onclick="toggleStrat('diagonal')" ondblclick="soloStrat('diagonal')" title="1/25 put-diagonal — entry anywhere in the 12:30–15:00 ET window, exit at the same clock time next day (24-hour hold, Entry Time === Exit Time, one diagonal active at a time); sDTE=1, +10 ITM, lDTE=25, −20 below; OPEX-1 + NM + VIX 50–80% + AAPL/MSFT/TSLA/META earnings excluded (default)">Diagonal</div>
   </div>
 
   <div class="filter-bar" id="filterBar">
@@ -1631,7 +1631,7 @@ function renderCorrelation() {
     // 7-filter stack) or no-data days. A non-null value means the strategy
     // actually traded — matches convention used by allocation optimizer and
     // equity chart. Computed by compute_diagonal_pnl.py with DEFAULT_PARAMS
-    // (entry 12:30 ET, exit 12:30 ET next day, 1/25 DTE, +10 ITM, -20 below).
+    // (entry anywhere in 12:30–15:00 ET window, exit at same clock time next day, 1/25 DTE, +10 ITM, -20 below).
     if (row.diagPL != null) dailyPL.diagonal[row.date] = row.diagPL;
   }
 

@@ -6,7 +6,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<!-- v2026-04-22b: 1/30 DTE, 11:30/15:45, +10 ITM, -20 below, OPEX-1 + EOM + NM + VIX 50-80% + ALL EARNINGS -->
+<!-- v2026-04-23: 1/25 DTE, 12:30-15:00 ET window (24h hold, entry=exit time), +10 ITM, -20 below, OPEX-1 + NM + VIX 50-80% + AAPL/MSFT/TSLA/META -->
 <title>SPX-BF // Diagonal Backtester</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -569,38 +569,44 @@ body {
 
 <!-- Strategy description -->
 <section class="strategy-banner">
-  <div class="strategy-title">1/30 DTE Put Diagonal — Bullish Skewed</div>
+  <div class="strategy-title">1/25 DTE Put Diagonal — Bullish Skewed</div>
   <div class="strategy-desc">
-    <strong>Setup</strong> — enter at <code>11:30 ET</code>, exit at <code>15:45 ET</code> the next trading day. Short a near-term put slightly in the money
+    <strong>Setup</strong> — enter any time in the <code>12:30–15:00 ET</code> window, exit at the <strong>same clock time</strong> the next trading day (<code>Entry Time === Exit Time</code>). Short a near-term put slightly in the money
     and buy a longer-dated put below it. Default sizing: short 10 pts ITM, long 20 pts below that (roughly 10 pts OTM).
-    Example: SPX 6300 → sell 1 DTE 6310 put, buy ~30 DTE 6290 put.
+    Example: SPX 6300 → sell 1 DTE 6310 put, buy ~25 DTE 6290 put.
     <br>
-    <strong>Holding</strong> — carry the position overnight. The next session, roll the whole structure forward one day, aiming for a credit.
-    If a 1-day roll can't generate a credit even after nudging strikes ~10 pts, extend the roll to 2 days while staying close to price.
+    <strong>Holding</strong> — carry the position overnight. Next session at the same clock time, exit the whole structure and simultaneously open the next day's diagonal.
+    The <code>24h</code> hold means one diagonal in the book at any given moment — no overlap, no stacked gamma.
     <br>
-    <strong>Closing</strong> — held into late afternoon (<code>15:45 ET</code>) so the expiring short bleeds out nearly all of its time value, then rolled.
-    Profit comes from the diagonal value widening because the short decays faster than the long; the rolls themselves are housekeeping.
+    <strong>Closing</strong> — held exactly 24 hours so the expiring short bleeds a full day of theta with no overnight-gap overlap between positions.
+    Profit comes from the diagonal value widening because the short decays faster than the long; the daily roll is housekeeping.
     <br><br>
     <span style="color:var(--accent);font-size:11px;font-weight:600">
-      ★ Best backtested config (2023‑01 → 2026‑04, real NBBO quotes only):
-      <code>entry 11:30, exit 15:45, sDTE=1, +10 ITM, lDTE=30, −20 below, OPEX‑1 + EOM + NM + VIX 50–80% + ALL EARNINGS excluded</code>
-      → 493 trades, total P/L <strong>+$134,836</strong>, win rate <strong>67.5%</strong>, MaxDD <strong>$14,296</strong>, MAR <strong>9.43</strong>, worst trade <strong>−$5,043</strong>, 100% real NBBO quotes.
-      Loaded as defaults below (filters pre-selected). Conservative sizing (10 ITM / 20 wide instead of 30 / 50) caps overnight‑gap tail risk at roughly debit + width ≈ $2–3K/contract, trading a bit of absolute P/L for a 2× better MAR and lower MaxDD.
+      ⏰ <strong>Recommended entry/exit window</strong> — any intraday time between <code>12:30 ET</code> and <code>15:00 ET</code>,
+      as long as <strong>Entry Time === Exit Time</strong>. This guarantees that yesterday's diagonal closes at the exact moment today's opens, so only one diagonal is live in the book at any given moment.
+      Earlier (before 12:30 ET) picks up too much of the morning open's noise; later (after 15:00 ET) leaves too little room on the expiring-short side.
+    </span>
+    <br><br>
+    <span style="color:var(--accent);font-size:11px;font-weight:600">
+      ★ Canonical default config (loaded below):
+      <code>entry/exit anywhere in 12:30–15:00 ET (same clock time), sDTE=1, +10 ITM, lDTE=25, −20 below</code>,
+      filtered with <code>OPEX-1 + NM + VIX 50–80% + AAPL + MSFT + TSLA + META</code> in EXCLUDE mode.
+      Conservative sizing (10 ITM / 20 wide) caps overnight-gap tail risk at ≈ debit + width ≈ $2–3K/contract.
+      The per-ticker earnings subset (four mega-caps) targets the overnight-gap days that matter, without penalising the historically neutral GOOGL/NVDA/AMZN report days that <code>ALL EARNINGS</code> used to sweep up.
     </span>
     <br><br>
     <span style="color:#fcd34d;font-size:11px">
       🧪 <strong>Filter stack</strong> — <code>OPEX-1</code> (day before monthly OPEX — weakest-edge day of the cycle),
-      <code>EOM</code> (last trading day of month — noisy month-end reprice),
       <code>NM</code> (first trading day of month — gap risk, NM Straddle day),
       <code>VIX 50–80%</code> (uncomfortable-middle regime; avg −$117/trade there vs +$220 elsewhere), and
-      <code>ALL EARNINGS</code> (skip any AAPL/GOOGL/MSFT/TSLA/META/NVDA/AMZN report day — overnight-gap risk).
-      All five are active by default in <strong>EXCLUDE</strong> mode.
+      <code>AAPL / MSFT / TSLA / META</code> earnings days (the four mega-caps whose after-hours prints drive the largest overnight SPX gaps).
+      All seven active by default in <strong>EXCLUDE</strong> mode. <code>EOM</code> and <code>ALL EARNINGS</code> are intentionally OFF — the per-ticker subset is tighter.
     </span>
     <br><br>
     <span style="color:var(--text3);font-size:11px">
       ⚠ <strong>Backtester scope</strong> — what this tool does / does NOT model:
       <br>
-      <strong>Does</strong>: open a fresh diagonal at the selected entry time (default <code>11:30 ET</code>), close it at the selected exit time the next trading day (default <code>15:45 ET</code>), price both legs from real Polygon NBBO bid/ask snapshots.
+      <strong>Does</strong>: open a fresh diagonal at the selected entry time (default <code>12:30 ET</code>, any time in the 12:30–15:00 ET window is valid), close it at the same clock time the next trading day (Entry Time === Exit Time), price both legs from real Polygon NBBO bid/ask snapshots.
       Data coverage: <strong>2023‑01‑03 → 2026‑04‑22</strong>, 820 trading days, 20 selectable intraday buckets (<code>09:45</code> → <code>15:45</code>), SPXW puts ±300 pts around spot, <strong>DTE 0–35 continuous</strong> (100% real quote coverage on the default config, 0% Black‑Scholes fallback).
       Expired short legs settle to exact intrinsic (SPXW is PM‑settled at SPX close), not Black‑Scholes.
       <br>
@@ -627,14 +633,14 @@ body {
   <div class="fg">
     <div class="fg-label">Entry Time (ET)</div>
     <div class="fg-row">
-      <select class="time-input" id="entryTime" title="SPX snapshot time used to price the entry leg.">
+      <select class="time-input" id="entryTime" title="SPX snapshot time used to price the entry leg. Recommended to match Exit Time (so only one diagonal is active at a time). Recommended window: 12:30 → 15:00 ET.">
         <option value="09:45">09:45</option>
         <option value="10:00">10:00</option>
-        <option value="11:30" selected>11:30</option>
+        <option value="11:30">11:30</option>
         <option value="11:45">11:45</option>
         <option value="12:00">12:00</option>
         <option value="12:15">12:15</option>
-        <option value="12:30">12:30</option>
+        <option value="12:30" selected>12:30</option>
         <option value="12:45">12:45</option>
         <option value="13:00">13:00</option>
         <option value="13:15">13:15</option>
@@ -655,14 +661,14 @@ body {
   <div class="fg">
     <div class="fg-label">Exit Time (ET, next day)</div>
     <div class="fg-row">
-      <select class="time-input" id="exitTime" title="SPX snapshot time used to price the exit leg on the next trading day.">
+      <select class="time-input" id="exitTime" title="SPX snapshot time used to price the exit leg on the next trading day. Recommended to match Entry Time so yesterday's diagonal closes exactly when today's opens (no overlap). Recommended window: 12:30 → 15:00 ET.">
         <option value="09:45">09:45</option>
         <option value="10:00">10:00</option>
         <option value="11:30">11:30</option>
         <option value="11:45">11:45</option>
         <option value="12:00">12:00</option>
         <option value="12:15">12:15</option>
-        <option value="12:30">12:30</option>
+        <option value="12:30" selected>12:30</option>
         <option value="12:45">12:45</option>
         <option value="13:00">13:00</option>
         <option value="13:15">13:15</option>
@@ -675,7 +681,7 @@ body {
         <option value="15:00">15:00</option>
         <option value="15:15">15:15</option>
         <option value="15:30">15:30</option>
-        <option value="15:45" selected>15:45</option>
+        <option value="15:45">15:45</option>
       </select>
     </div>
   </div>
@@ -715,12 +721,12 @@ body {
       <option value="22">22</option>
       <option value="23">23</option>
       <option value="24">24</option>
-      <option value="25">25</option>
+      <option value="25" selected>25</option>
       <option value="26">26</option>
       <option value="27">27</option>
       <option value="28">28</option>
       <option value="29">29</option>
-      <option value="30" selected>30</option>
+      <option value="30">30</option>
       <option value="31">31</option>
       <option value="32">32</option>
       <option value="33">33</option>
@@ -853,7 +859,7 @@ body {
   <div class="empty-state" id="emptyState">
     <div class="empty-title">Framework ready — no data yet</div>
     <div class="empty-desc">
-      Once SPX puts historical chain data is loaded (11:30 ET entry snapshot + next-day 15:45 ET exit snapshot for each trading day, across 0&nbsp;DTE to 35&nbsp;DTE, strikes ±300 pts around ATM), this page will compute results using the parameters above.
+      Once SPX puts historical chain data is loaded (intraday snapshots across the 12:30–15:00 ET entry window + matching next-day exit snapshots at the same clock time for each trading day, across 0&nbsp;DTE to 35&nbsp;DTE, strikes ±300 pts around ATM), this page will compute results using the parameters above.
       <br><br>
       Drop your data file at <code>./data/diagonal/SPX_YYYYMMDD.csv</code> or adapt the loader in <code>diagonal.html</code> to your format.
     </div>
@@ -1090,18 +1096,22 @@ document.querySelectorAll('#sdPills .tpill').forEach(p => {
   });
 });
 
-// Preselect the best-backtested default filter stack in EXCLUDE mode:
-//   OPEX-1   — weakest-edge day of the OPEX cycle
-//   EOM      — last trading day of month (month-end volatility, noisy opens)
-//   NM       — first trading day of month (NM Straddle day; gap risk + reprice)
-//   VIX_MID  — VIX 50-80% uncomfortable-middle regime (no-edge band)
-//   ALL_EARN — any AAPL/GOOGL/MSFT/TSLA/META/NVDA/AMZN earnings day
+// Preselect the canonical 7-filter stack in EXCLUDE mode:
+//   OPEX-1      — weakest-edge day of the OPEX cycle
+//   NM          — first trading day of month (gap risk, reprice)
+//   VIX_MID     — VIX 50-80% uncomfortable-middle regime (no-edge band)
+//   AAPL/MSFT/TSLA/META — per-ticker earnings days (biggest overnight-gap offenders)
+// EOM and ALL_EARNINGS intentionally dropped — the per-ticker subset
+// (four mega-caps) captures the gap-risk days without penalising the
+// historically-neutral GOOGL/NVDA/AMZN report days.
 specialState.mode = 'exclude';
 specialState.active.add('OPEX-1');
-specialState.active.add('EOM');
 specialState.active.add('NM');
 specialState.active.add('VIX_MID');
-specialState.active.add('ALL_EARNINGS');
+specialState.active.add('AAPL');
+specialState.active.add('MSFT');
+specialState.active.add('TSLA');
+specialState.active.add('META');
 syncSpecialUI();
 
 // ══════════════════════════════════════════════════════════════════════

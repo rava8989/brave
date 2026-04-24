@@ -294,6 +294,14 @@
       .sp{font-size:11px;padding:2px 7px;}
     }
   </style>
+
+  <!-- Load signal-engine.js as a deferred module so its side-effect assignment
+       (globalThis.SignalEngine = { ..., computeDiagonalSignal, ... }) is available
+       to the classic <script> block below by the time user interactions fire.
+       This is the SINGLE SOURCE OF TRUTH for diagonal filter logic — the inline
+       diagonal card below reads SignalEngine.computeDiagonalSignal() output
+       directly so the browser UI, Discord message, and backtester can never drift. -->
+  <script type="module" src="./signal-engine.js"></script>
 </head>
 <body>
 
@@ -352,6 +360,14 @@
         <a href="diagonal.html" class="schwab-btn primary" style="text-decoration:none;font-size:13px;padding:8px 18px;border-radius:8px;text-align:center;background:linear-gradient(135deg,#f59e0b,#d97706);">◢ Diagonal Backtester</a>
       </div>
     </div>
+  </div>
+
+  <!-- SCHWAB-HEALTH CIRCUIT-BREAKER BANNER (hidden unless Worker reports Schwab refresh failures) -->
+  <div id="schwabHealthBanner" style="display:none;margin:6px 14px 0;padding:12px 16px;background:linear-gradient(135deg,#7f1d1d,#991b1b);border:1px solid #fca5a5;border-radius:10px;color:#fee2e2;font-size:13px;font-weight:600;box-shadow:0 4px 12px rgba(239,68,68,.25);">
+    <span style="font-size:16px;margin-right:8px;">⚠️</span>
+    <span id="schwabHealthBannerText">Worker is unable to refresh Schwab tokens — click Re-authenticate above.</span>
+    <button onclick="schwabReauth()" style="margin-left:14px;padding:4px 12px;background:#fff;color:#991b1b;border:none;border-radius:6px;font-weight:700;cursor:pointer;font-size:12px;">Re-authenticate Now</button>
+    <button onclick="document.getElementById('schwabHealthBanner').style.display='none';" style="margin-left:6px;padding:4px 10px;background:transparent;color:#fee2e2;border:1px solid #fca5a5;border-radius:6px;cursor:pointer;font-size:12px;">Dismiss</button>
   </div>
 
   <!-- SCHWAB INTEGRATION BAR -->
@@ -468,7 +484,7 @@
       <span class="ml" style="cursor:help" onclick="document.getElementById('vixPctExplain').hidden=!document.getElementById('vixPctExplain').hidden">VIX 20d %ile</span><span class="mv" id="vixPct20Display">—</span>
     </div>
     <span class="msep" id="regimeSep" style="display:none;">|</span>
-    <div class="mi" id="regimeWrap" style="display:none;" title="Diagonal-strategy regime check (ready by 9:30 AM ET — well before the 11:30 ET entry). DEAD = VIX ranks 50–80% vs last 20 days AND yesterday's SPX moved less than 0.5%. EDGE = any other combo. DEAD days historically cost the strategy ~$26K in P/L and ~26% of max drawdown across the backtest — this is the sharpest skip filter we have.">
+    <div class="mi" id="regimeWrap" style="display:none;" title="Diagonal-strategy regime check (ready by 9:30 AM ET — well before the 12:30 ET entry). DEAD = VIX ranks 50–80% vs last 20 days AND yesterday's SPX moved less than 0.5%. EDGE = any other combo. DEAD days historically cost the strategy ~$26K in P/L and ~26% of max drawdown across the backtest — this is the sharpest skip filter we have.">
       <span class="ml" style="cursor:help" onclick="document.getElementById('regimeExplain').hidden=!document.getElementById('regimeExplain').hidden">Diagonal Regime</span>
       <span class="mv" id="regimeDisplay">—</span>
     </div>
@@ -522,8 +538,8 @@
       <strong style="color:var(--accent);font-size:12px">What does "Diagonal Regime" mean?</strong>
       <span style="cursor:pointer;color:var(--text3);font-size:14px" onclick="document.getElementById('regimeExplain').hidden=true">✕</span>
     </div>
-    A simple <strong>go / no-go</strong> check for the 1/30 put-diagonal trade (entry 11:30 ET, exit 15:45 ET next day). Ready by
-    <strong>9:30 AM ET</strong> — well before the 11:30 entry.
+    A simple <strong>go / no-go</strong> check for the 1/25 put-diagonal trade (entry anywhere in the 12:30–15:00 ET window, exit at the same clock time next day). Ready by
+    <strong>9:30 AM ET</strong> — well before the 12:30 entry.
     <br><br>
     <strong>Two possible states:</strong>
     <ul style="margin:4px 0 0 16px;padding:0">
@@ -613,7 +629,7 @@
     </div>
 
     <!-- CARD 5: Diagonal (companion — not part of Sigma 3) -->
-    <div class="scard" id="cardDiag" title="1/30 Put Diagonal — default config (short 10 ITM, long 20 below) with OPEX-1, EOM, NM, VIX 50–80% dead zone, and ALL-EARNINGS days excluded. Entry 11:30 ET, exit 15:45 ET next day. See the '1/30 Put Diagonal' section below the calculator for full strategy details.">
+    <div class="scard" id="cardDiag" title="1/25 Put Diagonal — default config (short 10 ITM, long 20 below) with OPEX-1, NM, VIX 50–80% dead zone, and AAPL/MSFT/TSLA/META earnings days excluded. Entry anywhere in the 12:30–15:00 ET window, exit at the same clock time next day (24-hour hold; Entry Time === Exit Time; one diagonal in the book at a time). See the '1/25 Put Diagonal' section below the calculator for full strategy details.">
       <div class="scard-header">
         <span class="scard-label">Diagonal <span style="font-weight:400;font-size:10px;opacity:.7;letter-spacing:normal;text-transform:none">· companion</span></span>
         <span class="today-trade-pill" id="pillDiag" style="display:none;">▶ TODAY'S TRADE</span>
@@ -725,7 +741,7 @@
     </ul>
 
     <hr class="divider">
-    <h3>1/30 Put Diagonal — Companion Strategy <span style="font-weight:400;font-size:12px;color:var(--text3)">(separate from Sigma 3; OPEX-1 + EOM + NM + VIX + Earnings filtered default)</span></h3>
+    <h3>1/25 Put Diagonal — Companion Strategy <span style="font-weight:400;font-size:12px;color:var(--text3)">(separate from Sigma 3; OPEX-1 + NM + VIX 50–80% + AAPL/MSFT/TSLA/META earnings filtered default)</span></h3>
     <p>
       A <strong>SPXW put-diagonal spread</strong> that runs alongside the Sigma 3 bundle. Different instrument,
       different DTE, and different trade windows — so it's largely <strong>uncorrelated</strong> with M8BF / Straddle /
@@ -741,7 +757,7 @@
     <ul>
       <li><strong>Short leg</strong> — sell a <strong>1 DTE SPXW put</strong> at a strike <strong>+10 pts above spot</strong>
           (slightly in the money, rich theta). Strike tolerance ±5 pts.</li>
-      <li><strong>Long leg</strong> — buy a <strong>30 DTE SPXW put</strong> at a strike <strong>−20 pts below the short</strong>
+      <li><strong>Long leg</strong> — buy a <strong>25 DTE SPXW put</strong> at a strike <strong>−20 pts below the short</strong>
           (roughly 10 pts OTM from spot). Strike tolerance ±5 pts. Expiration tolerance ±5 DTE.</li>
       <li><strong>Bullish-skewed net</strong> — deltas partially offset, but the ITM short put dominates so the structure
           is mildly long delta. Profit comes from the <strong>short leg decaying faster than the long leg</strong>
@@ -749,31 +765,32 @@
       <li><strong>Why conservative sizing</strong> — at 10 ITM / 20 wide, theoretical max loss ≈ debit + width ≈ $2-3K/contract.
           Going deeper ITM (30+) or wider (50+) removes the short's extrinsic cushion and scales max loss to $8-13K+ per
           contract on a big overnight gap. The narrow setup keeps the tail risk bounded.</li>
-      <li><strong>Example</strong> — SPX 6300 → sell the 1 DTE 6310 put, buy the ~30 DTE 6290 put.</li>
+      <li><strong>Example</strong> — SPX 6300 → sell the 1 DTE 6310 put, buy the ~25 DTE 6290 put.</li>
     </ul>
 
     <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Timing</h4>
     <ul>
-      <li><strong>Entry</strong> — <code>11:30 ET</code> every trading day.</li>
-      <li><strong>Holding</strong> — carry overnight. The short leg expires next session; theta bleed is the engine.</li>
-      <li><strong>Exit / roll</strong> — next day at <strong>15:45 ET</strong>, close the expiring short (almost all of its time value bled out by then)
-          and roll the whole structure forward one day for a credit. If a 1-day roll can't clear a credit even after nudging strikes ~10 pts,
-          extend to a 2-day roll while staying close to price.</li>
-      <li><strong>Backtest simplification</strong> — the public backtester opens a brand-new position at 11:30 ET each day and closes it
-          at the next day's 15:45 ET snapshot. No rolling, no mid-trade adjustments. Live execution differs.</li>
+      <li><strong>Entry</strong> — <code>12:30 ET</code> every eligible trading day.</li>
+      <li><strong>Exit</strong> — next trading day at <code>12:30 ET</code> (exact 24-hour hold). Yesterday's position is closed at the same moment today's is opened — so only <strong>one diagonal is live</strong> in the book at any given instant. No overlap, no stacked gamma, no "two diagonals on top of each other".</li>
+      <li><strong>Recommended entry/exit window</strong> — any clock time between <code>12:30 ET</code> and <code>15:00 ET</code> works, <em>as long as entry time equals exit time</em>.
+          Earlier than 12:30 picks up too much of the morning open's noise; later than 15:00 leaves too little room on the expiring-short side.</li>
+      <li><strong>Backtest simplification</strong> — the public backtester opens a brand-new position at entry time each day and closes it
+          24 hours later at the same clock time on the next trading day. No rolling fees, no mid-trade adjustments. Live execution with continuous rolls can differ.</li>
     </ul>
 
-    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Default Filter Stack <span style="font-weight:400;color:var(--text3);font-size:11px">(all five excluded)</span></h4>
+    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Default Filter Stack <span style="font-weight:400;color:var(--text3);font-size:11px">(all seven excluded)</span></h4>
     <ul>
       <li><strong>OPEX-1</strong> — skip the trading day immediately before monthly OPEX. Historically the weakest-edge day of the OPEX cycle.</li>
-      <li><strong>EOM</strong> — skip the last trading day of the month. Month-end rebalancing flow creates noisy reprice behavior that weakens the short-decay edge.</li>
       <li><strong>NM</strong> — skip the first trading day of the month. NM overlaps the Straddle/auto-flow day and the overnight gap risk dominates theta burn.</li>
       <li><strong>VIX 50-80% (dead zone)</strong> — skip days where today's VIX 20-day rolling percentile lands in the 50–80% band
           (the "uncomfortable middle" — elevated but not spiky). Historically the strategy has <em>no edge</em> there;
           trade normally in 0–50% (calm → cheap vol sellers get paid) or 80–100% (panic → mean-reversion + skew crush pay).
           Percentile is ready by 9:30 AM ET; no intraday data needed.</li>
-      <li><strong>ALL EARNINGS</strong> — skip any day with an AAPL / GOOGL / MSFT / TSLA / META / NVDA / AMZN earnings release.
-          Overnight-gap risk makes the short leg's premium burn unreliable on these days.</li>
+      <li><strong>AAPL / MSFT / TSLA / META earnings</strong> — skip any trading day with an earnings release from these four mega-caps.
+          Their after-hours prints drive the largest overnight SPX gaps, which dominate the short leg's theta burn.
+          <code>GOOGL / NVDA / AMZN</code> earnings days are intentionally <em>NOT</em> filtered — historical backtests show they're roughly neutral,
+          and sweeping them up with a generic <code>ALL EARNINGS</code> filter throws away profitable trades.</li>
+      <li><strong>EOM is no longer in the default stack</strong> — in practice the month-end rebalancing flow the old filter was guarding against overlaps heavily with the VIX 50–80% band. Keeping both filters was double-counting.</li>
       <li>This filter stack is the <strong>default version</strong> of the strategy on this site — the one plotted on the
           historical backtester and the one counted in the default-diagonal equity line. All references to
           "diagonal P/L" in the UI use this filtered version unless noted otherwise.</li>
@@ -781,10 +798,11 @@
 
     <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">What it is <em>not</em></h4>
     <ul>
-      <li><strong>Not 0DTE</strong> — both legs carry overnight (1 DTE short + 30 DTE long).</li>
+      <li><strong>Not 0DTE</strong> — both legs carry overnight (1 DTE short + 25 DTE long).</li>
       <li><strong>Not a credit spread</strong> — it's a long-calendar-style diagonal; different DTEs, different strikes.</li>
       <li><strong>Not part of Sigma 3</strong> — separate sizing and separate signals. It does not displace M8BF / Straddle / GXBF / BOBF.</li>
-      <li><strong>Not blocked by CPI or FED</strong> — the default filter stack only skips OPEX-1, EOM, NM, VIX 50-80%, and mega-cap earnings days.</li>
+      <li><strong>Not blocked by CPI or FED</strong> — the default filter stack only skips OPEX-1, NM, VIX 50-80%, and AAPL/MSFT/TSLA/META earnings days.</li>
+      <li><strong>Never two diagonals at once</strong> — because entry time equals exit time, the previous day's position exits at the exact instant the next one opens. One position in the book, always.</li>
     </ul>
 
     <hr class="divider">
@@ -807,7 +825,7 @@
     <hr class="divider">
     <h3>Recent Changes</h3>
     <ul>
-      <li><strong>1/30 Put Diagonal documented as a companion strategy</strong> — separate from Sigma 3, enters at 11:30 ET and exits 15:45 ET next day. Default sizing tightened to <strong>+10 ITM / −20 below</strong> (was +30 / −50) to cap tail risk at ~$2-3K/contract. Filter stack excludes OPEX-1, EOM, NM, VIX 50–80%, and ALL-EARNINGS days. See the "1/30 Put Diagonal" section above for full structure, timing, and filter rules.</li>
+      <li><strong>1/25 Put Diagonal — canonical defaults updated (2026-04-23)</strong> — entry/exit moved to the <strong>12:30–15:00 ET window</strong> (24-hour hold, Entry Time === Exit Time, no two diagonals active at once). Long leg shortened to <strong>25 DTE</strong> (from 30). Filter stack switched from <code>OPEX-1 + EOM + NM + VIX + ALL_EARNINGS</code> to <code>OPEX-1 + NM + VIX + AAPL/MSFT/TSLA/META</code> — per-ticker earnings replaces the blanket ALL-EARNINGS sweep (GOOGL/NVDA/AMZN days are historically neutral and no longer skipped). Recommended entry/exit window: <strong>12:30–15:00 ET</strong>, as long as Entry Time === Exit Time. Sizing unchanged at +10 ITM / −20 below.</li>
       <li><strong>GXBF on OPEX+1 blocked when VIX gaps up ≥ 2% overnight</strong> — if today's VIX open is ≥ 2% above yesterday's VIX close, the automatic OPEX+1 GXBF signal is suppressed entirely.</li>
       <li><strong>SPX gap ≥ 0.9% cancels Straddle only</strong> — when the absolute SPX gap (today's open vs yesterday's close) is ≥ 0.9%, any Straddle or NM Straddle signal is cancelled. No effect on M8BF or GXBF. Gap and o2o have zero connection to butterfly.</li>
       <li><strong>o2o &gt; 1.4 cancels Straddle only (except EOM)</strong> — when the open-to-open VIX drop exceeds 1.4, any Straddle or NM Straddle signal is cancelled. Does not apply on EOM days. No effect on M8BF or GXBF.</li>
@@ -1465,11 +1483,11 @@
       regimeWrap.title = 'Waiting for today\'s VIX open + prior-day SPX close — connect Schwab and check back shortly after 9:30 AM ET.';
     }
 
-    // ── DIAGONAL signal card — companion strategy, full default 5-filter stack ──
-    // Priority: OPEX-1 > EOM > NM > ALL_EARNINGS > VIX_MID (50–80%) > GO.
-    // Mirrors compute_diagonal_pnl.py DEFAULT_PARAMS.special_active exactly.
-    // CPI is intentionally NOT in the stack (matches the backtester) — the
-    // whole signalStack is hidden on CPI day anyway, so this card isn't shown.
+    // ── DIAGONAL signal card — companion strategy ──
+    // SINGLE SOURCE OF TRUTH: signal-engine.js #computeDiagonalSignal().
+    // Browser UI, Worker Discord message, and Python backtester all share the
+    // same filter stack + output text. Do NOT re-implement filters here; add
+    // new filters to signal-engine.js and they'll propagate everywhere.
     // Independent of Sigma 3 — does not read any M8BF/Straddle/GXBF/BOBF flags.
     const diagRec    = document.getElementById('diagRec');
     const diagReason = document.getElementById('diagReason');
@@ -1477,60 +1495,44 @@
     const cardDiag   = document.getElementById('cardDiag');
     const pillDiag   = document.getElementById('pillDiag');
 
-    let _diagSkip = null;  // { code, title, reason }
-    if (opex1) {
-      _diagSkip = {
-        code: 'OPEX-1',
-        title: 'No Diagonal (day before OPEX)',
-        reason: 'Day before monthly OPEX — pin/gamma noise. Default filter skips this day.',
-      };
-    } else if (eomDay) {
-      _diagSkip = {
-        code: 'EOM',
-        title: 'No Diagonal (EOM)',
-        reason: 'Last trading day of month — month-end rebalancing flow creates noisy reprice. Default filter skips.',
-      };
-    } else if (nmDay) {
-      _diagSkip = {
-        code: 'NM',
-        title: 'No Diagonal (NM)',
-        reason: 'First trading day of month — gap risk dominates theta burn. Default filter skips.',
-      };
-    } else if (earningsDay) {
-      const ers = earningsSchedule
-        .filter(e => e.date === todayLong())
-        .map(e => `${e.ticker} ${e.timing}`)
-        .join(', ');
-      _diagSkip = {
-        code: 'EARN',
-        title: `No Diagonal (earnings: ${ers})`,
-        reason: `Mega-cap earnings day (${ers}) — overnight gap risk. Default filter skips.`,
-      };
-    } else if (_vixPctToday !== null && _vixPctToday > 50 && _vixPctToday <= 80) {
-      _diagSkip = {
-        code: 'VIX_MID',
-        title: 'No Diagonal (VIX 50–80% dead zone)',
-        reason: `VIX 20-day percentile = ${_vixPctToday}% — inside the 50–80% "no-edge" band. Default filter skips.`,
-      };
-    }
+    const _diagSig = (typeof SignalEngine !== 'undefined' && SignalEngine.computeDiagonalSignal)
+      ? SignalEngine.computeDiagonalSignal(now, _vixPctToday)
+      : null;
 
-    if (_diagSkip) {
-      diagRec.textContent    = _diagSkip.title;
-      diagReason.textContent = _diagSkip.reason;
-      diagBadge.textContent  = 'SKIP';
-      cardDiag.className     = 'scard active-block';
+    // Per-skip-code reason copy for the card tooltip (title/badge/gate are
+    // authoritative from signal-engine — only the expanded reason lives here).
+    const _diagReasonByCode = {
+      'OPEX-1': 'Day before monthly OPEX — pin/gamma noise. Default filter skips this day.',
+      'EOM':    'Last trading day of month — month-end rebalancing flow creates noisy reprice. Default filter skips.',
+      'NM':     'First trading day of month — gap risk dominates theta burn. Default filter skips.',
+      'EARN':   'Mega-cap earnings today — overnight gap risk. Default filter skips.',
+      'VIX_MID':`VIX 20-day percentile = ${_vixPctToday}% — inside the 50–80% "no-edge" band. Default filter skips.`,
+    };
+
+    if (!_diagSig) {
+      // signal-engine module hasn't loaded yet (extreme early interaction) — neutral state.
+      diagRec.textContent    = 'Calculate to see signal';
+      diagReason.textContent = '';
+      diagBadge.textContent  = '…';
+      cardDiag.className     = 'scard';
       if (pillDiag) pillDiag.style.display = 'none';
-    } else if (_vixPctToday !== null) {
-      const band = _vixPctToday <= 50 ? '0–50% (calm edge)' : '80–100% (panic edge)';
-      diagRec.textContent    = 'Diagonal @ 11:30 AM ET';
-      diagReason.textContent = `VIX 20-day percentile = ${_vixPctToday}% — ${band}. Short 1 DTE SPXW put +10 pts ITM · long 30 DTE SPXW put −20 pts below short · ±5 pt tol. Entry 11:30 ET · Exit 15:45 ET next day. Default filters (OPEX-1, EOM, NM, earnings) all clear today.`;
-      diagBadge.textContent  = '⏰ 11:30 ET';
+    } else if (_diagSig.diagGo) {
+      diagRec.textContent    = _diagSig.diagText;
+      diagReason.textContent = 'Short 1 DTE SPXW put +10 pts ITM · long 25 DTE SPXW put −20 pts below short · ±5 pt tol. Entry anywhere in the 12:30–15:00 ET window; exit at the same clock time on the next trading day (24-hour hold, entry time = exit time). All 7 default filters (OPEX-1, NM, VIX 20d, AAPL/MSFT/TSLA/META earnings) clear today.';
+      diagBadge.textContent  = _diagSig.diagBadge;
       cardDiag.className     = 'scard active-ok';
       if (pillDiag) pillDiag.style.display = '';
+    } else if (_diagSig.diagSkipCode) {
+      diagRec.textContent    = _diagSig.diagText;
+      diagReason.textContent = _diagReasonByCode[_diagSig.diagSkipCode] || '';
+      diagBadge.textContent  = _diagSig.diagBadge;
+      cardDiag.className     = 'scard active-block';
+      if (pillDiag) pillDiag.style.display = 'none';
     } else {
+      // Calendar filters clear but VIX 20d percentile not yet populated.
       diagRec.textContent    = 'Waiting for VIX 20-day percentile…';
       diagReason.textContent = 'Calendar filters all clear, but need today\'s VIX open + last 20 daily closes to confirm regime. Connect Schwab and check back after 9:30 AM ET.';
-      diagBadge.textContent  = '…';
+      diagBadge.textContent  = _diagSig.diagBadge;
       cardDiag.className     = 'scard';
       if (pillDiag) pillDiag.style.display = 'none';
     }
@@ -2446,6 +2448,42 @@
     }
   }
 
+  /* ── Worker-side circuit-breaker: poll /schwab-health and show banner ──
+     The Worker records token-refresh outcomes in KV (key schwab_refresh_state).
+     If Schwab is rejecting the refresh_token (so the Worker's cron + /trigger
+     both silently fail), surface a red banner IMMEDIATELY so we re-auth
+     instead of losing 24h of signals to stale tokens. */
+  let _schwabHealthInterval = null;
+  async function schwabPollHealth(){
+    try {
+      const proxy = (localStorage.getItem('sc_proxyUrl') || '').trim();
+      if (!proxy) return;
+      const res = await fetch(proxy.replace(/\/$/, '') + '/schwab-health', { cache: 'no-store' });
+      if (!res.ok) return;
+      const h = await res.json();
+      const banner = document.getElementById('schwabHealthBanner');
+      const txt = document.getElementById('schwabHealthBannerText');
+      if (!banner || !txt) return;
+      if (h && h.alarming) {
+        const errs = h.consecutiveErrors || 0;
+        const mins = h.minutesSinceSuccess;
+        const lastOk = mins == null ? 'never (KV untouched)' : `${mins} min ago`;
+        const msg = h.msg ? ` — last error: "${h.msg}"` : '';
+        txt.textContent = `Worker cannot refresh Schwab token (${errs} consecutive failures, last success ${lastOk})${msg}. Re-authenticate NOW or the next cron will fail silently.`;
+        banner.style.display = 'block';
+      } else {
+        banner.style.display = 'none';
+      }
+    } catch (e) {
+      // Network failure polling health is non-fatal — don't spam the console.
+    }
+  }
+  function schwabStartHealthPolling(){
+    if (_schwabHealthInterval) return;
+    schwabPollHealth();                            // immediate first check
+    _schwabHealthInterval = setInterval(schwabPollHealth, 5 * 60 * 1000); // every 5 min
+  }
+
   /* ── Init on page load ── */
   async function schwabInit(){
     // Handle OAuth callback first
@@ -2478,6 +2516,7 @@
     await schwabFetchHistorical();
     schwabScheduleStream();
     schwabCheckReauthWarning();
+    schwabStartHealthPolling();
   }
 
   /* ====================================================
