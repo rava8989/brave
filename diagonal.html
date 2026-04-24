@@ -1141,8 +1141,8 @@ let HALFDAY_CLOSE = {};         // {date: spx_close} for half-day sessions missi
 // Initial state comes from the DOM dropdowns so the JS can't drift from the
 // selected option (e.g. HTML default changes to 09:45 but JS still reads 14:00,
 // causing spot/vix to be pulled from the wrong time bucket on first run).
-let SELECTED_ENTRY_TIME = document.getElementById('entryTime')?.value || '14:00';
-let SELECTED_EXIT_TIME  = document.getElementById('exitTime')?.value  || '14:00';
+let SELECTED_ENTRY_TIME = document.getElementById('entryTime')?.value || '12:30';
+let SELECTED_EXIT_TIME  = document.getElementById('exitTime')?.value  || '12:30';
 
 async function fetchGzJson(url) {
   // Fetch a gzipped JSON file and decompress via native DecompressionStream.
