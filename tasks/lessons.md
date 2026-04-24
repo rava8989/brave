@@ -291,3 +291,90 @@ Before executing ANY surfaced plan:
 plan from days earlier. All target changes were already committed; user hadn't
 mentioned the topic in over a week. Started reading files to "execute" work
 that was long done.)
+
+---
+
+## Never deploy Worker code when user-facing scheduled handlers are the same day (2026-04-23)
+
+Deployed a signal-engine.js refactor at 2026-04-22 23:49 UTC, then at
+2026-04-23 09:30 ET the morning Discord signal did not fire. User reported
+two failures: no morning Discord message, GEX page broken.
+
+Root cause turned out to be Schwab refresh-token rejection (token last
+refreshed 2026-04-22 19:33 ET; every refresh attempt since has thrown HTTP
+non-200). Evidence:
+- `schwab_tokens.expiry` stuck 24h stale in KV (would update every ~28 min
+  if refresh were working)
+- `morning_signal_2026-04-23` stuck at `claim:<uuid>` — claim taken (line
+  652) but `getAccessToken` at line 663 threw before the "sent" write
+- GEX endpoint still returns a 200 because it serves stale `gex_current`
+  from KV when refresh fails — masks the real problem
+- EOD `last_run` shows `vixClose:null, spxClose:null, "Invalid close from
+  Stooq"` — Schwab path dead, fallback path also dead
+
+My refactor was NOT the cause (Schwab rejection started before the deploy),
+but deploying to a live schwab-bound Worker on the same day a cron is due
+meant the rollback had to happen under time pressure and user frustration.
+
+**Rules:**
+1. Worker deploys that touch the bundle `schwab-proxy.js` imports — including
+   `signal-engine.js` — must be smoke-tested against the actual Worker
+   runtime (not just Node) before a scheduled cron is due. Use
+   `wrangler dev --remote` or a manual `/gex` ping after deploy.
+2. Never deploy on a Wednesday evening or Thursday morning — the Thursday
+   09:30 ET morning cron is the highest-stakes scheduled handler and the
+   one the user notices within seconds if it fails.
+3. When a user reports a scheduled-handler failure, the diagnostic order is:
+   a. Check `schwab_tokens.expiry` — if >1h old, Schwab refresh is dead
+   b. Check `morning_signal_<date>` / `gex_last_refresh_ts` for stuck claim
+      or stale timestamps
+   c. Only THEN suspect the recent code deploy
+4. Rollback first, diagnose second. `wrangler rollback <version-id>` is a
+   30-second operation that restores known-good behaviour and buys time to
+   investigate without the user losing more data points.
+5. If the root cause is dead Schwab tokens, the fix is user-side: open the
+   web UI → click "Re-authenticate" button → Schwab OAuth → tokens sync to
+   KV via POST /sync. Code rollback alone does NOT restore service.
+
+---
+
+## `deadlineMs` relative to 9:30 ET makes the fallback structurally broken (2026-04-24)
+
+2026-04-24 09:30 ET morning Discord signal didn't fire. User reported after
+the fact. Symptoms:
+- `morning_signal_2026-04-24` stuck at `claim:<uuid>` — claim taken, never
+  flipped to `sent`
+- `morning_signal_fail_2026-04-24` had a timestamp — fallback fired but also
+  failed
+- `schwab_refresh_state` was `{ok:true}` — Schwab was healthy
+- `last_run` was from yesterday's EOD — no today write yet
+
+Root cause in schwab-proxy.js (pre-fix lines 795-801): the VIX post-open
+polling deadline was computed as **9:30 ET absolute + 120s = 9:32 ET
+absolute**, regardless of when the function actually runs. So the 9:30 cron
+had the intended 2-min grace, but any fallback invocation at 9:32+ ET saw
+`Date.now() > deadlineMs` immediately → `while (Date.now() < deadlineMs)`
+body never executed → `attempt` stayed 0 → threw "VIX post-open tick not
+yet available after 0 attempts over ~2 minutes".
+
+Every subsequent /gex hit re-triggered the fallback, re-threw the same
+error, wrote `morning_signal_fail_<date>`, got gated by the 60s cooldown,
+waited 60s, retried, same thing. Permanently wedged.
+
+Fix: `const deadlineMs = Date.now() + maxWaitMs;` — relative to when the
+handler actually runs. Works for both the 9:30 cron (same behaviour as
+before) and any post-9:32 recovery attempt.
+
+**Rules:**
+1. Any polling loop with a deadline should be relative to `Date.now()`, not
+   absolute to a wall-clock time, unless there's a specific reason otherwise.
+   Wall-clock deadlines silently break recovery paths.
+2. When diagnosing a wedged morning signal, check
+   `morning_signal_fail_<date>` in addition to `morning_signal_<date>`. A
+   timestamp in the fail key means the fallback IS running and IS throwing
+   — tail the Worker logs for the actual exception.
+3. `wrangler tail schwab-proxy --format=pretty` is the fastest way to see
+   the real error. Don't guess from KV state — logs show the actual throw.
+4. "Discord post failed" vs "VIX not available" vs "Schwab token rejected"
+   look identical from outside (claim stuck, fallback retrying). Always
+   tail the logs to distinguish.

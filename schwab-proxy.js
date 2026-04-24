@@ -23,6 +23,37 @@
 const rateLimitMap = new Map(); // Map<ip, {count: number, reset: number}>
 let _tokenRefreshPromise = null; // mutex: prevents concurrent Schwab token refreshes
 
+// ════════════════════════════════════════════════════════════════════
+// SCHWAB REFRESH HEALTH — circuit-breaker state written to KV
+// ────────────────────────────────────────────────────────────────────
+// Surfaces "KV says tokens valid, Schwab says no" to the browser so the
+// dashboard can show a red "re-auth now" banner instead of silently
+// serving stale data for 24h.
+// Shape:
+//   { ok: true,  lastSuccess: <ms> }
+//   { ok: false, lastSuccess: <ms>, lastError: <ms>, msg, consecutiveErrors }
+// ════════════════════════════════════════════════════════════════════
+async function recordRefreshHealth(env, ok, msg = null) {
+  try {
+    const prevRaw = await env.SIGNAL_KV.get('schwab_refresh_state');
+    const prev = prevRaw ? JSON.parse(prevRaw) : {};
+    const now = Date.now();
+    const state = ok
+      ? { ok: true, lastSuccess: now, consecutiveErrors: 0 }
+      : {
+          ok: false,
+          lastSuccess: prev.lastSuccess || null,
+          lastError: now,
+          msg: String(msg || '').slice(0, 300),
+          consecutiveErrors: (prev.consecutiveErrors || 0) + 1,
+        };
+    await env.SIGNAL_KV.put('schwab_refresh_state', JSON.stringify(state));
+  } catch (e) {
+    // Never let health-tracking break the main flow
+    console.warn('[proxy] recordRefreshHealth failed:', e.message || e);
+  }
+}
+
 function checkRateLimit(request) {
   const ip = request.headers.get('CF-Connecting-IP') || request.headers.get('X-Forwarded-For') || 'unknown';
   const now = Date.now();
@@ -91,7 +122,7 @@ function buildDiscordMessage(signal, vixValues) {
   inner += `${sigColor(signal.stradText)}Straddle │ ${signal.stradText}${RST}\n`;
   inner += `${sigColor(signal.gxbfText)}GXBF     │ ${signal.gxbfText}${RST}\n`;
   inner += `${sigColor(signal.bobfRec)}BOBF     │ ${signal.bobfRec}${RST}\n`;
-  // Diagonal (companion — 10 ITM / 20 wide, 5-filter stack)
+  // Diagonal (companion — 10 ITM / 20 wide, 7-filter stack, 12:30–15:00 ET window)
   if (signal.diagText) {
     inner += `${sigColor(signal.diagText)}Diagonal │ ${signal.diagText}${RST}\n`;
   }
@@ -167,6 +198,7 @@ async function getAccessToken(env, forceRefresh = false) {
                 const fresh = JSON.parse(freshRaw);
                 if (fresh.refresh !== tokens.refresh && Date.now() < fresh.expiry - 60000) {
                   console.warn('[proxy] Token refresh lost race; using winner from KV');
+                  await recordRefreshHealth(env, true);
                   return fresh.access;
                 }
               }
@@ -176,26 +208,45 @@ async function getAccessToken(env, forceRefresh = false) {
             const data = await resp.json();
             if (!data.access_token) throw new Error('Token refresh failed: ' + (data.error_description || JSON.stringify(data)));
 
-            // Only write to KV if timeout hasn't fired (prevents stale token overwrite)
-            if (!timedOut) {
-              const newTokens = {
-                access: data.access_token,
-                refresh: data.refresh_token || tokens.refresh,
-                expiry: Date.now() + (data.expires_in * 1000),
-                refreshExpiry: data.refresh_token
-                  ? Date.now() + (7 * 24 * 60 * 60 * 1000)
-                  : tokens.refreshExpiry,
-              };
-              await env.SIGNAL_KV.put('schwab_tokens', JSON.stringify(newTokens));
-              return newTokens.access;
+            // ALWAYS write to KV on a successful Schwab response, even if our
+            // 30s timeout already fired. Rationale: Schwab's refresh_token is
+            // single-use — if Schwab rotated, we hold the ONLY valid copy.
+            // The old code's `if (!timedOut)` gate dropped the new tokens on
+            // the floor when the timeout fired, guaranteeing a 24h stuck
+            // state until manual re-auth (observed 2026-04-23). No other
+            // isolate can possibly have fresher tokens because this specific
+            // refresh_token only validates with Schwab once.
+            const newTokens = {
+              access: data.access_token,
+              refresh: data.refresh_token || tokens.refresh,
+              expiry: Date.now() + (data.expires_in * 1000),
+              refreshExpiry: data.refresh_token
+                ? Date.now() + (7 * 24 * 60 * 60 * 1000)
+                : tokens.refreshExpiry,
+            };
+            await env.SIGNAL_KV.put('schwab_tokens', JSON.stringify(newTokens));
+            if (timedOut) {
+              console.warn('[proxy] Token refresh returned after timeout — wrote fresh tokens anyway');
             }
-            throw new Error('Token refresh completed but timeout already fired');
+            await recordRefreshHealth(env, true);
+            return newTokens.access;
+          } catch (err) {
+            // Record the failure so the browser UI can surface a red banner
+            // instead of silently serving stale data. Re-throw to preserve
+            // caller error handling.
+            await recordRefreshHealth(env, false, err?.message || String(err));
+            throw err;
           } finally {
             _tokenRefreshPromise = null;
           }
         })(),
-        new Promise((_, reject) => setTimeout(() => {
+        new Promise((_, reject) => setTimeout(async () => {
           timedOut = true;
+          // Record timeout as health failure so browser UI catches it even if
+          // the inner refresh never completes. If the inner fn eventually
+          // resolves successfully, it will overwrite this with an ok=true
+          // record — that's the desired convergence.
+          await recordRefreshHealth(env, false, 'Token refresh timeout (30s)');
           // Do NOT null _tokenRefreshPromise here — let the actual refresh's finally block do it
           reject(new Error('Token refresh timeout (30s)'));
         }, 30000))
@@ -317,47 +368,67 @@ async function handleEOD(env, etNow) {
   }
 
   // Determine if today is a SKIP day per the live signal logic.
-  // We need vixToday/vixYClose/vixYOpen to call calculateSignal — pull from history.
   // m8bfBlockedByLive == true means: live system would NOT trade M8BF today (calendar
   // blocks, gap, o2o, 0% rule, etc.). In that case the backtester must also skip,
   // so we set m8bfPL = 0 and add the date to M8BF_SKIP after appending trades.
   let m8bfBlockedByLive = false;
-  try {
-    const histResp0 = await fetch(
-      `https://raw.githubusercontent.com/rava8989/brave/main/history_data.json?t=${Date.now()}`,
-      { headers: { 'Cache-Control': 'no-cache' } }
-    );
-    if (histResp0.ok) {
-      const hist0 = await histResp0.json();
-      const todayE = hist0.find(e => e.date === todayISO);
-      // Find prior trading day for vixYClose / vixYOpen
-      const prior = hist0
-        .filter(e => e.date < todayISO && e.vixClose != null && e.vixOpen != null)
-        .sort((a, b) => b.date.localeCompare(a.date))[0];
-      const prevWREntry = hist0
-        .filter(e => e.date < todayISO && e.m8bfWR != null)
-        .sort((a, b) => b.date.localeCompare(a.date))[0];
-      if (todayE && prior && todayE.vixOpen != null) {
-        const spxGapPct = (todayE.spxOpen != null && prior.spxClose != null)
-          ? ((todayE.spxOpen - prior.spxClose) / prior.spxClose) * 100
-          : null;
-        const sig = calculateSignal({
-          vixToday: todayE.vixOpen,
-          vixYOpen: prior.vixOpen,
-          vixYClose: prior.vixClose,
-          spxGapPct,
-          etDate: etNow,
-          prevWR: prevWREntry ? parseFloat(prevWREntry.m8bfWR) : null,
-        });
-        // M8BF independence: only block if M8BF's OWN conditions block it.
-        // GXBF/Straddle firing does NOT block M8BF. Ever.
-        if (sig.m8bfBanned || sig.cpiDay) {
-          m8bfBlockedByLive = true;
-          console.log(`[eod] M8BF blocked by own conditions (m8bfBanned=${sig.m8bfBanned}, cpiDay=${sig.cpiDay})`);
+
+  // STEP 1 — calendar-only bans (purely date-driven, don't need vix/spx inputs).
+  // These must fire even if the morning signal didn't populate vixOpen yet.
+  // Mirrors signal-engine.js m8bfBanned = eomDay || eom1 || opex1 || vixExpAfterOpex || nonAmznTslaEarn
+  // plus cpiDay (both are calendar-only).
+  {
+    const eomDay = isEomN(0, etNow);
+    const eom1 = isEomN(1, etNow);
+    const opex1 = opexSch.some(ds => isTodayBefore(ds, etNow));
+    const vixExpAfterOpex = isVixAfterOpexDay(etNow);
+    const nonAmznTslaEarn = isNonAmznTslaEarningsDay(etNow);
+    const cpiDay = cpiSch.includes(todayLong(etNow));
+    if (eomDay || eom1 || opex1 || vixExpAfterOpex || nonAmznTslaEarn || cpiDay) {
+      m8bfBlockedByLive = true;
+      console.log(`[eod] M8BF blocked by calendar (eom=${eomDay}, eom-1=${eom1}, opex-1=${opex1}, vixAfterOpex=${vixExpAfterOpex}, earn=${nonAmznTslaEarn}, cpi=${cpiDay})`);
+    }
+  }
+
+  // STEP 2 — gap/o2o/signal-based bans (need vixOpen/spxOpen, only run if morning wrote them).
+  if (!m8bfBlockedByLive) {
+    try {
+      const histResp0 = await fetch(
+        `https://raw.githubusercontent.com/rava8989/brave/main/history_data.json?t=${Date.now()}`,
+        { headers: { 'Cache-Control': 'no-cache' } }
+      );
+      if (histResp0.ok) {
+        const hist0 = await histResp0.json();
+        const todayE = hist0.find(e => e.date === todayISO);
+        // Find prior trading day for vixYClose / vixYOpen
+        const prior = hist0
+          .filter(e => e.date < todayISO && e.vixClose != null && e.vixOpen != null)
+          .sort((a, b) => b.date.localeCompare(a.date))[0];
+        const prevWREntry = hist0
+          .filter(e => e.date < todayISO && e.m8bfWR != null)
+          .sort((a, b) => b.date.localeCompare(a.date))[0];
+        if (todayE && prior && todayE.vixOpen != null) {
+          const spxGapPct = (todayE.spxOpen != null && prior.spxClose != null)
+            ? ((todayE.spxOpen - prior.spxClose) / prior.spxClose) * 100
+            : null;
+          const sig = calculateSignal({
+            vixToday: todayE.vixOpen,
+            vixYOpen: prior.vixOpen,
+            vixYClose: prior.vixClose,
+            spxGapPct,
+            etDate: etNow,
+            prevWR: prevWREntry ? parseFloat(prevWREntry.m8bfWR) : null,
+          });
+          // M8BF independence: only block if M8BF's OWN conditions block it.
+          // GXBF/Straddle firing does NOT block M8BF. Ever.
+          if (sig.m8bfBanned || sig.cpiDay) {
+            m8bfBlockedByLive = true;
+            console.log(`[eod] M8BF blocked by own conditions (m8bfBanned=${sig.m8bfBanned}, cpiDay=${sig.cpiDay})`);
+          }
         }
       }
-    }
-  } catch (e) { console.warn('[eod] live signal check:', e.message); }
+    } catch (e) { console.warn('[eod] live signal check:', e.message); }
+  }
 
   // Compute m8bfPL from first qualifying signal in window (same logic as backfillMissingPL)
   if (m8bfBlockedByLive) {
@@ -719,15 +790,13 @@ async function handleScheduled(env) {
   //      e.g. 2026-04-14: openPrice=18.73 but first print was 18.25
   const quoteUrl = `https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`;
   let vixToday = null;
-  const maxWaitMs = 120_000; // 2 minutes total budget from 9:30:00
+  const maxWaitMs = 120_000; // 2 minutes total budget from NOW (not from 9:30 absolute)
   const pollIntervalMs = 1500;
-  // Compute deadline: 9:30:00 ET + 120s in UTC ms
-  const deadlineMs = (() => {
-    const d = new Date();
-    const et = toET(d);
-    const offsetMin = Math.round((d.getTime() - et.getTime()) / 60000);
-    return Date.UTC(et.getFullYear(), et.getMonth(), et.getDate(), 9, 30, 0) + offsetMin * 60000 + maxWaitMs;
-  })();
+  // Deadline is relative to when this handler runs — works for the 9:30 cron
+  // AND for /gex fallback hits at 9:32+ ET (absolute-to-9:30 would short-circuit
+  // the loop with "after 0 attempts" for any recovery attempt after 9:32 ET,
+  // which is exactly how 2026-04-24's morning signal stayed dead).
+  const deadlineMs = Date.now() + maxWaitMs;
   let attempt = 0;
   while (Date.now() < deadlineMs) {
     attempt++;
@@ -1871,6 +1940,21 @@ async function backfillMissingPL(env, targetDates = null) {
       // Get day of week in ET
       const etDate = toET(new Date(row.date + 'T20:00:00Z'));
       const dow = etDate.getDay(); // 0=Sun,1=Mon...6=Sat
+
+      // Calendar-only M8BF bans (earnings, EOM, OPEX-1, VIX-after-OPEX, CPI).
+      // Skip these dates — m8bfPL = 0, like signal-engine.js m8bfBanned + cpiDay.
+      const eomDay = isEomN(0, etDate);
+      const eom1 = isEomN(1, etDate);
+      const opex1 = opexSch.some(ds => isTodayBefore(ds, etDate));
+      const vixExpAfterOpex = isVixAfterOpexDay(etDate);
+      const nonAmznTslaEarn = isNonAmznTslaEarningsDay(etDate);
+      const cpiDay = cpiSch.includes(todayLong(etDate));
+      if (eomDay || eom1 || opex1 || vixExpAfterOpex || nonAmznTslaEarn || cpiDay) {
+        row.m8bfPL = 0;
+        filled.push({ date: row.date, pl: 0, blocked: { eom: eomDay, 'eom-1': eom1, 'opex-1': opex1, vixAfterOpex: vixExpAfterOpex, earn: nonAmznTslaEarn, cpi: cpiDay } });
+        continue;
+      }
+
       const win = getM8BFWindow(dow, row.date);
       if (!win) {
         failed.push({ date: row.date, reason: 'no window for dow=' + dow });
@@ -2566,6 +2650,43 @@ export default {
         return jsonResp(result, 200, { 'Access-Control-Allow-Origin': '*' });
       } catch (e) {
         return jsonResp({ error: e.message }, 500, { 'Access-Control-Allow-Origin': '*' });
+      }
+    }
+
+    // ── GET /schwab-health ── Public circuit-breaker endpoint
+    // Returns current Schwab refresh-token health so the dashboard can
+    // display a red "re-authenticate now" banner when KV says the token
+    // is valid but Schwab has been rejecting it. Populated by
+    // recordRefreshHealth() in every token-refresh path.
+    if (url.pathname === '/schwab-health' && request.method === 'GET') {
+      const publicCors = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Max-Age': '86400',
+      };
+      try {
+        const raw = await env.SIGNAL_KV.get('schwab_refresh_state');
+        const state = raw ? JSON.parse(raw) : { ok: null, lastSuccess: null, msg: 'never recorded' };
+        // Add a computed "stale" flag so the browser doesn't need to do clock math
+        const now = Date.now();
+        const lastSuccess = state.lastSuccess || 0;
+        const lastError = state.lastError || 0;
+        const minutesSinceSuccess = lastSuccess ? Math.round((now - lastSuccess) / 60000) : null;
+        const minutesSinceError = lastError ? Math.round((now - lastError) / 60000) : null;
+        // Show red banner when: explicit failure + 3+ consecutive errors + last success >30min ago
+        const alarming = state.ok === false
+          && (state.consecutiveErrors || 0) >= 3
+          && (!minutesSinceSuccess || minutesSinceSuccess > 30);
+        return jsonResp({
+          ...state,
+          now,
+          minutesSinceSuccess,
+          minutesSinceError,
+          alarming,
+        }, 200, publicCors);
+      } catch (e) {
+        return jsonResp({ error: e.message }, 500, publicCors);
       }
     }
 
