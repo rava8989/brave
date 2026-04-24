@@ -65,6 +65,23 @@
     .col-day{color:var(--text2);font-family:'Inter',sans-serif;font-size:11px;}
     .val-pos{color:#22c55e;} .val-neg{color:#ef4444;} .val-zero{color:var(--text3);}
 
+    /* Special day pills — tags for OPEX/EOM/NM/Earnings/CPI/FOMC/VIX-exp */
+    .sday{display:inline-block;padding:1px 6px;margin-right:3px;border-radius:4px;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;letter-spacing:.02em;line-height:1.4;}
+    .sday-cpi{background:rgba(239,68,68,.15);color:#ef4444;}
+    .sday-fomc{background:rgba(99,102,241,.15);color:#6366f1;}
+    .sday-opex{background:rgba(168,85,247,.15);color:#a855f7;}
+    .sday-eom{background:rgba(251,146,60,.15);color:#f97316;}
+    .sday-nm{background:rgba(6,182,212,.15);color:#06b6d4;}
+    .sday-vix{background:rgba(148,163,184,.15);color:#64748b;}
+    .sday-earn{background:rgba(234,179,8,.15);color:#ca8a04;}
+    [data-theme="dark"] .sday-cpi{color:#f87171;}
+    [data-theme="dark"] .sday-fomc{color:#818cf8;}
+    [data-theme="dark"] .sday-opex{color:#c084fc;}
+    [data-theme="dark"] .sday-eom{color:#fb923c;}
+    [data-theme="dark"] .sday-nm{color:#22d3ee;}
+    [data-theme="dark"] .sday-vix{color:#94a3b8;}
+    [data-theme="dark"] .sday-earn{color:#eab308;}
+
     .cross{color:#ef4444;font-weight:700;font-size:14px;}
 
     .spinner-wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:80px 20px;gap:12px;}
@@ -220,7 +237,7 @@
     <div class="strat-pill active" data-strat="strad" onclick="toggleStrat('strad')" ondblclick="soloStrat('strad')">Straddle</div>
     <div class="strat-pill active" data-strat="gxbf" onclick="toggleStrat('gxbf')" ondblclick="soloStrat('gxbf')">GXBF</div>
     <div class="strat-pill active" data-strat="bobf" onclick="toggleStrat('bobf')" ondblclick="soloStrat('bobf')">BOBF</div>
-    <div class="strat-pill active" data-strat="diagonal" onclick="toggleStrat('diagonal')" ondblclick="soloStrat('diagonal')" title="1/30 put-diagonal — entry 11:30 ET, exit 15:45 ET next day; sDTE=1, +10 ITM, lDTE=30, −20 below; OPEX-1 + EOM + NM + VIX 50–80% + ALL EARNINGS excluded (default)">Diagonal</div>
+    <div class="strat-pill active" data-strat="diagonal" onclick="toggleStrat('diagonal')" ondblclick="soloStrat('diagonal')" title="1/25 put-diagonal — entry 12:30 ET, exit 12:30 ET next day (24-hour hold, one diagonal active at a time); sDTE=1, +10 ITM, lDTE=25, −20 below; OPEX-1 + NM + VIX 50–80% + AAPL/MSFT/TSLA/META earnings excluded (default)">Diagonal</div>
   </div>
 
   <div class="filter-bar" id="filterBar">
@@ -506,7 +523,8 @@ function calculateSignal({vixToday,vixYOpen,vixYClose,spxGapPct,etDate}){
   else if(theme==='gxbf'){m8bfText=m8bfBanned?(eomDay?'No M8BF (EOM)':eom1?'No M8BF (EOM-1)':opex1?'No M8BF (day before OPEX)':nonAmznTslaEarn?'No M8BF (earnings)':vixExpAfterOpex?'No M8BF (VIX exp day)':'No M8BF'):m8Msg(etDate);stradText=`No Straddle (overnight VIX drop > ${T.DROP_GXBF})`;}
   else if(theme==='block'){if(rec.includes('M8BF')){stradText=`No Straddle (${_oNUp?'overnight VIX up':oNight>T.DROP_GXBF?'overnight VIX drop > '+T.DROP_GXBF:blockT==='90%rule'?'WR ≥ 90%':'non-CPI/Fed Wednesday'})`;gxbfText=`No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;}else if(rec.includes('Straddle')||rec.includes('CPI')||rec.includes('Trade')){m8bfText="No M8BF";gxbfText="No GXBF";}else if(rec.includes('GXBF')){m8bfText=m8bfBanned?(eomDay?'No M8BF (EOM)':eom1?'No M8BF (EOM-1)':opex1?'No M8BF (day before OPEX)':nonAmznTslaEarn?'No M8BF (earnings)':vixExpAfterOpex?'No M8BF (VIX exp day)':'No M8BF'):m8Msg(etDate);stradText=`No Straddle (overnight VIX drop > ${T.DROP_GXBF})`;}}
 
-  return {rec,theme,crossed,badge,entryT,blockT,blockD,pmNote,strikeInfo,m8bfText,stradText,gxbfText,bobfRec,bobfBadge,bobfBlocks,oNight,o2o,spxGapPct,spxGapCancelsStrad,dayLabel:tradeWdLabel(etDate),dateStr:todayLong(etDate),eomDay,eom1,m8bfBanned,cpiDay,fedDay};
+  const earningsTickers = earningsDay ? earningsSchedule.filter(e=>e.date===todayLong(etDate)).map(e=>e.ticker) : [];
+  return {rec,theme,crossed,badge,entryT,blockT,blockD,pmNote,strikeInfo,m8bfText,stradText,gxbfText,bobfRec,bobfBadge,bobfBlocks,oNight,o2o,spxGapPct,spxGapCancelsStrad,dayLabel:tradeWdLabel(etDate),dateStr:todayLong(etDate),eomDay,eom1,eom2,opex1,opexDay,postOpMon,postOpDay,nmDay,nmMon,vixExpDay,earningsDay,earningsTickers,nonAmznTslaEarn,m8bfBanned,cpiDay,fedDay};
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -901,6 +919,8 @@ async function init() {
         diagPL: cur.diagPL != null ? cur.diagPL : null,
         prevWR: prevWR != null ? prevWR : null,
         signal,
+        specialDayText: buildSpecialDayText(signal),
+        specialDayHtml: buildSpecialDayHtml(signal),
       });
     }
 
@@ -935,6 +955,7 @@ const cols = [
   { key:'bobfPL',      label:'BOBF',       type:'stratPL' },
   { key:'diagPL',      label:'Diagonal',   type:'stratPL' },
   { key:'totalPL',     label:'Total',      type:'stratPL' },
+  { key:'specialDay',  label:'Special',    type:'string'  },
 ];
 
 function getValue(row, col) {
@@ -955,6 +976,7 @@ function getValue(row, col) {
       if (activeStrats.diagonal && row.diagPL != null) t += row.diagPL;
       return t;
     }
+    case 'specialDay': return row.specialDayText || '';
     default: return row[col.key];
   }
 }
@@ -982,6 +1004,46 @@ function stratCell(signalActive, pl) {
   if (pl == null) return '<td style="color:var(--text3);font-style:italic;text-align:center;font-size:11px">No fill</td>';
   const cls = pl > 0 ? 'val-pos' : pl < 0 ? 'val-neg' : 'val-zero';
   return `<td class="${cls}" style="font-weight:600">$${pl.toLocaleString()}</td>`;
+}
+
+// Build pill HTML for the Special Day column. Empty string when no special flags.
+function buildSpecialDayHtml(s) {
+  if (!s) return '<span style="color:var(--text3)">—</span>';
+  const tags = [];
+  if (s.cpiDay)    tags.push('<span class="sday sday-cpi" title="CPI release">CPI</span>');
+  if (s.fedDay)    tags.push('<span class="sday sday-fomc" title="FOMC / Fed decision">FOMC</span>');
+  if (s.opexDay)   tags.push('<span class="sday sday-opex" title="OPEX Friday">OPEX</span>');
+  if (s.opex1)     tags.push('<span class="sday sday-opex" title="Day before OPEX">OPEX-1</span>');
+  if (s.postOpMon) tags.push('<span class="sday sday-opex" title="Monday after OPEX">OPEX+1</span>');
+  if (s.eomDay)    tags.push('<span class="sday sday-eom" title="End of month (last trade day)">EOM</span>');
+  if (s.eom1)      tags.push('<span class="sday sday-eom" title="EOM-1 (2nd-to-last trade day)">EOM-1</span>');
+  if (s.eom2)      tags.push('<span class="sday sday-eom" title="EOM-2 (3rd-to-last trade day)">EOM-2</span>');
+  if (s.nmMon)     tags.push('<span class="sday sday-nm" title="NM Monday (1st trade Monday of month)">NM-MON</span>');
+  else if (s.nmDay)tags.push('<span class="sday sday-nm" title="New month (1st trade day)">NM</span>');
+  if (s.vixExpDay) tags.push('<span class="sday sday-vix" title="VIX expiration day">VIX-X</span>');
+  if (s.earningsTickers && s.earningsTickers.length) {
+    tags.push(`<span class="sday sday-earn" title="Mega-cap earnings AH">E:${s.earningsTickers.join(',')}</span>`);
+  }
+  return tags.length ? tags.join(' ') : '<span style="color:var(--text3)">—</span>';
+}
+
+// Plain-text version (for sort + CSV export)
+function buildSpecialDayText(s) {
+  if (!s) return '';
+  const tags = [];
+  if (s.cpiDay)    tags.push('CPI');
+  if (s.fedDay)    tags.push('FOMC');
+  if (s.opexDay)   tags.push('OPEX');
+  if (s.opex1)     tags.push('OPEX-1');
+  if (s.postOpMon) tags.push('OPEX+1');
+  if (s.eomDay)    tags.push('EOM');
+  if (s.eom1)      tags.push('EOM-1');
+  if (s.eom2)      tags.push('EOM-2');
+  if (s.nmMon)     tags.push('NM-MON');
+  else if (s.nmDay)tags.push('NM');
+  if (s.vixExpDay) tags.push('VIX-X');
+  if (s.earningsTickers && s.earningsTickers.length) tags.push('E:' + s.earningsTickers.join(','));
+  return tags.join(' ');
 }
 
 function renderTable() {
@@ -1034,6 +1096,8 @@ function renderTable() {
         h += dash;
       }
     }
+    // Special Day column (calendar-based — shown for historical AND future dates)
+    h += `<td>${row.specialDayHtml || '<span style="color:var(--text3)">—</span>'}</td>`;
     h += '</tr>';
 
     if (activeStrats.m8bf && s.m8bfRan && row.m8bfPL != null) totM8 += row.m8bfPL;
@@ -1050,6 +1114,7 @@ function renderTable() {
   h += fc(totM8, activeStrats.m8bf) + fc(totStrad, activeStrats.strad) + fc(totGxbf, activeStrats.gxbf) + fc(totBobf, activeStrats.bobf) + fc(totDiag, activeStrats.diagonal);
   const anyActive = activeStrats.m8bf || activeStrats.strad || activeStrats.gxbf || activeStrats.bobf || activeStrats.diagonal;
   h += anyActive ? `<td class="${valClass(totAll)}" style="font-weight:700">$${Math.round(totAll).toLocaleString()}</td>` : `<td style="color:var(--text3);text-align:center">—</td>`;
+  h += `<td></td>`; // Special Day column — no total
   h += '</tr></tfoot></table></div>';
   document.getElementById('content').innerHTML = h;
   renderAll();
@@ -1498,10 +1563,12 @@ function renderCorrelation() {
     if (s.stradRan && row.stradPL != null) dailyPL.strad[row.date] = row.stradPL;
     if (row.gxbfPL != null) dailyPL.gxbf[row.date] = row.gxbfPL;
     if (s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) dailyPL.bobf[row.date] = row.bobfPL;
-    // Diagonal: diagPL is null on filtered days (OPEX-1, EOM, NM, VIX 50-80%
-    // dead-zone, or ALL-EARNINGS days per the default filter stack) or no-data days.
-    // A non-null value means the strategy actually traded — matches convention
-    // used by allocation optimizer and equity chart.
+    // Diagonal: diagPL is null on filtered days (OPEX-1, NM, VIX 50-80%
+    // dead-zone, or AAPL/MSFT/TSLA/META earnings days per the canonical
+    // 7-filter stack) or no-data days. A non-null value means the strategy
+    // actually traded — matches convention used by allocation optimizer and
+    // equity chart. Computed by compute_diagonal_pnl.py with DEFAULT_PARAMS
+    // (entry 12:30 ET, exit 12:30 ET next day, 1/25 DTE, +10 ITM, -20 below).
     if (row.diagPL != null) dailyPL.diagonal[row.date] = row.diagPL;
   }
 
