@@ -16,31 +16,97 @@
 // SCHEDULES (calendar data)
 // ════════════════════════════════════════════════════════════════════
 
-export const cpiSch   = ["January 13, 2026","February 11, 2026","March 11, 2026","April 10, 2026","May 12, 2026","June 10, 2026","July 14, 2026","August 12, 2026","September 11, 2026","October 14, 2026","November 10, 2026","December 10, 2026"];
-export const fedSch   = ["January 28, 2026","March 18, 2026","April 29, 2026","June 17, 2026","July 29, 2026","September 16, 2026","October 28, 2026","December 9, 2026"];
-export const opexSch  = ["January 16, 2026","February 20, 2026","March 20, 2026","April 17, 2026","May 15, 2026","June 18, 2026","July 17, 2026","August 21, 2026","September 18, 2026","October 16, 2026","November 20, 2026","December 18, 2026"];
-export const holidays = ["January 1, 2026","January 19, 2026","February 16, 2026","April 3, 2026","May 25, 2026","June 19, 2026","July 3, 2026","September 7, 2026","November 26, 2026","December 25, 2026"];
-export const vixSch   = ["January 21, 2026","February 18, 2026","March 18, 2026","April 15, 2026","May 19, 2026","June 17, 2026","July 22, 2026","August 19, 2026","September 16, 2026","October 21, 2026","November 18, 2026","December 16, 2026"];
+export const cpiSch   = ["January 11, 2024","February 13, 2024","March 12, 2024","April 10, 2024","May 15, 2024","June 12, 2024","July 11, 2024","August 14, 2024","September 11, 2024","October 10, 2024","November 13, 2024","December 11, 2024","January 15, 2025","February 12, 2025","March 12, 2025","April 10, 2025","May 13, 2025","June 11, 2025","July 15, 2025","August 12, 2025","September 11, 2025","October 24, 2025","December 18, 2025","January 13, 2026","February 11, 2026","March 11, 2026","April 10, 2026","May 12, 2026","June 10, 2026","July 14, 2026","August 12, 2026","September 11, 2026","October 14, 2026","November 10, 2026","December 10, 2026"];
+export const fedSch   = ["January 31, 2024","March 20, 2024","May 1, 2024","June 12, 2024","July 31, 2024","September 18, 2024","November 7, 2024","December 18, 2024","January 29, 2025","March 19, 2025","May 7, 2025","June 18, 2025","July 30, 2025","September 17, 2025","October 29, 2025","December 10, 2025","January 28, 2026","March 18, 2026","April 29, 2026","June 17, 2026","July 29, 2026","September 16, 2026","October 28, 2026","December 9, 2026"];
+export const opexSch  = ["January 19, 2024","February 16, 2024","March 15, 2024","April 19, 2024","May 17, 2024","June 21, 2024","July 19, 2024","August 16, 2024","September 20, 2024","October 18, 2024","November 15, 2024","December 20, 2024","January 17, 2025","February 21, 2025","March 21, 2025","April 17, 2025","May 16, 2025","June 20, 2025","July 18, 2025","August 15, 2025","September 19, 2025","October 17, 2025","November 21, 2025","December 19, 2025","January 16, 2026","February 20, 2026","March 20, 2026","April 17, 2026","May 15, 2026","June 18, 2026","July 17, 2026","August 21, 2026","September 18, 2026","October 16, 2026","November 20, 2026","December 18, 2026"];
+export const holidays = ["January 1, 2024","January 15, 2024","February 19, 2024","March 29, 2024","May 27, 2024","June 19, 2024","July 4, 2024","September 2, 2024","November 28, 2024","December 25, 2024","January 1, 2025","January 9, 2025","January 20, 2025","February 17, 2025","April 18, 2025","May 26, 2025","June 19, 2025","July 4, 2025","September 1, 2025","November 27, 2025","December 25, 2025","January 1, 2026","January 19, 2026","February 16, 2026","April 3, 2026","May 25, 2026","June 19, 2026","July 3, 2026","September 7, 2026","November 26, 2026","December 25, 2026"];
+export const vixSch   = ["January 17, 2024","February 14, 2024","March 20, 2024","April 17, 2024","May 22, 2024","June 18, 2024","July 17, 2024","August 21, 2024","September 18, 2024","October 16, 2024","November 20, 2024","December 18, 2024","January 22, 2025","February 19, 2025","March 18, 2025","April 16, 2025","May 21, 2025","June 18, 2025","July 16, 2025","August 20, 2025","September 17, 2025","October 22, 2025","November 19, 2025","December 17, 2025","January 21, 2026","February 18, 2026","March 18, 2026","April 15, 2026","May 19, 2026","June 17, 2026","July 22, 2026","August 19, 2026","September 16, 2026","October 21, 2026","November 18, 2026","December 16, 2026"];
 
 export const earningsSchedule = [
+  // ── 2024 (historical, confirmed) ──
+  { date:"January 24, 2024",  company:"Tesla",     ticker:"TSLA", timing:"AH", confirmed:true },
+  { date:"January 30, 2024",  company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:true },
+  { date:"January 30, 2024",  company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:true },
+  { date:"February 1, 2024",  company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:true },
+  { date:"February 1, 2024",  company:"Meta",      ticker:"META", timing:"AH", confirmed:true },
+  { date:"February 1, 2024",  company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:true },
+  { date:"February 21, 2024", company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:true },
+  { date:"April 23, 2024",    company:"Tesla",     ticker:"TSLA", timing:"AH", confirmed:true },
+  { date:"April 24, 2024",    company:"Meta",      ticker:"META", timing:"AH", confirmed:true },
+  { date:"April 25, 2024",    company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:true },
+  { date:"April 25, 2024",    company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:true },
+  { date:"April 30, 2024",    company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:true },
+  { date:"May 2, 2024",       company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:true },
+  { date:"May 22, 2024",      company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:true },
+  { date:"July 23, 2024",     company:"Tesla",     ticker:"TSLA", timing:"AH", confirmed:true },
+  { date:"July 23, 2024",     company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:true },
+  { date:"July 30, 2024",     company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:true },
+  { date:"July 31, 2024",     company:"Meta",      ticker:"META", timing:"AH", confirmed:true },
+  { date:"August 1, 2024",    company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:true },
+  { date:"August 1, 2024",    company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:true },
+  { date:"August 28, 2024",   company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:true },
+  { date:"October 23, 2024",  company:"Tesla",     ticker:"TSLA", timing:"AH", confirmed:true },
+  { date:"October 29, 2024",  company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:true },
+  { date:"October 30, 2024",  company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:true },
+  { date:"October 30, 2024",  company:"Meta",      ticker:"META", timing:"AH", confirmed:true },
+  { date:"October 31, 2024",  company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:true },
+  { date:"October 31, 2024",  company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:true },
+  { date:"November 20, 2024", company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:true },
+  // ── 2025 (historical, confirmed) ──
+  { date:"January 29, 2025",  company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:true },
+  { date:"January 29, 2025",  company:"Meta",      ticker:"META", timing:"AH", confirmed:true },
+  { date:"January 29, 2025",  company:"Tesla",     ticker:"TSLA", timing:"AH", confirmed:true },
+  { date:"January 30, 2025",  company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:true },
+  { date:"February 4, 2025",  company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:true },
+  { date:"February 6, 2025",  company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:true },
+  { date:"February 26, 2025", company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:true },
+  { date:"April 22, 2025",    company:"Tesla",     ticker:"TSLA", timing:"AH", confirmed:true },
+  { date:"April 24, 2025",    company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:true },
+  { date:"April 30, 2025",    company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:true },
+  { date:"April 30, 2025",    company:"Meta",      ticker:"META", timing:"AH", confirmed:true },
+  { date:"May 1, 2025",       company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:true },
+  { date:"May 1, 2025",       company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:true },
+  { date:"May 28, 2025",      company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:true },
+  { date:"July 23, 2025",     company:"Tesla",     ticker:"TSLA", timing:"AH", confirmed:true },
+  { date:"July 23, 2025",     company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:true },
+  { date:"July 30, 2025",     company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:true },
+  { date:"July 30, 2025",     company:"Meta",      ticker:"META", timing:"AH", confirmed:true },
+  { date:"July 31, 2025",     company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:true },
+  { date:"July 31, 2025",     company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:true },
+  { date:"August 27, 2025",   company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:true },
+  { date:"October 22, 2025",  company:"Tesla",     ticker:"TSLA", timing:"AH", confirmed:true },
+  { date:"October 29, 2025",  company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:true },
+  { date:"October 29, 2025",  company:"Meta",      ticker:"META", timing:"AH", confirmed:true },
+  { date:"October 29, 2025",  company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:true },
+  { date:"October 30, 2025",  company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:true },
+  { date:"October 30, 2025",  company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:true },
+  { date:"November 19, 2025", company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:true },
+  // ── Q1 2026 (Jan/Feb reports) ──
   { date:"January 28, 2026",  company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:true },
   { date:"January 28, 2026",  company:"Meta",      ticker:"META", timing:"AH", confirmed:true },
+  { date:"January 29, 2026",  company:"Tesla",     ticker:"TSLA", timing:"AH", confirmed:true },
   { date:"January 29, 2026",  company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:true },
   { date:"February 4, 2026",  company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:true },
   { date:"February 5, 2026",  company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:true },
   { date:"February 26, 2026", company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:true },
+  // ── Q2 2026 (Apr/May reports) ──
+  { date:"April 22, 2026",    company:"Tesla",     ticker:"TSLA", timing:"AH", confirmed:false },
   { date:"April 23, 2026",    company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:false },
   { date:"April 28, 2026",    company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:false },
   { date:"April 29, 2026",    company:"Meta",      ticker:"META", timing:"AH", confirmed:true  },
   { date:"April 30, 2026",    company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:false },
   { date:"April 30, 2026",    company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:false },
   { date:"May 20, 2026",      company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:true  },
+  // ── Q3 2026 (Jul/Aug reports — estimates) ──
+  { date:"July 22, 2026",     company:"Tesla",     ticker:"TSLA", timing:"AH", confirmed:false },
   { date:"July 23, 2026",     company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:false },
   { date:"July 28, 2026",     company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:false },
   { date:"July 29, 2026",     company:"Meta",      ticker:"META", timing:"AH", confirmed:false },
   { date:"July 30, 2026",     company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:false },
   { date:"July 30, 2026",     company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:false },
   { date:"August 19, 2026",   company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:false },
+  // ── Q4 2026 (Oct/Nov reports — estimates) ──
+  { date:"October 21, 2026",  company:"Tesla",     ticker:"TSLA", timing:"AH", confirmed:false },
   { date:"October 22, 2026",  company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:false },
   { date:"October 27, 2026",  company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:false },
   { date:"October 28, 2026",  company:"Meta",      ticker:"META", timing:"AH", confirmed:false },
@@ -151,6 +217,59 @@ export function tradeWdLabel(d) {
 export function isEarningsDay(etDate) { return earningsSchedule.some(e => e.date === todayLong(etDate)); }
 export function isNonAmznTslaEarningsDay(etDate) { return earningsSchedule.some(e => e.date === todayLong(etDate) && e.ticker !== 'AMZN' && e.ticker !== 'TSLA'); }
 export function isDayAfterAnyEarnings(etDate) { return earningsSchedule.some(e => isTodayAfter(e.date, etDate)); }
+
+// ════════════════════════════════════════════════════════════════════
+// DIAGONAL SIGNAL (companion strategy, single source of truth)
+// Consumed by: schwab-proxy.js (via calculateSignal), index.html (direct)
+// ────────────────────────────────────────────────────────────────────
+// Canonical 7-filter stack — priority:
+//   OPEX-1 > NM > EARN_MEGA(AAPL/MSFT/TSLA/META) > VIX_MID (50–80%)
+// Mirrors compute_diagonal_pnl.py DEFAULT_PARAMS.special_active exactly.
+// CPI / FED / EOM / ALL_EARNINGS intentionally NOT in the stack.
+// Entry 12:30–15:00 ET (window; pick any clock time, must equal Exit Time).
+// Exit 12:30–15:00 ET next trading day · 1/25 DTE · short +10 ITM · long −20 below · ±5 pt tol.
+// Entry and exit must use the SAME wall-clock time so only one diagonal is live at a time.
+// ════════════════════════════════════════════════════════════════════
+const DIAG_EARN_TICKERS = new Set(['AAPL', 'MSFT', 'TSLA', 'META']);
+export function computeDiagonalSignal(etDate, vixPct20d = null) {
+  const opex1 = opexSch.some(ds => isTodayBefore(ds, etDate));
+  const nmDay = isFirstTradeMo(etDate);
+  const earnMegaTickers = earningsSchedule
+    .filter(e => e.date === todayLong(etDate) && DIAG_EARN_TICKERS.has(e.ticker))
+    .map(e => e.ticker);
+  const earnMega = earnMegaTickers.length > 0;
+
+  let diagText, diagBadge = '…', diagGo = false, diagSkipCode = null;
+  if (opex1) {
+    diagSkipCode = 'OPEX-1';
+    diagText = 'No Diagonal (OPEX-1)';
+    diagBadge = 'SKIP';
+  } else if (nmDay) {
+    diagSkipCode = 'NM';
+    diagText = 'No Diagonal (NM)';
+    diagBadge = 'SKIP';
+  } else if (earnMega) {
+    diagSkipCode = 'EARN';
+    diagText = `No Diagonal (earnings: ${earnMegaTickers.join(',')})`;
+    diagBadge = 'SKIP';
+  } else if (vixPct20d !== null && vixPct20d !== undefined && vixPct20d > 50 && vixPct20d <= 80) {
+    diagSkipCode = 'VIX_MID';
+    diagText = `No Diagonal (VIX 20d ${vixPct20d}% — dead zone)`;
+    diagBadge = 'SKIP';
+  } else if (vixPct20d === null || vixPct20d === undefined) {
+    // All calendar filters cleared but no VIX percentile yet — waiting state.
+    diagText = 'Diagonal pending VIX 20d data';
+    diagBadge = '…';
+  } else {
+    // All filters cleared → GO.
+    diagGo = true;
+    const band = vixPct20d <= 50 ? 'calm' : 'panic';
+    diagText = `Diagonal 12:30–15:00 ET window (VIX 20d ${vixPct20d}% — ${band} edge)`;
+    diagBadge = '⏰ 12:30–15:00 ET';
+  }
+
+  return { diagText, diagBadge, diagGo, diagSkipCode, vixPct20d };
+}
 
 // ════════════════════════════════════════════════════════════════════
 // SIGNAL CALCULATION (single source of truth)
@@ -319,45 +438,8 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
   // null when the M8BF's OWN status is blocked (CPI/m8bfBanned).
   const m8bfStrikeInfo = (cpiDay || m8bfBanned) ? null : m8Sched(dow);
 
-  // ── DIAGONAL (companion strategy) — default 5-filter stack ──
-  // Mirrors compute_diagonal_pnl.py DEFAULT_PARAMS.special_active exactly.
-  // Priority (calendar filters first, then regime):
-  //   OPEX-1 > EOM > NM > ALL_EARNINGS > VIX_MID (50–80%)
-  // CPI intentionally NOT in the filter stack — matches the backtester.
-  // Entry 11:30 ET · exit 15:45 ET · 1/30 DTE · short +10 ITM · long −20 below · ±5 pt tol.
-  let diagText, diagBadge = '…', diagGo = false, diagSkipCode = null;
-  if (opex1) {
-    diagSkipCode = 'OPEX-1';
-    diagText = 'No Diagonal (OPEX-1)';
-    diagBadge = 'SKIP';
-  } else if (eomDay) {
-    diagSkipCode = 'EOM';
-    diagText = 'No Diagonal (EOM)';
-    diagBadge = 'SKIP';
-  } else if (nmDay) {
-    diagSkipCode = 'NM';
-    diagText = 'No Diagonal (NM)';
-    diagBadge = 'SKIP';
-  } else if (earningsDay) {
-    const tickers = earningsSchedule.filter(e => e.date === todayLong(etDate)).map(e => e.ticker).join(',');
-    diagSkipCode = 'EARN';
-    diagText = `No Diagonal (earnings: ${tickers})`;
-    diagBadge = 'SKIP';
-  } else if (vixPct20d !== null && vixPct20d !== undefined && vixPct20d > 50 && vixPct20d <= 80) {
-    diagSkipCode = 'VIX_MID';
-    diagText = `No Diagonal (VIX 20d ${vixPct20d}% — dead zone)`;
-    diagBadge = 'SKIP';
-  } else if (vixPct20d === null || vixPct20d === undefined) {
-    // Enough calendar filters cleared but no VIX percentile yet — waiting state.
-    diagText = 'Diagonal pending VIX 20d data';
-    diagBadge = '…';
-  } else {
-    // All five filters cleared → GO.
-    diagGo = true;
-    const band = vixPct20d <= 50 ? 'calm' : 'panic';
-    diagText = `Diagonal @ 11:30 ET (VIX 20d ${vixPct20d}% — ${band} edge)`;
-    diagBadge = '⏰ 11:30 ET';
-  }
+  // ── DIAGONAL (companion strategy) — delegated to single source of truth ──
+  const { diagText, diagBadge, diagGo, diagSkipCode } = computeDiagonalSignal(etDate, vixPct20d);
 
   return {
     rec, theme, crossed, badge, entryT, blockT, blockD, pmNote,
@@ -387,6 +469,7 @@ if (typeof globalThis !== 'undefined') {
     isVixAfterOpexDay, isPostOpexMon, isLastTradeMo, isEomN, isFirstTradeMo, isFirstTradeMon,
     m8Sched, m8Msg, ordinal, wdName, tradeWdLabel,
     isEarningsDay, isNonAmznTslaEarningsDay, isDayAfterAnyEarnings,
+    computeDiagonalSignal,
     calculateSignal,
   };
 }
