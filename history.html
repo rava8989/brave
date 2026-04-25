@@ -1105,7 +1105,7 @@ function buildSpecialDayText(s) {
   if (s.nmMon)     tags.push('NM-MON');
   else if (s.nmDay)tags.push('NM');
   if (s.vixExpDay) tags.push('VIX-X');
-  if (s.earningsTickers && s.earningsTickers.length) tags.push('E:' + s.earningsTickers.join(','));
+  if (s.earningsTickers && s.earningsTickers.length) tags.push(s.earningsTickers.join(','));
   return tags.join(' ');
 }
 
