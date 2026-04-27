@@ -241,9 +241,9 @@
 
     /* Next events panel */
     #nextEventsBar{border-bottom:1px solid var(--border);background:var(--bg3);}
-    .next-event-row{display:flex;align-items:center;justify-content:space-between;padding:3px 8px;border-radius:6px;font-size:11px;gap:6px;}
+    .next-event-row{display:flex;align-items:flex-start;justify-content:space-between;padding:3px 8px;border-radius:6px;font-size:11px;gap:6px;}
     .next-event-row:hover{background:var(--bg);}
-    .ne-label{color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px;}
+    .ne-label{color:var(--text2);white-space:normal;word-break:break-word;flex:1;min-width:0;}
     .ne-badge{font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;flex-shrink:0;}
     .ne-badge.soon{background:var(--tag-eom-bg);color:var(--tag-eom);border:1px solid var(--tag-eom);}
     .ne-badge.near{background:var(--tag-opex-bg);color:var(--tag-opex);border:1px solid var(--tag-opex);}
