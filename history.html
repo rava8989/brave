@@ -1085,7 +1085,7 @@ function buildSpecialDayHtml(s) {
   else if (s.nmDay)tags.push('<span class="sday sday-nm" title="New month (1st trade day)">NM</span>');
   if (s.vixExpDay) tags.push('<span class="sday sday-vix" title="VIX expiration day">VIX-X</span>');
   if (s.earningsTickers && s.earningsTickers.length) {
-    tags.push(`<span class="sday sday-earn" title="Mega-cap earnings AH">E:${s.earningsTickers.join(',')}</span>`);
+    tags.push(`<span class="sday sday-earn" title="Mega-cap earnings AH">${s.earningsTickers.join(',')}</span>`);
   }
   return tags.length ? tags.join(' ') : '<span style="color:var(--text3)">—</span>';
 }
