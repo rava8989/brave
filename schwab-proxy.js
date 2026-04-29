@@ -204,7 +204,17 @@ async function getAccessToken(env, forceRefresh = false) {
               }
             }
 
-            if (!resp.ok) throw new Error('Token refresh HTTP ' + resp.status);
+            if (!resp.ok) {
+              // Capture Schwab's actual error response so we can debug 400s.
+              // Tokens are sensitive — log only first/last 4 chars + length to
+              // confirm round-trip integrity without leaking the secret.
+              let errBody = '';
+              try { errBody = (await resp.text()).slice(0, 500); } catch {}
+              const r = tokens.refresh || '';
+              const fingerprint = r ? `${r.slice(0,4)}…${r.slice(-4)}(len=${r.length})` : '(none)';
+              console.error('[proxy] Token refresh HTTP', resp.status, '— body:', errBody, '— refresh fp:', fingerprint, '— appKey:', creds.appKey?.slice(0, 8) + '…');
+              throw new Error('Token refresh HTTP ' + resp.status + ': ' + errBody.slice(0, 120));
+            }
             const data = await resp.json();
             if (!data.access_token) throw new Error('Token refresh failed: ' + (data.error_description || JSON.stringify(data)));
 
@@ -247,7 +257,17 @@ async function getAccessToken(env, forceRefresh = false) {
           // resolves successfully, it will overwrite this with an ok=true
           // record — that's the desired convergence.
           await recordRefreshHealth(env, false, 'Token refresh timeout (30s)');
-          // Do NOT null _tokenRefreshPromise here — let the actual refresh's finally block do it
+          // CRITICAL: null _tokenRefreshPromise here too. If the inner refresh
+          // fetch was killed by the Workers runtime after our Response returned
+          // (which happens for cron handlers when the cron tick ends), its
+          // finally block never runs, leaving _tokenRefreshPromise pinned to a
+          // rejected value forever. Subsequent calls in the same isolate would
+          // skip the `if (!_tokenRefreshPromise)` branch and re-throw the same
+          // timeout error indefinitely (observed: 77 consecutive errors over
+          // 3+ hours, only fixed by a new deploy that killed the isolate).
+          // Concurrent refreshes are safe: the retry-on-stale path at line ~195
+          // catches the loser and returns the winner's access from KV.
+          _tokenRefreshPromise = null;
           reject(new Error('Token refresh timeout (30s)'));
         }, 30000))
       ]);
@@ -3076,15 +3096,18 @@ export default {
       // themselves. This eliminates the 3-way rotation race that was kicking
       // every client into 401 hell.
       if (url.pathname === '/access-token' && request.method === 'GET') {
-        const accTokenSecret = request.headers.get('X-Sync-Secret');
+        const accTokenSecret = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
         if (!accTokenSecret || accTokenSecret !== env.SYNC_SECRET) {
           return jsonResp({ error: 'Unauthorized' }, 401, corsHeaders);
         }
         try {
-          const token = await getAccessToken(env);
+          // ?force=true triggers an immediate refresh against Schwab, useful
+          // for diagnosing token issues without waiting for natural expiry.
+          const force = url.searchParams.get('force') === 'true';
+          const token = await getAccessToken(env, force);
           const tokensRaw = await env.SIGNAL_KV.get('schwab_tokens');
           const expiry = tokensRaw ? JSON.parse(tokensRaw).expiry : null;
-          return jsonResp({ access_token: token, expiry }, 200, corsHeaders);
+          return jsonResp({ access_token: token, expiry, forced: force }, 200, corsHeaders);
         } catch (e) {
           return jsonResp({ error: e.message }, 500, corsHeaders);
         }
