@@ -607,8 +607,8 @@ body {
       ⚠ <strong>Backtester scope</strong> — what this tool does / does NOT model:
       <br>
       <strong>Does</strong>: open a fresh diagonal at the selected entry time (default <code>12:30 ET</code>, any time in the 12:30–15:00 ET window is valid), close it at the same clock time the next trading day (Entry Time === Exit Time), price both legs from real Polygon NBBO bid/ask snapshots.
-      Data coverage: <strong>2023‑01‑03 → 2026‑04‑22</strong>, 820 trading days, 20 selectable intraday buckets (<code>09:45</code> → <code>15:45</code>), SPXW puts ±300 pts around spot, <strong>DTE 0–35 continuous</strong> (100% real quote coverage on the default config, 0% Black‑Scholes fallback).
-      Expired short legs settle to exact intrinsic (SPXW is PM‑settled at SPX close), not Black‑Scholes.
+      Data coverage: <strong>2023‑01‑03 → 2026‑04‑22</strong>, 820 trading days, 20 selectable intraday buckets (<code>09:45</code> → <code>15:45</code>), SPX puts ±300 pts around spot, <strong>DTE 0–35 continuous</strong> (100% real quote coverage on the default config, 0% Black‑Scholes fallback).
+      Expired short legs settle to exact intrinsic (SPX is PM‑settled at SPX close), not Black‑Scholes.
       <br>
       <strong>Does NOT</strong>: no rolling, no strike adjustments, no mid‑trade management, no theta/delta hedging, no slippage past mid, no commissions — every day opens a brand‑new position and closes it flat.
       Sizing is fixed at 1 contract by default; equity compounding is only engaged if you flip off <em>Ignore margin</em> in the sidebar.
@@ -1741,10 +1741,10 @@ function sizePosition(equity, marginPerContract, params) {
 // Real quote lookup — find the contract ticker matching (strike, expiration)
 // ══════════════════════════════════════════════════════════════════════
 function findTicker(quotes, strike, expDate, snapTolerance = 0) {
-  // Polygon ticker format: O:SPXW<YYMMDD>P<STRIKEx1000_zero_padded_8>
+  // Polygon ticker format: O:SPX<YYMMDD>P<STRIKEx1000_zero_padded_8>
   // First try an EXACT match. If snapTolerance > 0 and no exact match exists,
   // snap to the nearest listed strike on the same expiration within tolerance.
-  // Far-dated SPXW expirations (20+ DTE) are often listed at $10 increments,
+  // Far-dated SPX expirations (20+ DTE) are often listed at $10 increments,
   // so a target like 4445 may need to snap to 4440 or 4450.
   let exact = null;
   let nearest = null;
@@ -1941,7 +1941,7 @@ function runBacktestBS(data, params) {
     //   1. REAL quote at exit time (bid/ask passes quoteOk)
     //   2. INTRINSIC settlement — when a leg expired strictly before closeDate
     //      (e.g. Fri→Tue roll across Mon holiday: Mon-exp short already settled).
-    //      This is mathematically EXACT (SPXW is PM-settled at SPX close), not an
+    //      This is mathematically EXACT (SPX is PM-settled at SPX close), not an
     //      approximation — strictly more accurate than B-S for expired legs.
     //   3. B-S — last resort (leg still alive but quote is garbage)
     const spxCloseOn = (date) => {
@@ -1949,7 +1949,7 @@ function runBacktestBS(data, params) {
       //    are not in REAL_DATA_MULTI — use the pre-extracted half-day close file.
       if (HALFDAY_CLOSE[date] != null) return HALFDAY_CLOSE[date];
       // 2. Full trading days: use last available bucket as close proxy (15:45 is
-      //    15 min before 16:00 SPXW PM settlement; close enough for intrinsic).
+      //    15 min before 16:00 SPX PM settlement; close enough for intrinsic).
       const bt = REAL_DATA_MULTI?.by_date?.[date]?.by_time;
       if (!bt) return null;
       for (const t of ['15:45','15:30','15:15','15:00','14:45','14:30','14:15','14:00']) {
