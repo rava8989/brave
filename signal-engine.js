@@ -223,7 +223,7 @@ export function isDayAfterAnyEarnings(etDate) { return earningsSchedule.some(e =
 // Consumed by: schwab-proxy.js (via calculateSignal), index.html (direct)
 // ────────────────────────────────────────────────────────────────────
 // Canonical 7-filter stack — priority:
-//   OPEX-1 > NM > EARN_MEGA(AAPL/MSFT/TSLA/META) > VIX_MID (50–80%)
+//   OPEX-1 > NM > EARN_MEGA(AAPL/MSFT/TSLA/META) > VIX_MID (40–90%)
 // Mirrors compute_diagonal_pnl.py DEFAULT_PARAMS.special_active exactly.
 // CPI / FED / EOM / ALL_EARNINGS intentionally NOT in the stack.
 // Entry 12:30–15:00 ET (window; pick any clock time, must equal Exit Time).
@@ -252,7 +252,7 @@ export function computeDiagonalSignal(etDate, vixPct20d = null) {
     diagSkipCode = 'EARN';
     diagText = `No Diagonal (earnings: ${earnMegaTickers.join(',')})`;
     diagBadge = 'SKIP';
-  } else if (vixPct20d !== null && vixPct20d !== undefined && vixPct20d > 50 && vixPct20d <= 80) {
+  } else if (vixPct20d !== null && vixPct20d !== undefined && vixPct20d > 40 && vixPct20d <= 90) {
     diagSkipCode = 'VIX_MID';
     diagText = `No Diagonal (VIX 20d ${vixPct20d}% — dead zone)`;
     diagBadge = 'SKIP';
@@ -263,7 +263,7 @@ export function computeDiagonalSignal(etDate, vixPct20d = null) {
   } else {
     // All filters cleared → GO.
     diagGo = true;
-    const band = vixPct20d <= 50 ? 'calm' : 'panic';
+    const band = vixPct20d <= 40 ? 'calm' : 'panic';
     diagText = `Diagonal 12:30–15:00 ET window (VIX 20d ${vixPct20d}% — ${band} edge)`;
     diagBadge = '⏰ 12:30–15:00 ET';
   }

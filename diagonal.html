@@ -6,7 +6,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<!-- v2026-04-23: 1/25 DTE, 12:30-15:00 ET window (24h hold, entry=exit time), +10 ITM, -20 below, OPEX-1 + NM + VIX 50-80% + AAPL/MSFT/TSLA/META -->
+<!-- v2026-04-23: 1/25 DTE, 12:30-15:00 ET window (24h hold, entry=exit time), +10 ITM, -20 below, OPEX-1 + NM + VIX 40-90% + AAPL/MSFT/TSLA/META -->
 <title>SPX-BF // Diagonal Backtester</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -590,7 +590,7 @@ body {
     <span style="color:var(--accent);font-size:11px;font-weight:600">
       ★ Canonical default config (loaded below):
       <code>entry/exit anywhere in 12:30–15:00 ET (same clock time), sDTE=1, +10 ITM, lDTE=25, −20 below</code>,
-      filtered with <code>OPEX-1 + NM + VIX 50–80% + AAPL + MSFT + TSLA + META</code> in EXCLUDE mode.
+      filtered with <code>OPEX-1 + NM + VIX 40–90% + AAPL + MSFT + TSLA + META</code> in EXCLUDE mode.
       Conservative sizing (10 ITM / 20 wide) caps overnight-gap tail risk at ≈ debit + width ≈ $2–3K/contract.
       The per-ticker earnings subset (four mega-caps) targets the overnight-gap days that matter, without penalising the historically neutral GOOGL/NVDA/AMZN report days that <code>ALL EARNINGS</code> used to sweep up.
     </span>
@@ -598,7 +598,7 @@ body {
     <span style="color:#fcd34d;font-size:11px">
       🧪 <strong>Filter stack</strong> — <code>OPEX-1</code> (day before monthly OPEX — weakest-edge day of the cycle),
       <code>NM</code> (first trading day of month — gap risk, NM Straddle day),
-      <code>VIX 50–80%</code> (uncomfortable-middle regime; avg −$117/trade there vs +$220 elsewhere), and
+      <code>VIX 40–90%</code> (uncomfortable-middle regime; avg −$117/trade there vs +$220 elsewhere), and
       <code>AAPL / MSFT / TSLA / META</code> earnings days (the four mega-caps whose after-hours prints drive the largest overnight SPX gaps).
       All seven active by default in <strong>EXCLUDE</strong> mode. <code>EOM</code> and <code>ALL EARNINGS</code> are intentionally OFF — the per-ticker subset is tighter.
     </span>
@@ -778,14 +778,14 @@ body {
       <button class="tpill" data-sd="FED">FED</button>
       <button class="tpill" data-sd="CPI">CPI</button>
       <button class="tpill" data-sd="VIX">VIX EXP</button>
-      <button class="tpill" data-sd="VIX_MID"  title="Rank today's VIX against the last 20 trading days' VIX values. Skip the trade if the percentile sits inside the band defined by the lo/hi inputs to the right. Default 50–80 — the legacy 'uncomfortable middle'. Adjust lo/hi to sweep different bands.">VIX MID-band</button>
+      <button class="tpill" data-sd="VIX_MID"  title="Rank today's VIX against the last 20 trading days' VIX values. Skip the trade if the percentile sits inside the band defined by the lo/hi inputs to the right. Default 40–90. Adjust lo/hi to sweep different bands.">VIX MID-band</button>
       <span style="display:inline-flex;align-items:center;gap:3px;font-size:11px;color:var(--text2);margin-left:2px;">
-        <input type="number" id="vixBandLo" value="50" min="0" max="99" step="5" style="width:38px;padding:1px 3px;font-family:'JetBrains Mono',monospace;font-size:11px;text-align:center;" title="Band lower bound (exclusive). Trades whose VIX percentile is &gt; this value AND ≤ hi are filtered out.">
+        <input type="number" id="vixBandLo" value="40" min="0" max="99" step="5" style="width:38px;padding:1px 3px;font-family:'JetBrains Mono',monospace;font-size:11px;text-align:center;" title="Band lower bound (exclusive). Trades whose VIX percentile is &gt; this value AND ≤ hi are filtered out.">
         <span>–</span>
-        <input type="number" id="vixBandHi" value="80" min="1" max="100" step="5" style="width:38px;padding:1px 3px;font-family:'JetBrains Mono',monospace;font-size:11px;text-align:center;" title="Band upper bound (inclusive). Trades whose VIX percentile is &gt; lo AND ≤ this value are filtered out.">
+        <input type="number" id="vixBandHi" value="90" min="1" max="100" step="5" style="width:38px;padding:1px 3px;font-family:'JetBrains Mono',monospace;font-size:11px;text-align:center;" title="Band upper bound (inclusive). Trades whose VIX percentile is &gt; lo AND ≤ this value are filtered out.">
         <span style="opacity:0.7">%</span>
       </span>
-      <button class="tpill" data-sd="VIX_DEAD" title="Tighter version of VIX 50–80%: only flag the day if VIX is in the 50–80% band AND yesterday's SPX moved less than 0.5%. This catches the purest 'no-edge' regime — elevated-but-not-spiky VIX plus a sleepy prior session with no directional follow-through. Skipping these days cuts MaxDD by ~26% in the backtest.">VIX DEAD</button>
+      <button class="tpill" data-sd="VIX_DEAD" title="Tighter version of VIX 40–90%: only flag the day if VIX is in the 40–90% band AND yesterday's SPX moved less than 0.5%. This catches the purest 'no-edge' regime — elevated-but-not-spiky VIX plus a sleepy prior session with no directional follow-through. Skipping these days cuts MaxDD by ~26% in the backtest.">VIX DEAD</button>
       <button class="tpill" data-sd="AAPL">AAPL</button>
       <button class="tpill" data-sd="GOOGL">GOOGL</button>
       <button class="tpill" data-sd="MSFT">MSFT</button>
@@ -818,7 +818,7 @@ body {
         <strong style="color:#fcd34d">VIX regime filters</strong> <em style="color:var(--text3)">(data-derived, not calendar-based)</em>
         <ul style="margin:4px 0 0 16px;padding:0">
           <li>
-            <strong>VIX 50–80%</strong> — the <em>"VIX 20-day percentile"</em> filter.
+            <strong>VIX 40–90%</strong> — the <em>"VIX 20-day percentile"</em> filter.
             Each day, we rank today's VIX against the last 20 trading days' VIX values (0% = lowest in 20 days, 100% = highest).
             This pill flags days where that rank lands between 50 and 80 — the <strong>"uncomfortable middle"</strong>.
             Not cheap enough to be complacent, not elevated enough to be panic — just ambiguous.
@@ -826,10 +826,10 @@ body {
             while the rest of the distribution averages <span style="color:#22c55e">+$220/trade</span>.
           </li>
           <li style="margin-top:5px">
-            <strong>VIX DEAD</strong> — a tighter subset of VIX 50–80%.
+            <strong>VIX DEAD</strong> — a tighter subset of VIX 40–90%.
             Flags a day only if <em>both</em> conditions hold:
             <ol style="margin:2px 0 0 18px;padding:0">
-              <li>VIX ranks 50–80% vs the prior 20 trading days (the "uncomfortable middle" above), <strong>AND</strong></li>
+              <li>VIX ranks 40–90% vs the prior 20 trading days (the "uncomfortable middle" above), <strong>AND</strong></li>
               <li>Yesterday's SPX moved less than 0.5% in either direction (a "flat / sleepy" prior session).</li>
             </ol>
             This isolates the <strong>pure no-edge regime</strong>: elevated-but-not-spiky VIX plus no directional
@@ -1120,7 +1120,7 @@ syncVixBand();
 // Preselect the canonical 7-filter stack in EXCLUDE mode:
 //   OPEX-1      — weakest-edge day of the OPEX cycle
 //   NM          — first trading day of month (gap risk, reprice)
-//   VIX_MID     — VIX 50-80% uncomfortable-middle regime (no-edge band)
+//   VIX_MID     — VIX 40-90% uncomfortable-middle regime (no-edge band)
 //   AAPL/MSFT/TSLA/META — per-ticker earnings days (biggest overnight-gap offenders)
 // EOM and ALL_EARNINGS intentionally dropped — the per-ticker subset
 // (four mega-caps) captures the gap-risk days without penalising the

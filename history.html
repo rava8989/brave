@@ -237,7 +237,7 @@
     <div class="strat-pill active" data-strat="strad" onclick="toggleStrat('strad')" ondblclick="soloStrat('strad')">Straddle</div>
     <div class="strat-pill active" data-strat="gxbf" onclick="toggleStrat('gxbf')" ondblclick="soloStrat('gxbf')">GXBF</div>
     <div class="strat-pill active" data-strat="bobf" onclick="toggleStrat('bobf')" ondblclick="soloStrat('bobf')">BOBF</div>
-    <div class="strat-pill active" data-strat="diagonal" onclick="toggleStrat('diagonal')" ondblclick="soloStrat('diagonal')" title="1/25 put-diagonal — entry anywhere in the 12:30–15:00 ET window, exit at the same clock time next day (24-hour hold, Entry Time === Exit Time, one diagonal active at a time); sDTE=1, +10 ITM, lDTE=25, −20 below; OPEX-1 + NM + VIX 50–80% + AAPL/MSFT/TSLA/META earnings excluded (default)">Diagonal</div>
+    <div class="strat-pill active" data-strat="diagonal" onclick="toggleStrat('diagonal')" ondblclick="soloStrat('diagonal')" title="1/25 put-diagonal — entry anywhere in the 12:30–15:00 ET window, exit at the same clock time next day (24-hour hold, Entry Time === Exit Time, one diagonal active at a time); sDTE=1, +10 ITM, lDTE=25, −20 below; OPEX-1 + NM + VIX 40–90% + AAPL/MSFT/TSLA/META earnings excluded (default)">Diagonal</div>
   </div>
 
   <div class="filter-bar" id="filterBar">
@@ -1626,7 +1626,7 @@ function renderCorrelation() {
     if (s.stradRan && row.stradPL != null) dailyPL.strad[row.date] = row.stradPL;
     if (row.gxbfPL != null) dailyPL.gxbf[row.date] = row.gxbfPL;
     if (s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) dailyPL.bobf[row.date] = row.bobfPL;
-    // Diagonal: diagPL is null on filtered days (OPEX-1, NM, VIX 50-80%
+    // Diagonal: diagPL is null on filtered days (OPEX-1, NM, VIX 40-90%
     // dead-zone, or AAPL/MSFT/TSLA/META earnings days per the canonical
     // 7-filter stack) or no-data days. A non-null value means the strategy
     // actually traded — matches convention used by allocation optimizer and
