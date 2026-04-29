@@ -778,7 +778,13 @@ body {
       <button class="tpill" data-sd="FED">FED</button>
       <button class="tpill" data-sd="CPI">CPI</button>
       <button class="tpill" data-sd="VIX">VIX EXP</button>
-      <button class="tpill" data-sd="VIX_MID"  title="Rank today's VIX against the last 20 trading days' VIX values. If it sits in the 50–80th percentile (elevated but not spiky — the 'uncomfortable middle'), skip the trade. Research shows this band averages -$117/trade while the rest of the distribution averages +$220/trade.">VIX 50–80%</button>
+      <button class="tpill" data-sd="VIX_MID"  title="Rank today's VIX against the last 20 trading days' VIX values. Skip the trade if the percentile sits inside the band defined by the lo/hi inputs to the right. Default 50–80 — the legacy 'uncomfortable middle'. Adjust lo/hi to sweep different bands.">VIX MID-band</button>
+      <span style="display:inline-flex;align-items:center;gap:3px;font-size:11px;color:var(--text2);margin-left:2px;">
+        <input type="number" id="vixBandLo" value="50" min="0" max="99" step="5" style="width:38px;padding:1px 3px;font-family:'JetBrains Mono',monospace;font-size:11px;text-align:center;" title="Band lower bound (exclusive). Trades whose VIX percentile is &gt; this value AND ≤ hi are filtered out.">
+        <span>–</span>
+        <input type="number" id="vixBandHi" value="80" min="1" max="100" step="5" style="width:38px;padding:1px 3px;font-family:'JetBrains Mono',monospace;font-size:11px;text-align:center;" title="Band upper bound (inclusive). Trades whose VIX percentile is &gt; lo AND ≤ this value are filtered out.">
+        <span style="opacity:0.7">%</span>
+      </span>
       <button class="tpill" data-sd="VIX_DEAD" title="Tighter version of VIX 50–80%: only flag the day if VIX is in the 50–80% band AND yesterday's SPX moved less than 0.5%. This catches the purest 'no-edge' regime — elevated-but-not-spiky VIX plus a sleepy prior session with no directional follow-through. Skipping these days cuts MaxDD by ~26% in the backtest.">VIX DEAD</button>
       <button class="tpill" data-sd="AAPL">AAPL</button>
       <button class="tpill" data-sd="GOOGL">GOOGL</button>
@@ -1095,6 +1101,21 @@ document.querySelectorAll('#sdPills .tpill').forEach(p => {
     syncSpecialUI();
   });
 });
+
+// VIX band lo/hi inputs — push values into globals read by buildSpecialSets,
+// then trigger a re-run if VIX_MID is currently active.
+function syncVixBand() {
+  const lo = parseFloat(document.getElementById('vixBandLo').value);
+  const hi = parseFloat(document.getElementById('vixBandHi').value);
+  if (!isNaN(lo)) window.VIX_BAND_LO = lo;
+  if (!isNaN(hi)) window.VIX_BAND_HI = hi;
+}
+['change','input'].forEach(ev => {
+  document.getElementById('vixBandLo').addEventListener(ev, syncVixBand);
+  document.getElementById('vixBandHi').addEventListener(ev, syncVixBand);
+});
+// Seed globals on load
+syncVixBand();
 
 // Preselect the canonical 7-filter stack in EXCLUDE mode:
 //   OPEX-1      — weakest-edge day of the OPEX cycle
@@ -1671,22 +1692,34 @@ function buildSpecialDateSets(tradingDays, byDate = null) {
   });
 
   // ── VIX 20-day percentile bands ──
-  // VIX_MID  = today's VIX ranks 50–80% within prior 20 trading days' VIX values
+  // VIX_MID  = today's VIX ranks lo-hi% within prior 20 trading days' VIX
   // VIX_DEAD = VIX_MID AND prior-day SPX |change| < 0.5%
-  // Both use the entry-time (14:00) VIX/SPX snapshot so ranks match apples-to-apples
-  // with what the strategy would have seen live.
+  // Uses `vix_open` (first VIX print at-or-after 9:30 ET) — the SAME value the
+  // live signal reads, so backtest matches what you'd see in real time. No
+  // lookahead bias. Falls back to vix_14 only when vix_open is absent (old
+  // bs_data files). Band lo/hi and the underlying field are tunable from the
+  // UI sliders.
   if (byDate) {
+    const vixField = (() => {
+      // Use vix_open if present anywhere; else fall back to vix_14
+      for (const d of tradingDays) {
+        if (byDate[d] && typeof byDate[d].vix_open === 'number') return 'vix_open';
+      }
+      return 'vix_14';
+    })();
+    const lo = (typeof window.VIX_BAND_LO === 'number') ? window.VIX_BAND_LO : 50;
+    const hi = (typeof window.VIX_BAND_HI === 'number') ? window.VIX_BAND_HI : 80;
     const validDays = tradingDays.filter(d => {
       const r = byDate[d];
-      return r && typeof r.vix_14 === 'number' && r.vix_14 > 0;
+      return r && typeof r[vixField] === 'number' && r[vixField] > 0;
     });
     for (let i = 20; i < validDays.length; i++) {
       const today  = validDays[i];
-      const vToday = byDate[today].vix_14;
+      const vToday = byDate[today][vixField];
       let below = 0;
-      for (let j = i - 20; j < i; j++) if (byDate[validDays[j]].vix_14 < vToday) below++;
+      for (let j = i - 20; j < i; j++) if (byDate[validDays[j]][vixField] < vToday) below++;
       const pct = (100 * below) / 20;
-      if (pct > 50 && pct <= 80) {
+      if (pct > lo && pct <= hi) {
         sets['VIX_MID'].add(today);
         // VIX_DEAD: also requires prior-day SPX |change| < 0.5%
         const dPrev  = validDays[i - 1];
