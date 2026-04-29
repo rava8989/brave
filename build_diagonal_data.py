@@ -105,6 +105,10 @@ def main():
         spot_12 = read_bar_at(spx_path, EXIT_HHMM)
         vix_14  = read_bar_at(vix_path, ENTRY_HHMM)
         vix_12  = read_bar_at(vix_path, EXIT_HHMM)
+        # First VIX print at-or-after 09:30 ET — matches the live signal's
+        # "first post-open tick" used by VIX_MID percentile classification.
+        # read_bar_at falls back to the first bar AT OR AFTER hhmm.
+        vix_open = read_bar_at(vix_path, "09:30")
         # Require at least entry data
         if spot_14 is None or vix_14 is None:
             skipped += 1
@@ -114,6 +118,7 @@ def main():
             "vix_14":  round(vix_14, 2),
             "spot_12": round(spot_12, 2) if spot_12 is not None else None,
             "vix_12":  round(vix_12, 2) if vix_12 is not None else None,
+            "vix_open": round(vix_open, 2) if vix_open is not None else None,
         }
 
     result = {
