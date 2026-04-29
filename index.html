@@ -864,78 +864,46 @@
 
 
   /* ====== EARNINGS SCHEDULE ====== */
-  // Format: { date, company, ticker, timing }
-  // timing: "AH" = After Hours, "BO" = Before Open
-  // Q1 2026 cycle (confirmed where noted, otherwise best estimate from multiple sources)
-  // Q2 2026 cycle dates are estimates based on historical patterns — update when confirmed
-  const earningsSchedule = [
-    // ── Q1 2026 (Jan/Feb reports) ──
-    { date:"January 28, 2026",  company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:true },
-    { date:"January 28, 2026",  company:"Meta",      ticker:"META", timing:"AH", confirmed:true },
-    { date:"January 29, 2026",  company:"Tesla",     ticker:"TSLA", timing:"AH", confirmed:true },
-    { date:"January 29, 2026",  company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:true },
-    { date:"February 4, 2026",  company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:true },
-    { date:"February 5, 2026",  company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:true },
-    { date:"February 26, 2026", company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:true },
-    // ── Q2 2026 (Apr/May reports) ──
-    { date:"April 22, 2026",    company:"Tesla",     ticker:"TSLA", timing:"AH", confirmed:true  },
-    { date:"April 29, 2026",    company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:true  },
-    { date:"April 29, 2026",    company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:true  },
-    { date:"April 29, 2026",    company:"Meta",      ticker:"META", timing:"AH", confirmed:true  },
-    { date:"April 29, 2026",    company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:true  },
-    { date:"April 30, 2026",    company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:true  },
-    { date:"May 20, 2026",      company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:true  },
-    // ── Q3 2026 (Jul/Aug reports — estimates) ──
-    { date:"July 22, 2026",     company:"Tesla",     ticker:"TSLA", timing:"AH", confirmed:false },
-    { date:"July 23, 2026",     company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:false },
-    { date:"July 28, 2026",     company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:false },
-    { date:"July 29, 2026",     company:"Meta",      ticker:"META", timing:"AH", confirmed:false },
-    { date:"July 30, 2026",     company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:false },
-    { date:"July 30, 2026",     company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:false },
-    { date:"August 19, 2026",   company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:false },
-    // ── Q4 2026 (Oct/Nov reports — estimates) ──
-    { date:"October 21, 2026",  company:"Tesla",     ticker:"TSLA", timing:"AH", confirmed:false },
-    { date:"October 22, 2026",  company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:false },
-    { date:"October 27, 2026",  company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:false },
-    { date:"October 28, 2026",  company:"Meta",      ticker:"META", timing:"AH", confirmed:false },
-    { date:"October 29, 2026",  company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:false },
-    { date:"October 29, 2026",  company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:false },
-    { date:"November 18, 2026", company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:false },
-  ];
+  // Source of truth: globalThis.SignalEngine.earningsSchedule (set by the
+  // deferred module load in <head>). Do NOT redeclare a local copy — helpers
+  // and renderers below dereference SignalEngine at call time, so calendar
+  // updates in signal-engine.js flow into index.html, history.html, and the
+  // worker (schwab-proxy.js) together. Outage 2026-04-27: stale local copy.
 
   /* Helper: is today an earnings day for any of the 7 companies? */
-  function isEarningsDay() { return earningsSchedule.some(e => e.date === todayLong()); }
+  function isEarningsDay() { return SignalEngine.earningsSchedule.some(e => e.date === todayLong()); }
   /* M8BF-specific: earnings day that is NOT AMZN or TSLA */
-  const isNonAmznTslaEarningsDay = () => earningsSchedule.some(e => e.date === todayLong() && e.ticker !== 'AMZN' && e.ticker !== 'TSLA');
+  const isNonAmznTslaEarningsDay = () => SignalEngine.earningsSchedule.some(e => e.date === todayLong() && e.ticker !== 'AMZN' && e.ticker !== 'TSLA');
   /* M8BF-specific: today is the trading day after ANY of the 7 earnings */
-  const isDayAfterAnyEarnings = () => earningsSchedule.some(e => isTodayAfter(e.date));
+  const isDayAfterAnyEarnings = () => SignalEngine.earningsSchedule.some(e => isTodayAfter(e.date));
   /* M8BF-specific: today is VIX exp day AND VIX exp falls AFTER OPEX this month */
   function isVixAfterOpexDay(ref=new Date()){
     if(!isVixExp()) return false;
-    const vx=schedInMonth(vixSch,ref), op=schedInMonth(opexSch,ref);
+    const vx=schedInMonth(SignalEngine.vixSch,ref), op=schedInMonth(SignalEngine.opexSch,ref);
     if(!vx||!op) return false;
     return vx > op;
   }
 
-  /* ====== SCHEDULES ====== */
-  const cpiSch   = ["January 13, 2026","February 11, 2026","March 11, 2026","April 10, 2026","May 12, 2026","June 10, 2026","July 14, 2026","August 12, 2026","September 11, 2026","October 14, 2026","November 10, 2026","December 10, 2026"];
-  const fedSch   = ["January 28, 2026","March 18, 2026","April 29, 2026","June 17, 2026","July 29, 2026","September 16, 2026","October 28, 2026","December 9, 2026"];
-  const opexSch  = ["January 16, 2026","February 20, 2026","March 20, 2026","April 17, 2026","May 15, 2026","June 18, 2026","July 17, 2026","August 21, 2026","September 18, 2026","October 16, 2026","November 20, 2026","December 18, 2026"];
-  const holidays = ["January 1, 2026","January 19, 2026","February 16, 2026","April 3, 2026","May 25, 2026","June 19, 2026","July 3, 2026","September 7, 2026","November 26, 2026","December 25, 2026"];
-  const vixSch   = ["January 21, 2026","February 18, 2026","March 18, 2026","April 15, 2026","May 19, 2026","June 17, 2026","July 22, 2026","August 19, 2026","September 16, 2026","October 21, 2026","November 18, 2026","December 16, 2026"];
+  /* ====== SCHEDULES ======
+   * cpiSch / fedSch / opexSch / holidays / vixSch live on globalThis.SignalEngine
+   * (set by the deferred module load in <head>). Helpers below dereference
+   * SignalEngine.<name> at call time — by then DOMContentLoaded has fired.
+   * Outage 2026-04-27: stale inline copies here drifted from signal-engine.js
+   * (Feb 2026 CPI), affecting backtester output. Same fix pattern as
+   * earningsSchedule. */
 
   /* ====== DATE HELPERS ====== */
   let _todayStr = null;
   function todayLong() { if(!_todayStr) _todayStr=new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}); return _todayStr; }
   function resetCache() { _todayStr=null; }
 
-  const isCpi  = () => cpiSch.includes(todayLong());
-  const isFed  = () => fedSch.includes(todayLong());
-  const isOpex = () => opexSch.includes(todayLong());
-  const isVixExp=() => vixSch.includes(todayLong());
+  const isCpi  = () => SignalEngine.cpiSch.includes(todayLong());
+  const isFed  = () => SignalEngine.fedSch.includes(todayLong());
+  const isOpex = () => SignalEngine.opexSch.includes(todayLong());
+  const isVixExp=() => SignalEngine.vixSch.includes(todayLong());
 
   const isWkend= d => { const w=d.getDay(); return w===0||w===6; };
-  const isHol  = d => holidays.includes(d.toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}));
+  const isHol  = d => SignalEngine.holidays.includes(d.toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}));
   const isTrade= d => !isWkend(d)&&!isHol(d);
 
   function nextTrade(d){ const n=new Date(d); do{n.setDate(n.getDate()+1);}while(isWkend(n)||isHol(n)); return n; }
@@ -955,8 +923,8 @@
   function schedInMonth(list,ref){ const y=ref.getFullYear(),m=ref.getMonth(); for(const s of list){const d=parseLong(s);if(d&&d.getFullYear()===y&&d.getMonth()===m)return d;} return null; }
 
   // isPostVixBeforeOpex removed — unused dead code
-  const isPostHol     = () => holidays.some(isTodayAfter);
-  const isPostOpexMon = () => opexSch.some(isTodayAfter) && new Date().getDay()===1;
+  const isPostHol     = () => SignalEngine.holidays.some(isTodayAfter);
+  const isPostOpexMon = () => SignalEngine.opexSch.some(isTodayAfter) && new Date().getDay()===1;
   const isLastTradeMo = (d=new Date()) => nextTrade(d).getMonth()!==d.getMonth();
   function isEomN(n,d=new Date()){ const f=new Date(d.getFullYear(),d.getMonth()+1,1); let t=prevTrade(f); for(let i=0;i<n;i++)t=prevTrade(t); return t.getFullYear()===d.getFullYear()&&t.getMonth()===d.getMonth()&&t.getDate()===d.getDate(); }
   const isFirstTradeMo=(d=new Date())=>prevTrade(d).getMonth()!==d.getMonth();
@@ -1047,12 +1015,12 @@
     if(isCpi())   flags.push({txt:'📊 CPI',    cls:'tag tag-cpi'});
     if(isFed())   flags.push({txt:'🏦 Fed',    cls:'tag tag-fed'});
     if(isOpex())  flags.push({txt:'📅 OPEX',   cls:'tag tag-opex'});
-    if(opexSch.some(isTodayAfter)) flags.push({txt:'↗ Post-OPEX',cls:'tag tag-postopex'});
+    if(SignalEngine.opexSch.some(isTodayAfter)) flags.push({txt:'↗ Post-OPEX',cls:'tag tag-postopex'});
     if(isLastTradeMo()) flags.push({txt:'📆 EOM',cls:'tag tag-eom'});
     if(isVixExp()) flags.push({txt:'VIX Exp',  cls:'tag tag-cpi'});
     if(isFirstTradeMo()) flags.push({txt:'NM', cls:'tag tag-postopex'});
     if(isEarningsDay()){
-      const todayEntries = earningsSchedule.filter(e=>e.date===todayLong());
+      const todayEntries = SignalEngine.earningsSchedule.filter(e=>e.date===todayLong());
       const blocked = todayEntries.filter(e=>e.ticker!=='AMZN'&&e.ticker!=='TSLA').map(e=>e.ticker);
       const allowed = todayEntries.filter(e=>e.ticker==='AMZN'||e.ticker==='TSLA').map(e=>e.ticker);
       if(blocked.length) flags.push({txt:`🚫 Earnings: ${blocked.join(' · ')}`, cls:'tag tag-opex'});
@@ -1083,20 +1051,20 @@
         allEvents.push({date,label,color,days});
       });
     };
-    addEvents(cpiSch,   'CPI',       'tag-cpi');
-    addEvents(fedSch,   'Fed',       'tag-fed');
-    addEvents(opexSch,  'OPEX',      'tag-opex');
-    addEvents(vixSch,   'VIX Exp',   'tag-cpi');
+    addEvents(SignalEngine.cpiSch,   'CPI',       'tag-cpi');
+    addEvents(SignalEngine.fedSch,   'Fed',       'tag-fed');
+    addEvents(SignalEngine.opexSch,  'OPEX',      'tag-opex');
+    addEvents(SignalEngine.vixSch,   'VIX Exp',   'tag-cpi');
     // earnings
     const seen=new Set();
-    earningsSchedule.forEach(e=>{
+    SignalEngine.earningsSchedule.forEach(e=>{
       const key=e.date;
       if(seen.has(key)) return;
       const d=parseLong(e.date);
       if(!d||d<todayNorm) return;
       const days=tradeDaysUntil(e.date);
       if(days===null) return;
-      const tickers=earningsSchedule.filter(x=>x.date===e.date).map(x=>x.ticker).join(' ');
+      const tickers=SignalEngine.earningsSchedule.filter(x=>x.date===e.date).map(x=>x.ticker).join(' ');
       allEvents.push({date:e.date,label:`Earnings: ${tickers}`,color:'tag-opex',days});
       seen.add(key);
     });
@@ -1345,7 +1313,7 @@
       document.getElementById('signalStack').style.display='none';
       const sgw=document.getElementById('strikeGridWrap'); if(sgw) sgw.style.display='none';
       // keep tag row updated so the "📊 CPI" chip shows
-      const tmapCpi={cpiTag:true,fedTag:isFed(),opexTag:isOpex(),postOpexTag:opexSch.some(isTodayAfter),eomTag:isLastTradeMo(new Date())};
+      const tmapCpi={cpiTag:true,fedTag:isFed(),opexTag:isOpex(),postOpexTag:SignalEngine.opexSch.some(isTodayAfter),eomTag:isLastTradeMo(new Date())};
       let anyTagCpi=false;
       Object.entries(tmapCpi).forEach(([id,v])=>{document.getElementById(id).style.display=v?'inline-flex':'none';if(v)anyTagCpi=true;});
       document.getElementById('tagSep').style.display=anyTagCpi?'inline':'none';
@@ -1370,9 +1338,9 @@
     const nmDay=isFirstTradeMo(now), nmMon=isFirstTradeMon(now);
     const fedDay=isFed(), opexDay=isOpex();
     const postOpMon=isPostOpexMon();
-    const postOpDay=opexSch.some(isTodayAfter);
+    const postOpDay=SignalEngine.opexSch.some(isTodayAfter);
     const eomDay=isLastTradeMo(now), eom1=isEomN(1,now), eom2=isEomN(2,now);
-    const vixExpDay=isVixExp(), opex1=opexSch.some(isTodayBefore);
+    const vixExpDay=isVixExp(), opex1=SignalEngine.opexSch.some(isTodayBefore);
     const earningsDay=isEarningsDay();
 
     // ── M8BF block rules (checked independently of other strategy cards) ──
@@ -1769,7 +1737,7 @@
     if(opex1)       br.push("OPEX-1");
     if(eom2)        br.push("EOM-2");
     if(eom1)        br.push("EOM-1");
-    if(earningsDay){ const tickers=earningsSchedule.filter(e=>e.date===todayLong()).map(e=>e.ticker).join(','); br.push(`earnings (${tickers})`); }
+    if(earningsDay){ const tickers=SignalEngine.earningsSchedule.filter(e=>e.date===todayLong()).map(e=>e.ticker).join(','); br.push(`earnings (${tickers})`); }
     if(!isNaN(vToday)&&vToday>T.VIX_MAX_BOBF) br.push("high VIX");
     if(br.length){
       cardBobf.className='scard active-block';
@@ -1810,7 +1778,7 @@
     const ts=todayLong(), now=new Date();
     // group by date
     const grouped={};
-    earningsSchedule.forEach(e=>{
+    SignalEngine.earningsSchedule.forEach(e=>{
       if(!grouped[e.date]) grouped[e.date]=[];
       grouped[e.date].push(e);
     });
@@ -2327,7 +2295,7 @@
     const day = d.getDay();
     if (day === 0 || day === 6) return false; // not Sunday or Saturday
     const dateStr = d.toLocaleDateString('en-US', {month:'long', day:'numeric', year:'numeric'});
-    return !holidays.includes(dateStr);
+    return !SignalEngine.holidays.includes(dateStr);
   }
 
   /* ── Step 5: Schedule live stream at 9:30 AM ET ── */
@@ -2773,11 +2741,11 @@
       const isNM1ISO = d => { const p = prevTradeISO(d); return p && isFirstTradeMoISO(p); };
 
       // Schedule sets in ISO form for fast lookup
-      const opexISO = new Set(opexSch.map(longToISO).filter(Boolean));
-      const fedISO  = new Set(fedSch.map(longToISO).filter(Boolean));
-      const vixExpISO = new Set(vixSch.map(longToISO).filter(Boolean));
+      const opexISO = new Set(SignalEngine.opexSch.map(longToISO).filter(Boolean));
+      const fedISO  = new Set(SignalEngine.fedSch.map(longToISO).filter(Boolean));
+      const vixExpISO = new Set(SignalEngine.vixSch.map(longToISO).filter(Boolean));
       const earnISO = {};  // {TSLA: Set([...]), ...}
-      earningsSchedule.forEach(e => {
+      SignalEngine.earningsSchedule.forEach(e => {
         const iso = longToISO(e.date); if (!iso) return;
         if (!earnISO[e.ticker]) earnISO[e.ticker] = new Set();
         earnISO[e.ticker].add(iso);
@@ -2837,7 +2805,7 @@
       { const s = wrOn(pVixExp); if (isVixExp()      && s) notes.push(`Today is VIX expiry — M8BF historically averages ${tag(s)}.`); }
       { const s = wrOn(pNM1);    if (isNMplus1()     && s) notes.push(`Today is the 2nd trading day of the month — M8BF historically averages ${tag(s)}.`); }
 
-      earningsSchedule.filter(e => e.date === todayLong()).forEach(e => {
+      SignalEngine.earningsSchedule.filter(e => e.date === todayLong()).forEach(e => {
         const s = wrOn(pEarn(e.ticker));
         if (s) notes.push(`Today is ${e.company} earnings — M8BF historically averages ${tag(s)} on ${e.ticker} earnings days.`);
       });
@@ -2854,11 +2822,11 @@
       }
 
       // === TOMORROW IS A SPECIAL DAY ===
-      { const s = wrOn(pDayBefore(pFed));  if (fedSch.some(isTodayBefore)  && s) notes.push(`Tomorrow is a FED day — M8BF averages ${tag(s)} the day before Fed decisions.`); }
-      { const s = wrOn(pDayBefore(pOpex)); if (opexSch.some(isTodayBefore) && s) notes.push(`Tomorrow is OPEX — M8BF averages ${tag(s)} the day before OPEX.`); }
+      { const s = wrOn(pDayBefore(pFed));  if (SignalEngine.fedSch.some(isTodayBefore)  && s) notes.push(`Tomorrow is a FED day — M8BF averages ${tag(s)} the day before Fed decisions.`); }
+      { const s = wrOn(pDayBefore(pOpex)); if (SignalEngine.opexSch.some(isTodayBefore) && s) notes.push(`Tomorrow is OPEX — M8BF averages ${tag(s)} the day before OPEX.`); }
       { const s = wrOn(pDayBefore(r => twISO.has(r.date))); if (isTodayBeforeTW() && s) notes.push(`Tomorrow is Triple Witching — M8BF averages ${tag(s)} the day before TW.`); }
 
-      earningsSchedule.filter(e => isTodayBefore(e.date)).forEach(e => {
+      SignalEngine.earningsSchedule.filter(e => isTodayBefore(e.date)).forEach(e => {
         const s = wrOn(pDayBefore(pEarn(e.ticker)));
         if (s) notes.push(`Tomorrow is ${e.company} earnings — M8BF averages ${tag(s)} the day before ${e.ticker} earnings.`);
       });
@@ -2866,7 +2834,7 @@
       // === YESTERDAY WAS A SPECIAL DAY ===
       if (daysDiff <= 3) {
         { const s = wrOn(pDayAfter(r => twISO.has(r.date))); if (isTodayAfterTW() && s) notes.push(`Yesterday was Triple Witching — M8BF averages ${tag(s)} the day after TW.`); }
-        { const s = wrOn(pDayAfter(pOpex)); if (opexSch.some(isTodayAfter) && s) notes.push(`Yesterday was OPEX — M8BF averages ${tag(s)} the day after OPEX.`); }
+        { const s = wrOn(pDayAfter(pOpex)); if (SignalEngine.opexSch.some(isTodayAfter) && s) notes.push(`Yesterday was OPEX — M8BF averages ${tag(s)} the day after OPEX.`); }
 
         const lastD = new Date(last.date + 'T12:00:00');
         if (isFirstTradeMo(lastD)) {
@@ -2874,7 +2842,7 @@
           if (s) notes.push(`Yesterday was the first trading day of the month — M8BF averages ${tag(s)} the day after.`);
         }
 
-        earningsSchedule.filter(e => longToISO(e.date) === last.date).forEach(e => {
+        SignalEngine.earningsSchedule.filter(e => longToISO(e.date) === last.date).forEach(e => {
           const s = wrOn(pDayAfter(pEarn(e.ticker)));
           if (s) notes.push(`Yesterday was ${e.company} earnings — M8BF averages ${tag(s)} the day after ${e.ticker} earnings.`);
         });
@@ -3001,11 +2969,11 @@
 
   document.addEventListener('DOMContentLoaded',()=>{
     initTheme();
-    renderSched(cpiSch,  'cpiSchedule');
-    renderSched(fedSch,  'fedSchedule');
-    renderSched(opexSch, 'opexSchedule');
-    renderSched(holidays,'holidaySchedule');
-    renderSched(vixSch,  'vixExpirySchedule');
+    renderSched(SignalEngine.cpiSch,  'cpiSchedule');
+    renderSched(SignalEngine.fedSch,  'fedSchedule');
+    renderSched(SignalEngine.opexSch, 'opexSchedule');
+    renderSched(SignalEngine.holidays,'holidaySchedule');
+    renderSched(SignalEngine.vixSch,  'vixExpirySchedule');
     renderEarnings();
     refreshCross(); buildStatus(); buildNextEvents(); updateHeader();
     document.getElementById('yesterdayOpen').disabled=isCpi();

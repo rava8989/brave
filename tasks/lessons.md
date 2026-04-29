@@ -1,5 +1,76 @@
 # Lessons Learned
 
+## Duplicate-source-of-truth across browser bundles (2026-04-27)
+
+`earningsSchedule` was hardcoded as `const` in three places: the canonical
+export in `signal-engine.js:25`, and inline copies in `index.html:871` and
+`history.html:370`. After confirming Q2 2026 dates were updated in
+signal-engine.js the user still saw stale dates on the dashboard, because
+`buildNextEvents()` at `index.html:1068` reads the LOCAL inline copy — the
+module-loaded SignalEngine was loaded but unused for that data. Three
+round-trips to find the local copy was the actual culprit.
+
+**Fix:** delete the inline `const earningsSchedule = [...]` from both HTML
+files; have call sites read `SignalEngine.earningsSchedule` directly.
+`signal-engine.js` is loaded as a deferred `<script type="module">` in
+`<head>`, so by the time any DOMContentLoaded handler or click runs,
+`globalThis.SignalEngine` is already defined. (For history.html I had to
+add the module `<script>` tag to its `<head>` first — index.html already
+had one.)
+
+**Pattern to catch:** any data hardcoded in more than one file is a ticking
+bug — the moment one copy moves, the others lie quietly until someone
+notices the dashboard disagreeing with the worker. The risk surface is
+proportional to (consumers × time-since-last-sync). Build the data once
+in the canonical module; consumers dereference at call time.
+
+**Co-pattern noticed during this fix (NOT yet repaired, scope was
+earningsSchedule only):** `cpiSch`, `fedSch`, `opexSch`, `holidays`, `vixSch`
+are also independently declared in `index.html:921-925`, `history.html:365-369`,
+AND `signal-engine.js:19-23`. The history.html copy of `cpiSch` already
+disagrees with signal-engine.js on Feb 2026 ("February 13" vs canonical
+"February 11"). Same fix applies — replace each inline `const` with reads
+from `SignalEngine.<name>`. Worth scheduling as follow-up before the next
+calendar-update cycle.
+
+**Co-pattern follow-up (2026-04-27, same day):** fixed. Audit found three
+distinct cpiSch values across the files: signal-engine.js had Feb 11 (the
+ORIGINAL BLS schedule), index.html had Feb 11 (matching the wrong canonical),
+history.html had Feb 13 (the ACTUAL release after the BLS shutdown delay).
+Verified against BLS archive URL `cpi_02132026.htm`: market reacted on
+Feb 13, so Feb 13 is the correct canonical. Updated signal-engine.js
+Feb 11 → Feb 13, then deleted all 5 inline `const` arrays from both HTML
+files and replaced every call site with `SignalEngine.<name>.includes(...)`
+/ `.some(...)` / `.map(...)` etc. — direct dereference at call time, no
+parse-time aliases (which would break since classic `<script>` runs before
+the deferred module). Verified in browser via `python3 -m http.server 8788`:
+0 console errors on both pages, sidebar schedule lists populate from all 5
+arrays, next-events bar shows correct distances (Fed 2d, CPI 11d, OPEX 14d
+relative to Apr 27, 2026), history.html row for 2026-02-13 emits "CPI" in
+Special column and `calculateSignal` returns theme=`block` for that date
+(was returning `m8bf` for Feb 13 in any consumer that read the canonical
+signal-engine.js — silent backtester bug now resolved). Strategy-independence
+hook still passes.
+
+**Rule of thumb when removing a duplicate:** check WHEN the deferred module
+loads vs WHEN the consumers run. Classic `<script>` blocks parse
+synchronously DURING HTML parsing — `globalThis.SignalEngine` is `undefined`
+at that moment. But functions DEFINED inside those blocks don't EXECUTE
+until DOMContentLoaded or later, by which time the deferred module has
+populated `globalThis`. Direct call-site replacement is safe; binding to a
+local `const` at parse time is NOT.
+
+**Verification:** loaded both pages via `python3 -m http.server`, confirmed
+0 console errors, `SignalEngine.earningsSchedule.length === 84`, next-events
+bar shows correct Apr 29 / Apr 30 / May 20 dates, history.html Special
+column still emits `E:AAPL,AMZN` and `E:MSFT,META,GOOGL` for known historical
+earnings days. Pre-commit `scripts/check-strategy-independence.sh` passes.
+(Side note: `_serve.js` doesn't strip `?v=` cache-buster query strings
+from req.url, so it 404s `signal-engine.js?v=...`; switch to
+`python3 -m http.server` for local module testing.)
+
+---
+
 ## Never hardcode historical statistics — compute live from source data (2026-04-24)
 
 The M8BF signal message rendered ~47 hardcoded statistical claims like
@@ -130,7 +201,7 @@ Wednesday over a holiday), the Monday-expired ticker is gone. Polygon correctly
 stops listing expired contracts.
 
 **Fix:** for an expired leg, use `max(strike - SPX_close_on_exp_date, 0)` as
-the exit value. This is mathematically EXACT (SPXW is PM-settled at SPX close),
+the exit value. This is mathematically EXACT (SPX is PM-settled at SPX close),
 not an approximation — strictly better than BS.
 
 **Data gap:** half-day sessions (day before July 4, day after Thanksgiving,

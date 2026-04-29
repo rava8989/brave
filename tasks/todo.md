@@ -17,7 +17,7 @@ missing from the snapshot → forced Black-Scholes fallback.
 - [x] Lower `LONG_DTE_MIN` from 12 → 8 in `fetch_polygon_spx.py` so the
       long-side listing now covers `[8,35]` going forward
 - [x] Write `backfill_polygon_dte_gap.py` — walks every existing
-      `data/polygon/SPX_*.json`, fetches SPXW put contracts for DTE `[8,11]`
+      `data/polygon/SPX_*.json`, fetches SPX put contracts for DTE `[8,11]`
       once per date, fetches NBBO per ticker at each time bucket, ADDITIVELY
       merges into `quotes` (never overwrites existing tickers)
 - [x] Apply screenshot defaults to `diagonal.html`: entry=11:30, exit=15:45,

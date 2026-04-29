@@ -4,12 +4,12 @@ Fetch real SPX options bid/ask from Polygon for the diagonal backtester.
 For each trading day:
   - Use existing spot_14 (or spot_12 on half-days) from diagonal_bs_data.json
     OR derive spot from data/spx/SPX_YYYYMMDD.csv when --time is set
-  - Find SPXW put contracts in a strike+DTE grid around the strategy
+  - Find SPX put contracts in a strike+DTE grid around the strategy
   - Fetch bid/ask at the target time ET
   - Save per-day JSON to data/polygon/SPX_YYYYMMDD[_HHMM].json
 
 HARD RULES (from user):
-  1. SPXW only — no AM-settled SPX monthlies (filter by root_symbol)
+  1. SPX only — no AM-settled SPX monthlies (filter by root_symbol)
   2. Half-days use 12:45 ET instead of 14:00 ET (no --time override)
   3. When --time > 12:45 is specified, half-days are SKIPPED (market closed)
   4. Entry and exit are both at the target time on consecutive trading days
