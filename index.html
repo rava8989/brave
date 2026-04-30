@@ -987,9 +987,15 @@
   function refreshCross(){ ['cpiSchedule','fedSchedule','opexSchedule','holidaySchedule','vixExpirySchedule'].forEach(crossOff); }
 
   /* ====== RENDER SCHEDULES ====== */
+  // Filter: show TODAY + future only. Old dates (already happened) are
+  // hidden — they're noise on the dashboard since you can't act on them.
   function renderSched(list, id){
     const ul=document.getElementById(id), ts=todayLong();
+    const now = new Date();
+    const todayMidday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12);
     list.forEach(date=>{
+      const d = parseLong(date);
+      if(d && d < todayMidday) return;  // hide past
       const li=document.createElement('li');
       const sp=document.createElement('span'); sp.textContent=date; li.appendChild(sp);
       li.setAttribute('data-date',date);
@@ -1774,9 +1780,12 @@
     const ul=document.getElementById('earningsSchedule');
     if(!ul) return;
     const ts=todayLong(), now=new Date();
-    // group by date
+    const todayMidday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12);
+    // group by date — filter out past dates (already-reported earnings)
     const grouped={};
     SignalEngine.earningsSchedule.forEach(e=>{
+      const d = parseLong(e.date);
+      if(d && d < todayMidday) return;  // skip past
       if(!grouped[e.date]) grouped[e.date]=[];
       grouped[e.date].push(e);
     });
