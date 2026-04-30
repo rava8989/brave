@@ -2778,6 +2778,16 @@ export default {
         'Access-Control-Allow-Headers': 'Content-Type',
         'Access-Control-Max-Age': '86400',
       };
+      // ?refresh=now triggers a force refresh against Schwab — useful for
+      // recovering after a re-auth without waiting for natural token expiry.
+      if (url.searchParams.get('refresh') === 'now') {
+        try {
+          const token = await getAccessToken(env, true);
+          return jsonResp({ ok: true, refreshed: true, accessLen: token.length, accessTail: token.slice(-8) }, 200, publicCors);
+        } catch (e) {
+          return jsonResp({ ok: false, refreshed: false, error: e.message }, 500, publicCors);
+        }
+      }
       try {
         const now = Date.now();
         const etNow = toET(new Date(now));
@@ -3317,6 +3327,46 @@ export default {
 
   async scheduled(event, env, ctx) {
     console.log('[cron] Triggered at', new Date().toISOString());
+
+    // ── Slow-degradation watchdog: alert Discord if Schwab refresh has been
+    //    failing for too long. Without this, a broken refresh chain rots
+    //    silently for hours (observed 2026-04-30: 376 errors / 17 hrs before
+    //    user noticed missing morning signal).
+    //    Rate-limited to one alert per hour to avoid spam during outages.
+    try {
+      const stRaw = await env.SIGNAL_KV.get('schwab_refresh_state');
+      if (stRaw) {
+        const st = JSON.parse(stRaw);
+        const errs = st.consecutiveErrors || 0;
+        const lastAlert = parseInt(await env.SIGNAL_KV.get('schwab_alert_last_ms') || '0');
+        const ALERT_COOLDOWN_MS = 60 * 60 * 1000;  // 1 hour
+        const ERR_THRESHOLD = 10;
+        if (!st.ok && errs >= ERR_THRESHOLD && (Date.now() - lastAlert) > ALERT_COOLDOWN_MS) {
+          const dcRaw = await env.SIGNAL_KV.get('discord_config');
+          if (dcRaw) {
+            const dc = JSON.parse(dcRaw);
+            if (dc.proxyUrl && dc.channelId) {
+              const minsSinceOK = st.lastSuccess ? Math.round((Date.now() - st.lastSuccess) / 60000) : null;
+              const headers = { 'Content-Type': 'application/json' };
+              if (env.PROXY_SECRET) headers['Authorization'] = `Bearer ${env.PROXY_SECRET}`;
+              await fetch(dc.proxyUrl, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({
+                  userId: dc.channelId,
+                  message: `🚨 **Schwab refresh degraded** — ${errs} consecutive errors${minsSinceOK ? ` (${minsSinceOK} min since last success)` : ''}.\nMessage: \`${(st.msg || '').slice(0, 150)}\`\n→ Re-authenticate Schwab in dashboard, then hit \`/health?refresh=now\` to recover.`,
+                }),
+              });
+              await env.SIGNAL_KV.put('schwab_alert_last_ms', String(Date.now()), { expirationTtl: 86400 });
+              console.log('[cron] Posted Schwab degraded alert');
+            }
+          }
+        }
+      }
+    } catch (watchdogErr) {
+      console.error('[cron] Watchdog failed:', watchdogErr.message);
+    }
+
     let result;
     try {
       result = await handleScheduled(env);
