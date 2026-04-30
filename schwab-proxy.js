@@ -122,7 +122,7 @@ function buildDiscordMessage(signal, vixValues) {
   inner += `${sigColor(signal.stradText)}Straddle │ ${signal.stradText}${RST}\n`;
   inner += `${sigColor(signal.gxbfText)}GXBF     │ ${signal.gxbfText}${RST}\n`;
   inner += `${sigColor(signal.bobfRec)}BOBF     │ ${signal.bobfRec}${RST}\n`;
-  // Diagonal (companion — 10 ITM / 20 wide, 7-filter stack, 12:30–15:00 ET window)
+  // Diagonal (companion — 30 ITM / 40 wide, 5-filter stack: OPEX-1+EOM+EOM-1+NM+VIX_MID 40-90, 12:30–15:00 ET window)
   if (signal.diagText) {
     inner += `${sigColor(signal.diagText)}Diagonal │ ${signal.diagText}${RST}\n`;
   }
