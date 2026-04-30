@@ -818,23 +818,23 @@ body {
         <strong style="color:#fcd34d">VIX regime filters</strong> <em style="color:var(--text3)">(data-derived, not calendar-based)</em>
         <ul style="margin:4px 0 0 16px;padding:0">
           <li>
-            <strong>VIX 40–90%</strong> — the <em>"VIX 20-day percentile"</em> filter.
-            Each day, we rank today's VIX against the last 20 trading days' VIX values (0% = lowest in 20 days, 100% = highest).
-            This pill flags days where that rank lands between 50 and 80 — the <strong>"uncomfortable middle"</strong>.
-            Not cheap enough to be complacent, not elevated enough to be panic — just ambiguous.
-            The diagonal has no edge here: in the backtest these days average <span style="color:#ef4444">−$117/trade</span>
-            while the rest of the distribution averages <span style="color:#22c55e">+$220/trade</span>.
+            <strong>VIX MID-band</strong> (default 40–90%) — the <em>"VIX 20-day percentile"</em> filter.
+            Each day, we take today's first VIX print at-or-after 9:30 ET and rank it against the last 20 trading days' first-post-9:30 prints (0% = lowest in 20 days, 100% = highest).
+            This pill flags days where that rank lands inside the band defined by the <code>lo</code> / <code>hi</code> inputs to its right.
+            Default 40–90 — the <strong>"uncomfortable middle"</strong>. Not cheap enough to be complacent, not elevated enough to be panic.
+            The diagonal has no edge here: at 30/40 strikes the 40–90 band averages <span style="color:#ef4444">−$31/trade</span>
+            while the rest of the distribution averages <span style="color:#22c55e">+$337/trade</span>.
+            <strong>Same recipe as the live signal banner</strong> — backtest and live banner can never disagree on borderline days.
           </li>
           <li style="margin-top:5px">
-            <strong>VIX DEAD</strong> — a tighter subset of VIX 40–90%.
+            <strong>VIX DEAD</strong> — a tighter subset of VIX MID-band.
             Flags a day only if <em>both</em> conditions hold:
             <ol style="margin:2px 0 0 18px;padding:0">
-              <li>VIX ranks 40–90% vs the prior 20 trading days (the "uncomfortable middle" above), <strong>AND</strong></li>
+              <li>VIX rank lands in the MID-band (default 40–90% vs the prior 20 trading days), <strong>AND</strong></li>
               <li>Yesterday's SPX moved less than 0.5% in either direction (a "flat / sleepy" prior session).</li>
             </ol>
             This isolates the <strong>pure no-edge regime</strong>: elevated-but-not-spiky VIX plus no directional
-            follow-through from the prior day. In the backtest, skipping these ~100 days (out of 800+) increases total
-            P/L by ~$26K <em>and</em> cuts the max drawdown by ~26%. This is the single most powerful filter we've found.
+            follow-through from the prior day. Useful as a sharper subset when you want to be more selective inside the MID-band.
           </li>
         </ul>
 
