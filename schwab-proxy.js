@@ -3277,6 +3277,30 @@ export default {
         const dow = etNowT.getDay();
         const win = getM8BFWindow(dow, todayT);
 
+        // ── M8BF banned-day check (mirrors signal-engine.js m8bfBanned) ──
+        // Without this, days like EOM / EOM-1 / OPEX-1 / non-AMZN-TSLA earnings
+        // / CPI / VIX-exp-after-OPEX would still show a "triggered" trade on
+        // the M8BF Today page even though signal-engine.js correctly blocks
+        // M8BF (observed 2026-04-30 EOM: live.html showed a 7155-center trade
+        // despite "No M8BF (EOM)" on the dashboard).
+        const eomDay = isLastTradeMo(etNowT);
+        const eom1   = isEomN(1, etNowT);
+        const opex1  = opexSch.some(ds => isTodayBefore(ds, etNowT));
+        const vixExpAfterOpex = isVixAfterOpexDay(etNowT);
+        const nonAmznTslaEarn = isNonAmznTslaEarningsDay(etNowT);
+        const cpiDay = cpiSch.includes(todayLong(etNowT));
+        const m8bfBanned = eomDay || eom1 || opex1 || vixExpAfterOpex || nonAmznTslaEarn;
+        if (m8bfBanned || cpiDay) {
+          const reason = cpiDay ? 'CPI day'
+                       : eomDay ? 'EOM'
+                       : eom1   ? 'EOM-1'
+                       : opex1  ? 'day before OPEX'
+                       : vixExpAfterOpex ? 'VIX exp day'
+                       : nonAmznTslaEarn ? 'earnings'
+                       : 'banned';
+          return jsonResp({ date: todayT, triggered: false, status: 'banned', reason: `No M8BF (${reason})` }, 200, corsHeaders);
+        }
+
         const sigRaw = await env.SIGNAL_KV.get('signals_today');
         const sigData = sigRaw ? JSON.parse(sigRaw) : { date: '', signals: [] };
 
