@@ -753,19 +753,18 @@
       <a href="./diagonal.html" style="color:var(--accent);text-decoration:underline">diagonal.html</a>.
     </p>
 
-    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Structure (default)</h4>
+    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Structure (default — updated 2026-04-29)</h4>
     <ul>
-      <li><strong>Short leg</strong> — sell a <strong>1 DTE SPX put</strong> at a strike <strong>+10 pts above spot</strong>
-          (slightly in the money, rich theta). Strike tolerance ±5 pts.</li>
-      <li><strong>Long leg</strong> — buy a <strong>25 DTE SPX put</strong> at a strike <strong>−20 pts below the short</strong>
+      <li><strong>Short leg</strong> — sell a <strong>1 DTE SPX put</strong> at a strike <strong>+30 pts above spot</strong>
+          (deep in the money — collects significant extrinsic on top of intrinsic, fast theta burn into expiry). Strike tolerance ±5 pts.</li>
+      <li><strong>Long leg</strong> — buy a <strong>25 DTE SPX put</strong> at a strike <strong>−40 pts below the short</strong>
           (roughly 10 pts OTM from spot). Strike tolerance ±5 pts. Expiration tolerance ±5 DTE.</li>
-      <li><strong>Bullish-skewed net</strong> — deltas partially offset, but the ITM short put dominates so the structure
+      <li><strong>Bullish-skewed net</strong> — deltas partially offset, but the deep-ITM short put dominates so the structure
           is mildly long delta. Profit comes from the <strong>short leg decaying faster than the long leg</strong>
           (different DTE = different theta rates), not from direction.</li>
-      <li><strong>Sizing — 30 ITM / 40 wide (long 10 OTM)</strong> — theoretical max loss ≈ debit + width ≈ ~$9K/contract on a true tail event.
-          Going deeper ITM (30+) or wider (50+) removes the short's extrinsic cushion and scales max loss to $8-13K+ per
-          contract on a big overnight gap. The narrow setup keeps the tail risk bounded.</li>
-      <li><strong>Example</strong> — SPX 6300 → sell the 1 DTE 6310 put, buy the ~25 DTE 6290 put.</li>
+      <li><strong>Sizing — 30 ITM / 40 wide (long 10 OTM)</strong> — theoretical max loss ≈ debit + width ≈ <strong>~$9K/contract</strong> on a true tail event (1987/2020 class).
+          Empirical worst trade in the 2023-2026 backtest is around <strong>−$5K</strong> per contract.</li>
+      <li><strong>Example</strong> — SPX 6300 → sell the 1 DTE 6330 put (30 ITM), buy the ~25 DTE 6290 put (10 OTM).</li>
     </ul>
 
     <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Timing</h4>
@@ -778,19 +777,17 @@
           24 hours later at the same clock time on the next trading day. No rolling fees, no mid-trade adjustments. Live execution with continuous rolls can differ.</li>
     </ul>
 
-    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Default Filter Stack <span style="font-weight:400;color:var(--text3);font-size:11px">(all seven excluded)</span></h4>
+    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Default Filter Stack <span style="font-weight:400;color:var(--text3);font-size:11px">(all five excluded — updated 2026-04-29)</span></h4>
     <ul>
       <li><strong>OPEX-1</strong> — skip the trading day immediately before monthly OPEX. Historically the weakest-edge day of the OPEX cycle.</li>
+      <li><strong>EOM</strong> — skip the last trading day of the month. Month-end rebalancing flow creates noisy reprice that hurts deeper-ITM short structures.</li>
+      <li><strong>EOM-1</strong> — skip the second-to-last trading day too. Rebalancing pressure starts the day before EOM and leaks into pricing.</li>
       <li><strong>NM</strong> — skip the first trading day of the month. NM overlaps the Straddle/auto-flow day and the overnight gap risk dominates theta burn.</li>
       <li><strong>VIX 40-90% (dead zone)</strong> — skip days where today's VIX 20-day rolling percentile lands in the 40–90% band
           (the "uncomfortable middle" — elevated but not spiky). Historically the strategy has <em>no edge</em> there;
-          trade normally in 0–50% (calm → cheap vol sellers get paid) or 80–100% (panic → mean-reversion + skew crush pay).
-          Percentile is ready by 9:30 AM ET; no intraday data needed.</li>
-      <li><strong>AAPL / MSFT / TSLA / META earnings</strong> — skip any trading day with an earnings release from these four mega-caps.
-          Their after-hours prints drive the largest overnight SPX gaps, which dominate the short leg's theta burn.
-          <code>GOOGL / NVDA / AMZN</code> earnings days are intentionally <em>NOT</em> filtered — historical backtests show they're roughly neutral,
-          and sweeping them up with a generic <code>ALL EARNINGS</code> filter throws away profitable trades.</li>
-      <li><strong>EOM is no longer in the default stack</strong> — in practice the month-end rebalancing flow the old filter was guarding against overlaps heavily with the VIX 40–90% band. Keeping both filters was double-counting.</li>
+          trade normally in 0–40% (calm → cheap vol sellers get paid) or 90–100% (panic → mean-reversion + skew crush pay).
+          Percentile is ready by 9:30 AM ET (uses today's first VIX print at-or-after 9:30 vs the prior 20 days' first prints — same value the live signal banner reads).</li>
+      <li><strong>Earnings filters dropped (2026-04-29)</strong> — at the new 30/40 strikes, the per-ticker earnings gates (AAPL/MSFT/TSLA/META) were costing more edge than they preserved. The deeper-ITM short collects enough extrinsic that a single mega-cap report doesn't break it. EOM/EOM-1 added in their place because month-end flow hurts deeper structures more.</li>
       <li>This filter stack is the <strong>default version</strong> of the strategy on this site — the one plotted on the
           historical backtester and the one counted in the default-diagonal equity line. All references to
           "diagonal P/L" in the UI use this filtered version unless noted otherwise.</li>
@@ -825,7 +822,8 @@
     <hr class="divider">
     <h3>Recent Changes</h3>
     <ul>
-      <li><strong>1/25 Put Diagonal — canonical defaults updated (2026-04-23)</strong> — entry/exit moved to the <strong>12:30–15:00 ET window</strong> (24-hour hold, Entry Time === Exit Time, no two diagonals active at once). Long leg shortened to <strong>25 DTE</strong> (from 30). Filter stack switched from <code>OPEX-1 + EOM + NM + VIX + ALL_EARNINGS</code> to <code>OPEX-1 + NM + VIX + AAPL/MSFT/TSLA/META</code> — per-ticker earnings replaces the blanket ALL-EARNINGS sweep (GOOGL/NVDA/AMZN days are historically neutral and no longer skipped). Recommended entry/exit window: <strong>12:30–15:00 ET</strong>, as long as Entry Time === Exit Time. <strong>2026-04-29 update:</strong> defaults rewritten to <strong>+30 ITM / −40 below</strong> (long is 10 OTM), filter stack changed to <code>OPEX-1 + EOM + EOM-1 + NM + VIX 40-90%</code>. Earnings filters dropped at this strike depth — they cost more than they saved.</li>
+      <li><strong>1/25 Put Diagonal — canonical defaults updated (2026-04-29)</strong> — strikes deepened from <strong>10 ITM / 20 below</strong> to <strong>30 ITM / 40 below</strong> (long is 10 OTM). Filter stack changed from <code>OPEX-1 + NM + VIX + AAPL/MSFT/TSLA/META</code> to <code>OPEX-1 + EOM + EOM-1 + NM + VIX 40-90%</code> — earnings filters dropped (at deeper strikes the per-ticker gates cost more edge than they preserved); EOM/EOM-1 added (month-end rebalancing chop hurts deeper-ITM structures more). VIX percentile recipe also fixed — uses today's first VIX print at-or-after 9:30 ET (matches live signal — no lookahead bias). Times unchanged at 12:30/12:30 ET.</li>
+      <li><strong>1/25 Put Diagonal — entry/exit window finalized (2026-04-23)</strong> — moved to <strong>12:30–15:00 ET window</strong> (24-hour hold, Entry Time === Exit Time, no two diagonals active at once). Long leg shortened to <strong>25 DTE</strong> (from 30). Recommended any clock time between 12:30 and 15:00, as long as Entry Time === Exit Time.</li>
       <li><strong>GXBF on OPEX+1 blocked when VIX gaps up ≥ 2% overnight</strong> — if today's VIX open is ≥ 2% above yesterday's VIX close, the automatic OPEX+1 GXBF signal is suppressed entirely.</li>
       <li><strong>SPX gap ≥ 0.9% cancels Straddle only</strong> — when the absolute SPX gap (today's open vs yesterday's close) is ≥ 0.9%, any Straddle or NM Straddle signal is cancelled. No effect on M8BF or GXBF. Gap and o2o have zero connection to butterfly.</li>
       <li><strong>o2o &gt; 1.4 cancels Straddle only (except EOM)</strong> — when the open-to-open VIX drop exceeds 1.4, any Straddle or NM Straddle signal is cancelled. Does not apply on EOM days. No effect on M8BF or GXBF.</li>
