@@ -629,7 +629,7 @@
     </div>
 
     <!-- CARD 5: Diagonal (companion — not part of Sigma 3) -->
-    <div class="scard" id="cardDiag" title="1/25 Put Diagonal — default config (short 10 ITM, long 20 below) with OPEX-1, NM, VIX 40–90% dead zone, and AAPL/MSFT/TSLA/META earnings days excluded. Entry anywhere in the 12:30–15:00 ET window, exit at the same clock time next day (24-hour hold; Entry Time === Exit Time; one diagonal in the book at a time). See the '1/25 Put Diagonal' section below the calculator for full strategy details.">
+    <div class="scard" id="cardDiag" title="1/25 Put Diagonal — default config (short 30 ITM, long 40 below = 10 OTM) with OPEX-1, EOM, EOM-1, NM, and VIX 40–90% dead zone excluded (no earnings filter — dropped 2026-04-29). Entry anywhere in the 12:30–15:00 ET window, exit at the same clock time next day (24-hour hold; Entry Time === Exit Time; one diagonal in the book at a time). See the '1/25 Put Diagonal' section below the calculator for full strategy details.">
       <div class="scard-header">
         <span class="scard-label">Diagonal <span style="font-weight:400;font-size:10px;opacity:.7;letter-spacing:normal;text-transform:none">· companion</span></span>
         <span class="today-trade-pill" id="pillDiag" style="display:none;">▶ TODAY'S TRADE</span>
@@ -741,7 +741,7 @@
     </ul>
 
     <hr class="divider">
-    <h3>1/25 Put Diagonal — Companion Strategy <span style="font-weight:400;font-size:12px;color:var(--text3)">(separate from Sigma 3; OPEX-1 + NM + VIX 40–90% + AAPL/MSFT/TSLA/META earnings filtered default)</span></h3>
+    <h3>1/25 Put Diagonal — Companion Strategy <span style="font-weight:400;font-size:12px;color:var(--text3)">(separate from Sigma 3; OPEX-1 + EOM + EOM-1 + NM + VIX 40–90% filtered default, 30 ITM / 40 below)</span></h3>
     <p>
       A <strong>SPX put-diagonal spread</strong> that runs alongside the Sigma 3 bundle. Different instrument,
       different DTE, and different trade windows — so it's largely <strong>uncorrelated</strong> with M8BF / Straddle /
@@ -762,7 +762,7 @@
       <li><strong>Bullish-skewed net</strong> — deltas partially offset, but the ITM short put dominates so the structure
           is mildly long delta. Profit comes from the <strong>short leg decaying faster than the long leg</strong>
           (different DTE = different theta rates), not from direction.</li>
-      <li><strong>Why conservative sizing</strong> — at 10 ITM / 20 wide, theoretical max loss ≈ debit + width ≈ $2-3K/contract.
+      <li><strong>Sizing — 30 ITM / 40 wide (long 10 OTM)</strong> — theoretical max loss ≈ debit + width ≈ ~$9K/contract on a true tail event.
           Going deeper ITM (30+) or wider (50+) removes the short's extrinsic cushion and scales max loss to $8-13K+ per
           contract on a big overnight gap. The narrow setup keeps the tail risk bounded.</li>
       <li><strong>Example</strong> — SPX 6300 → sell the 1 DTE 6310 put, buy the ~25 DTE 6290 put.</li>
@@ -801,7 +801,7 @@
       <li><strong>Not 0DTE</strong> — both legs carry overnight (1 DTE short + 25 DTE long).</li>
       <li><strong>Not a credit spread</strong> — it's a long-calendar-style diagonal; different DTEs, different strikes.</li>
       <li><strong>Not part of Sigma 3</strong> — separate sizing and separate signals. It does not displace M8BF / Straddle / GXBF / BOBF.</li>
-      <li><strong>Not blocked by CPI or FED</strong> — the default filter stack only skips OPEX-1, NM, VIX 40-90%, and AAPL/MSFT/TSLA/META earnings days.</li>
+      <li><strong>Not blocked by CPI, FED, or earnings</strong> — the default filter stack only skips OPEX-1, EOM, EOM-1, NM, and VIX 40-90%. Per-ticker earnings filters were dropped 2026-04-29 because at 30/40 strikes they cost more edge than they preserved.</li>
       <li><strong>Never two diagonals at once</strong> — because entry time equals exit time, the previous day's position exits at the exact instant the next one opens. One position in the book, always.</li>
     </ul>
 
@@ -825,7 +825,7 @@
     <hr class="divider">
     <h3>Recent Changes</h3>
     <ul>
-      <li><strong>1/25 Put Diagonal — canonical defaults updated (2026-04-23)</strong> — entry/exit moved to the <strong>12:30–15:00 ET window</strong> (24-hour hold, Entry Time === Exit Time, no two diagonals active at once). Long leg shortened to <strong>25 DTE</strong> (from 30). Filter stack switched from <code>OPEX-1 + EOM + NM + VIX + ALL_EARNINGS</code> to <code>OPEX-1 + NM + VIX + AAPL/MSFT/TSLA/META</code> — per-ticker earnings replaces the blanket ALL-EARNINGS sweep (GOOGL/NVDA/AMZN days are historically neutral and no longer skipped). Recommended entry/exit window: <strong>12:30–15:00 ET</strong>, as long as Entry Time === Exit Time. Sizing unchanged at +10 ITM / −20 below.</li>
+      <li><strong>1/25 Put Diagonal — canonical defaults updated (2026-04-23)</strong> — entry/exit moved to the <strong>12:30–15:00 ET window</strong> (24-hour hold, Entry Time === Exit Time, no two diagonals active at once). Long leg shortened to <strong>25 DTE</strong> (from 30). Filter stack switched from <code>OPEX-1 + EOM + NM + VIX + ALL_EARNINGS</code> to <code>OPEX-1 + NM + VIX + AAPL/MSFT/TSLA/META</code> — per-ticker earnings replaces the blanket ALL-EARNINGS sweep (GOOGL/NVDA/AMZN days are historically neutral and no longer skipped). Recommended entry/exit window: <strong>12:30–15:00 ET</strong>, as long as Entry Time === Exit Time. <strong>2026-04-29 update:</strong> defaults rewritten to <strong>+30 ITM / −40 below</strong> (long is 10 OTM), filter stack changed to <code>OPEX-1 + EOM + EOM-1 + NM + VIX 40-90%</code>. Earnings filters dropped at this strike depth — they cost more than they saved.</li>
       <li><strong>GXBF on OPEX+1 blocked when VIX gaps up ≥ 2% overnight</strong> — if today's VIX open is ≥ 2% above yesterday's VIX close, the automatic OPEX+1 GXBF signal is suppressed entirely.</li>
       <li><strong>SPX gap ≥ 0.9% cancels Straddle only</strong> — when the absolute SPX gap (today's open vs yesterday's close) is ≥ 0.9%, any Straddle or NM Straddle signal is cancelled. No effect on M8BF or GXBF. Gap and o2o have zero connection to butterfly.</li>
       <li><strong>o2o &gt; 1.4 cancels Straddle only (except EOM)</strong> — when the open-to-open VIX drop exceeds 1.4, any Straddle or NM Straddle signal is cancelled. Does not apply on EOM days. No effect on M8BF or GXBF.</li>
@@ -1472,8 +1472,8 @@
     const _diagReasonByCode = {
       'OPEX-1': 'Day before monthly OPEX — pin/gamma noise. Default filter skips this day.',
       'EOM':    'Last trading day of month — month-end rebalancing flow creates noisy reprice. Default filter skips.',
+      'EOM-1':  'Second-to-last trading day of month — early rebalance flow. Default filter skips.',
       'NM':     'First trading day of month — gap risk dominates theta burn. Default filter skips.',
-      'EARN':   'Mega-cap earnings today — overnight gap risk. Default filter skips.',
       'VIX_MID':`VIX 20-day percentile = ${_vixPctToday}% — inside the 40–90% "no-edge" band. Default filter skips.`,
     };
 
@@ -1486,7 +1486,7 @@
       if (pillDiag) pillDiag.style.display = 'none';
     } else if (_diagSig.diagGo) {
       diagRec.textContent    = _diagSig.diagText;
-      diagReason.textContent = 'Short 1 DTE SPX put +10 pts ITM · long 25 DTE SPX put −20 pts below short · ±5 pt tol. Entry anywhere in the 12:30–15:00 ET window; exit at the same clock time on the next trading day (24-hour hold, entry time = exit time). All 7 default filters (OPEX-1, NM, VIX 20d, AAPL/MSFT/TSLA/META earnings) clear today.';
+      diagReason.textContent = 'Short 1 DTE SPX put +30 pts ITM · long 25 DTE SPX put −40 pts below short (long is 10 OTM) · ±5 pt tol. Entry anywhere in the 12:30–15:00 ET window; exit at the same clock time on the next trading day (24-hour hold, entry time = exit time). All 5 default filters (OPEX-1, EOM, EOM-1, NM, VIX 40-90%) clear today.';
       diagBadge.textContent  = _diagSig.diagBadge;
       cardDiag.className     = 'scard active-ok';
       if (pillDiag) pillDiag.style.display = '';
@@ -2585,7 +2585,7 @@
     inner += `${sigColor(strad)}Straddle │ ${strad}${RST}\n`;
     inner += `${sigColor(gxbf)}GXBF     │ ${gxbf}${RST}\n`;
     inner += `${sigColor(bobf)}BOBF     │ ${bobf}${RST}\n`;
-    // Diagonal (companion — 10 ITM / 20 wide, 5-filter stack)
+    // Diagonal (companion — 30 ITM / 40 wide, 5-filter stack: OPEX-1+EOM+EOM-1+NM+VIX_MID)
     if (diag && notCalc(diag)) {
       inner += `${sigColor(diag)}Diagonal │ ${diag}${RST}\n`;
     }

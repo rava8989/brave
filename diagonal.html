@@ -6,7 +6,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<!-- v2026-04-23: 1/25 DTE, 12:30-15:00 ET window (24h hold, entry=exit time), +10 ITM, -20 below, OPEX-1 + NM + VIX 40-90% + AAPL/MSFT/TSLA/META -->
+<!-- v2026-04-29: 1/25 DTE, 12:30-15:00 ET window (24h hold, entry=exit time), +30 ITM, -40 below (long 10 OTM), OPEX-1 + EOM + EOM-1 + NM + VIX 40-90% (no earnings filters) -->
 <title>SPX-BF // Diagonal Backtester</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -588,18 +588,18 @@ body {
     </span>
     <br><br>
     <span style="color:var(--accent);font-size:11px;font-weight:600">
-      ★ Canonical default config (loaded below):
-      <code>entry/exit anywhere in 12:30–15:00 ET (same clock time), sDTE=1, +10 ITM, lDTE=25, −20 below</code>,
-      filtered with <code>OPEX-1 + NM + VIX 40–90% + AAPL + MSFT + TSLA + META</code> in EXCLUDE mode.
-      Conservative sizing (10 ITM / 20 wide) caps overnight-gap tail risk at ≈ debit + width ≈ $2–3K/contract.
-      The per-ticker earnings subset (four mega-caps) targets the overnight-gap days that matter, without penalising the historically neutral GOOGL/NVDA/AMZN report days that <code>ALL EARNINGS</code> used to sweep up.
+      ★ Canonical default config (loaded below, updated 2026-04-29):
+      <code>entry/exit anywhere in 12:30–15:00 ET (same clock time), sDTE=1, +30 ITM, lDTE=25, −40 below (long 10 OTM)</code>,
+      filtered with <code>OPEX-1 + EOM + EOM-1 + NM + VIX 40–90%</code> in EXCLUDE mode.
+      Sizing (30 ITM / 40 wide) caps overnight-gap tail risk at ≈ debit + width ≈ ~$9K/contract.
+      Earnings filters (AAPL/MSFT/TSLA/META) dropped at this strike depth — they were costing more edge than they preserved. EOM/EOM-1 added — month-end rebalancing chop hurts deeper-ITM short structures.
     </span>
     <br><br>
     <span style="color:#fcd34d;font-size:11px">
       🧪 <strong>Filter stack</strong> — <code>OPEX-1</code> (day before monthly OPEX — weakest-edge day of the cycle),
-      <code>NM</code> (first trading day of month — gap risk, NM Straddle day),
-      <code>VIX 40–90%</code> (uncomfortable-middle regime; avg −$117/trade there vs +$220 elsewhere), and
-      <code>AAPL / MSFT / TSLA / META</code> earnings days (the four mega-caps whose after-hours prints drive the largest overnight SPX gaps).
+      <code>EOM / EOM-1</code> (last and second-to-last trading days of the month — rebalancing flow noise),
+      <code>NM</code> (first trading day of month — gap risk, NM Straddle day), and
+      <code>VIX 40–90%</code> (uncomfortable-middle regime).
       All seven active by default in <strong>EXCLUDE</strong> mode. <code>EOM</code> and <code>ALL EARNINGS</code> are intentionally OFF — the per-ticker subset is tighter.
     </span>
     <br><br>
@@ -702,7 +702,7 @@ body {
 
   <div class="fg">
     <div class="fg-label">Short ITM Offset (pts)</div>
-    <input type="number" class="num-input" id="shortOffset" value="10" min="0" step="5">
+    <input type="number" class="num-input" id="shortOffset" value="30" min="0" step="5">
   </div>
 
   <div class="fg">
@@ -737,7 +737,7 @@ body {
 
   <div class="fg">
     <div class="fg-label">Long Below Short (pts)</div>
-    <input type="number" class="num-input" id="longOffset" value="20" min="0" step="5">
+    <input type="number" class="num-input" id="longOffset" value="40" min="0" step="5">
   </div>
 
   <div class="fg">
@@ -1117,22 +1117,22 @@ function syncVixBand() {
 // Seed globals on load
 syncVixBand();
 
-// Preselect the canonical 7-filter stack in EXCLUDE mode:
-//   OPEX-1      — weakest-edge day of the OPEX cycle
-//   NM          — first trading day of month (gap risk, reprice)
-//   VIX_MID     — VIX 40-90% uncomfortable-middle regime (no-edge band)
-//   AAPL/MSFT/TSLA/META — per-ticker earnings days (biggest overnight-gap offenders)
-// EOM and ALL_EARNINGS intentionally dropped — the per-ticker subset
-// (four mega-caps) captures the gap-risk days without penalising the
-// historically-neutral GOOGL/NVDA/AMZN report days.
+// Preselect the canonical 5-filter stack in EXCLUDE mode (2026-04-29 update):
+//   OPEX-1   — weakest-edge day of the OPEX cycle
+//   EOM      — last trading day of month (rebalance chop)
+//   EOM-1    — second-to-last trading day of month
+//   NM       — first trading day of month (gap risk, reprice)
+//   VIX_MID  — VIX 40-90% uncomfortable-middle regime (no-edge band)
+// Earnings filters (AAPL/MSFT/TSLA/META) DROPPED — at the new 30/40 strikes
+// the per-ticker earnings gates were costing more edge than they preserved.
+// EOM/EOM-1 added — month-end rebalancing chop hurts deeper-ITM short
+// structures more than it does shallow ones.
 specialState.mode = 'exclude';
 specialState.active.add('OPEX-1');
+specialState.active.add('EOM');
+specialState.active.add('EOM-1');
 specialState.active.add('NM');
 specialState.active.add('VIX_MID');
-specialState.active.add('AAPL');
-specialState.active.add('MSFT');
-specialState.active.add('TSLA');
-specialState.active.add('META');
 syncSpecialUI();
 
 // ══════════════════════════════════════════════════════════════════════
@@ -1893,7 +1893,7 @@ function runBacktestBS(data, params) {
     const ivEntry = vixEntryN / 100;   // VIX is annualized % → decimal
     const ivExit  = vixExitN  / 100;
 
-    // Strikes: short = spot + shortOffset ITM (10 ITM), long = short - longOffset (10 OTM)
+    // Strikes: short = spot + shortOffset ITM (30 ITM), long = short - longOffset (10 OTM)
     // e.g. spot=6830, shortOffset=10 → short=6840; longOffset=20 → long=6820 (10 pts OTM)
     const shortStrike = Math.round((spotEntry + params.shortOffset) / 5) * 5;
     const longStrike  = shortStrike - params.longOffset;

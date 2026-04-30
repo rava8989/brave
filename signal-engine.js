@@ -222,35 +222,39 @@ export function isDayAfterAnyEarnings(etDate) { return earningsSchedule.some(e =
 // DIAGONAL SIGNAL (companion strategy, single source of truth)
 // Consumed by: schwab-proxy.js (via calculateSignal), index.html (direct)
 // ────────────────────────────────────────────────────────────────────
-// Canonical 7-filter stack — priority:
-//   OPEX-1 > NM > EARN_MEGA(AAPL/MSFT/TSLA/META) > VIX_MID (40–90%)
+// Canonical 5-filter stack — priority:
+//   OPEX-1 > EOM > EOM-1 > NM > VIX_MID (40–90%)
 // Mirrors compute_diagonal_pnl.py DEFAULT_PARAMS.special_active exactly.
-// CPI / FED / EOM / ALL_EARNINGS intentionally NOT in the stack.
+// FED / CPI / VIX-EXP / OPEX / OPEX+1 / per-ticker earnings intentionally NOT
+// in the stack. Earnings filters dropped 2026-04-29 (per backtest sweep —
+// removing earnings gates while widening to 30/40 + EOM/EOM-1 captured more
+// edge).
 // Entry 12:30–15:00 ET (window; pick any clock time, must equal Exit Time).
-// Exit 12:30–15:00 ET next trading day · 1/25 DTE · short +10 ITM · long −20 below · ±5 pt tol.
+// Exit 12:30–15:00 ET next trading day · 1/25 DTE · short +30 ITM · long −40 below · ±5 pt tol.
 // Entry and exit must use the SAME wall-clock time so only one diagonal is live at a time.
 // ════════════════════════════════════════════════════════════════════
-const DIAG_EARN_TICKERS = new Set(['AAPL', 'MSFT', 'TSLA', 'META']);
 export function computeDiagonalSignal(etDate, vixPct20d = null) {
   const opex1 = opexSch.some(ds => isTodayBefore(ds, etDate));
+  const eomDay = isLastTradeMo(etDate);
+  const eom1Day = isEomN(1, etDate);
   const nmDay = isFirstTradeMo(etDate);
-  const earnMegaTickers = earningsSchedule
-    .filter(e => e.date === todayLong(etDate) && DIAG_EARN_TICKERS.has(e.ticker))
-    .map(e => e.ticker);
-  const earnMega = earnMegaTickers.length > 0;
 
   let diagText, diagBadge = '…', diagGo = false, diagSkipCode = null;
   if (opex1) {
     diagSkipCode = 'OPEX-1';
     diagText = 'No Diagonal (OPEX-1)';
     diagBadge = 'SKIP';
+  } else if (eomDay) {
+    diagSkipCode = 'EOM';
+    diagText = 'No Diagonal (EOM)';
+    diagBadge = 'SKIP';
+  } else if (eom1Day) {
+    diagSkipCode = 'EOM-1';
+    diagText = 'No Diagonal (EOM-1)';
+    diagBadge = 'SKIP';
   } else if (nmDay) {
     diagSkipCode = 'NM';
     diagText = 'No Diagonal (NM)';
-    diagBadge = 'SKIP';
-  } else if (earnMega) {
-    diagSkipCode = 'EARN';
-    diagText = `No Diagonal (earnings: ${earnMegaTickers.join(',')})`;
     diagBadge = 'SKIP';
   } else if (vixPct20d !== null && vixPct20d !== undefined && vixPct20d > 40 && vixPct20d <= 90) {
     diagSkipCode = 'VIX_MID';
