@@ -802,6 +802,23 @@ document.getElementById('sdPills').addEventListener('click', e => {
     specialActive.add(type);
     btn.classList.add('active');
   }
+  // Auto-activate ONLY mode when first pill is clicked. Without this, pills
+  // are decorative until the user separately clicks the ONLY/EXCLUDE button —
+  // a UX trap that produced thousands of unfiltered "results" (observed
+  // 2026-05-01: clicking NM + 10:40 returned 400 trades instead of ~20).
+  // If user explicitly toggled mode off (specialMode === null), respect that
+  // choice the moment they clear all pills; otherwise default to ONLY.
+  if (specialMode === null && specialActive.size > 0) {
+    specialMode = 'only';
+    document.getElementById('sdOnly').classList.add('only-on');
+  }
+  // If user emptied all pills, also deactivate the mode so it doesn't linger.
+  if (specialActive.size === 0) {
+    specialMode = null;
+    document.getElementById('sdExclude').classList.remove('exclude-on');
+    document.getElementById('sdOnly').classList.remove('only-on');
+  }
+  updateSDPillColors();
 });
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
