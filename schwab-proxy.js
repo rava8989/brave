@@ -396,7 +396,9 @@ async function handleEOD(env, etNow) {
   // STEP 1 — calendar-only bans (purely date-driven, don't need vix/spx inputs).
   // These must fire even if the morning signal didn't populate vixOpen yet.
   // Mirrors signal-engine.js m8bfBanned = eomDay || eom1 || opex1 || vixExpAfterOpex || nonAmznTslaEarn
-  // plus cpiDay (both are calendar-only).
+  // plus cpiDay AND NM-not-Monday (NM Straddle override at signal-engine.js:336
+  // replaces M8BF on first trading day of month unless that day is a Monday;
+  // observed 2026-05-01 NM day where m8bfPL was incorrectly written as -$101).
   {
     const eomDay = isEomN(0, etNow);
     const eom1 = isEomN(1, etNow);
@@ -404,9 +406,12 @@ async function handleEOD(env, etNow) {
     const vixExpAfterOpex = isVixAfterOpexDay(etNow);
     const nonAmznTslaEarn = isNonAmznTslaEarningsDay(etNow);
     const cpiDay = cpiSch.includes(todayLong(etNow));
-    if (eomDay || eom1 || opex1 || vixExpAfterOpex || nonAmznTslaEarn || cpiDay) {
+    const nmDay = isFirstTradeMo(etNow);
+    const nmMon = isFirstTradeMon(etNow);
+    const nmNonMon = nmDay && !nmMon;  // NM that triggers Straddle override
+    if (eomDay || eom1 || opex1 || vixExpAfterOpex || nonAmznTslaEarn || cpiDay || nmNonMon) {
       m8bfBlockedByLive = true;
-      console.log(`[eod] M8BF blocked by calendar (eom=${eomDay}, eom-1=${eom1}, opex-1=${opex1}, vixAfterOpex=${vixExpAfterOpex}, earn=${nonAmznTslaEarn}, cpi=${cpiDay})`);
+      console.log(`[eod] M8BF blocked by calendar (eom=${eomDay}, eom-1=${eom1}, opex-1=${opex1}, vixAfterOpex=${vixExpAfterOpex}, earn=${nonAmznTslaEarn}, cpi=${cpiDay}, nm-non-mon=${nmNonMon})`);
     }
   }
 
@@ -3291,19 +3296,21 @@ export default {
         const dow = etNowT.getDay();
         const win = getM8BFWindow(dow, todayT);
 
-        // ── M8BF banned-day check (mirrors signal-engine.js m8bfBanned) ──
-        // Without this, days like EOM / EOM-1 / OPEX-1 / non-AMZN-TSLA earnings
-        // / CPI / VIX-exp-after-OPEX would still show a "triggered" trade on
-        // the M8BF Today page even though signal-engine.js correctly blocks
-        // M8BF (observed 2026-04-30 EOM: live.html showed a 7155-center trade
-        // despite "No M8BF (EOM)" on the dashboard).
+        // ── M8BF banned-day check (mirrors signal-engine.js m8bfBanned + NM-non-Mon) ──
+        // Without this, banned days still show a "triggered" trade on
+        // the M8BF Today page (live.html). NM-non-Mon added 2026-05-01:
+        // NM Straddle override replaces M8BF on first trading day of month
+        // unless that day is a Monday.
         const eomDay = isLastTradeMo(etNowT);
         const eom1   = isEomN(1, etNowT);
         const opex1  = opexSch.some(ds => isTodayBefore(ds, etNowT));
         const vixExpAfterOpex = isVixAfterOpexDay(etNowT);
         const nonAmznTslaEarn = isNonAmznTslaEarningsDay(etNowT);
         const cpiDay = cpiSch.includes(todayLong(etNowT));
-        const m8bfBanned = eomDay || eom1 || opex1 || vixExpAfterOpex || nonAmznTslaEarn;
+        const nmDay = isFirstTradeMo(etNowT);
+        const nmMon = isFirstTradeMon(etNowT);
+        const nmNonMon = nmDay && !nmMon;
+        const m8bfBanned = eomDay || eom1 || opex1 || vixExpAfterOpex || nonAmznTslaEarn || nmNonMon;
         if (m8bfBanned || cpiDay) {
           const reason = cpiDay ? 'CPI day'
                        : eomDay ? 'EOM'
@@ -3311,6 +3318,7 @@ export default {
                        : opex1  ? 'day before OPEX'
                        : vixExpAfterOpex ? 'VIX exp day'
                        : nonAmznTslaEarn ? 'earnings'
+                       : nmNonMon ? 'NM (Straddle day)'
                        : 'banned';
           return jsonResp({ date: todayT, triggered: false, status: 'banned', reason: `No M8BF (${reason})` }, 200, corsHeaders);
         }
