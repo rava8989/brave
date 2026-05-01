@@ -11,7 +11,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <!-- html2canvas: lazy-loaded by exportPNG() on demand to save 200KB on
+       initial page load. Eagerly loading it crashed mobile Safari. -->
   <style>
     :root {
       --bg:#f1f5f9; --bg2:#ffffff; --bg3:#f8fafc;
@@ -1109,6 +1110,13 @@ function buildSpecialDayText(s) {
   return tags.join(' ');
 }
 
+// Mobile guard — render all rows on desktop, last 90 days only on mobile by
+// default. 425+ rows × 16 cells = 6800 DOM cells, which crashes mobile Safari.
+// Tap the "Show all" button at the bottom to expand if you need older history.
+const IS_MOBILE = /Mobi|Android|iPhone|iPad/.test(navigator.userAgent) || window.innerWidth < 768;
+let tableShowAll = !IS_MOBILE;
+const TABLE_DEFAULT_LIMIT = 90;
+
 function renderTable() {
   let h = '<div class="table-wrap"><table><thead><tr>';
   cols.forEach((col, i) => {
@@ -1123,7 +1131,22 @@ function renderTable() {
   const todayStr = new Date().toISOString().slice(0, 10);
   const dash = '<td style="color:var(--text3);text-align:center">—</td>';
 
+  // On mobile: limit to most recent N rows by default to keep DOM under control.
+  // Totals still computed across ALL rows — only the rendered slice is limited.
+  // Pre-compute totals here so the foot row reflects everything regardless of
+  // how many rows are visible.
   for (const row of rows) {
+    const s = row.signal || {};
+    if (activeStrats.m8bf && s.m8bfRan && row.m8bfPL != null) totM8 += row.m8bfPL;
+    if (activeStrats.strad && s.stradRan && row.stradPL != null) totStrad += row.stradPL;
+    if (activeStrats.gxbf && row.gxbfPL != null) totGxbf += row.gxbfPL;
+    if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) totBobf += row.bobfPL;
+    if (activeStrats.diagonal && row.diagPL != null) totDiag += row.diagPL;
+  }
+
+  const renderRows = tableShowAll ? rows : rows.slice(-TABLE_DEFAULT_LIMIT);
+
+  for (const row of renderRows) {
     const s = row.signal || {};
     const isFuture = row.date > todayStr;
     h += '<tr>';
@@ -1162,12 +1185,6 @@ function renderTable() {
     // Special Day column (calendar-based — shown for historical AND future dates)
     h += `<td>${row.specialDayHtml || '<span style="color:var(--text3)">—</span>'}</td>`;
     h += '</tr>';
-
-    if (activeStrats.m8bf && s.m8bfRan && row.m8bfPL != null) totM8 += row.m8bfPL;
-    if (activeStrats.strad && s.stradRan && row.stradPL != null) totStrad += row.stradPL;
-    if (activeStrats.gxbf && row.gxbfPL != null) totGxbf += row.gxbfPL;
-    if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) totBobf += row.bobfPL;
-    if (activeStrats.diagonal && row.diagPL != null) totDiag += row.diagPL;
   }
 
   const fc = (v, active) => active ? `<td class="${valClass(v)}" style="font-weight:700">$${Math.round(v).toLocaleString()}</td>` : '<td style="color:var(--text3);text-align:center">—</td>';
@@ -1179,6 +1196,16 @@ function renderTable() {
   h += anyActive ? `<td class="${valClass(totAll)}" style="font-weight:700">$${Math.round(totAll).toLocaleString()}</td>` : `<td style="color:var(--text3);text-align:center">—</td>`;
   h += `<td></td>`; // Special Day column — no total
   h += '</tr></tfoot></table></div>';
+  // Show-all toggle when the table is currently truncated
+  if (!tableShowAll && rows.length > TABLE_DEFAULT_LIMIT) {
+    const hidden = rows.length - TABLE_DEFAULT_LIMIT;
+    h += `<div style="text-align:center;padding:12px 0">
+      <button onclick="tableShowAll=true; renderTable();"
+        style="background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:8px 16px;border-radius:6px;cursor:pointer;font-size:12px">
+        Show all ${rows.length} rows (${hidden} older hidden)
+      </button>
+    </div>`;
+  }
   document.getElementById('content').innerHTML = h;
   renderAll();
 }
@@ -2026,6 +2053,16 @@ function renderRisk() {
 async function exportPNG() {
   const btn = document.querySelector('[onclick="exportPNG()"]');
   btn.textContent = '⏳ Capturing…';
+  // Lazy-load html2canvas only when user actually clicks export.
+  if (typeof html2canvas === 'undefined') {
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js';
+      s.onload = resolve;
+      s.onerror = () => reject(new Error('Failed to load html2canvas'));
+      document.head.appendChild(s);
+    });
+  }
   try {
     const canvas = await html2canvas(document.getElementById('dashboardWrap'), {
       backgroundColor: getComputedStyle(document.body).backgroundColor,
