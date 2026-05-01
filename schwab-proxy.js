@@ -2788,6 +2788,20 @@ export default {
           return jsonResp({ ok: false, refreshed: false, error: e.message }, 500, publicCors);
         }
       }
+      // ?run=now manually invokes the scheduled handler — recovery path when
+      // Cloudflare crons stall (observed 2026-05-01: last cron 16h ago).
+      // Public to avoid lock-out when the SYNC_SECRET is in the dashboard
+      // but the dashboard's own crons are also down.
+      if (url.searchParams.get('run') === 'now') {
+        try {
+          const result = await handleScheduled(env);
+          result.date = result.date || new Date().toISOString();
+          await env.SIGNAL_KV.put('last_run', JSON.stringify(result));
+          return jsonResp({ ok: true, ran: true, result }, 200, publicCors);
+        } catch (e) {
+          return jsonResp({ ok: false, ran: false, error: e.message }, 500, publicCors);
+        }
+      }
       try {
         const now = Date.now();
         const etNow = toET(new Date(now));
