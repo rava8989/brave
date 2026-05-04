@@ -2843,11 +2843,9 @@
         { const s = wrOn(pDayAfter(r => twISO.has(r.date))); if (isTodayAfterTW() && s) notes.push(`Yesterday was Triple Witching — M8BF averages ${tag(s)} the day after TW.`); }
         { const s = wrOn(pDayAfter(pOpex)); if (SignalEngine.opexSch.some(isTodayAfter) && s) notes.push(`Yesterday was OPEX — M8BF averages ${tag(s)} the day after OPEX.`); }
 
-        const lastD = new Date(last.date + 'T12:00:00');
-        if (isFirstTradeMo(lastD)) {
-          const s = wrOn(pDayAfter(r => isFirstTradeMoISO(r.date)));
-          if (s) notes.push(`Yesterday was the first trading day of the month — M8BF averages ${tag(s)} the day after.`);
-        }
+        // (NM+1 / "Yesterday was first trading day of month" is covered by the
+        // "Today is the 2nd trading day of the month" note above — same stat,
+        // don't duplicate.)
 
         SignalEngine.earningsSchedule.filter(e => longToISO(e.date) === last.date).forEach(e => {
           const s = wrOn(pDayAfter(pEarn(e.ticker)));
