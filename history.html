@@ -10,9 +10,26 @@
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <!-- html2canvas: lazy-loaded by exportPNG() on demand to save 200KB on
-       initial page load. Eagerly loading it crashed mobile Safari. -->
+  <!-- chart.js + html2canvas: BOTH lazy-loaded on demand (see loadChartJS /
+       loadHtml2Canvas in main script). Loading Chart.js synchronously here was
+       blocking ~200KB on every page load and contributing to mobile crashes —
+       6 chart instances spinning up simultaneously on a fresh page on iOS
+       Safari pushed past the WKWebView memory ceiling. -->
+  <script>
+    let _chartJSPromise = null;
+    function loadChartJS() {
+      if (window.Chart) return Promise.resolve();
+      if (_chartJSPromise) return _chartJSPromise;
+      _chartJSPromise = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/chart.js';
+        s.onload = () => resolve();
+        s.onerror = () => { _chartJSPromise = null; reject(new Error('Chart.js failed to load')); };
+        document.head.appendChild(s);
+      });
+      return _chartJSPromise;
+    }
+  </script>
   <style>
     :root {
       --bg:#f1f5f9; --bg2:#ffffff; --bg3:#f8fafc;
@@ -1238,75 +1255,115 @@ function safeRender(name, fn) {
   catch (e) { console.error('[history] render failed:', name, e); }
 }
 
-// IntersectionObserver instance reused across renderAll calls on mobile.
-let _lazyIO = null;
-const _lazyRendered = new Set();
+// Mobile-only: tracks whether the user has tapped "Show charts". Once true,
+// all chart renders for the current filter set will run (sequentially).
+let _mobileChartsEnabled = false;
+const _mobileRendered = new Set();
+
+const CHART_SECTIONS = [
+  { id: 'chartCard',      fn: () => renderChart(),       name: 'chart' },
+  { id: 'barChartCard',   fn: () => renderBarChart(),    name: 'barChart' },
+  { id: 'heatmapSection', fn: () => renderHeatmap(),     name: 'heatmap' },
+  { id: 'corrCard',       fn: () => renderCorrelation(), name: 'correlation' },
+  { id: 'allocCard',      fn: () => renderAllocation(),  name: 'allocation' },
+  { id: 'riskCard',       fn: () => renderRisk(),        name: 'risk' },
+];
 
 function renderAll() {
   safeRender('stats', renderStats);
 
   if (IS_MOBILE) {
-    // Mobile: defer heavy chart renders until each card scrolls into view.
-    // 5 Chart.js canvases + heatmap + correlation grid all firing at once
-    // crashes iOS Safari (~250-380MB tab memory ceiling). Lazy via IO.
-    setupLazyRender();
+    // Mobile: do NOT auto-render charts. The IntersectionObserver approach
+    // didn't work — chart cards stack near each other and all entered the
+    // viewport (with 300px margin) at the same time on initial load,
+    // re-creating the original simultaneous-render OOM. Instead we show a
+    // single "Show charts" CTA below the table; user opts in.
+    if (_mobileChartsEnabled) {
+      // Re-filter case: charts are already enabled, re-render any that were
+      // previously visible, sequentially with idle gaps so memory recovers.
+      renderMobileChartsSerially();
+    } else {
+      ensureMobileChartsCTA();
+    }
   } else {
-    safeRender('chart',       renderChart);
-    safeRender('barChart',    renderBarChart);
+    // Desktop: still need Chart.js (was previously sync-loaded in <head>).
+    // Heatmap/correlation/risk don't need Chart.js — render them immediately.
     safeRender('heatmap',     renderHeatmap);
     safeRender('correlation', renderCorrelation);
-    safeRender('allocation',  renderAllocation);
-    safeRender('risk',        renderRisk);
+    loadChartJS().then(() => {
+      safeRender('chart',       renderChart);
+      safeRender('barChart',    renderBarChart);
+      safeRender('allocation',  renderAllocation);
+      safeRender('risk',        renderRisk);
+      document.getElementById('monteCarloCard').style.display = rows.length ? '' : 'none';
+    }).catch(e => console.error('[history] Chart.js load failed', e));
   }
-  // Show Monte Carlo card (but don't auto-run simulation)
-  document.getElementById('monteCarloCard').style.display = rows.length ? '' : 'none';
 }
 
-function setupLazyRender() {
-  const sections = [
-    { id: 'chartCard',      fn: renderChart,       name: 'chart' },
-    { id: 'barChartCard',   fn: renderBarChart,    name: 'barChart' },
-    { id: 'heatmapSection', fn: renderHeatmap,     name: 'heatmap' },
-    { id: 'corrCard',       fn: renderCorrelation, name: 'correlation' },
-    { id: 'allocCard',      fn: renderAllocation,  name: 'allocation' },
-    { id: 'riskCard',       fn: renderRisk,        name: 'risk' },
-  ];
-
-  // Reset on each renderAll so re-filtering re-renders visible cards.
-  if (_lazyIO) { _lazyIO.disconnect(); _lazyRendered.clear(); }
-
-  // Reveal cards with a tiny loading placeholder so they have layout for IO.
-  for (const s of sections) {
+function ensureMobileChartsCTA() {
+  // Hide all chart cards on mobile until user opts in.
+  for (const s of CHART_SECTIONS) {
     const el = document.getElementById(s.id);
-    if (!el) continue;
-    el.style.display = '';
-    // If a chart was previously rendered (re-filter case), re-render eagerly so
-    // it stays in sync with the current filter set.
-    if (_lazyRendered.has(s.id)) safeRender(s.name, s.fn);
+    if (el) el.style.display = 'none';
   }
+  document.getElementById('monteCarloCard').style.display = 'none';
 
-  if (!('IntersectionObserver' in window)) {
-    // Old browser fallback: just render everything.
-    sections.forEach(s => safeRender(s.name, s.fn));
+  // Inject the CTA once, right above the chart cards (which sit before
+  // #content / the table in the DOM). Place after the dashboardWrap close.
+  if (document.getElementById('mobileChartsCTA')) return;
+  const cta = document.createElement('div');
+  cta.id = 'mobileChartsCTA';
+  cta.style.cssText = 'margin:16px 12px;padding:14px 16px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;text-align:center;font-size:13px;color:var(--text2);';
+  cta.innerHTML = `
+    <div style="margin-bottom:10px;font-weight:600;color:var(--text)">Charts &amp; analytics</div>
+    <div style="margin-bottom:12px;font-size:12px;line-height:1.4;">
+      Hidden by default on mobile to keep the page light.
+      Tap to render the equity curve, P/L distribution, heatmap, correlation matrix, allocation optimizer, risk analysis, and Monte Carlo.
+    </div>
+    <button id="mobileChartsCTABtn"
+      style="background:var(--accent);color:#000;border:none;padding:10px 18px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px">
+      Show charts
+    </button>`;
+  // Insert before the table content area
+  const content = document.getElementById('content');
+  if (content && content.parentNode) {
+    content.parentNode.insertBefore(cta, content);
+  } else {
+    document.body.appendChild(cta);
+  }
+  document.getElementById('mobileChartsCTABtn').addEventListener('click', enableMobileCharts);
+}
+
+async function enableMobileCharts() {
+  const btn = document.getElementById('mobileChartsCTABtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
+  _mobileChartsEnabled = true;
+
+  // Lazy-load Chart.js first (was previously blocking the whole page sync).
+  try { await loadChartJS(); }
+  catch (e) {
+    console.error('[history] Chart.js load failed', e);
+    if (btn) { btn.textContent = 'Failed to load charts — tap to retry'; btn.disabled = false; }
+    _mobileChartsEnabled = false;
     return;
   }
 
-  _lazyIO = new IntersectionObserver((entries) => {
-    for (const entry of entries) {
-      if (!entry.isIntersecting) continue;
-      const id = entry.target.id;
-      if (_lazyRendered.has(id)) continue;
-      const s = sections.find(x => x.id === id);
-      if (!s) continue;
-      _lazyRendered.add(id);
-      safeRender(s.name, s.fn);
-      _lazyIO.unobserve(entry.target);
-    }
-  }, { rootMargin: '300px 0px' });
+  const cta = document.getElementById('mobileChartsCTA');
+  if (cta) cta.remove();
 
-  for (const s of sections) {
-    const el = document.getElementById(s.id);
-    if (el && !_lazyRendered.has(s.id)) _lazyIO.observe(el);
+  document.getElementById('monteCarloCard').style.display = rows.length ? '' : 'none';
+  await renderMobileChartsSerially();
+}
+
+// Render charts one at a time, with a gap between each so iOS Safari can
+// settle / GC. Even if every render is cheap individually, doing all 6 in the
+// same task tripped the WKWebView memory watchdog. setTimeout(...,120) yields
+// to the event loop and gives the browser room to recover.
+async function renderMobileChartsSerially() {
+  for (const s of CHART_SECTIONS) {
+    await new Promise(r => setTimeout(r, 120));
+    safeRender(s.name, s.fn);
+    _mobileRendered.add(s.id);
   }
 }
 
