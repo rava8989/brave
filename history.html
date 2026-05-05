@@ -360,6 +360,18 @@
 
 <script>
 // ══════════════════════════════════════════════════════════════
+// GLOBAL ERROR HANDLER — keep page alive on mobile if anything throws.
+// Without this, a single uncaught exception (e.g. Chart.js OOM on iOS Safari)
+// blanks the whole page and looks like a "crash".
+// ══════════════════════════════════════════════════════════════
+window.addEventListener('error', (e) => {
+  console.error('[history] uncaught:', e.message, e.filename, e.lineno);
+});
+window.addEventListener('unhandledrejection', (e) => {
+  console.error('[history] unhandled promise rejection:', e.reason);
+});
+
+// ══════════════════════════════════════════════════════════════
 // SIGNAL LOGIC (mirrored from schwab-proxy.js / index.html)
 // ══════════════════════════════════════════════════════════════
 
@@ -1216,16 +1228,83 @@ function scheduleRenderAll() {
   _renderAllTimer = setTimeout(renderAll, 50);
 }
 
+// Each render is wrapped in try/catch so a single chart failure (e.g. Chart.js
+// running out of GPU memory on a mobile tab) does NOT blank the entire page.
+function safeRender(name, fn) {
+  try { fn(); }
+  catch (e) { console.error('[history] render failed:', name, e); }
+}
+
+// IntersectionObserver instance reused across renderAll calls on mobile.
+let _lazyIO = null;
+const _lazyRendered = new Set();
+
 function renderAll() {
-  renderStats();
-  renderChart();
-  renderBarChart();
-  renderHeatmap();
-  renderCorrelation();
-  renderAllocation();
-  renderRisk();
+  safeRender('stats', renderStats);
+
+  if (IS_MOBILE) {
+    // Mobile: defer heavy chart renders until each card scrolls into view.
+    // 5 Chart.js canvases + heatmap + correlation grid all firing at once
+    // crashes iOS Safari (~250-380MB tab memory ceiling). Lazy via IO.
+    setupLazyRender();
+  } else {
+    safeRender('chart',       renderChart);
+    safeRender('barChart',    renderBarChart);
+    safeRender('heatmap',     renderHeatmap);
+    safeRender('correlation', renderCorrelation);
+    safeRender('allocation',  renderAllocation);
+    safeRender('risk',        renderRisk);
+  }
   // Show Monte Carlo card (but don't auto-run simulation)
   document.getElementById('monteCarloCard').style.display = rows.length ? '' : 'none';
+}
+
+function setupLazyRender() {
+  const sections = [
+    { id: 'chartCard',      fn: renderChart,       name: 'chart' },
+    { id: 'barChartCard',   fn: renderBarChart,    name: 'barChart' },
+    { id: 'heatmapSection', fn: renderHeatmap,     name: 'heatmap' },
+    { id: 'corrCard',       fn: renderCorrelation, name: 'correlation' },
+    { id: 'allocCard',      fn: renderAllocation,  name: 'allocation' },
+    { id: 'riskCard',       fn: renderRisk,        name: 'risk' },
+  ];
+
+  // Reset on each renderAll so re-filtering re-renders visible cards.
+  if (_lazyIO) { _lazyIO.disconnect(); _lazyRendered.clear(); }
+
+  // Reveal cards with a tiny loading placeholder so they have layout for IO.
+  for (const s of sections) {
+    const el = document.getElementById(s.id);
+    if (!el) continue;
+    el.style.display = '';
+    // If a chart was previously rendered (re-filter case), re-render eagerly so
+    // it stays in sync with the current filter set.
+    if (_lazyRendered.has(s.id)) safeRender(s.name, s.fn);
+  }
+
+  if (!('IntersectionObserver' in window)) {
+    // Old browser fallback: just render everything.
+    sections.forEach(s => safeRender(s.name, s.fn));
+    return;
+  }
+
+  _lazyIO = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      const id = entry.target.id;
+      if (_lazyRendered.has(id)) continue;
+      const s = sections.find(x => x.id === id);
+      if (!s) continue;
+      _lazyRendered.add(id);
+      safeRender(s.name, s.fn);
+      _lazyIO.unobserve(entry.target);
+    }
+  }, { rootMargin: '300px 0px' });
+
+  for (const s of sections) {
+    const el = document.getElementById(s.id);
+    if (el && !_lazyRendered.has(s.id)) _lazyIO.observe(el);
+  }
 }
 
 // ══════════════════════════════════════════════════════════════
