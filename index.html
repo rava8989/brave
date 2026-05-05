@@ -728,7 +728,7 @@
     <h3>Win Rate Rules (Strongest Overrides)</h3>
     <ul>
       <li><strong>WR = 0%</strong> prior day → forces Straddle. Trumps M8BF, GXBF, SPX gap block, o2o block. Only Fed day takes priority.</li>
-      <li><strong>WR ≥ 90%</strong> prior day → forces M8BF. Trumps Straddle, NM Straddle, SPX gap block, o2o block.</li>
+      <li><strong>WR ≥ 90%</strong> prior day → forces M8BF. Trumps Straddle, NM Straddle, SPX gap block, o2o block, M8BF EOM-style bans. <strong>Does NOT cancel GXBF</strong> — GXBF is independent.</li>
       <li>Win rate = 0% on a Fed day → Fed day takes priority (Straddle not forced).</li>
       <li>These are the <strong>strongest signals</strong> in the system. Gap and o2o rules only apply when neither WR=0% nor WR≥90% is active.</li>
     </ul>
@@ -1565,11 +1565,17 @@
           rec="Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="0%rule";entryT="9:32 AM";badge="STRADDLE";strikeInfo=null;
         }
       } else if(wr90.checked){
-        if(!cpiDay){const sc=m8Sched(dow,now);rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=sc;entryT=sc?.window||"";blockT="90%rule";}
+        // 90% rule cannot cancel GXBF — GXBF is independent (overnight VIX drop).
+        // Everything else (Straddle, NM Straddle, gap/o2o blocks, M8BF EOM-style bans)
+        // still gets overridden to M8BF as documented.
+        if(!cpiDay && !rec.includes("GXBF")){
+          const sc=m8Sched(dow,now);rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=sc;entryT=sc?.window||"";blockT="90%rule";
+        }
       }
 
-      // OPEX+1 GXBF override — but NOT when WR 0% or 90% forced the signal, and NOT on CPI days
-      if(postOpDay && !cpiDay && blockT!=='0%rule' && blockT!=='90%rule'){
+      // OPEX+1 GXBF override — only 0%-rule (forced Straddle) blocks the M8BF→GXBF
+      // conversion; 90%-rule does NOT (GXBF on OPEX+1 fires even with WR ≥ 90%).
+      if(postOpDay && !cpiDay && blockT!=='0%rule'){
         const isM8=rec.startsWith("M8BF"), isStr=rec.startsWith("Straddle")||rec.startsWith("NM Straddle");
         if(isM8||isStr){
           const vixOvernightPct = (vToday - vYClose) / vYClose * 100;

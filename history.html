@@ -566,8 +566,9 @@ function calculateSignal({vixToday,vixYOpen,vixYClose,spxGapPct,etDate}){
     rec=`No Straddle (o2o ${o2o.toFixed(1)} > ${T.O2O_M8BF})`;theme="block";crossed=true;blockT="o2o";blockD=`Open-to-open ${o2o.toFixed(1)} > ${T.O2O_M8BF}`;badge="BLOCKED";strikeInfo=null;
   }
 
-  // OPEX+1 GXBF override — but NOT when WR 0% or 90% forced the signal, and NOT on CPI days
-  if(postOpDay && !cpiDay && blockT!=='0%rule' && blockT!=='90%rule'){
+  // OPEX+1 GXBF override — only 0%-rule (forced Straddle) blocks the M8BF→GXBF
+  // conversion; 90%-rule does NOT (GXBF on OPEX+1 fires even with WR ≥ 90%).
+  if(postOpDay && !cpiDay && blockT!=='0%rule'){
     const isM8=rec.startsWith("M8BF"),isStr=rec.startsWith("Straddle")||rec.startsWith("NM Straddle");
     if(isM8||isStr){
       const vixOvernightPct=(vixToday-vixYClose)/vixYClose*100;
@@ -962,8 +963,10 @@ async function init() {
           // 0% rule is strongest — forces Straddle, trumps gap/o2o/m8bf/gxbf/blocks (except Fed & CPI)
           signal.rec = "Straddle @ 9:32 AM"; signal.theme = "strad"; signal.crossed = false;
           signal.blockT = "0%rule"; signal.entryT = "9:32 AM"; signal.badge = "STRADDLE"; signal.strikeInfo = null;
-        } else if (prevWR >= 90 && !isCPI) {
-          // 90% rule is strongest — forces M8BF, trumps gap/o2o/straddle/gxbf/blocks (except CPI)
+        } else if (prevWR >= 90 && !isCPI && !signal.rec.includes("GXBF")) {
+          // 90% rule cannot cancel GXBF — GXBF is independent (overnight VIX drop
+          // or OPEX+1 conversion). For everything else (Straddle, NM Straddle,
+          // gap/o2o blocks, M8BF bans), 90% rule still forces M8BF.
           const sc = m8Sched(dow);
           signal.rec = m8Msg(etDate); signal.theme = "m8bf"; signal.badge = "M8BF";
           signal.strikeInfo = sc; signal.entryT = sc?.window || ""; signal.blockT = "90%rule";

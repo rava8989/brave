@@ -358,15 +358,20 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
     if (prevWR === 0 && !cpiDay && !fedDay) {
       rec = "Straddle @ 9:32 AM"; theme = "strad"; crossed = false;
       blockT = "0%rule"; entryT = "9:32 AM"; badge = "STRADDLE"; strikeInfo = null;
-    } else if (prevWR >= 90 && !cpiDay) {
+    } else if (prevWR >= 90 && !cpiDay && !rec.includes("GXBF")) {
+      // 90% rule cannot cancel GXBF — GXBF is independent (overnight VIX drop).
+      // For everything else (Straddle, NM Straddle, gap/o2o blocks, M8BF bans
+      // like EOM/EOM-1/OPEX-1), 90% rule still forces M8BF as documented.
       const sc = m8Sched(dow);
       rec = m8Msg(etDate); theme = "m8bf"; badge = "M8BF";
       strikeInfo = sc; entryT = sc?.window || ""; blockT = "90%rule";
     }
   }
 
-  // OPEX+1 GXBF override
-  if (postOpDay && !cpiDay && blockT !== '0%rule' && blockT !== '90%rule') {
+  // OPEX+1 GXBF override.
+  // Only the 0%-rule (forced Straddle) blocks the M8BF→GXBF conversion here;
+  // 90%-rule does NOT — GXBF on OPEX+1 should still fire even if prevWR ≥ 90%.
+  if (postOpDay && !cpiDay && blockT !== '0%rule') {
     const isM8 = rec.startsWith("M8BF"), isStr = rec.startsWith("Straddle") || rec.startsWith("NM Straddle");
     if (isM8 || isStr) {
       const vixOvernightPct = (vixToday - vixYClose) / vixYClose * 100;
