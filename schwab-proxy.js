@@ -1041,19 +1041,32 @@ async function handleScheduled(env) {
     }
   }
 
-  // ── Diagonal trade: open/close at 12:30 ET (idempotent via diag_done_<date>) ──
+  // ── Diagonal trade: open/close at 12:30 ET. Idempotent via diag_done_<date>.
+  // Window 12:30–12:40 ET gives up to 5 retry attempts (cron is */2). We only
+  // mark `diag_done` after a clean run — if the chain fetch / GitHub commit
+  // throws, the next tick within the window retries automatically. After 12:40
+  // we stop trying for the day and the live page shows the error state.
   let diagResult = {};
   const diagDoneKey = `diag_done_${todayISO}`;
-  const isDiagonalEntry = (etHour === 12 && etMin >= 30 && etMin < 35);
+  const isDiagonalEntry = (etHour === 12 && etMin >= 30 && etMin < 40);
   if (isDiagonalEntry) {
     const diagDone = await env.SIGNAL_KV.get(diagDoneKey);
     if (!diagDone) {
       try {
         diagResult = await handleDiagonalTrade(env, etNow);
-        await env.SIGNAL_KV.put(diagDoneKey, 'done', { expirationTtl: 86400 });
+        // Only mark done when we either (a) opened a new trade, (b) cleanly
+        // skipped per signal, OR (c) closed a prior trade without error.
+        // Transient errors (token, chain, GitHub) leave the slot unmarked so
+        // the next 2-min tick retries within the 12:30–12:40 window.
+        const hadError = !!(diagResult.error || diagResult.openError || diagResult.closeError);
+        if (!hadError) {
+          await env.SIGNAL_KV.put(diagDoneKey, 'done', { expirationTtl: 86400 });
+        } else {
+          console.warn('[diag] not marking done — will retry next tick:', JSON.stringify(diagResult));
+        }
       } catch (e) {
         diagResult = { diagonal: 'error', error: e.message };
-        console.warn('[diag] handler failed:', e.message);
+        console.warn('[diag] handler threw:', e.message);
       }
     }
   }
@@ -3113,6 +3126,23 @@ export default {
     // reasons in `alerts[]`. Designed to be polled every 5-10 min by an
     // external uptime monitor so silent failures surface before the user
     // notices Discord stayed quiet.
+    // ── GET /diagonal-trigger ── Manually run handleDiagonalTrade NOW
+    // Bypasses the normal 12:30 ET window so we can verify the open path
+    // end-to-end without waiting for the cron. Auth-required.
+    if (url.pathname === '/diagonal-trigger' && request.method === 'GET') {
+      const secret = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
+      if (!secret || secret !== env.SYNC_SECRET) {
+        return jsonResp({ error: 'Unauthorized' }, 401, { 'Access-Control-Allow-Origin': '*' });
+      }
+      try {
+        const etNowDT = toET(new Date());
+        const result = await handleDiagonalTrade(env, etNowDT);
+        return jsonResp(result, 200, { 'Access-Control-Allow-Origin': '*' });
+      } catch (e) {
+        return jsonResp({ error: e.message, stack: e.stack }, 500, { 'Access-Control-Allow-Origin': '*' });
+      }
+    }
+
     // ── GET /diagonal-today ── Public live diagonal state (no auth)
     // Returns the currently-open diagonal trade with live mid-quote refresh,
     // plus the most recent closed trade for the live page's tape view.
