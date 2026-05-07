@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Σ3 — M8BF Today</title>
+  <title>Σ3 — Today's Trades</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -155,7 +155,7 @@
     <a href="index.html">Dashboard</a>
     <a href="history.html">History</a>
     <a href="backtester.html">Backtester</a>
-    <a href="live.html" class="active">M8BF Today</a>
+    <a href="live.html" class="active">Today's Trades</a>
     <a href="gex.html">GEX</a>
     <a href="diagonal.html">Diagonal</a>
   </nav>
@@ -183,12 +183,53 @@
   </div>
 </div>
 
+<!-- Diagonal trade section (always visible — opens at 12:30 ET, closes next day 12:30 ET) -->
+<div class="main" id="diagonalSection" style="display:none;">
+  <!-- Dynamically rendered by renderDiagonal() -->
+</div>
+
 <div class="main" id="mainContent">
   <!-- Dynamically rendered -->
 </div>
 
 
 <script>
+// ─── Diagonal section styles ────────────────────────────────────────────
+(function injectDiagonalCSS() {
+  const css = `
+    .diag-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;box-shadow:var(--shadow);margin-bottom:16px;}
+    .diag-header{display:flex;align-items:center;gap:12px;margin-bottom:12px;}
+    .diag-title{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:var(--text);letter-spacing:.04em;text-transform:uppercase;}
+    .diag-title span{color:var(--accent);}
+    .diag-badge{font-size:10px;font-weight:700;padding:3px 9px;border-radius:11px;letter-spacing:.06em;text-transform:uppercase;}
+    .diag-badge.open{background:rgba(34,197,94,.16);color:#22c55e;border:1px solid rgba(34,197,94,.35);}
+    .diag-badge.skip{background:rgba(148,163,184,.16);color:var(--text2);border:1px solid var(--border);}
+    .diag-badge.pending{background:rgba(251,191,36,.16);color:var(--yellow);border:1px solid rgba(251,191,36,.35);}
+    .diag-badge.error{background:rgba(239,68,68,.16);color:#ef4444;border:1px solid rgba(239,68,68,.35);}
+    .diag-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:12px;}
+    .diag-stat{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;}
+    .diag-stat-label{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;font-weight:600;margin-bottom:4px;}
+    .diag-stat-value{font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700;color:var(--text);}
+    .diag-stat-sub{font-size:10px;color:var(--text3);margin-top:2px;}
+    .diag-pl-pos{color:#22c55e;}
+    .diag-pl-neg{color:#ef4444;}
+    .diag-legs{margin-top:12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 14px;}
+    .diag-legs-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);margin-bottom:8px;}
+    .diag-leg{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px dashed var(--border);font-size:13px;}
+    .diag-leg:last-child{border-bottom:none;}
+    .diag-leg .side{font-weight:700;font-size:11px;padding:2px 7px;border-radius:4px;letter-spacing:.04em;}
+    .diag-leg .side.short{background:rgba(239,68,68,.15);color:#ef4444;}
+    .diag-leg .side.long{background:rgba(129,140,248,.15);color:var(--accent);}
+    .diag-leg .desc{flex:1;font-family:'JetBrains Mono',monospace;}
+    .diag-leg .price{font-family:'JetBrains Mono',monospace;color:var(--text2);}
+    .diag-meta{font-size:10px;color:var(--text3);margin-top:10px;font-family:'JetBrains Mono',monospace;display:flex;gap:14px;flex-wrap:wrap;}
+    .diag-error{background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.3);color:#ef4444;padding:10px 14px;border-radius:var(--radius-sm);font-size:13px;margin-top:10px;}
+  `;
+  const style = document.createElement('style');
+  style.textContent = css;
+  document.head.appendChild(style);
+})();
+
 // ─── Theme ───────────────────────────────────────────────────────────────────
 const html = document.documentElement;
 const saved = localStorage.getItem('theme') || 'dark';
@@ -434,6 +475,99 @@ function updateSPXChartTheme() {
   spxChart.options.scales.y.ticks.color = c.text;
   spxChart.options.scales.y.grid.color = c.grid;
   spxChart.update();
+}
+
+// ─── Diagonal trade state ─────────────────────────────────────────────────────
+let diagonal = null;
+async function loadDiagonal() {
+  try {
+    const r = await fetchWithRetry(PROXY + '/diagonal-today', { cache: 'no-store' });
+    if (r.ok) diagonal = await r.json();
+  } catch { /* keep last known */ }
+}
+
+function renderDiagonal() {
+  const sec = document.getElementById('diagonalSection');
+  if (!diagonal) { sec.style.display = 'none'; return; }
+  sec.style.display = '';
+
+  const { open, lastClosed, signal, vixPct20d, date, isWeekend, isHoliday, serverTimeET } = diagonal;
+
+  // Determine the visible state — priority: error > open > closed (today) > signal preview
+  let badge, badgeClass, statusText;
+  if (open) {
+    badge = 'OPEN'; badgeClass = 'open';
+    statusText = `Trade live · entered ${open.openTimeET || ''} ET`;
+  } else if (lastClosed && lastClosed.closeDate === date) {
+    badge = 'CLOSED'; badgeClass = 'skip';
+    statusText = `Closed today · final P&L ${fmt$(lastClosed.pnl)}`;
+  } else if (isWeekend || isHoliday) {
+    badge = 'CLOSED'; badgeClass = 'skip';
+    statusText = isWeekend ? 'Market closed (weekend)' : 'Market closed (holiday)';
+  } else if (signal && signal.diagSkipCode) {
+    badge = 'SKIP'; badgeClass = 'skip';
+    statusText = signal.diagText;
+  } else if (signal && signal.diagGo === false && signal.diagBadge === '…') {
+    badge = 'PENDING'; badgeClass = 'pending';
+    statusText = signal.diagText;
+  } else if (signal && signal.diagGo) {
+    badge = 'WAITING 12:30 ET'; badgeClass = 'pending';
+    statusText = signal.diagText;
+  } else {
+    badge = '—'; badgeClass = 'skip';
+    statusText = 'No diagonal data';
+  }
+
+  const sec_html = [];
+  sec_html.push(`<div class="diag-card">`);
+  sec_html.push(`<div class="diag-header">`);
+  sec_html.push(`<div class="diag-title"><span>Diagonal</span> · 12:30 ET</div>`);
+  sec_html.push(`<span class="diag-badge ${badgeClass}">${badge}</span>`);
+  sec_html.push(`<div style="flex:1"></div>`);
+  if (vixPct20d != null) sec_html.push(`<span style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;">VIX 20d: ${vixPct20d}%</span>`);
+  sec_html.push(`</div>`);
+
+  if (open) {
+    const plClass = open.currentPnl > 0 ? 'diag-pl-pos' : open.currentPnl < 0 ? 'diag-pl-neg' : '';
+    const move = open.currentSpot != null && open.spotEntry != null
+      ? (open.currentSpot - open.spotEntry).toFixed(2)
+      : '—';
+    sec_html.push(`<div class="diag-grid">`);
+    sec_html.push(`  <div class="diag-stat"><div class="diag-stat-label">Live P&L</div><div class="diag-stat-value ${plClass}">${fmt$(open.currentPnl)}</div><div class="diag-stat-sub">${open.contracts} contract</div></div>`);
+    sec_html.push(`  <div class="diag-stat"><div class="diag-stat-label">SPX Now</div><div class="diag-stat-value">${open.currentSpot != null ? open.currentSpot.toFixed(2) : '—'}</div><div class="diag-stat-sub">Entry ${open.spotEntry?.toFixed(2)} · ${move > 0 ? '+' : ''}${move}</div></div>`);
+    sec_html.push(`  <div class="diag-stat"><div class="diag-stat-label">Debit Paid</div><div class="diag-stat-value">$${(open.entryDebit*100).toFixed(0)}</div><div class="diag-stat-sub">Entry mid ${open.entryDebit?.toFixed(2)}</div></div>`);
+    sec_html.push(`  <div class="diag-stat"><div class="diag-stat-label">Current Value</div><div class="diag-stat-value">$${(open.currentValue*100).toFixed(0)}</div><div class="diag-stat-sub">Mid ${open.currentValue?.toFixed(2)}</div></div>`);
+    sec_html.push(`</div>`);
+
+    sec_html.push(`<div class="diag-legs">`);
+    sec_html.push(`  <div class="diag-legs-title">Legs</div>`);
+    sec_html.push(`  <div class="diag-leg"><span class="side short">SHORT</span><span class="desc">${open.shortStrike}P · ${open.shortExp} (${open.shortDte}DTE)</span><span class="price">entry $${open.entryShortMid?.toFixed(2)} → now $${open.currentShortMid?.toFixed(2)}</span></div>`);
+    sec_html.push(`  <div class="diag-leg"><span class="side long">LONG</span><span class="desc">${open.longStrike}P · ${open.longExp} (${open.longDte}DTE)</span><span class="price">entry $${open.entryLongMid?.toFixed(2)} → now $${open.currentLongMid?.toFixed(2)}</span></div>`);
+    sec_html.push(`</div>`);
+
+    const ageS = open.lastQuoteAt ? Math.round((Date.now() - new Date(open.lastQuoteAt).getTime()) / 1000) : null;
+    const ageStr = ageS == null ? '—' : ageS < 60 ? `${ageS}s ago` : `${Math.round(ageS/60)}m ago`;
+    sec_html.push(`<div class="diag-meta">`);
+    sec_html.push(`  <span>Status: ${statusText}</span>`);
+    sec_html.push(`  <span>Quote age: ${ageStr}</span>`);
+    sec_html.push(`  <span>Closes ~12:30 ET on ${open.shortExp}</span>`);
+    sec_html.push(`</div>`);
+  } else if (lastClosed && lastClosed.closeDate === date) {
+    const plClass = lastClosed.pnl > 0 ? 'diag-pl-pos' : lastClosed.pnl < 0 ? 'diag-pl-neg' : '';
+    sec_html.push(`<div class="diag-grid">`);
+    sec_html.push(`  <div class="diag-stat"><div class="diag-stat-label">Final P&L</div><div class="diag-stat-value ${plClass}">${fmt$(lastClosed.pnl)}</div><div class="diag-stat-sub">${lastClosed.openDate} → ${lastClosed.closeDate}</div></div>`);
+    sec_html.push(`  <div class="diag-stat"><div class="diag-stat-label">Entry → Exit</div><div class="diag-stat-value">${lastClosed.spotEntry?.toFixed(0)} → ${lastClosed.spotExit?.toFixed(0)}</div><div class="diag-stat-sub">Spot ${(lastClosed.spotExit-lastClosed.spotEntry).toFixed(2)}</div></div>`);
+    sec_html.push(`  <div class="diag-stat"><div class="diag-stat-label">Debit / Credit</div><div class="diag-stat-value">$${(lastClosed.entryDebit*100).toFixed(0)} → $${(lastClosed.closeValue*100).toFixed(0)}</div></div>`);
+    sec_html.push(`</div>`);
+    sec_html.push(`<div class="diag-meta"><span>${statusText}</span><span>Strikes: ${lastClosed.shortStrike}/${lastClosed.longStrike}P</span></div>`);
+    sec_html.push(`<div style="margin-top:8px;font-size:11px;color:var(--text3);">Next diagonal opens at 12:30 ET tomorrow if signal allows.</div>`);
+  } else {
+    // No open trade, no close today — show signal preview
+    sec_html.push(`<div style="font-size:14px;color:var(--text2);padding:6px 0;">${statusText}</div>`);
+    sec_html.push(`<div style="font-size:11px;color:var(--text3);margin-top:6px;">Server time: ${serverTimeET} ET · ${date}</div>`);
+  }
+  sec_html.push(`</div>`);
+  sec.innerHTML = sec_html.join('');
 }
 
 // ─── Load today's trade status from worker ───────────────────────────────────
@@ -1031,7 +1165,8 @@ async function tick() {
   // Re-check trade state every tick — catches trigger/close without page refresh
   const prevTriggered = trade?.triggered;
   const prevStatus = trade?.status;
-  await loadTrade();
+  await Promise.all([loadTrade(), loadDiagonal()]);
+  renderDiagonal();
   const stateChanged = (trade?.triggered !== prevTriggered) || (trade?.status !== prevStatus);
   if (stateChanged) { render(); }
 
@@ -1071,11 +1206,12 @@ async function tick() {
 async function init() {
   try {
     checkOAuthCallback();
-    await Promise.all([loadTrade(), loadSPXHistory(), loadSignals()]);
+    await Promise.all([loadTrade(), loadSPXHistory(), loadSignals(), loadDiagonal()]);
     updateLiveBadge();
     createSPXChart();
     rebuildSPXChart();
     render();
+    renderDiagonal();
     await tick();
     pollTimer = setInterval(tick, 30_000);
     document.addEventListener('visibilitychange', () => {

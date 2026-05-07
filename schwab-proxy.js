@@ -88,7 +88,7 @@ import {
   isVixAfterOpexDay, isPostOpexMon, isLastTradeMo, isEomN, isFirstTradeMo, isFirstTradeMon,
   m8Sched, m8Msg, ordinal, wdName, tradeWdLabel,
   isEarningsDay, isNonAmznTslaEarningsDay, isDayAfterAnyEarnings,
-  calculateSignal,
+  calculateSignal, computeDiagonalSignal,
 } from './signal-engine.js';
 
 
@@ -668,6 +668,316 @@ async function pollDiscordSignals(env) {
   return { polled: true, newSignals: newCount, total: signals.length };
 }
 
+// ════════════════════════════════════════════════════════════════════
+// DIAGONAL TRADE HANDLER (live)
+// Fires at 12:30 ET each weekday: closes prior open trade, then opens
+// a new one if signal-engine.js says so. State lives in KV at:
+//   diagonal_open_trade  — the currently-active trade (one at a time)
+//   diagonal_closed_log  — last 30 closed trades (for live page tape)
+// Live page polls /diagonal-today which reads KV.
+// Strikes: short = round5(spot+30), long = K_short - 40 (canonical 30/40).
+// Expiries: short = next trading day, long = ~25 trading days out.
+// ════════════════════════════════════════════════════════════════════
+
+const DIAG_SHORT_OFFSET = 30;     // pts ITM (matches compute_diagonal_pnl.py)
+const DIAG_LONG_OFFSET  = 40;     // pts BELOW short (so 10 OTM relative to spot)
+const DIAG_LONG_DTE     = 25;     // calendar trading-days target for long leg
+const DIAG_LONG_DTE_TOL = 5;      // ±5 days acceptable
+
+function snap5(x) { return Math.round(x / 5) * 5; }
+
+function isoDateET(d) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+function nextTradeDayET(etDate) {
+  const d = new Date(etDate);
+  d.setHours(12, 0, 0, 0);
+  do { d.setDate(d.getDate() + 1); } while (d.getDay() === 0 || d.getDay() === 6 || isHol(d));
+  return d;
+}
+
+function addTradeDaysET(etDate, n) {
+  const d = new Date(etDate);
+  d.setHours(12, 0, 0, 0);
+  let added = 0;
+  while (added < n) {
+    d.setDate(d.getDate() + 1);
+    if (d.getDay() === 0 || d.getDay() === 6) continue;
+    if (isHol(d)) continue;
+    added++;
+  }
+  return d;
+}
+
+// Look up a put quote at the requested strike. Schwab chain map keys are
+// "YYYY-MM-DD:DTE"; strikes are dotted strings ("7290.0"). We tolerate
+// ±5 strike fuzz so a missing exact strike falls back to the closest neighbor.
+function pickPutFromChain(putExpDateMap, expISO, strike) {
+  const targetKey = Object.keys(putExpDateMap).find(k => k.startsWith(expISO + ':'));
+  if (!targetKey) return null;
+  const strikes = putExpDateMap[targetKey];
+  // Try exact, then ±5, ±10
+  for (const offset of [0, -5, 5, -10, 10]) {
+    const k = String(strike + offset).includes('.') ? String(strike + offset) : String(strike + offset) + '.0';
+    if (strikes[k] && strikes[k][0]) {
+      const q = strikes[k][0];
+      return {
+        strike: parseFloat(q.strikePrice ?? (strike + offset)),
+        bid: q.bid,
+        ask: q.ask,
+        mid: (q.bid != null && q.ask != null) ? (q.bid + q.ask) / 2 : null,
+        symbol: q.symbol,
+        expirationDate: q.expirationDate,
+        daysToExpiration: q.daysToExpiration,
+      };
+    }
+  }
+  return null;
+}
+
+// Fetch SPX put chains for a date-range covering both legs in one call.
+// fromDate / toDate are YYYY-MM-DD. Returns {spot, putExpDateMap}.
+async function fetchSpxPutChain(token, fromDate, toDate, env) {
+  const params = new URLSearchParams({
+    symbol: '$SPX',
+    contractType: 'PUT',
+    fromDate, toDate,
+    strikeCount: '60',
+    includeUnderlyingQuote: 'true',
+    strategy: 'SINGLE',
+  });
+  const data = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/chains?${params}`, token, env);
+  const spot = data.underlyingPrice || data.underlying?.last || data.underlying?.mark;
+  return { spot, putExpDateMap: data.putExpDateMap || {} };
+}
+
+// Open a diagonal at 12:30 ET. Returns the trade record (or throws).
+async function openDiagonalTrade(env, token, etNow, vixPct20d) {
+  const todayISO = isoDateET(etNow);
+  const shortExp = isoDateET(nextTradeDayET(etNow));
+  const longExpTarget = isoDateET(addTradeDaysET(etNow, DIAG_LONG_DTE));
+
+  // Fetch full chain spanning both expiries in one pass
+  const { spot, putExpDateMap } = await fetchSpxPutChain(token, shortExp, longExpTarget, env);
+  if (!spot) throw new Error('Diagonal open: no spot price in chain response');
+
+  const kShort = snap5(spot + DIAG_SHORT_OFFSET);
+  const kLong  = kShort - DIAG_LONG_OFFSET;
+
+  const shortLeg = pickPutFromChain(putExpDateMap, shortExp, kShort);
+  if (!shortLeg) throw new Error(`Diagonal open: no SPX ${kShort}P @ ${shortExp} in chain`);
+
+  // Long leg — find the actual expiry closest to target within tolerance
+  let longLeg = null, longExpUsed = null;
+  const candidateExps = Object.keys(putExpDateMap)
+    .map(k => k.split(':')[0])
+    .filter(d => d > shortExp);  // strictly later than short
+  candidateExps.sort((a, b) => Math.abs(daysBetween(longExpTarget, a)) - Math.abs(daysBetween(longExpTarget, b)));
+  for (const expISO of candidateExps) {
+    const dteDiff = Math.abs(daysBetween(longExpTarget, expISO));
+    if (dteDiff > DIAG_LONG_DTE_TOL) break;  // sorted, so done
+    const candidate = pickPutFromChain(putExpDateMap, expISO, kLong);
+    if (candidate && candidate.mid != null) { longLeg = candidate; longExpUsed = expISO; break; }
+  }
+  if (!longLeg) throw new Error(`Diagonal open: no long leg ~${kLong}P near ${longExpTarget}`);
+
+  if (shortLeg.mid == null || longLeg.mid == null) throw new Error('Diagonal open: missing bid/ask on a leg');
+
+  const debit = longLeg.mid - shortLeg.mid;  // positive = net debit paid
+  const trade = {
+    openDate: todayISO,
+    openTimeET: `${String(etNow.getHours()).padStart(2,'0')}:${String(etNow.getMinutes()).padStart(2,'0')}`,
+    spotEntry: parseFloat(spot.toFixed(2)),
+    vixPct20d,
+    shortStrike: kShort,
+    longStrike: kLong,
+    shortExp,
+    longExp: longExpUsed,
+    shortDte: 1,
+    longDte: Math.abs(daysBetween(todayISO, longExpUsed)),
+    shortSymbol: shortLeg.symbol,
+    longSymbol: longLeg.symbol,
+    entryShortMid: parseFloat(shortLeg.mid.toFixed(2)),
+    entryLongMid: parseFloat(longLeg.mid.toFixed(2)),
+    entryShortBid: shortLeg.bid,
+    entryShortAsk: shortLeg.ask,
+    entryLongBid: longLeg.bid,
+    entryLongAsk: longLeg.ask,
+    entryDebit: parseFloat(debit.toFixed(2)),
+    contracts: 1,
+    // Live fields — refreshed by every market-hours cron tick
+    currentSpot: parseFloat(spot.toFixed(2)),
+    currentShortMid: parseFloat(shortLeg.mid.toFixed(2)),
+    currentLongMid: parseFloat(longLeg.mid.toFixed(2)),
+    currentValue: parseFloat(debit.toFixed(2)),
+    currentPnl: 0,
+    lastQuoteAt: new Date().toISOString(),
+    status: 'open',
+  };
+  return trade;
+}
+
+// Refresh just the live-quote fields on the open trade. Cheap call.
+async function refreshDiagonalLiveQuotes(env, token) {
+  const raw = await env.SIGNAL_KV.get('diagonal_open_trade');
+  if (!raw) return null;
+  const trade = JSON.parse(raw);
+  if (trade.status !== 'open') return null;
+
+  // Re-fetch the chain spanning both leg expiries
+  try {
+    const { spot, putExpDateMap } = await fetchSpxPutChain(token, trade.shortExp, trade.longExp, env);
+    const sNow = pickPutFromChain(putExpDateMap, trade.shortExp, trade.shortStrike);
+    const lNow = pickPutFromChain(putExpDateMap, trade.longExp, trade.longStrike);
+    if (!sNow || !lNow || sNow.mid == null || lNow.mid == null) return trade;
+    trade.currentSpot = spot ? parseFloat(spot.toFixed(2)) : trade.currentSpot;
+    trade.currentShortMid = parseFloat(sNow.mid.toFixed(2));
+    trade.currentLongMid = parseFloat(lNow.mid.toFixed(2));
+    trade.currentValue = parseFloat((lNow.mid - sNow.mid).toFixed(2));
+    trade.currentPnl = Math.round((trade.currentValue - trade.entryDebit) * 100 * trade.contracts);
+    trade.lastQuoteAt = new Date().toISOString();
+    await env.SIGNAL_KV.put('diagonal_open_trade', JSON.stringify(trade));
+  } catch (e) {
+    console.warn('[diag] refresh quotes failed:', e.message);
+  }
+  return trade;
+}
+
+// Close a trade at the current chain. Mutates input trade with close fields,
+// returns the realized PnL.
+async function closeDiagonalTrade(env, token, openTrade, etNow) {
+  const closeISO = isoDateET(etNow);
+  // For an expired short (closeISO >= shortExp), price intrinsic = max(K - SPX, 0)
+  const { spot, putExpDateMap } = await fetchSpxPutChain(token, openTrade.shortExp, openTrade.longExp, env);
+
+  let closeShortMid, closeLongMid;
+  const sNow = pickPutFromChain(putExpDateMap, openTrade.shortExp, openTrade.shortStrike);
+  const lNow = pickPutFromChain(putExpDateMap, openTrade.longExp, openTrade.longStrike);
+
+  if (sNow && sNow.mid != null) {
+    closeShortMid = sNow.mid;
+  } else if (closeISO >= openTrade.shortExp && spot != null) {
+    closeShortMid = Math.max(openTrade.shortStrike - spot, 0);  // expired intrinsic
+  } else {
+    throw new Error('Diagonal close: missing short leg quote');
+  }
+  if (lNow && lNow.mid != null) {
+    closeLongMid = lNow.mid;
+  } else {
+    throw new Error('Diagonal close: missing long leg quote');
+  }
+
+  const closeValue = closeLongMid - closeShortMid;
+  const pnl = (closeValue - openTrade.entryDebit) * 100 * openTrade.contracts;
+
+  const closed = {
+    ...openTrade,
+    status: 'closed',
+    closeDate: closeISO,
+    closeTimeET: `${String(etNow.getHours()).padStart(2,'0')}:${String(etNow.getMinutes()).padStart(2,'0')}`,
+    spotExit: spot ? parseFloat(spot.toFixed(2)) : null,
+    closeShortMid: parseFloat(closeShortMid.toFixed(2)),
+    closeLongMid: parseFloat(closeLongMid.toFixed(2)),
+    closeValue: parseFloat(closeValue.toFixed(2)),
+    pnl: Math.round(pnl),
+  };
+  return closed;
+}
+
+// Helper: integer days between two YYYY-MM-DD strings (calendar days).
+function daysBetween(a, b) {
+  const da = new Date(a + 'T12:00:00Z');
+  const db = new Date(b + 'T12:00:00Z');
+  return Math.round((db - da) / 86400000);
+}
+
+// Orchestrate close-then-open at 12:30 ET. Idempotent via diag_done_<date>.
+async function handleDiagonalTrade(env, etNow) {
+  const todayISO = isoDateET(etNow);
+  const out = { date: todayISO, closed: null, opened: null, skipped: null };
+
+  let token;
+  try { token = await getAccessToken(env); }
+  catch (e) { return { ...out, error: 'token: ' + e.message }; }
+
+  // 1. Close prior open trade (if any & opened on a different day)
+  const openRaw = await env.SIGNAL_KV.get('diagonal_open_trade');
+  let openTrade = openRaw ? JSON.parse(openRaw) : null;
+
+  if (openTrade && openTrade.openDate < todayISO && openTrade.status === 'open') {
+    try {
+      const closed = await closeDiagonalTrade(env, token, openTrade, etNow);
+      // Commit diagPL for the OPEN date (matches history convention)
+      await upsertHistoryGitHub(env, openTrade.openDate, { diagPL: closed.pnl });
+      // Append to closed log
+      const logRaw = await env.SIGNAL_KV.get('diagonal_closed_log');
+      const log = logRaw ? JSON.parse(logRaw) : [];
+      log.unshift(closed);
+      await env.SIGNAL_KV.put('diagonal_closed_log', JSON.stringify(log.slice(0, 30)));
+      // Clear the slot
+      await env.SIGNAL_KV.delete('diagonal_open_trade');
+      out.closed = { openDate: closed.openDate, closeDate: closed.closeDate, pnl: closed.pnl };
+    } catch (e) {
+      out.closeError = e.message;
+      console.warn('[diag] close failed:', e.message);
+      // Don't open a new trade if close failed — manual recovery needed
+      return out;
+    }
+  }
+
+  // 2. Compute today's vixPct20d for signal check (mirror handleScheduled logic)
+  let vixPct20d = null;
+  let vixToday = null;
+  try {
+    const histResp = await fetch(
+      `https://raw.githubusercontent.com/rava8989/brave/main/history_data.json?t=${Date.now()}`,
+      { headers: { 'User-Agent': 'schwab-proxy' } }
+    );
+    if (histResp.ok) {
+      const histData = await histResp.json();
+      const todayRow = histData.find(r => r.date === todayISO);
+      vixToday = todayRow?.vixOpen != null ? parseFloat(todayRow.vixOpen) : null;
+      const vix20 = histData
+        .filter(r => r.date < todayISO && r.vixClose != null && r.vixClose > 0)
+        .sort((a, b) => a.date.localeCompare(b.date))
+        .slice(-20)
+        .map(r => parseFloat(r.vixClose));
+      if (vix20.length >= 10 && vixToday != null && !isNaN(vixToday)) {
+        const below = vix20.filter(c => c < vixToday).length;
+        vixPct20d = Math.round(100 * below / vix20.length);
+      }
+    }
+  } catch (e) { /* signal will be 'pending' if no vixPct20d */ }
+
+  // 3. Compute diagonal signal
+  const sig = computeDiagonalSignal(etNow, vixPct20d);
+  if (!sig.diagGo) {
+    out.skipped = sig.diagSkipCode || 'no-data';
+    out.signalText = sig.diagText;
+    return out;
+  }
+
+  // 4. Open new trade
+  try {
+    const newTrade = await openDiagonalTrade(env, token, etNow, vixPct20d);
+    await env.SIGNAL_KV.put('diagonal_open_trade', JSON.stringify(newTrade));
+    out.opened = {
+      openDate: newTrade.openDate,
+      shortStrike: newTrade.shortStrike,
+      longStrike: newTrade.longStrike,
+      shortExp: newTrade.shortExp,
+      longExp: newTrade.longExp,
+      entryDebit: newTrade.entryDebit,
+    };
+  } catch (e) {
+    out.openError = e.message;
+    console.warn('[diag] open failed:', e.message);
+  }
+
+  return out;
+}
+
 async function handleScheduled(env) {
   const etNow = toET();
   const dow = etNow.getDay();
@@ -731,13 +1041,40 @@ async function handleScheduled(env) {
     }
   }
 
+  // ── Diagonal trade: open/close at 12:30 ET (idempotent via diag_done_<date>) ──
+  let diagResult = {};
+  const diagDoneKey = `diag_done_${todayISO}`;
+  const isDiagonalEntry = (etHour === 12 && etMin >= 30 && etMin < 35);
+  if (isDiagonalEntry) {
+    const diagDone = await env.SIGNAL_KV.get(diagDoneKey);
+    if (!diagDone) {
+      try {
+        diagResult = await handleDiagonalTrade(env, etNow);
+        await env.SIGNAL_KV.put(diagDoneKey, 'done', { expirationTtl: 86400 });
+      } catch (e) {
+        diagResult = { diagonal: 'error', error: e.message };
+        console.warn('[diag] handler failed:', e.message);
+      }
+    }
+  }
+
+  // ── Refresh live quotes on the open diagonal every market tick ──
+  if (isMarket) {
+    try {
+      const schwabToken = await getAccessToken(env);
+      await refreshDiagonalLiveQuotes(env, schwabToken);
+    } catch (e) {
+      console.warn('[diag] live refresh failed:', e.message);
+    }
+  }
+
   // ── Morning signal: retries every cron tick until sent ──
   const morningDoneKey = `morning_signal_${todayISO}`;
   const morningDone = await env.SIGNAL_KV.get(morningDoneKey);
   const preMarket = etHour < 9 || (etHour === 9 && etMin < 30);
 
   if (morningDone === 'sent' || preMarket) {
-    return { status: 'discord_poll', discord: discordResult, gex: gexResult, time: `${etHour}:${String(etMin).padStart(2,'0')} ET` };
+    return { status: 'discord_poll', discord: discordResult, gex: gexResult, diagonal: diagResult, time: `${etHour}:${String(etMin).padStart(2,'0')} ET` };
   }
 
   // ── Stuck-claim self-heal + notify ──
@@ -2776,6 +3113,73 @@ export default {
     // reasons in `alerts[]`. Designed to be polled every 5-10 min by an
     // external uptime monitor so silent failures surface before the user
     // notices Discord stayed quiet.
+    // ── GET /diagonal-today ── Public live diagonal state (no auth)
+    // Returns the currently-open diagonal trade with live mid-quote refresh,
+    // plus the most recent closed trade for the live page's tape view.
+    // The cron refreshes mids every 2 min so this endpoint just reads KV
+    // (zero Schwab API cost). On stale data the live page can show an age
+    // indicator using `lastQuoteAt`.
+    if (url.pathname === '/diagonal-today' && request.method === 'GET') {
+      const publicCors = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Max-Age': '86400',
+      };
+      try {
+        const etNowDT = toET(new Date());
+        const todayDT = isoDateET(etNowDT);
+        const isWeekendDT = etNowDT.getDay() === 0 || etNowDT.getDay() === 6;
+        const isHolidayDT = isHol(etNowDT);
+
+        const openRaw = await env.SIGNAL_KV.get('diagonal_open_trade');
+        const open = openRaw ? JSON.parse(openRaw) : null;
+
+        const logRaw = await env.SIGNAL_KV.get('diagonal_closed_log');
+        const closedLog = logRaw ? JSON.parse(logRaw) : [];
+        const lastClosed = closedLog[0] || null;
+
+        // Today's signal preview — even if 12:30 hasn't fired yet, the live
+        // page can show "Diagonal pending" / "Skipped (NM)" / "GO at 12:30".
+        // Fetch vixPct20d via the same path the cron uses.
+        let vixPct20d = null, vixToday = null, sigPreview = null;
+        try {
+          const histResp = await fetch(
+            `https://raw.githubusercontent.com/rava8989/brave/main/history_data.json?t=${Date.now()}`,
+            { headers: { 'User-Agent': 'schwab-proxy' } }
+          );
+          if (histResp.ok) {
+            const histData = await histResp.json();
+            const todayRow = histData.find(r => r.date === todayDT);
+            vixToday = todayRow?.vixOpen != null ? parseFloat(todayRow.vixOpen) : null;
+            const vix20 = histData
+              .filter(r => r.date < todayDT && r.vixClose != null && r.vixClose > 0)
+              .sort((a, b) => a.date.localeCompare(b.date))
+              .slice(-20)
+              .map(r => parseFloat(r.vixClose));
+            if (vix20.length >= 10 && vixToday != null && !isNaN(vixToday)) {
+              const below = vix20.filter(c => c < vixToday).length;
+              vixPct20d = Math.round(100 * below / vix20.length);
+            }
+          }
+        } catch (_) { /* fall through to null */ }
+        try { sigPreview = computeDiagonalSignal(etNowDT, vixPct20d); } catch (_) {}
+
+        return jsonResp({
+          date: todayDT,
+          isWeekend: isWeekendDT,
+          isHoliday: isHolidayDT,
+          open,                              // currently active trade or null
+          lastClosed,                        // most recently closed trade (for context)
+          signal: sigPreview,                // {diagText, diagBadge, diagGo, diagSkipCode, vixPct20d}
+          vixPct20d,
+          serverTimeET: `${String(etNowDT.getHours()).padStart(2,'0')}:${String(etNowDT.getMinutes()).padStart(2,'0')}`,
+        }, 200, publicCors);
+      } catch (e) {
+        return jsonResp({ error: e.message }, 500, publicCors);
+      }
+    }
+
     if (url.pathname === '/health' && request.method === 'GET') {
       const publicCors = {
         'Access-Control-Allow-Origin': '*',
