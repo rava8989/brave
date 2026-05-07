@@ -222,6 +222,26 @@
     .diag-leg .side.long{background:rgba(129,140,248,.15);color:var(--accent);}
     .diag-leg .desc{flex:1;font-family:'JetBrains Mono',monospace;}
     .diag-leg .price{font-family:'JetBrains Mono',monospace;color:var(--text2);}
+    /* New combined-position view */
+    .diag-position{margin-top:12px;background:linear-gradient(135deg,var(--bg) 0%,rgba(129,140,248,.04) 100%);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;}
+    .diag-pos-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);margin-bottom:10px;}
+    .diag-pos-headline{font-family:'JetBrains Mono',monospace;font-size:22px;font-weight:700;color:var(--text);margin-bottom:4px;letter-spacing:-.01em;}
+    .diag-pos-headline .diag-slash{color:var(--text3);margin:0 4px;font-weight:400;}
+    .diag-pos-subline{font-size:11px;color:var(--text3);margin-bottom:16px;font-family:'JetBrains Mono',monospace;}
+    .diag-pos-legs{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;}
+    @media(max-width:600px){.diag-pos-legs{grid-template-columns:1fr;}}
+    .diag-pos-leg{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;}
+    .diag-pos-leg.short{border-left:3px solid #ef4444;}
+    .diag-pos-leg.long{border-left:3px solid var(--accent);}
+    .diag-pos-leg-side{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px;}
+    .diag-pos-leg.short .diag-pos-leg-side{color:#ef4444;}
+    .diag-pos-leg.long .diag-pos-leg-side{color:var(--accent);}
+    .diag-pos-leg-strike{font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700;color:var(--text);line-height:1.1;}
+    .diag-pos-leg-meta{font-size:11px;color:var(--text3);margin-top:4px;font-family:'JetBrains Mono',monospace;}
+    .diag-pos-pricing{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding-top:12px;border-top:1px solid var(--border);}
+    .diag-pos-price{text-align:center;}
+    .diag-pos-price-label{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);margin-bottom:3px;}
+    .diag-pos-price-value{font-family:'JetBrains Mono',monospace;font-size:17px;font-weight:700;color:var(--text);}
     .diag-meta{font-size:10px;color:var(--text3);margin-top:10px;font-family:'JetBrains Mono',monospace;display:flex;gap:14px;flex-wrap:wrap;}
     .diag-error{background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.3);color:#ef4444;padding:10px 14px;border-radius:var(--radius-sm);font-size:13px;margin-top:10px;}
   `;
@@ -539,26 +559,46 @@ function renderDiagonal() {
     sec_html.push(`  <div class="diag-stat"><div class="diag-stat-label">Current Value</div><div class="diag-stat-value">$${(open.currentValue*100).toFixed(0)}</div><div class="diag-stat-sub">Mid ${open.currentValue?.toFixed(2)}</div></div>`);
     sec_html.push(`</div>`);
 
-    // Combined diagonal view (single position, debit basis vs current spread mid).
-    // The legs themselves are still useful for verification — keep them in a
-    // collapsible <details>.
+    // Combined diagonal position card. Two leg cards side-by-side, then a
+    // 3-cell pricing footer (entry / current / Δ). Per-leg fills hidden behind
+    // a collapsed <details> for the rare case the user wants to verify.
     const debitDelta = (open.currentValue - open.entryDebit);
     const deltaClass = debitDelta > 0 ? 'diag-pl-pos' : debitDelta < 0 ? 'diag-pl-neg' : '';
-    sec_html.push(`<div class="diag-legs">`);
-    sec_html.push(`  <div class="diag-legs-title">Diagonal Position</div>`);
-    sec_html.push(`  <div class="diag-leg" style="font-family:'JetBrains Mono',monospace;flex-direction:column;align-items:flex-start;gap:4px;">`);
-    sec_html.push(`    <div style="font-weight:700;font-size:14px;color:var(--text);">SPX ${open.shortStrike}P / ${open.longStrike}P diagonal</div>`);
-    sec_html.push(`    <div style="font-size:12px;color:var(--text2);">${open.shortExp} (${open.shortDte}DTE short, +30 ITM) · ${open.longExp} (${open.longDte}DTE long, −10 OTM)</div>`);
-    sec_html.push(`    <div style="font-size:13px;margin-top:2px;">debit <strong>$${open.entryDebit?.toFixed(2)}</strong> @ entry → <strong class="${deltaClass}">$${open.currentValue?.toFixed(2)}</strong> now <span style="color:var(--text3);">(${debitDelta > 0 ? '+' : ''}${debitDelta.toFixed(2)})</span></div>`);
+    // Format expiry as a short human-readable date e.g. "May 8" / "Jun 12"
+    const fmtExp = iso => {
+      if (!iso) return '—';
+      const d = new Date(iso + 'T12:00:00');
+      return d.toLocaleString('en-US',{month:'short',day:'numeric'});
+    };
+    sec_html.push(`<div class="diag-position">`);
+    sec_html.push(`  <div class="diag-pos-title">Diagonal Position · ${open.contracts} contract</div>`);
+    sec_html.push(`  <div class="diag-pos-headline">SPX ${open.shortStrike}P <span class="diag-slash">/</span> ${open.longStrike}P</div>`);
+    sec_html.push(`  <div class="diag-pos-subline">put diagonal · 40-wide · spot ${open.spotEntry?.toFixed(2)} → ${open.currentSpot?.toFixed(2)}</div>`);
+    sec_html.push(`  <div class="diag-pos-legs">`);
+    sec_html.push(`    <div class="diag-pos-leg short">`);
+    sec_html.push(`      <div class="diag-pos-leg-side">Short · sold</div>`);
+    sec_html.push(`      <div class="diag-pos-leg-strike">${open.shortStrike}P</div>`);
+    sec_html.push(`      <div class="diag-pos-leg-meta">${fmtExp(open.shortExp)} · ${open.shortDte} DTE · 30 ITM</div>`);
+    sec_html.push(`    </div>`);
+    sec_html.push(`    <div class="diag-pos-leg long">`);
+    sec_html.push(`      <div class="diag-pos-leg-side">Long · bought</div>`);
+    sec_html.push(`      <div class="diag-pos-leg-strike">${open.longStrike}P</div>`);
+    sec_html.push(`      <div class="diag-pos-leg-meta">${fmtExp(open.longExp)} · ${open.longDte} DTE · 10 OTM</div>`);
+    sec_html.push(`    </div>`);
+    sec_html.push(`  </div>`);
+    sec_html.push(`  <div class="diag-pos-pricing">`);
+    sec_html.push(`    <div class="diag-pos-price"><div class="diag-pos-price-label">Entry debit</div><div class="diag-pos-price-value">$${open.entryDebit?.toFixed(2)}</div></div>`);
+    sec_html.push(`    <div class="diag-pos-price"><div class="diag-pos-price-label">Current</div><div class="diag-pos-price-value">$${open.currentValue?.toFixed(2)}</div></div>`);
+    sec_html.push(`    <div class="diag-pos-price"><div class="diag-pos-price-label">Δ vs entry</div><div class="diag-pos-price-value ${deltaClass}">${debitDelta > 0 ? '+' : ''}${debitDelta.toFixed(2)}</div></div>`);
     sec_html.push(`  </div>`);
     sec_html.push(`</div>`);
 
-    // Per-leg detail (collapsed by default — open if user wants to verify fills)
+    // Per-leg fills (collapsed — for cross-checking against your broker)
     sec_html.push(`<details style="margin-top:8px;">`);
-    sec_html.push(`  <summary style="font-size:11px;color:var(--text3);cursor:pointer;text-transform:uppercase;letter-spacing:.06em;">show per-leg detail</summary>`);
-    sec_html.push(`  <div style="margin-top:8px;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);">`);
-    sec_html.push(`    <div class="diag-leg"><span class="side short">SHORT</span><span class="desc">${open.shortStrike}P · ${open.shortExp} (${open.shortDte}DTE)</span><span class="price">entry $${open.entryShortMid?.toFixed(2)} → now $${open.currentShortMid?.toFixed(2)}</span></div>`);
-    sec_html.push(`    <div class="diag-leg"><span class="side long">LONG</span><span class="desc">${open.longStrike}P · ${open.longExp} (${open.longDte}DTE)</span><span class="price">entry $${open.entryLongMid?.toFixed(2)} → now $${open.currentLongMid?.toFixed(2)}</span></div>`);
+    sec_html.push(`  <summary style="font-size:10px;color:var(--text3);cursor:pointer;text-transform:uppercase;letter-spacing:.08em;padding:4px 0;">show per-leg fills</summary>`);
+    sec_html.push(`  <div style="margin-top:6px;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);">`);
+    sec_html.push(`    <div class="diag-leg"><span class="side short">SHORT</span><span class="desc">${open.shortStrike}P · ${fmtExp(open.shortExp)} · ${open.shortDte}DTE</span><span class="price">$${open.entryShortMid?.toFixed(2)} → $${open.currentShortMid?.toFixed(2)}</span></div>`);
+    sec_html.push(`    <div class="diag-leg"><span class="side long">LONG</span><span class="desc">${open.longStrike}P · ${fmtExp(open.longExp)} · ${open.longDte}DTE</span><span class="price">$${open.entryLongMid?.toFixed(2)} → $${open.currentLongMid?.toFixed(2)}</span></div>`);
     sec_html.push(`  </div>`);
     sec_html.push(`</details>`);
 
