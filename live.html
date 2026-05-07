@@ -539,11 +539,28 @@ function renderDiagonal() {
     sec_html.push(`  <div class="diag-stat"><div class="diag-stat-label">Current Value</div><div class="diag-stat-value">$${(open.currentValue*100).toFixed(0)}</div><div class="diag-stat-sub">Mid ${open.currentValue?.toFixed(2)}</div></div>`);
     sec_html.push(`</div>`);
 
+    // Combined diagonal view (single position, debit basis vs current spread mid).
+    // The legs themselves are still useful for verification — keep them in a
+    // collapsible <details>.
+    const debitDelta = (open.currentValue - open.entryDebit);
+    const deltaClass = debitDelta > 0 ? 'diag-pl-pos' : debitDelta < 0 ? 'diag-pl-neg' : '';
     sec_html.push(`<div class="diag-legs">`);
-    sec_html.push(`  <div class="diag-legs-title">Legs</div>`);
-    sec_html.push(`  <div class="diag-leg"><span class="side short">SHORT</span><span class="desc">${open.shortStrike}P · ${open.shortExp} (${open.shortDte}DTE)</span><span class="price">entry $${open.entryShortMid?.toFixed(2)} → now $${open.currentShortMid?.toFixed(2)}</span></div>`);
-    sec_html.push(`  <div class="diag-leg"><span class="side long">LONG</span><span class="desc">${open.longStrike}P · ${open.longExp} (${open.longDte}DTE)</span><span class="price">entry $${open.entryLongMid?.toFixed(2)} → now $${open.currentLongMid?.toFixed(2)}</span></div>`);
+    sec_html.push(`  <div class="diag-legs-title">Diagonal Position</div>`);
+    sec_html.push(`  <div class="diag-leg" style="font-family:'JetBrains Mono',monospace;flex-direction:column;align-items:flex-start;gap:4px;">`);
+    sec_html.push(`    <div style="font-weight:700;font-size:14px;color:var(--text);">SPX ${open.shortStrike}P / ${open.longStrike}P diagonal</div>`);
+    sec_html.push(`    <div style="font-size:12px;color:var(--text2);">${open.shortExp} (${open.shortDte}DTE short, +30 ITM) · ${open.longExp} (${open.longDte}DTE long, −10 OTM)</div>`);
+    sec_html.push(`    <div style="font-size:13px;margin-top:2px;">debit <strong>$${open.entryDebit?.toFixed(2)}</strong> @ entry → <strong class="${deltaClass}">$${open.currentValue?.toFixed(2)}</strong> now <span style="color:var(--text3);">(${debitDelta > 0 ? '+' : ''}${debitDelta.toFixed(2)})</span></div>`);
+    sec_html.push(`  </div>`);
     sec_html.push(`</div>`);
+
+    // Per-leg detail (collapsed by default — open if user wants to verify fills)
+    sec_html.push(`<details style="margin-top:8px;">`);
+    sec_html.push(`  <summary style="font-size:11px;color:var(--text3);cursor:pointer;text-transform:uppercase;letter-spacing:.06em;">show per-leg detail</summary>`);
+    sec_html.push(`  <div style="margin-top:8px;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);">`);
+    sec_html.push(`    <div class="diag-leg"><span class="side short">SHORT</span><span class="desc">${open.shortStrike}P · ${open.shortExp} (${open.shortDte}DTE)</span><span class="price">entry $${open.entryShortMid?.toFixed(2)} → now $${open.currentShortMid?.toFixed(2)}</span></div>`);
+    sec_html.push(`    <div class="diag-leg"><span class="side long">LONG</span><span class="desc">${open.longStrike}P · ${open.longExp} (${open.longDte}DTE)</span><span class="price">entry $${open.entryLongMid?.toFixed(2)} → now $${open.currentLongMid?.toFixed(2)}</span></div>`);
+    sec_html.push(`  </div>`);
+    sec_html.push(`</details>`);
 
     const ageS = open.lastQuoteAt ? Math.round((Date.now() - new Date(open.lastQuoteAt).getTime()) / 1000) : null;
     const ageStr = ageS == null ? '—' : ageS < 60 ? `${ageS}s ago` : `${Math.round(ageS/60)}m ago`;
