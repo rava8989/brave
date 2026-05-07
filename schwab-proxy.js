@@ -681,8 +681,8 @@ async function pollDiscordSignals(env) {
 
 const DIAG_SHORT_OFFSET = 30;     // pts ITM (matches compute_diagonal_pnl.py)
 const DIAG_LONG_OFFSET  = 40;     // pts BELOW short (so 10 OTM relative to spot)
-const DIAG_LONG_DTE     = 25;     // calendar trading-days target for long leg
-const DIAG_LONG_DTE_TOL = 5;      // ±5 days acceptable
+const DIAG_LONG_DTE     = 25;     // CALENDAR days target (matches Python long_dte=25)
+const DIAG_LONG_DTE_TOL = 5;      // ±5 calendar days → 20-30 DTE acceptable range
 
 function snap5(x) { return Math.round(x / 5) * 5; }
 
@@ -756,7 +756,12 @@ async function fetchSpxPutChain(token, fromDate, toDate, env) {
 async function openDiagonalTrade(env, token, etNow, vixPct20d) {
   const todayISO = isoDateET(etNow);
   const shortExp = isoDateET(nextTradeDayET(etNow));
-  const longExpTarget = isoDateET(addTradeDaysET(etNow, DIAG_LONG_DTE));
+  // Calendar days, NOT trading days — matches Python long_dte=25.
+  // Trading-day version pushed expiry ~10 calendar days too far (36 DTE
+  // instead of 25-26 — observed 2026-05-07 picked Jun 12 instead of Jun 1).
+  const _longTarget = new Date(etNow);
+  _longTarget.setDate(_longTarget.getDate() + DIAG_LONG_DTE);
+  const longExpTarget = isoDateET(_longTarget);
 
   // Fetch full chain spanning both expiries in one pass
   const { spot, putExpDateMap } = await fetchSpxPutChain(token, shortExp, longExpTarget, env);
