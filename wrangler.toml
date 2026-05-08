@@ -4,12 +4,12 @@ compatibility_date = "2026-03-17"
 
 [triggers]
 # Morning signal: dedicated 9:30 ET tick (EDT + EST)
-# Market hours: every 2 min for GEX + Discord poll (EDT + EST)
+# Market hours: every 1 min for GEX + Discord poll + BOBF entry checks (EDT + EST)
 # EOD: ~16:17 ET (EDT + EST)
 crons = [
   "30 13 * * 1-5",
   "30 14 * * 1-5",
-  "*/2 13-20 * * 1-5",
+  "* 13-20 * * 1-5",
   "17 20 * * 1-5",
   "17 21 * * 1-5"
 ]

@@ -838,15 +838,18 @@ async function openDiagonalTrade(env, token, etNow, vixPct20d) {
 }
 
 // Refresh just the live-quote fields on the open trade. Cheap call.
-async function refreshDiagonalLiveQuotes(env, token) {
+async function refreshDiagonalLiveQuotes(env, token, preChain = null) {
   const raw = await env.SIGNAL_KV.get('diagonal_open_trade');
   if (!raw) return null;
   const trade = JSON.parse(raw);
   if (trade.status !== 'open') return null;
 
-  // Re-fetch the chain spanning both leg expiries
+  // Re-fetch the chain spanning both leg expiries — but reuse master chain
+  // if it covers what we need (it almost always will).
   try {
-    const { spot, putExpDateMap } = await fetchSpxPutChain(token, trade.shortExp, trade.longExp, env);
+    const chain = await chainOrFetch(preChain, token, env, [trade.shortExp, trade.longExp], 'PUT');
+    const spot = chain.spot;
+    const putExpDateMap = chain.putExpDateMap;
     const sNow = pickPutFromChain(putExpDateMap, trade.shortExp, trade.shortStrike);
     const lNow = pickPutFromChain(putExpDateMap, trade.longExp, trade.longStrike);
     if (!sNow || !lNow || sNow.mid == null || lNow.mid == null) return trade;
@@ -1056,6 +1059,48 @@ async function fetchSpxFullChain(token, expDate, env) {
   };
 }
 
+// Master SPX chain — fetched ONCE per cron tick and passed to every handler
+// (GEX, straddle, BOBF, diagonal). strikeCount=80 covers ±$200 around spot
+// which is wide enough for every strategy's strikes (deepest is diagonal's
+// 30-ITM short = spot+30, well within range). No date range = Schwab returns
+// all available expiries, covering 0DTE through ~30+ DTE.
+async function fetchMasterSpxChain(token, env) {
+  const baseParams = 'symbol=%24SPX&strikeCount=80&includeUnderlyingQuote=true&strategy=SINGLE';
+  const [callData, putData] = await Promise.all([
+    fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/chains?${baseParams}&contractType=CALL`, token, env),
+    fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/chains?${baseParams}&contractType=PUT`, token, env),
+  ]);
+  const spot = callData.underlyingPrice || callData.underlying?.last
+            || putData.underlyingPrice  || putData.underlying?.last;
+  return {
+    spot,
+    callExpDateMap: callData.callExpDateMap || {},
+    putExpDateMap:  putData.putExpDateMap  || {},
+    fetchedAt: Date.now(),
+  };
+}
+
+// Returns a chain compatible with what each handler needs. If `preChain` has
+// the requested expiries, reuse it (zero Schwab calls). Else falls through
+// to a targeted fetch. Used by the diagonal/straddle/bobf live refreshers.
+async function chainOrFetch(preChain, token, env, expectedExpiries, contractFilter = 'BOTH') {
+  if (preChain) {
+    const haveAll = expectedExpiries.every(exp => {
+      const map = contractFilter === 'PUT' ? preChain.putExpDateMap : preChain.callExpDateMap;
+      return Object.keys(map).some(k => k.startsWith(exp + ':'));
+    });
+    if (haveAll) return preChain;
+  }
+  // Fallback: fetch covering all needed expiries
+  const min = expectedExpiries.reduce((a, b) => a < b ? a : b);
+  const max = expectedExpiries.reduce((a, b) => a > b ? a : b);
+  if (contractFilter === 'PUT') {
+    return fetchSpxPutChain(token, min, max, env);
+  }
+  // For CALL/BOTH, do a master fetch (covers everything)
+  return fetchMasterSpxChain(token, env);
+}
+
 function straddleMaxDebit(badge) {
   // badge = 'NM STRADDLE' | 'EOM STRADDLE' | 'STRADDLE'
   return badge === 'NM STRADDLE' ? STRADDLE_MAX_DEBIT_NM : STRADDLE_MAX_DEBIT_OTHER;
@@ -1112,7 +1157,7 @@ async function openStraddleTrade(env, token, etNow, signal) {
 
 // Refresh live mids on the open straddle. Also handles working→filled and
 // working→expired transitions.
-async function refreshStraddleLiveQuotes(env, token, etNow) {
+async function refreshStraddleLiveQuotes(env, token, etNow, preChain = null) {
   const raw = await env.SIGNAL_KV.get('straddle_open_trade');
   if (!raw) return null;
   const trade = JSON.parse(raw);
@@ -1129,7 +1174,8 @@ async function refreshStraddleLiveQuotes(env, token, etNow) {
   }
 
   try {
-    const { spot, callExpDateMap, putExpDateMap } = await fetchSpxFullChain(token, trade.expDate, env);
+    const chain = preChain || await fetchSpxFullChain(token, trade.expDate, env);
+    const { spot, callExpDateMap, putExpDateMap } = chain;
     const c = pickContractFromChain(callExpDateMap, trade.expDate, trade.strike);
     const p = pickContractFromChain(putExpDateMap,  trade.expDate, trade.strike);
     if (!c || !p || c.mid == null || p.mid == null) return trade;
@@ -1315,7 +1361,7 @@ function bobfEntryReady(typeInfo, spotNow, spxOpen, sma5, rsi14) {
 
 // Main entry flow — called from every cron tick during the window.
 // Idempotent via bobf_done_<date>: exits early once trade fires or window expires.
-async function handleBobfEntry(env, etNow) {
+async function handleBobfEntry(env, etNow, preChain = null) {
   const todayISO = isoDateET(etNow);
   const out = { date: todayISO, status: null };
 
@@ -1387,11 +1433,11 @@ async function handleBobfEntry(env, etNow) {
     return { ...out, status: 'blackout', reason: blackouts.join(', '), type: typeInfo.type };
   }
 
-  // Fetch chain → also gives us live SPX spot for move-up calculation
+  // Use master chain if available (saves 2 Schwab calls), else fetch our own.
   let token, spot, callExpDateMap;
   try {
     token = await getAccessToken(env);
-    const chain = await fetchSpxFullChain(token, todayISO, env);
+    const chain = preChain || await fetchSpxFullChain(token, todayISO, env);
     spot = chain.spot; callExpDateMap = chain.callExpDateMap;
   } catch (e) { return { ...out, status: 'error', error: 'chain fetch: ' + e.message }; }
   if (!spot) return { ...out, status: 'error', error: 'no SPX spot' };
@@ -1476,7 +1522,7 @@ async function handleBobfEntry(env, etNow) {
 
 // Refresh live mids on the open BOBF trade. Handles working→filled transition
 // + working→expired at 12:15 ET.
-async function refreshBobfLiveQuotes(env, token, etNow) {
+async function refreshBobfLiveQuotes(env, token, etNow, preChain = null) {
   const raw = await env.SIGNAL_KV.get('bobf_open_trade');
   if (!raw) return null;
   const trade = JSON.parse(raw);
@@ -1492,7 +1538,8 @@ async function refreshBobfLiveQuotes(env, token, etNow) {
   }
 
   try {
-    const { spot, callExpDateMap } = await fetchSpxFullChain(token, trade.expDate, env);
+    const chain = preChain || await fetchSpxFullChain(token, trade.expDate, env);
+    const { spot, callExpDateMap } = chain;
     const lower = pickContractFromChain(callExpDateMap, trade.expDate, trade.lowerStrike);
     const body  = pickContractFromChain(callExpDateMap, trade.expDate, trade.bodyStrike);
     const upper = pickContractFromChain(callExpDateMap, trade.expDate, trade.upperStrike);
@@ -1611,12 +1658,26 @@ async function handleScheduled(env) {
     return { ...eodResult, discord: discordResult, backfill_wr: backfillWR, backfill_pl: backfillPL, scrape_append: scrapeAppend };
   }
 
-  // ── GEX update during market hours (every 2-min cron tick) ──
-  let gexResult = {};
+  // ── Master SPX chain fetch — ONE call per market tick, shared across all
+  //    chain-consuming handlers (GEX, diagonal, straddle, BOBF). Cuts Schwab
+  //    API usage from ~7 chain calls per tick to 2 (one CALL + one PUT).
+  let masterChain = null;
+  let schwabToken = null;
   if (isMarket) {
     try {
-      const schwabToken = await getAccessToken(env);
-      gexResult = await handleGEXUpdate(env, schwabToken);
+      schwabToken = await getAccessToken(env);
+      masterChain = await fetchMasterSpxChain(schwabToken, env);
+    } catch (e) {
+      console.warn('[chain] master fetch failed:', e.message);
+      // Handlers will fall through to their own targeted fetches.
+    }
+  }
+
+  // ── GEX update during market hours (every cron tick) ──
+  let gexResult = {};
+  if (isMarket && schwabToken) {
+    try {
+      gexResult = await handleGEXUpdate(env, schwabToken, masterChain);
     } catch (e) {
       gexResult = { gex: 'error', error: e.message };
       console.warn('[proxy] GEX update failed:', e.message || e);
@@ -1654,21 +1715,22 @@ async function handleScheduled(env) {
   }
 
   // ── Refresh live quotes on the open diagonal, straddle, AND BOBF every market tick ──
-  if (isMarket) {
+  //    All three reuse the master chain fetched above (zero extra Schwab calls).
+  if (isMarket && schwabToken) {
     try {
-      const schwabToken = await getAccessToken(env);
-      await refreshDiagonalLiveQuotes(env, schwabToken);
-      await refreshStraddleLiveQuotes(env, schwabToken, etNow);
-      await refreshBobfLiveQuotes(env, schwabToken, etNow);
+      await refreshDiagonalLiveQuotes(env, schwabToken, masterChain);
+      await refreshStraddleLiveQuotes(env, schwabToken, etNow, masterChain);
+      await refreshBobfLiveQuotes(env, schwabToken, etNow, masterChain);
     } catch (e) {
       console.warn('[live] refresh failed:', e.message);
     }
   }
 
   // ── BOBF entry: check every market tick during 10:29-12:15 ET window ──
+  //    Also reuses the master chain.
   let bobfResult = {};
   if (isMarket) {
-    try { bobfResult = await handleBobfEntry(env, etNow); }
+    try { bobfResult = await handleBobfEntry(env, etNow, masterChain); }
     catch (e) { bobfResult = { bobf: 'error', error: e.message }; console.warn('[bobf] entry failed:', e.message); }
   }
 
@@ -2204,23 +2266,26 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
   };
 }
 
-async function handleGEXUpdate(env, token) {
-  // 1. Fetch SPX options chain — split calls/puts to get 80 strikes each without Schwab 502
-  const baseParams = 'symbol=%24SPX&strikeCount=80&includeUnderlyingQuote=true&strategy=SINGLE';
-  const [callData, putData] = await Promise.all([
-    fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/chains?${baseParams}&contractType=CALL`, token),
-    fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/chains?${baseParams}&contractType=PUT`, token),
-  ]);
-
-  // 2. Merge into unified chain structure
-  const chainData = {
-    callExpDateMap: callData.callExpDateMap || {},
-    putExpDateMap: putData.putExpDateMap || {},
-  };
-
-  // 3. Get spot from underlying quote
-  const spot = callData.underlyingPrice || callData.underlying?.last || callData.underlying?.mark
-            || putData.underlyingPrice || putData.underlying?.last || putData.underlying?.mark;
+async function handleGEXUpdate(env, token, preChain = null) {
+  // 1. Use pre-fetched master chain if available (saves 2 Schwab calls per tick),
+  //    else fetch our own. preChain is the same shape we'd build below.
+  let chainData, spot;
+  if (preChain) {
+    chainData = { callExpDateMap: preChain.callExpDateMap, putExpDateMap: preChain.putExpDateMap };
+    spot = preChain.spot;
+  } else {
+    const baseParams = 'symbol=%24SPX&strikeCount=80&includeUnderlyingQuote=true&strategy=SINGLE';
+    const [callData, putData] = await Promise.all([
+      fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/chains?${baseParams}&contractType=CALL`, token),
+      fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/chains?${baseParams}&contractType=PUT`, token),
+    ]);
+    chainData = {
+      callExpDateMap: callData.callExpDateMap || {},
+      putExpDateMap: putData.putExpDateMap || {},
+    };
+    spot = callData.underlyingPrice || callData.underlying?.last || callData.underlying?.mark
+        || putData.underlyingPrice || putData.underlying?.last || putData.underlying?.mark;
+  }
   if (!spot) throw new Error('No SPX spot price in chain response');
 
   // 4. Calculate GEX — both all-expiry and 0DTE-only
