@@ -767,7 +767,7 @@ async function fetchSpxPutChain(token, fromDate, toDate, env) {
 }
 
 // Open a diagonal at 12:30 ET. Returns the trade record (or throws).
-async function openDiagonalTrade(env, token, etNow, vixPct20d) {
+async function openDiagonalTrade(env, token, etNow, vixPct20d, preChain = null) {
   const todayISO = isoDateET(etNow);
   const shortExp = isoDateET(nextTradeDayET(etNow));
   // Calendar days, NOT trading days — matches Python long_dte=25.
@@ -777,15 +777,17 @@ async function openDiagonalTrade(env, token, etNow, vixPct20d) {
   _longTarget.setDate(_longTarget.getDate() + DIAG_LONG_DTE);
   const longExpTarget = isoDateET(_longTarget);
 
-  // Fetch full chain spanning both expiries in one pass
-  const { spot, putExpDateMap } = await fetchSpxPutChain(token, shortExp, longExpTarget, env);
+  // Fetch full chain spanning both expiries — reuse master if it covers them.
+  const chain = await chainOrFetch(preChain, token, env, [shortExp, longExpTarget], 'PUT');
+  const spot = chain.spot;
+  const putExpDateMap = chain.putExpDateMap;
   if (!spot) throw new Error('Diagonal open: no spot price in chain response');
 
-  const kShort = snap5(spot + DIAG_SHORT_OFFSET);
-  const kLong  = kShort - DIAG_LONG_OFFSET;
-
-  const shortLeg = pickPutFromChain(putExpDateMap, shortExp, kShort);
-  if (!shortLeg) throw new Error(`Diagonal open: no SPX ${kShort}P @ ${shortExp} in chain`);
+  const reqShort = snap5(spot + DIAG_SHORT_OFFSET);
+  const shortLeg = pickPutFromChain(putExpDateMap, shortExp, reqShort);
+  if (!shortLeg) throw new Error(`Diagonal open: no SPX ${reqShort}P @ ${shortExp} in chain`);
+  const kShort = shortLeg.strike;            // actual filled short strike (post-fuzz)
+  const kLong  = kShort - DIAG_LONG_OFFSET;  // re-anchor long on actual short
 
   // Long leg — find the actual expiry closest to target within tolerance
   let longLeg = null, longExpUsed = null;
@@ -868,10 +870,12 @@ async function refreshDiagonalLiveQuotes(env, token, preChain = null) {
 
 // Close a trade at the current chain. Mutates input trade with close fields,
 // returns the realized PnL.
-async function closeDiagonalTrade(env, token, openTrade, etNow) {
+async function closeDiagonalTrade(env, token, openTrade, etNow, preChain = null) {
   const closeISO = isoDateET(etNow);
   // For an expired short (closeISO >= shortExp), price intrinsic = max(K - SPX, 0)
-  const { spot, putExpDateMap } = await fetchSpxPutChain(token, openTrade.shortExp, openTrade.longExp, env);
+  const chain = await chainOrFetch(preChain, token, env, [openTrade.shortExp, openTrade.longExp], 'PUT');
+  const spot = chain.spot;
+  const putExpDateMap = chain.putExpDateMap;
 
   let closeShortMid, closeLongMid;
   const sNow = pickPutFromChain(putExpDateMap, openTrade.shortExp, openTrade.shortStrike);
@@ -915,7 +919,7 @@ function daysBetween(a, b) {
 }
 
 // Orchestrate close-then-open at 12:30 ET. Idempotent via diag_done_<date>.
-async function handleDiagonalTrade(env, etNow) {
+async function handleDiagonalTrade(env, etNow, preChain = null) {
   const todayISO = isoDateET(etNow);
   const out = { date: todayISO, closed: null, opened: null, skipped: null };
 
@@ -929,7 +933,7 @@ async function handleDiagonalTrade(env, etNow) {
 
   if (openTrade && openTrade.openDate < todayISO && openTrade.status === 'open') {
     try {
-      const closed = await closeDiagonalTrade(env, token, openTrade, etNow);
+      const closed = await closeDiagonalTrade(env, token, openTrade, etNow, preChain);
       // Commit diagPL for the OPEN date (matches history convention)
       await upsertHistoryGitHub(env, openTrade.openDate, { diagPL: closed.pnl });
       // Append to closed log
@@ -982,7 +986,7 @@ async function handleDiagonalTrade(env, etNow) {
 
   // 4. Open new trade
   try {
-    const newTrade = await openDiagonalTrade(env, token, etNow, vixPct20d);
+    const newTrade = await openDiagonalTrade(env, token, etNow, vixPct20d, preChain);
     await env.SIGNAL_KV.put('diagonal_open_trade', JSON.stringify(newTrade));
     out.opened = {
       openDate: newTrade.openDate,
@@ -1108,17 +1112,25 @@ function straddleMaxDebit(badge) {
 
 // Open or work a straddle. Called from the morning signal block once per day.
 // `signal` is the calculateSignal result; we expect signal.theme === 'strad'.
-async function openStraddleTrade(env, token, etNow, signal) {
+async function openStraddleTrade(env, token, etNow, signal, preChain = null) {
   const todayISO = isoDateET(etNow);
   const expISO = todayISO;  // 0DTE — same-day expiry
-  const { spot, callExpDateMap, putExpDateMap } = await fetchSpxFullChain(token, expISO, env);
+  const chain = preChain || await fetchSpxFullChain(token, expISO, env);
+  const { spot, callExpDateMap, putExpDateMap } = chain;
   if (!spot) throw new Error('Straddle open: no spot price in chain response');
 
-  const strike = snap5(spot);
-  const callLeg = pickContractFromChain(callExpDateMap, expISO, strike);
-  const putLeg  = pickContractFromChain(putExpDateMap,  expISO, strike);
-  if (!callLeg || !putLeg) throw new Error(`Straddle open: missing leg @ ${strike} for ${expISO}`);
+  const requestedK = snap5(spot);
+  const callLeg = pickContractFromChain(callExpDateMap, expISO, requestedK);
+  const putLeg  = pickContractFromChain(putExpDateMap,  expISO, requestedK);
+  if (!callLeg || !putLeg) throw new Error(`Straddle open: missing leg @ ${requestedK} for ${expISO}`);
   if (callLeg.mid == null || putLeg.mid == null) throw new Error('Straddle open: missing bid/ask');
+  // Reconcile: ATM straddle requires call & put at IDENTICAL strike. Fuzz
+  // fallback in pickContractFromChain could land them on different strikes.
+  // If that happens, prefer the strike that BOTH legs share — re-pick if needed.
+  if (callLeg.strike !== putLeg.strike) {
+    throw new Error(`Straddle open: leg-strike mismatch (call ${callLeg.strike}, put ${putLeg.strike}) — chain incomplete`);
+  }
+  const strike = callLeg.strike;  // actual filled strike (post-fuzz)
 
   const debit = callLeg.mid + putLeg.mid;
   const maxDebit = straddleMaxDebit(signal.badge || 'STRADDLE');
@@ -1404,9 +1416,10 @@ async function prefilterBobf(env, etNow, vixToday, vixYClose) {
     return { skipped: 'blackout', reasons: blackouts };
   }
 
-  // 3. RSI(14) — daily-close-based, fixed for the entire trading day. If it's
-  //    out of bounds at 9:30 it'll still be out of bounds at 12:14.
-  let rsi14 = null;
+  // 3. RSI(14) + SMA5 + spxOpen — all daily-close-based, fixed for the entire
+  //    trading day. Cache them in KV so handleBobfEntry doesn't re-fetch
+  //    history_data.json from GitHub on every tick (~106 saved fetches/day).
+  let rsi14 = null, sma5 = null, spxOpen = null;
   try {
     const histResp = await fetch(
       `https://raw.githubusercontent.com/rava8989/brave/main/history_data.json?t=${Date.now()}`,
@@ -1414,11 +1427,14 @@ async function prefilterBobf(env, etNow, vixToday, vixYClose) {
     );
     if (histResp.ok) {
       const histData = await histResp.json();
+      const todayRow = histData.find(r => r.date === todayISO);
+      spxOpen = todayRow?.spxOpen != null ? parseFloat(todayRow.spxOpen) : null;
       const sortedPrior = histData
         .filter(r => r.date < todayISO && r.spxClose != null)
         .sort((a, b) => a.date.localeCompare(b.date));
       const closes30 = sortedPrior.slice(-30).map(r => parseFloat(r.spxClose));
       rsi14 = computeRSI14(closes30);
+      sma5 = computeSMA5(closes30);
     }
   } catch (_) { /* leave handleBobfEntry to recheck */ }
 
@@ -1432,6 +1448,12 @@ async function prefilterBobf(env, etNow, vixToday, vixYClose) {
       return { skipped: 'rsi-high', rsi14, type: 'vix_down' };
     }
   }
+
+  // Cache the day's static inputs for handleBobfEntry to reuse every tick.
+  await env.SIGNAL_KV.put(`bobf_static_${todayISO}`, JSON.stringify({
+    rsi14, sma5, spxOpen, vixToday, vixYClose,
+    type: typeInfo.type, label: typeInfo.label, bodyOffset: typeInfo.bodyOffset,
+  }), { expirationTtl: 86400 });
 
   // All static filters pass — entry checks during 10:29-12:15 will evaluate
   // the dynamic conditions (move-up %, SMA5).
@@ -1453,35 +1475,44 @@ async function handleBobfEntry(env, etNow, preChain = null) {
   }
   if (!bobfInWindow(etNow)) return { ...out, status: 'pre-window' };
 
-  // Pull history for today's vixOpen/spxOpen + last N daily closes for RSI/SMA
-  let histData;
-  try {
-    const histResp = await fetch(`https://raw.githubusercontent.com/rava8989/brave/main/history_data.json?t=${Date.now()}`,
-      { headers: { 'User-Agent': 'schwab-proxy' } });
-    if (!histResp.ok) return { ...out, status: 'error', error: `history fetch ${histResp.status}` };
-    histData = await histResp.json();
-  } catch (e) { return { ...out, status: 'error', error: 'history fetch: ' + e.message }; }
+  // Try BOBF static cache first (written by prefilterBobf at 9:30). If hit,
+  // we skip the GitHub history fetch entirely on every market tick.
+  let vixToday, spxOpen, vixYClose, sma5, rsi14, typeInfo;
+  const staticRaw = await env.SIGNAL_KV.get(`bobf_static_${todayISO}`);
+  if (staticRaw) {
+    const s = JSON.parse(staticRaw);
+    vixToday = s.vixToday; spxOpen = s.spxOpen; vixYClose = s.vixYClose;
+    sma5 = s.sma5; rsi14 = s.rsi14;
+    typeInfo = { type: s.type, label: s.label, bodyOffset: s.bodyOffset };
+  } else {
+    // Cache miss (e.g. cold start, prefilter never ran) — fall back to GitHub fetch
+    let histData;
+    try {
+      const histResp = await fetch(`https://raw.githubusercontent.com/rava8989/brave/main/history_data.json?t=${Date.now()}`,
+        { headers: { 'User-Agent': 'schwab-proxy' } });
+      if (!histResp.ok) return { ...out, status: 'error', error: `history fetch ${histResp.status}` };
+      histData = await histResp.json();
+    } catch (e) { return { ...out, status: 'error', error: 'history fetch: ' + e.message }; }
 
-  const todayRow = histData.find(r => r.date === todayISO);
-  const vixToday = todayRow?.vixOpen != null ? parseFloat(todayRow.vixOpen) : null;
-  const spxOpen  = todayRow?.spxOpen != null ? parseFloat(todayRow.spxOpen) : null;
+    const todayRow = histData.find(r => r.date === todayISO);
+    vixToday = todayRow?.vixOpen != null ? parseFloat(todayRow.vixOpen) : null;
+    spxOpen  = todayRow?.spxOpen != null ? parseFloat(todayRow.spxOpen) : null;
 
-  // Sorted prior trading days with both spxClose + vixClose
-  const sortedPrior = histData
-    .filter(r => r.date < todayISO && r.spxClose != null)
-    .sort((a, b) => a.date.localeCompare(b.date));
-  if (sortedPrior.length === 0) return { ...out, status: 'error', error: 'no prior history' };
+    const sortedPrior = histData
+      .filter(r => r.date < todayISO && r.spxClose != null)
+      .sort((a, b) => a.date.localeCompare(b.date));
+    if (sortedPrior.length === 0) return { ...out, status: 'error', error: 'no prior history' };
 
-  const yClose = sortedPrior[sortedPrior.length - 1];
-  const vixYClose = yClose.vixClose != null ? parseFloat(yClose.vixClose) : null;
-  const closes30 = sortedPrior.slice(-30).map(r => parseFloat(r.spxClose));
-  const sma5  = computeSMA5(closes30);
-  const rsi14 = computeRSI14(closes30);
+    const yClose = sortedPrior[sortedPrior.length - 1];
+    vixYClose = yClose.vixClose != null ? parseFloat(yClose.vixClose) : null;
+    const closes30 = sortedPrior.slice(-30).map(r => parseFloat(r.spxClose));
+    sma5  = computeSMA5(closes30);
+    rsi14 = computeRSI14(closes30);
 
-  // Determine type
-  const typeInfo = determineBobfType(etNow, vixToday, vixYClose);
+    typeInfo = determineBobfType(etNow, vixToday, vixYClose);
+  }
   if (!typeInfo.type) {
-    await env.SIGNAL_KV.put(doneKey, 'no-type:' + typeInfo.reason, { expirationTtl: 86400 });
+    await env.SIGNAL_KV.put(doneKey, 'no-type:' + (typeInfo.reason || 'unknown'), { expirationTtl: 86400 });
     return { ...out, status: 'no-type', reason: typeInfo.reason };
   }
 
@@ -1525,16 +1556,26 @@ async function handleBobfEntry(env, etNow, preChain = null) {
   const ready = bobfEntryReady(typeInfo, spot, spxOpen, sma5, rsi14);
   if (!ready.ready) return { ...out, status: 'waiting', reason: ready.reason, type: typeInfo.type, sma5, rsi14, spotNow: spot, spxOpen };
 
-  // Compute strikes
-  const kBody  = snap5(spot + typeInfo.bodyOffset);
+  // Compute strikes — pick body FIRST, then re-anchor wings on the actual body
+  // strike picked (in case fuzz fallback in pickContractFromChain lands on a
+  // neighbor). Otherwise wings could mismatch the body and butterfly geometry
+  // breaks, which mis-prices settlement intrinsic.
+  const reqBody  = snap5(spot + typeInfo.bodyOffset);
+  const bodyLeg  = pickContractFromChain(callExpDateMap, todayISO, reqBody);
+  if (!bodyLeg) return { ...out, status: 'error', error: `missing body leg in chain @ ${reqBody}` };
+  const kBody  = bodyLeg.strike;            // actual filled body strike
   const kLower = kBody - BOBF_WING_OFFSET;
   const kUpper = kBody + BOBF_WING_OFFSET;
 
   const lowerLeg = pickContractFromChain(callExpDateMap, todayISO, kLower);
-  const bodyLeg  = pickContractFromChain(callExpDateMap, todayISO, kBody);
   const upperLeg = pickContractFromChain(callExpDateMap, todayISO, kUpper);
-  if (!lowerLeg || !bodyLeg || !upperLeg) return { ...out, status: 'error', error: `missing leg in chain (${kLower}/${kBody}/${kUpper})` };
+  if (!lowerLeg || !upperLeg) return { ...out, status: 'error', error: `missing wing leg in chain (${kLower}/${kUpper}, anchored on body ${kBody})` };
   if (lowerLeg.mid == null || bodyLeg.mid == null || upperLeg.mid == null) return { ...out, status: 'error', error: 'missing bid/ask on a leg' };
+  // Verify wings landed on EXACT requested strikes (no fuzz on wings — that
+  // would break the symmetric debit math).
+  if (lowerLeg.strike !== kLower || upperLeg.strike !== kUpper) {
+    return { ...out, status: 'error', error: `wing fuzz mismatch — lower req ${kLower}/got ${lowerLeg.strike}, upper req ${kUpper}/got ${upperLeg.strike}` };
+  }
 
   const debit = lowerLeg.mid - 2 * bodyLeg.mid + upperLeg.mid;
 
@@ -1630,6 +1671,7 @@ async function refreshBobfLiveQuotes(env, token, etNow, preChain = null) {
     trade.currentValue    = parseFloat(newDebit.toFixed(2));
 
     // Working → filled if mid drops to ≤ max debit
+    let justFilled = false;
     if (trade.status === 'working' && newDebit <= trade.maxDebit) {
       trade.status = 'filled';
       trade.fillDebit = parseFloat(newDebit.toFixed(2));
@@ -1639,14 +1681,21 @@ async function refreshBobfLiveQuotes(env, token, etNow, preChain = null) {
       trade.entryBodyMid  = parseFloat(body.mid.toFixed(2));
       trade.entryUpperMid = parseFloat(upper.mid.toFixed(2));
       trade.entryDebit    = parseFloat(newDebit.toFixed(2));
-      await env.SIGNAL_KV.put(`bobf_done_${isoDateET(etNow)}`, 'filled', { expirationTtl: 86400 });
+      justFilled = true;
     }
 
     if (trade.status === 'filled') {
       trade.currentPnl = Math.round((trade.currentValue - trade.entryDebit) * 100 * trade.contracts);
     }
     trade.lastQuoteAt = new Date().toISOString();
+    // Write trade record FIRST (source of truth), then the done-key marker.
+    // If worker is evicted between the two writes, next tick still finds the
+    // filled trade in `bobf_open_trade` and treats it correctly. Reverse order
+    // would mark "done" but lose the fill snapshot.
     await env.SIGNAL_KV.put('bobf_open_trade', JSON.stringify(trade));
+    if (justFilled) {
+      await env.SIGNAL_KV.put(`bobf_done_${isoDateET(etNow)}`, 'filled', { expirationTtl: 86400 });
+    }
   } catch (e) { console.warn('[bobf] refresh failed:', e.message); }
   return trade;
 }
@@ -1773,7 +1822,7 @@ async function handleScheduled(env) {
     const diagDone = await env.SIGNAL_KV.get(diagDoneKey);
     if (!diagDone) {
       try {
-        diagResult = await handleDiagonalTrade(env, etNow);
+        diagResult = await handleDiagonalTrade(env, etNow, masterChain);
         // Only mark done when we either (a) opened a new trade, (b) cleanly
         // skipped per signal, OR (c) closed a prior trade without error.
         // Transient errors (token, chain, GitHub) leave the slot unmarked so
@@ -2070,7 +2119,7 @@ async function handleScheduled(env) {
       const existing = existingRaw ? JSON.parse(existingRaw) : null;
       if (!existing || existing.openDate !== isoDateET(etNow)) {
         const stradToken = await getAccessToken(env);
-        const trade = await openStraddleTrade(env, stradToken, etNow, signal);
+        const trade = await openStraddleTrade(env, stradToken, etNow, signal, masterChain);
         await env.SIGNAL_KV.put('straddle_open_trade', JSON.stringify(trade));
         console.log(`[strad] opened ${trade.status} K=${trade.strike} debit=${trade.entryDebit} maxDebit=${trade.maxDebit}`);
       }

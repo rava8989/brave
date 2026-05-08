@@ -505,6 +505,27 @@ function updateSPXChartTheme() {
   spxChart.update();
 }
 
+// ─── Helper: preserve <details> open state across full-card re-renders ──────
+// Each strategy card uses sec.innerHTML = html.join('') every tick which blows
+// away the user's "show per-leg fills" toggle state. Snapshot it pre-render
+// and restore post-render so the toggle stays put.
+function preserveDetailsState(secId, render) {
+  const sec = document.getElementById(secId);
+  const openIds = new Set();
+  if (sec) {
+    sec.querySelectorAll('details[open]').forEach((d, i) => {
+      openIds.add(d.dataset.detailKey || `idx-${i}`);
+    });
+  }
+  render();
+  if (sec) {
+    sec.querySelectorAll('details').forEach((d, i) => {
+      const key = d.dataset.detailKey || `idx-${i}`;
+      if (openIds.has(key)) d.open = true;
+    });
+  }
+}
+
 // ─── BOBF trade state ─────────────────────────────────────────────────────────
 let bobf = null;
 async function loadBobf() {
@@ -1536,9 +1557,11 @@ async function tick() {
   const prevTriggered = trade?.triggered;
   const prevStatus = trade?.status;
   await Promise.all([loadTrade(), loadDiagonal(), loadStraddle(), loadBobf()]);
-  renderDiagonal();
-  renderStraddle();
-  renderBobf();
+  // Wrap each render so the user's "show per-leg fills" <details> toggle
+  // doesn't reset every 30s tick.
+  preserveDetailsState('diagonalSection', renderDiagonal);
+  preserveDetailsState('straddleSection', renderStraddle);
+  preserveDetailsState('bobfSection',     renderBobf);
   const stateChanged = (trade?.triggered !== prevTriggered) || (trade?.status !== prevStatus);
   if (stateChanged) { render(); }
 
