@@ -568,9 +568,19 @@ function renderBobf() {
     } else if (doneState && doneState.startsWith('no-type')) {
       placeholderText = `No BOBF today — ${doneState.replace('no-type:','')}`;
       placeholderBadge = 'SKIP'; placeholderClass = 'skip';
+    } else if (doneState && doneState.startsWith('rsi')) {
+      placeholderText = `No BOBF today — RSI ${doneState.replace('rsi:','')}`;
+      placeholderBadge = 'SKIP'; placeholderClass = 'skip';
     } else if (doneState === 'window-passed') {
       placeholderText = `Window closed — no BOBF qualified today`;
       placeholderBadge = 'NO TRADE'; placeholderClass = 'skip';
+    } else if (doneState === 'expired') {
+      placeholderText = `Working order expired at 12:15 ET — premium never met max debit`;
+      placeholderBadge = 'NO FILL'; placeholderClass = 'skip';
+    } else if (doneState && doneState !== 'filled') {
+      // Defensive catch-all for any future done-state we forgot to map.
+      placeholderText = `No BOBF today — ${doneState}`;
+      placeholderBadge = 'SKIP'; placeholderClass = 'skip';
     } else {
       placeholderText = `BOBF entry window: ${windowET} ET. First minute filters pass → trade fires.`;
     }
