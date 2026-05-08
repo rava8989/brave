@@ -2187,6 +2187,18 @@ async function handleScheduled(env) {
     rsi14,
   });
 
+  // 5a. Persist the morning signal so /straddle-today and other endpoints
+  // can read EXACTLY what the morning cron computed (including the live
+  // quote-polled vixToday and the official quote-overridden vixYClose
+  // — those differ from the 9:30 candle data and matter for theme).
+  try {
+    await env.SIGNAL_KV.put(`morning_signal_data_${isoDateET(etNow)}`, JSON.stringify({
+      ...signal,
+      vixToday, vixYOpen, vixYClose, spxGapPct, prevWR, vixPct20d, rsi14,
+      computedAt: new Date().toISOString(),
+    }), { expirationTtl: 86400 });
+  } catch (_) { /* non-critical */ }
+
   // 5b. Open straddle if signal says so. Idempotent per day via straddle_open_trade
   // (only fire if no current trade for today). Errors here MUST NOT abort the
   // Discord post — straddle is a best-effort live-tracking layer on top.
@@ -4179,100 +4191,38 @@ export default {
         const skipRaw = await env.SIGNAL_KV.get(`straddle_skip_${todaySt}`);
         if (skipRaw) skip = JSON.parse(skipRaw);
 
-        // ── On-demand recovery ──────────────────────────────────────────────
-        // If skip is missing AND morning signal already sent AND no straddle
-        // for today AND we're past 9:30 ET, recompute the signal here so the
-        // live page can show the correct status. Covers cases where:
-        //   - Code was deployed AFTER today's morning cron ran
-        //   - Cloudflare cron scheduler stalled (recurring issue) and the
-        //     skip-write never landed
-        // Result is cached in KV so subsequent calls are cheap.
+        // ── On-demand recovery (uses ACTUAL morning signal data) ───────────
+        // The morning cron writes morning_signal_data_<date> with the signal
+        // it computed (including live-quote-polled vixToday and official
+        // vixYClose from quotes endpoint, which differ from candle data).
+        // Reading that gives us the EXACT signal the worker saw, not a
+        // recomputation that might disagree.
         const haveOpenToday = open && open.openDate === todaySt;
-        const past930 = etNowSt.getHours() > 9 || (etNowSt.getHours() === 9 && etNowSt.getMinutes() >= 30);
-        let _debugRecovery = { skip: !!skip, haveOpenToday, past930, isWeekend: isWeekendSt, isHoliday: isHolidaySt };
-        if (!skip && !haveOpenToday && past930 && !isWeekendSt && !isHolidaySt) {
-          const morningDone = await env.SIGNAL_KV.get(`morning_signal_${todaySt}`);
-          _debugRecovery.morningDone = morningDone;
-          if (morningDone === 'sent') {
-            try {
-              _debugRecovery.attempt = 'fetching';
-              const recoveryToken = await getAccessToken(env);
-              // Without explicit startDate/endDate, Schwab's pricehistory
-              // returns a window that may not include today's bars. Match
-              // the handleEOD pattern: 4 days back to now.
-              const _phEnd = Date.now();
-              const _phStart = _phEnd - 4 * 24 * 60 * 60 * 1000;
-              const [vH, sH] = await Promise.all([
-                fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24VIX&periodType=day&period=3&frequencyType=minute&frequency=1&startDate=${_phStart}&endDate=${_phEnd}&needExtendedHoursData=true`, recoveryToken, env),
-                fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24SPX&periodType=day&period=3&frequencyType=minute&frequency=1&startDate=${_phStart}&endDate=${_phEnd}&needExtendedHoursData=true`, recoveryToken, env),
-              ]);
-              const todayStr = etNowSt.toDateString();
-              const findFirstAt930 = (cs) => {
-                if (!cs) return null;
-                const sorted = cs.slice().sort((a,b) => a.datetime - b.datetime);
-                return sorted.find(c => {
-                  const d = toET(new Date(c.datetime));
-                  return d.toDateString() === todayStr && (d.getHours() > 9 || (d.getHours() === 9 && d.getMinutes() >= 30));
-                });
-              };
-              const findYesterdayClose = (cs) => {
-                if (!cs) return null;
-                const sorted = cs.slice().sort((a,b) => a.datetime - b.datetime);
-                const yesterday = sorted.filter(c => toET(new Date(c.datetime)).toDateString() !== todayStr);
-                return yesterday[yesterday.length - 1];
-              };
-              const findYesterdayOpenAt930 = (cs) => {
-                if (!cs) return null;
-                const sorted = cs.slice().sort((a,b) => a.datetime - b.datetime);
-                const yesterday = sorted.filter(c => toET(new Date(c.datetime)).toDateString() !== todayStr);
-                if (!yesterday.length) return null;
-                const yStr = toET(new Date(yesterday[yesterday.length - 1].datetime)).toDateString();
-                return yesterday.find(c => {
-                  const d = toET(new Date(c.datetime));
-                  return d.toDateString() === yStr && (d.getHours() > 9 || (d.getHours() === 9 && d.getMinutes() >= 30));
-                });
-              };
-              const vT = findFirstAt930(vH.candles)?.open;
-              const vYC = findYesterdayClose(vH.candles)?.close;
-              const vYO = findYesterdayOpenAt930(vH.candles)?.open;
-              const sT = findFirstAt930(sH.candles)?.open;
-              const sYC = findYesterdayClose(sH.candles)?.close;
-              _debugRecovery.todayStr = etNowSt.toDateString();
-              _debugRecovery.vCount = (vH.candles || []).length;
-              _debugRecovery.sCount = (sH.candles || []).length;
-              const _last3 = (vH.candles || []).slice(-3).map(c => ({
-                dt: c.datetime,
-                etDate: toET(new Date(c.datetime)).toDateString(),
-                etH: toET(new Date(c.datetime)).getHours(),
-                etM: toET(new Date(c.datetime)).getMinutes(),
-              }));
-              _debugRecovery.vLast3 = _last3;
-              _debugRecovery.prices = { vT, vYC, vYO, sT, sYC };
-              if (vT != null && vYC != null && vYO != null && sT != null && sYC != null) {
-                const gap = ((sT - sYC) / sYC) * 100;
-                const recoverySig = calculateSignal({
-                  vixToday: vT, vixYOpen: vYO, vixYClose: vYC,
-                  spxGapPct: gap, etDate: etNowSt,
-                });
-                _debugRecovery.theme = recoverySig.theme;
-                _debugRecovery.rec = recoverySig.rec;
-                if (recoverySig.theme === 'strad') {
-                  // Signal said straddle but no live trade exists → 9:32 cron
-                  // either failed inside openStraddleTrade or never ran. Mark
-                  // it as a "missed" so the live page clearly shows status.
-                  skip = {
-                    theme: 'strad-missed', rec: `${recoverySig.rec} — open failed or cron stalled`,
-                    recordedAt: new Date().toISOString(), source: 'on-demand-recovery-missed',
-                  };
-                  await env.SIGNAL_KV.put(`straddle_skip_${todaySt}`, JSON.stringify(skip), { expirationTtl: 86400 });
-                } else {
-                  skip = { theme: recoverySig.theme, rec: recoverySig.rec, recordedAt: new Date().toISOString(), source: 'on-demand-recovery' };
-                  await env.SIGNAL_KV.put(`straddle_skip_${todaySt}`, JSON.stringify(skip), { expirationTtl: 86400 });
-                }
+        if (!haveOpenToday) {
+          // Clear stale "strad-missed" skip from old recovery code that
+          // recomputed signal from candle data and got it wrong.
+          if (skip && skip.source === 'on-demand-recovery-missed') {
+            await env.SIGNAL_KV.delete(`straddle_skip_${todaySt}`);
+            skip = null;
+          }
+          if (!skip) {
+            const morningDataRaw = await env.SIGNAL_KV.get(`morning_signal_data_${todaySt}`);
+            if (morningDataRaw) {
+              const morningData = JSON.parse(morningDataRaw);
+              if (morningData.theme === 'strad') {
+                // Signal genuinely said straddle but no live trade exists
+                skip = { theme: 'strad-missed', rec: `${morningData.rec} — open failed`,
+                         recordedAt: new Date().toISOString(), source: 'morning-data' };
               } else {
-                _debugRecovery.error = 'missing-price-fields';
+                skip = { theme: morningData.theme, rec: morningData.rec,
+                         recordedAt: new Date().toISOString(), source: 'morning-data' };
               }
-            } catch (e) { _debugRecovery.error = e.message; console.warn('[strad] /straddle-today recovery failed:', e.message); }
+              await env.SIGNAL_KV.put(`straddle_skip_${todaySt}`, JSON.stringify(skip), { expirationTtl: 86400 });
+            }
+            // If morningData isn't present yet (today, since this code is
+            // newly deployed), leave skip as null. Live page will show
+            // generic 'WAITING SIGNAL' which is honest — we don't know
+            // what signal said.
           }
         }
 
