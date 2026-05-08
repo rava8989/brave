@@ -1120,17 +1120,23 @@ async function openStraddleTrade(env, token, etNow, signal, preChain = null) {
   if (!spot) throw new Error('Straddle open: no spot price in chain response');
 
   const requestedK = snap5(spot);
-  const callLeg = pickContractFromChain(callExpDateMap, expISO, requestedK);
-  const putLeg  = pickContractFromChain(putExpDateMap,  expISO, requestedK);
-  if (!callLeg || !putLeg) throw new Error(`Straddle open: missing leg @ ${requestedK} for ${expISO}`);
-  if (callLeg.mid == null || putLeg.mid == null) throw new Error('Straddle open: missing bid/ask');
-  // Reconcile: ATM straddle requires call & put at IDENTICAL strike. Fuzz
-  // fallback in pickContractFromChain could land them on different strikes.
-  // If that happens, prefer the strike that BOTH legs share — re-pick if needed.
-  if (callLeg.strike !== putLeg.strike) {
-    throw new Error(`Straddle open: leg-strike mismatch (call ${callLeg.strike}, put ${putLeg.strike}) — chain incomplete`);
+  // Find closest strike to spot that BOTH the call and put maps have, with
+  // valid bid/ask on both. Walk outward from the requested strike in $5 steps.
+  // Avoids the "fuzz lands call on 7355, put on 7350" mismatch that previously
+  // threw an error (observed today 2026-05-08 — straddle never auto-opened).
+  let strike = null, callLeg = null, putLeg = null;
+  for (const offset of [0, -5, 5, -10, 10, -15, 15, -20, 20]) {
+    const k = requestedK + offset;
+    const c = pickContractFromChain(callExpDateMap, expISO, k);
+    const p = pickContractFromChain(putExpDateMap,  expISO, k);
+    if (c && p && c.strike === k && p.strike === k && c.mid != null && p.mid != null) {
+      strike = k; callLeg = c; putLeg = p;
+      break;
+    }
   }
-  const strike = callLeg.strike;  // actual filled strike (post-fuzz)
+  if (!callLeg || !putLeg) {
+    throw new Error(`Straddle open: no common strike with both legs near ${requestedK} for ${expISO}`);
+  }
 
   const debit = callLeg.mid + putLeg.mid;
   const maxDebit = straddleMaxDebit(signal.badge || 'STRADDLE');
@@ -4019,6 +4025,70 @@ export default {
     // ── GET /diagonal-trigger ── Manually run handleDiagonalTrade NOW
     // Bypasses the normal 12:30 ET window so we can verify the open path
     // end-to-end without waiting for the cron. Auth-required.
+    // ── GET /straddle-trigger ── Manually open a straddle NOW.
+    // Useful when the 9:32 cron's openStraddleTrade threw and we need to
+    // surface the actual error or do a late open. Auth-required.
+    if (url.pathname === '/straddle-trigger' && request.method === 'GET') {
+      const secret = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
+      if (!secret || secret !== env.SYNC_SECRET) {
+        return jsonResp({ error: 'Unauthorized' }, 401, { 'Access-Control-Allow-Origin': '*' });
+      }
+      try {
+        const etNowDT = toET(new Date());
+        const todayDT = isoDateET(etNowDT);
+        const tokenDT = await getAccessToken(env);
+
+        // Recompute signal so we know the badge (NM/EOM/plain) for max debit
+        const _phEnd = Date.now();
+        const _phStart = _phEnd - 4 * 24 * 60 * 60 * 1000;
+        const [vH, sH] = await Promise.all([
+          fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24VIX&periodType=day&period=3&frequencyType=minute&frequency=1&startDate=${_phStart}&endDate=${_phEnd}&needExtendedHoursData=true`, tokenDT, env),
+          fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24SPX&periodType=day&period=3&frequencyType=minute&frequency=1&startDate=${_phStart}&endDate=${_phEnd}&needExtendedHoursData=true`, tokenDT, env),
+        ]);
+        const todayStr = etNowDT.toDateString();
+        const findFirstAt930 = (cs) => (cs || []).slice().sort((a,b) => a.datetime - b.datetime).find(c => {
+          const d = toET(new Date(c.datetime));
+          return d.toDateString() === todayStr && (d.getHours() > 9 || (d.getHours() === 9 && d.getMinutes() >= 30));
+        });
+        const findYesterdayClose = (cs) => {
+          const sorted = (cs || []).slice().sort((a,b) => a.datetime - b.datetime);
+          const yesterday = sorted.filter(c => toET(new Date(c.datetime)).toDateString() !== todayStr);
+          return yesterday[yesterday.length - 1];
+        };
+        const findYesterdayOpenAt930 = (cs) => {
+          const sorted = (cs || []).slice().sort((a,b) => a.datetime - b.datetime);
+          const yesterday = sorted.filter(c => toET(new Date(c.datetime)).toDateString() !== todayStr);
+          if (!yesterday.length) return null;
+          const yStr = toET(new Date(yesterday[yesterday.length - 1].datetime)).toDateString();
+          return yesterday.find(c => {
+            const d = toET(new Date(c.datetime));
+            return d.toDateString() === yStr && (d.getHours() > 9 || (d.getHours() === 9 && d.getMinutes() >= 30));
+          });
+        };
+        const vT = findFirstAt930(vH.candles)?.open;
+        const vYC = findYesterdayClose(vH.candles)?.close;
+        const vYO = findYesterdayOpenAt930(vH.candles)?.open;
+        const sT = findFirstAt930(sH.candles)?.open;
+        const sYC = findYesterdayClose(sH.candles)?.close;
+        const gap = (sT != null && sYC != null) ? ((sT - sYC) / sYC) * 100 : 0;
+        const sig = calculateSignal({
+          vixToday: vT, vixYOpen: vYO, vixYClose: vYC,
+          spxGapPct: gap, etDate: etNowDT,
+        });
+        if (sig.theme !== 'strad') {
+          return jsonResp({ ok: false, reason: 'signal-not-strad', theme: sig.theme, rec: sig.rec }, 200, { 'Access-Control-Allow-Origin': '*' });
+        }
+        // Try to open. Surfaces the actual error from openStraddleTrade.
+        const trade = await openStraddleTrade(env, tokenDT, etNowDT, sig);
+        await env.SIGNAL_KV.put('straddle_open_trade', JSON.stringify(trade));
+        // Clear the skip — we have a real trade now
+        await env.SIGNAL_KV.delete(`straddle_skip_${todayDT}`);
+        return jsonResp({ ok: true, trade, signal: sig }, 200, { 'Access-Control-Allow-Origin': '*' });
+      } catch (e) {
+        return jsonResp({ ok: false, error: e.message, stack: e.stack }, 500, { 'Access-Control-Allow-Origin': '*' });
+      }
+    }
+
     if (url.pathname === '/diagonal-trigger' && request.method === 'GET') {
       const secret = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
       if (!secret || secret !== env.SYNC_SECRET) {
