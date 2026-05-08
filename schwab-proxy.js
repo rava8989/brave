@@ -550,6 +550,10 @@ async function handleEOD(env, etNow) {
       const stradResult = await settleStraddleEOD(env, etNow, spxClose);
       console.log('[strad] EOD settle:', JSON.stringify(stradResult));
     } catch (e) { console.warn('[strad] EOD settle failed:', e.message); }
+    try {
+      const bobfResult = await settleBobfEOD(env, etNow, spxClose);
+      console.log('[bobf] EOD settle:', JSON.stringify(bobfResult));
+    } catch (e) { console.warn('[bobf] EOD settle failed:', e.message); }
   }
 
   // Append today's signals to TRADES database in backtester.html (reuse cached fullSigs)
@@ -1199,6 +1203,363 @@ async function settleStraddleEOD(env, etNow, spxClose) {
   return { status: 'settled', pnl, strike: trade.strike, debit: trade.entryDebit, closeValue: closeIntrinsic };
 }
 
+// ════════════════════════════════════════════════════════════════════
+// BOBF TRADE HANDLER (live)
+// 3 types of broken-wing call butterfly, all 0DTE on SPX:
+//   FRIDAY (Fri only)     — body offset +15, wings ±30 from body
+//   VIX_UP  (Mon–Thu)     — body offset +25, wings ±30
+//   VIX_DOWN (Mon–Thu)    — body offset +25, wings ±30
+// All three: SHORT 2 body calls, LONG 1 lower-wing call, LONG 1 upper-wing.
+//
+// Window: 10:29 ET – 12:15 ET. First qualifying minute opens the trade.
+// Mutual exclusion via bobf_done_<date> KV key — max 1 BOBF per day.
+//
+// Entry filters (all must pass at signal time):
+//   - Calendar blackout (mirrors signal-engine bobfBlocks): CPI / NM-Mon /
+//     VIX-exp / OPEX / OPEX-1 / EOM-1 / EOM-2 / earnings / VIX > 23
+//   - SPX > 5-day SMA (last 5 daily closes)
+//   - SPX move from open ≥ type-specific threshold
+//   - RSI(14) on daily close ∈ type-specific band
+//   - For VIX_UP / VIX_DOWN: overnight VIX moved in the right direction
+//     by ≥ 0.01 points
+//
+// Friday max premium $12 → leave working limit if mid > 12, cancel at 12:15.
+// VIX_UP / VIX_DOWN have no premium cap — fill at first qualifying minute.
+// Held to expiration (4:00 PM cash close). PnL settled from intrinsic at
+// SPX close: lower_intrinsic − 2*body_intrinsic + upper_intrinsic − debit.
+// ════════════════════════════════════════════════════════════════════
+
+const BOBF_BODY_OFFSET_FRIDAY = 15;
+const BOBF_BODY_OFFSET_VIX    = 25;
+const BOBF_WING_OFFSET        = 30;
+const BOBF_FRIDAY_MAX_PREMIUM = 12.00;
+const BOBF_VIX_O_N_THRESHOLD  = 0.01;
+const BOBF_FRIDAY_MOVE_MIN    = 0.001;   // 0.1%
+const BOBF_VIX_UP_MOVE_MIN    = 0.002;   // 0.2%
+const BOBF_VIX_DOWN_MOVE_MIN  = 0.002;   // 0.2%
+const BOBF_VIX_DOWN_MOVE_MAX  = 0.007;   // 0.7%
+const BOBF_FRIDAY_RSI_MIN     = 40;
+const BOBF_FRIDAY_RSI_MAX     = 65;
+const BOBF_VIX_DOWN_RSI_MAX   = 70;
+const BOBF_VIX_MAX            = 23;
+
+function bobfInWindow(etNow) {
+  const h = etNow.getHours(), m = etNow.getMinutes();
+  if (h === 10 && m >= 29) return true;
+  if (h === 11) return true;
+  if (h === 12 && m < 15) return true;
+  return false;
+}
+
+function bobfPastWindow(etNow) {
+  const h = etNow.getHours(), m = etNow.getMinutes();
+  return (h === 12 && m >= 15) || h > 12;
+}
+
+// Standard Wilder RSI(14) on daily closes. Returns null if insufficient data.
+function computeRSI14(closes) {
+  if (closes.length < 15) return null;
+  let gain = 0, loss = 0;
+  for (let i = 1; i <= 14; i++) {
+    const diff = closes[i] - closes[i-1];
+    if (diff > 0) gain += diff; else loss -= diff;
+  }
+  let avgGain = gain / 14, avgLoss = loss / 14;
+  for (let i = 15; i < closes.length; i++) {
+    const diff = closes[i] - closes[i-1];
+    avgGain = (avgGain * 13 + Math.max(diff, 0)) / 14;
+    avgLoss = (avgLoss * 13 + Math.max(-diff, 0)) / 14;
+  }
+  if (avgLoss === 0) return 100;
+  const rs = avgGain / avgLoss;
+  return 100 - 100 / (1 + rs);
+}
+
+function computeSMA5(closes) {
+  if (closes.length < 5) return null;
+  const last5 = closes.slice(-5);
+  return last5.reduce((a,b) => a + b, 0) / 5;
+}
+
+// Pick the BOBF type for today, or null if none qualifies.
+function determineBobfType(etNow, vixToday, vixYClose) {
+  const dow = etNow.getDay();
+  if (dow === 5) return { type: 'friday', label: 'Friday RSI BOBF', bodyOffset: BOBF_BODY_OFFSET_FRIDAY };
+  if (dow >= 1 && dow <= 4) {
+    if (vixToday == null || vixYClose == null) return { type: null, reason: 'VIX data missing' };
+    const diff = vixToday - vixYClose;
+    if (diff >=  BOBF_VIX_O_N_THRESHOLD) return { type: 'vix_up',   label: 'BOBF VIX up',   bodyOffset: BOBF_BODY_OFFSET_VIX };
+    if (diff <= -BOBF_VIX_O_N_THRESHOLD) return { type: 'vix_down', label: 'BOBF VIX down', bodyOffset: BOBF_BODY_OFFSET_VIX };
+    return { type: null, reason: 'flat overnight VIX (Δ<0.01)' };
+  }
+  return { type: null, reason: 'weekend' };
+}
+
+// Live entry-filter evaluation. Returns { ready: bool, reason: string }.
+function bobfEntryReady(typeInfo, spotNow, spxOpen, sma5, rsi14) {
+  if (sma5 == null || rsi14 == null) return { ready: false, reason: 'history insufficient (need 15+ days)' };
+  if (spotNow <= sma5) return { ready: false, reason: `SPX ${spotNow.toFixed(2)} ≤ 5d SMA ${sma5.toFixed(2)}` };
+  const moveUp = (spotNow - spxOpen) / spxOpen;
+  if (typeInfo.type === 'friday') {
+    if (moveUp < BOBF_FRIDAY_MOVE_MIN)  return { ready: false, reason: `move-up ${(moveUp*100).toFixed(2)}% < 0.10%` };
+    if (rsi14 < BOBF_FRIDAY_RSI_MIN || rsi14 > BOBF_FRIDAY_RSI_MAX) return { ready: false, reason: `RSI ${rsi14.toFixed(1)} outside [40,65]` };
+  } else if (typeInfo.type === 'vix_up') {
+    if (moveUp < BOBF_VIX_UP_MOVE_MIN)  return { ready: false, reason: `move-up ${(moveUp*100).toFixed(2)}% < 0.20%` };
+  } else if (typeInfo.type === 'vix_down') {
+    if (moveUp < BOBF_VIX_DOWN_MOVE_MIN) return { ready: false, reason: `move-up ${(moveUp*100).toFixed(2)}% < 0.20%` };
+    if (moveUp > BOBF_VIX_DOWN_MOVE_MAX) return { ready: false, reason: `move-up ${(moveUp*100).toFixed(2)}% > 0.70%` };
+    if (rsi14 > BOBF_VIX_DOWN_RSI_MAX)   return { ready: false, reason: `RSI ${rsi14.toFixed(1)} > 70` };
+  }
+  return { ready: true, moveUp };
+}
+
+// Main entry flow — called from every cron tick during the window.
+// Idempotent via bobf_done_<date>: exits early once trade fires or window expires.
+async function handleBobfEntry(env, etNow) {
+  const todayISO = isoDateET(etNow);
+  const out = { date: todayISO, status: null };
+
+  const doneKey = `bobf_done_${todayISO}`;
+  const done = await env.SIGNAL_KV.get(doneKey);
+  if (done) return { ...out, status: 'already-done', why: done };
+
+  // Past window → mark done permanently (no fire, no trade)
+  if (bobfPastWindow(etNow)) {
+    await env.SIGNAL_KV.put(doneKey, 'window-passed', { expirationTtl: 86400 });
+    return { ...out, status: 'window-passed' };
+  }
+  if (!bobfInWindow(etNow)) return { ...out, status: 'pre-window' };
+
+  // Pull history for today's vixOpen/spxOpen + last N daily closes for RSI/SMA
+  let histData;
+  try {
+    const histResp = await fetch(`https://raw.githubusercontent.com/rava8989/brave/main/history_data.json?t=${Date.now()}`,
+      { headers: { 'User-Agent': 'schwab-proxy' } });
+    if (!histResp.ok) return { ...out, status: 'error', error: `history fetch ${histResp.status}` };
+    histData = await histResp.json();
+  } catch (e) { return { ...out, status: 'error', error: 'history fetch: ' + e.message }; }
+
+  const todayRow = histData.find(r => r.date === todayISO);
+  const vixToday = todayRow?.vixOpen != null ? parseFloat(todayRow.vixOpen) : null;
+  const spxOpen  = todayRow?.spxOpen != null ? parseFloat(todayRow.spxOpen) : null;
+
+  // Sorted prior trading days with both spxClose + vixClose
+  const sortedPrior = histData
+    .filter(r => r.date < todayISO && r.spxClose != null)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  if (sortedPrior.length === 0) return { ...out, status: 'error', error: 'no prior history' };
+
+  const yClose = sortedPrior[sortedPrior.length - 1];
+  const vixYClose = yClose.vixClose != null ? parseFloat(yClose.vixClose) : null;
+  const closes30 = sortedPrior.slice(-30).map(r => parseFloat(r.spxClose));
+  const sma5  = computeSMA5(closes30);
+  const rsi14 = computeRSI14(closes30);
+
+  // Determine type
+  const typeInfo = determineBobfType(etNow, vixToday, vixYClose);
+  if (!typeInfo.type) {
+    await env.SIGNAL_KV.put(doneKey, 'no-type:' + typeInfo.reason, { expirationTtl: 86400 });
+    return { ...out, status: 'no-type', reason: typeInfo.reason };
+  }
+
+  // Calendar blackouts (mirrors signal-engine bobfBlocks)
+  const cpiDay   = cpiSch.includes(todayLong(etNow));
+  const nmDay    = isFirstTradeMo(etNow);
+  const nmMon    = isFirstTradeMon(etNow);
+  const vixExpDay = vixSch.includes(todayLong(etNow));
+  const opexDay  = opexSch.includes(todayLong(etNow));
+  const opex1    = opexSch.some(ds => isTodayBefore(ds, etNow));
+  const eom1     = isEomN(1, etNow);
+  const eom2     = isEomN(2, etNow);
+  const earnDay  = isEarningsDay(etNow);
+  const blackouts = [];
+  if (cpiDay) blackouts.push('CPI');
+  if (nmMon) blackouts.push('NM Mon');
+  if (vixExpDay) blackouts.push('VIX exp');
+  if (opexDay) blackouts.push('OPEX');
+  if (opex1) blackouts.push('OPEX-1');
+  if (eom2) blackouts.push('EOM-2');
+  if (eom1) blackouts.push('EOM-1');
+  if (earnDay) blackouts.push('earnings');
+  if (vixToday != null && vixToday > BOBF_VIX_MAX) blackouts.push(`VIX ${vixToday}>${BOBF_VIX_MAX}`);
+  if (blackouts.length) {
+    await env.SIGNAL_KV.put(doneKey, 'blackout:' + blackouts.join(','), { expirationTtl: 86400 });
+    return { ...out, status: 'blackout', reason: blackouts.join(', '), type: typeInfo.type };
+  }
+
+  // Fetch chain → also gives us live SPX spot for move-up calculation
+  let token, spot, callExpDateMap;
+  try {
+    token = await getAccessToken(env);
+    const chain = await fetchSpxFullChain(token, todayISO, env);
+    spot = chain.spot; callExpDateMap = chain.callExpDateMap;
+  } catch (e) { return { ...out, status: 'error', error: 'chain fetch: ' + e.message }; }
+  if (!spot) return { ...out, status: 'error', error: 'no SPX spot' };
+
+  if (spxOpen == null) return { ...out, status: 'error', error: 'no spxOpen — wait for morning EOD write' };
+
+  // Entry-filter check
+  const ready = bobfEntryReady(typeInfo, spot, spxOpen, sma5, rsi14);
+  if (!ready.ready) return { ...out, status: 'waiting', reason: ready.reason, type: typeInfo.type, sma5, rsi14, spotNow: spot, spxOpen };
+
+  // Compute strikes
+  const kBody  = snap5(spot + typeInfo.bodyOffset);
+  const kLower = kBody - BOBF_WING_OFFSET;
+  const kUpper = kBody + BOBF_WING_OFFSET;
+
+  const lowerLeg = pickContractFromChain(callExpDateMap, todayISO, kLower);
+  const bodyLeg  = pickContractFromChain(callExpDateMap, todayISO, kBody);
+  const upperLeg = pickContractFromChain(callExpDateMap, todayISO, kUpper);
+  if (!lowerLeg || !bodyLeg || !upperLeg) return { ...out, status: 'error', error: `missing leg in chain (${kLower}/${kBody}/${kUpper})` };
+  if (lowerLeg.mid == null || bodyLeg.mid == null || upperLeg.mid == null) return { ...out, status: 'error', error: 'missing bid/ask on a leg' };
+
+  const debit = lowerLeg.mid - 2 * bodyLeg.mid + upperLeg.mid;
+
+  // Friday max-premium logic (working order pattern). VIX_UP / VIX_DOWN: no cap.
+  let status, fillDebit = null, fillTimeET = null, maxDebit = null;
+  if (typeInfo.type === 'friday') {
+    maxDebit = BOBF_FRIDAY_MAX_PREMIUM;
+    if (debit <= BOBF_FRIDAY_MAX_PREMIUM) {
+      status = 'filled';
+      fillDebit = debit;
+      fillTimeET = `${String(etNow.getHours()).padStart(2,'0')}:${String(etNow.getMinutes()).padStart(2,'0')}`;
+    } else {
+      status = 'working';
+    }
+  } else {
+    status = 'filled';
+    fillDebit = debit;
+    fillTimeET = `${String(etNow.getHours()).padStart(2,'0')}:${String(etNow.getMinutes()).padStart(2,'0')}`;
+  }
+
+  const trade = {
+    openDate: todayISO,
+    openTimeET: `${String(etNow.getHours()).padStart(2,'0')}:${String(etNow.getMinutes()).padStart(2,'0')}`,
+    type: typeInfo.type,
+    label: typeInfo.label,
+    spotEntry: parseFloat(spot.toFixed(2)),
+    spxOpen: parseFloat(spxOpen.toFixed(2)),
+    moveUpPct: parseFloat((ready.moveUp * 100).toFixed(3)),
+    sma5: parseFloat(sma5.toFixed(2)),
+    rsi14: parseFloat(rsi14.toFixed(2)),
+    vixToday, vixYClose,
+    bodyStrike: kBody, lowerStrike: kLower, upperStrike: kUpper,
+    expDate: todayISO,
+    bodySymbol: bodyLeg.symbol, lowerSymbol: lowerLeg.symbol, upperSymbol: upperLeg.symbol,
+    entryLowerMid: parseFloat(lowerLeg.mid.toFixed(2)),
+    entryBodyMid:  parseFloat(bodyLeg.mid.toFixed(2)),
+    entryUpperMid: parseFloat(upperLeg.mid.toFixed(2)),
+    entryDebit:    parseFloat(debit.toFixed(2)),
+    maxDebit,
+    contracts: 1,
+    // Live fields
+    currentSpot: parseFloat(spot.toFixed(2)),
+    currentLowerMid: parseFloat(lowerLeg.mid.toFixed(2)),
+    currentBodyMid:  parseFloat(bodyLeg.mid.toFixed(2)),
+    currentUpperMid: parseFloat(upperLeg.mid.toFixed(2)),
+    currentValue:    parseFloat(debit.toFixed(2)),
+    currentPnl: 0,
+    lastQuoteAt: new Date().toISOString(),
+    status, fillDebit, fillTimeET,
+    workingExpiry: `${todayISO} 12:15 ET`,
+  };
+
+  await env.SIGNAL_KV.put('bobf_open_trade', JSON.stringify(trade));
+  if (status === 'filled') {
+    await env.SIGNAL_KV.put(doneKey, 'filled', { expirationTtl: 86400 });
+  }
+  // working orders: leave doneKey unset so subsequent ticks can flip working→filled
+
+  console.log(`[bobf] opened ${status} type=${typeInfo.type} body=${kBody} debit=${debit.toFixed(2)} maxDebit=${maxDebit ?? '-'}`);
+  return { ...out, status: 'opened', type: typeInfo.type, trade: { strikes: [kLower, kBody, kUpper], debit, status } };
+}
+
+// Refresh live mids on the open BOBF trade. Handles working→filled transition
+// + working→expired at 12:15 ET.
+async function refreshBobfLiveQuotes(env, token, etNow) {
+  const raw = await env.SIGNAL_KV.get('bobf_open_trade');
+  if (!raw) return null;
+  const trade = JSON.parse(raw);
+  if (trade.status === 'closed' || trade.status === 'expired') return trade;
+
+  // Working order past 12:15 ET → expire
+  if (trade.status === 'working' && bobfPastWindow(etNow)) {
+    trade.status = 'expired';
+    trade.expiredAt = new Date().toISOString();
+    await env.SIGNAL_KV.put('bobf_open_trade', JSON.stringify(trade));
+    await env.SIGNAL_KV.put(`bobf_done_${isoDateET(etNow)}`, 'expired', { expirationTtl: 86400 });
+    return trade;
+  }
+
+  try {
+    const { spot, callExpDateMap } = await fetchSpxFullChain(token, trade.expDate, env);
+    const lower = pickContractFromChain(callExpDateMap, trade.expDate, trade.lowerStrike);
+    const body  = pickContractFromChain(callExpDateMap, trade.expDate, trade.bodyStrike);
+    const upper = pickContractFromChain(callExpDateMap, trade.expDate, trade.upperStrike);
+    if (!lower || !body || !upper || lower.mid == null || body.mid == null || upper.mid == null) return trade;
+
+    const newDebit = lower.mid - 2 * body.mid + upper.mid;
+    trade.currentSpot     = spot ? parseFloat(spot.toFixed(2)) : trade.currentSpot;
+    trade.currentLowerMid = parseFloat(lower.mid.toFixed(2));
+    trade.currentBodyMid  = parseFloat(body.mid.toFixed(2));
+    trade.currentUpperMid = parseFloat(upper.mid.toFixed(2));
+    trade.currentValue    = parseFloat(newDebit.toFixed(2));
+
+    // Working → filled if mid drops to ≤ max debit
+    if (trade.status === 'working' && newDebit <= trade.maxDebit) {
+      trade.status = 'filled';
+      trade.fillDebit = parseFloat(newDebit.toFixed(2));
+      trade.fillTimeET = `${String(etNow.getHours()).padStart(2,'0')}:${String(etNow.getMinutes()).padStart(2,'0')}`;
+      // Re-snapshot leg fills at the actual fill time
+      trade.entryLowerMid = parseFloat(lower.mid.toFixed(2));
+      trade.entryBodyMid  = parseFloat(body.mid.toFixed(2));
+      trade.entryUpperMid = parseFloat(upper.mid.toFixed(2));
+      trade.entryDebit    = parseFloat(newDebit.toFixed(2));
+      await env.SIGNAL_KV.put(`bobf_done_${isoDateET(etNow)}`, 'filled', { expirationTtl: 86400 });
+    }
+
+    if (trade.status === 'filled') {
+      trade.currentPnl = Math.round((trade.currentValue - trade.entryDebit) * 100 * trade.contracts);
+    }
+    trade.lastQuoteAt = new Date().toISOString();
+    await env.SIGNAL_KV.put('bobf_open_trade', JSON.stringify(trade));
+  } catch (e) { console.warn('[bobf] refresh failed:', e.message); }
+  return trade;
+}
+
+// Settle BOBF at SPX close. PnL from intrinsic of the call butterfly:
+//   pnl = (lower_intrinsic − 2*body_intrinsic + upper_intrinsic − debit) × 100
+async function settleBobfEOD(env, etNow, spxClose) {
+  const raw = await env.SIGNAL_KV.get('bobf_open_trade');
+  if (!raw) return { status: 'no-trade' };
+  const trade = JSON.parse(raw);
+  if (trade.openDate !== isoDateET(etNow)) return { status: 'wrong-date', openDate: trade.openDate };
+  if (trade.status === 'closed') return { status: 'already-closed' };
+  if (trade.status === 'expired') return { status: 'expired-no-trade' };
+  if (trade.status !== 'filled') return { status: trade.status };
+
+  const lowerI = Math.max(spxClose - trade.lowerStrike, 0);
+  const bodyI  = Math.max(spxClose - trade.bodyStrike,  0);
+  const upperI = Math.max(spxClose - trade.upperStrike, 0);
+  const intrinsic = lowerI - 2 * bodyI + upperI;
+  const pnl = Math.round((intrinsic - trade.entryDebit) * 100 * trade.contracts);
+
+  trade.status = 'closed';
+  trade.closeDate = isoDateET(etNow);
+  trade.spxClose = parseFloat(spxClose.toFixed(2));
+  trade.closeIntrinsic = parseFloat(intrinsic.toFixed(2));
+  trade.pnl = pnl;
+  await env.SIGNAL_KV.put('bobf_open_trade', JSON.stringify(trade));
+
+  const logRaw = await env.SIGNAL_KV.get('bobf_closed_log');
+  const log = logRaw ? JSON.parse(logRaw) : [];
+  log.unshift(trade);
+  await env.SIGNAL_KV.put('bobf_closed_log', JSON.stringify(log.slice(0, 30)));
+
+  await upsertHistoryGitHub(env, trade.openDate, { bobfPL: pnl });
+  return { status: 'settled', pnl, type: trade.type, strikes: [trade.lowerStrike, trade.bodyStrike, trade.upperStrike], debit: trade.entryDebit, intrinsic };
+}
+
 async function handleScheduled(env) {
   const etNow = toET();
   const dow = etNow.getDay();
@@ -1292,15 +1653,23 @@ async function handleScheduled(env) {
     }
   }
 
-  // ── Refresh live quotes on the open diagonal AND straddle every market tick ──
+  // ── Refresh live quotes on the open diagonal, straddle, AND BOBF every market tick ──
   if (isMarket) {
     try {
       const schwabToken = await getAccessToken(env);
       await refreshDiagonalLiveQuotes(env, schwabToken);
       await refreshStraddleLiveQuotes(env, schwabToken, etNow);
+      await refreshBobfLiveQuotes(env, schwabToken, etNow);
     } catch (e) {
       console.warn('[live] refresh failed:', e.message);
     }
+  }
+
+  // ── BOBF entry: check every market tick during 10:29-12:15 ET window ──
+  let bobfResult = {};
+  if (isMarket) {
+    try { bobfResult = await handleBobfEntry(env, etNow); }
+    catch (e) { bobfResult = { bobf: 'error', error: e.message }; console.warn('[bobf] entry failed:', e.message); }
   }
 
   // ── Morning signal: retries every cron tick until sent ──
@@ -3387,6 +3756,47 @@ export default {
     // The cron refreshes mids every 2 min so this endpoint just reads KV
     // (zero Schwab API cost). On stale data the live page can show an age
     // indicator using `lastQuoteAt`.
+    // ── GET /bobf-today ── Public live BOBF state (no auth)
+    // Returns the currently-open/working/expired/closed BOBF trade.
+    if (url.pathname === '/bobf-today' && request.method === 'GET') {
+      const publicCors = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Max-Age': '86400',
+      };
+      try {
+        const etNowB = toET(new Date());
+        const todayB = isoDateET(etNowB);
+        const isWeekendB = etNowB.getDay() === 0 || etNowB.getDay() === 6;
+        const isHolidayB = isHol(etNowB);
+
+        const openRaw = await env.SIGNAL_KV.get('bobf_open_trade');
+        const open = openRaw ? JSON.parse(openRaw) : null;
+
+        const logRaw = await env.SIGNAL_KV.get('bobf_closed_log');
+        const closedLog = logRaw ? JSON.parse(logRaw) : [];
+        const lastClosed = closedLog[0] || null;
+
+        const doneKey = `bobf_done_${todayB}`;
+        const doneState = await env.SIGNAL_KV.get(doneKey);
+
+        return jsonResp({
+          date: todayB,
+          isWeekend: isWeekendB,
+          isHoliday: isHolidayB,
+          open,
+          lastClosed,
+          doneState,
+          serverTimeET: `${String(etNowB.getHours()).padStart(2,'0')}:${String(etNowB.getMinutes()).padStart(2,'0')}`,
+          windowET: '10:29 - 12:15',
+          maxPremiumFriday: BOBF_FRIDAY_MAX_PREMIUM,
+        }, 200, publicCors);
+      } catch (e) {
+        return jsonResp({ error: e.message }, 500, publicCors);
+      }
+    }
+
     // ── GET /straddle-today ── Public live straddle state (no auth)
     // Returns the currently-open/working/expired/closed straddle trade plus
     // the most recent closed straddle. Live mids refreshed by the cron, so

@@ -184,6 +184,10 @@
 </div>
 
 <!-- Diagonal trade section (always visible — opens at 12:30 ET, closes next day 12:30 ET) -->
+<div class="main" id="bobfSection" style="display:none;">
+  <!-- Dynamically rendered by renderBobf() -->
+</div>
+
 <div class="main" id="straddleSection" style="display:none;">
   <!-- Dynamically rendered by renderStraddle() -->
 </div>
@@ -499,6 +503,158 @@ function updateSPXChartTheme() {
   spxChart.options.scales.y.ticks.color = c.text;
   spxChart.options.scales.y.grid.color = c.grid;
   spxChart.update();
+}
+
+// ─── BOBF trade state ─────────────────────────────────────────────────────────
+let bobf = null;
+async function loadBobf() {
+  try {
+    const r = await fetchWithRetry(PROXY + '/bobf-today', { cache: 'no-store' });
+    if (r.ok) bobf = await r.json();
+  } catch { /* keep last known */ }
+}
+
+function renderBobf() {
+  const sec = document.getElementById('bobfSection');
+  if (!bobf) { sec.style.display = 'none'; return; }
+  const { open, lastClosed, doneState, date, isWeekend, isHoliday, serverTimeET, windowET, maxPremiumFriday } = bobf;
+
+  if (isWeekend || isHoliday) {
+    if (!lastClosed || lastClosed.closeDate !== date) { sec.style.display = 'none'; return; }
+  }
+
+  // Pre-window or no trade yet — show waiting placeholder
+  if (!open && !(lastClosed && lastClosed.closeDate === date)) {
+    sec.style.display = '';
+    let placeholderText, placeholderBadge = 'WAITING SIGNAL', placeholderClass = 'pending';
+    if (doneState && doneState.startsWith('blackout')) {
+      placeholderText = `No BOBF today — blackout (${doneState.replace('blackout:','')})`;
+      placeholderBadge = 'SKIP'; placeholderClass = 'skip';
+    } else if (doneState && doneState.startsWith('no-type')) {
+      placeholderText = `No BOBF today — ${doneState.replace('no-type:','')}`;
+      placeholderBadge = 'SKIP'; placeholderClass = 'skip';
+    } else if (doneState === 'window-passed') {
+      placeholderText = `Window closed — no BOBF qualified today`;
+      placeholderBadge = 'NO TRADE'; placeholderClass = 'skip';
+    } else {
+      placeholderText = `BOBF entry window: ${windowET} ET. First minute filters pass → trade fires.`;
+    }
+    sec.innerHTML = `
+      <div class="diag-card">
+        <div class="diag-header">
+          <div class="diag-title"><span>BOBF</span> · ${windowET} ET</div>
+          <span class="diag-badge ${placeholderClass}">${placeholderBadge}</span>
+          <div style="flex:1"></div>
+          <span style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;">${serverTimeET} ET</span>
+        </div>
+        <div style="font-size:13px;color:var(--text2);padding:6px 0;">${placeholderText}</div>
+      </div>`;
+    return;
+  }
+
+  sec.style.display = '';
+  const t = open || lastClosed;
+  if (!t) { sec.style.display = 'none'; return; }
+
+  let badge, badgeClass, statusText;
+  switch (t.status) {
+    case 'filled':
+      badge = 'FILLED · LIVE'; badgeClass = 'open';
+      statusText = `${t.label} · filled at $${t.fillDebit?.toFixed(2)} · ${t.fillTimeET} ET${t.maxDebit ? ' (max $'+t.maxDebit.toFixed(2)+')' : ''}`;
+      break;
+    case 'working':
+      badge = 'WORKING'; badgeClass = 'pending';
+      statusText = `${t.label} · working limit @ $${t.maxDebit?.toFixed(2)} · current $${t.currentValue?.toFixed(2)} · cancels 12:15 ET`;
+      break;
+    case 'expired':
+      badge = 'NO FILL'; badgeClass = 'skip';
+      statusText = `${t.label} · order expired 12:15 ET — premium never met max $${t.maxDebit?.toFixed(2)}`;
+      break;
+    case 'closed':
+      badge = 'CLOSED'; badgeClass = t.pnl >= 0 ? 'open' : 'error';
+      statusText = `${t.label} · settled SPX ${t.spxClose?.toFixed(2)} · final P&L ${fmt$(t.pnl)}`;
+      break;
+    default:
+      badge = (t.status || 'OPEN').toUpperCase(); badgeClass = 'pending';
+      statusText = `${t.label || 'BOBF'} · status ${t.status}`;
+  }
+
+  const debitDelta = (t.currentValue != null && t.entryDebit != null) ? (t.currentValue - t.entryDebit) : null;
+  const deltaClass = (debitDelta == null) ? '' : debitDelta > 0 ? 'diag-pl-pos' : debitDelta < 0 ? 'diag-pl-neg' : '';
+  const livePnl = t.status === 'filled' ? t.currentPnl : t.status === 'closed' ? t.pnl : null;
+  const plClass = livePnl == null ? '' : livePnl > 0 ? 'diag-pl-pos' : livePnl < 0 ? 'diag-pl-neg' : '';
+
+  const fmtExp = iso => {
+    if (!iso) return '—';
+    const d = new Date(iso + 'T12:00:00');
+    return d.toLocaleString('en-US',{month:'short',day:'numeric'});
+  };
+
+  const html = [];
+  html.push(`<div class="diag-card">`);
+  html.push(`<div class="diag-header">`);
+  html.push(`<div class="diag-title"><span>${t.label || 'BOBF'}</span> · ${t.openTimeET || windowET} ET</div>`);
+  html.push(`<span class="diag-badge ${badgeClass}">${badge}</span>`);
+  html.push(`<div style="flex:1"></div>`);
+  if (t.rsi14 != null && t.sma5 != null) {
+    html.push(`<span style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;">RSI ${t.rsi14.toFixed(1)} · SMA5 ${t.sma5.toFixed(0)} · move +${t.moveUpPct?.toFixed(2)}%</span>`);
+  }
+  html.push(`</div>`);
+
+  if (t.entryDebit != null) {
+    html.push(`<div class="diag-grid">`);
+    if (livePnl != null) {
+      html.push(`<div class="diag-stat"><div class="diag-stat-label">${t.status === 'closed' ? 'Final' : 'Live'} P&L</div><div class="diag-stat-value ${plClass}">${fmt$(livePnl)}</div><div class="diag-stat-sub">${t.contracts} contract</div></div>`);
+    } else {
+      html.push(`<div class="diag-stat"><div class="diag-stat-label">P&L</div><div class="diag-stat-value">—</div><div class="diag-stat-sub">${t.status === 'working' ? 'pending fill' : ''}</div></div>`);
+    }
+    html.push(`<div class="diag-stat"><div class="diag-stat-label">SPX</div><div class="diag-stat-value">${t.currentSpot?.toFixed(2) ?? t.spxClose?.toFixed(2) ?? '—'}</div><div class="diag-stat-sub">Body ${t.bodyStrike}</div></div>`);
+    html.push(`<div class="diag-stat"><div class="diag-stat-label">Entry debit</div><div class="diag-stat-value">$${(t.entryDebit*100).toFixed(0)}</div><div class="diag-stat-sub">$${t.entryDebit?.toFixed(2)} mid</div></div>`);
+    if (t.currentValue != null) {
+      html.push(`<div class="diag-stat"><div class="diag-stat-label">Current</div><div class="diag-stat-value">$${(t.currentValue*100).toFixed(0)}</div><div class="diag-stat-sub">${debitDelta != null ? `<span class="${deltaClass}">${debitDelta > 0 ? '+' : ''}${debitDelta.toFixed(2)}</span>` : ''}</div></div>`);
+    }
+    html.push(`</div>`);
+  }
+
+  // Position card: 3-leg butterfly (1 long lower, 2 short body, 1 long upper)
+  html.push(`<div class="diag-position">`);
+  html.push(`  <div class="diag-pos-title">Broken-wing call butterfly · ${t.contracts || 1}× (qty 1 / 2 / 1)</div>`);
+  html.push(`  <div class="diag-pos-headline">SPX ${t.lowerStrike} <span class="diag-slash">/</span> ${t.bodyStrike} <span class="diag-slash">/</span> ${t.upperStrike} <span style="font-size:13px;color:var(--text3);">CALL</span></div>`);
+  html.push(`  <div class="diag-pos-subline">${fmtExp(t.expDate)} · 0DTE · spot ${t.spotEntry?.toFixed(2)}${t.currentSpot != null && t.currentSpot !== t.spotEntry ? ' → '+t.currentSpot.toFixed(2) : ''}</div>`);
+  html.push(`  <div class="diag-pos-legs" style="grid-template-columns:1fr 1fr 1fr;">`);
+  html.push(`    <div class="diag-pos-leg long">`);
+  html.push(`      <div class="diag-pos-leg-side">+1 Long lower</div>`);
+  html.push(`      <div class="diag-pos-leg-strike">${t.lowerStrike}C</div>`);
+  html.push(`      <div class="diag-pos-leg-meta">$${t.entryLowerMid?.toFixed(2)}${t.currentLowerMid != null && t.currentLowerMid !== t.entryLowerMid ? ' → $'+t.currentLowerMid.toFixed(2) : ''}</div>`);
+  html.push(`    </div>`);
+  html.push(`    <div class="diag-pos-leg short">`);
+  html.push(`      <div class="diag-pos-leg-side">−2 Short body</div>`);
+  html.push(`      <div class="diag-pos-leg-strike">${t.bodyStrike}C</div>`);
+  html.push(`      <div class="diag-pos-leg-meta">$${t.entryBodyMid?.toFixed(2)}${t.currentBodyMid != null && t.currentBodyMid !== t.entryBodyMid ? ' → $'+t.currentBodyMid.toFixed(2) : ''}</div>`);
+  html.push(`    </div>`);
+  html.push(`    <div class="diag-pos-leg long">`);
+  html.push(`      <div class="diag-pos-leg-side">+1 Long upper</div>`);
+  html.push(`      <div class="diag-pos-leg-strike">${t.upperStrike}C</div>`);
+  html.push(`      <div class="diag-pos-leg-meta">$${t.entryUpperMid?.toFixed(2)}${t.currentUpperMid != null && t.currentUpperMid !== t.entryUpperMid ? ' → $'+t.currentUpperMid.toFixed(2) : ''}</div>`);
+  html.push(`    </div>`);
+  html.push(`  </div>`);
+  if (t.entryDebit != null && t.currentValue != null) {
+    html.push(`  <div class="diag-pos-pricing">`);
+    html.push(`    <div class="diag-pos-price"><div class="diag-pos-price-label">Entry debit</div><div class="diag-pos-price-value">$${t.entryDebit.toFixed(2)}</div></div>`);
+    html.push(`    <div class="diag-pos-price"><div class="diag-pos-price-label">${t.status === 'closed' ? 'Settled' : 'Current'}</div><div class="diag-pos-price-value">$${t.currentValue.toFixed(2)}</div></div>`);
+    html.push(`    <div class="diag-pos-price"><div class="diag-pos-price-label">Δ vs entry</div><div class="diag-pos-price-value ${deltaClass}">${debitDelta > 0 ? '+' : ''}${debitDelta.toFixed(2)}</div></div>`);
+    html.push(`  </div>`);
+  }
+  html.push(`</div>`);
+
+  const ageS = t.lastQuoteAt ? Math.round((Date.now() - new Date(t.lastQuoteAt).getTime()) / 1000) : null;
+  const ageStr = ageS == null ? '—' : ageS < 60 ? `${ageS}s ago` : `${Math.round(ageS/60)}m ago`;
+  html.push(`<div class="diag-meta">`);
+  html.push(`  <span>${statusText}</span>`);
+  if (t.status === 'filled' || t.status === 'working') html.push(`  <span>Quote age: ${ageStr}</span>`);
+  html.push(`</div>`);
+  html.push(`</div>`);
+  sec.innerHTML = html.join('');
 }
 
 // ─── Straddle trade state ─────────────────────────────────────────────────────
@@ -1379,9 +1535,10 @@ async function tick() {
   // Re-check trade state every tick — catches trigger/close without page refresh
   const prevTriggered = trade?.triggered;
   const prevStatus = trade?.status;
-  await Promise.all([loadTrade(), loadDiagonal(), loadStraddle()]);
+  await Promise.all([loadTrade(), loadDiagonal(), loadStraddle(), loadBobf()]);
   renderDiagonal();
   renderStraddle();
+  renderBobf();
   const stateChanged = (trade?.triggered !== prevTriggered) || (trade?.status !== prevStatus);
   if (stateChanged) { render(); }
 
@@ -1421,13 +1578,14 @@ async function tick() {
 async function init() {
   try {
     checkOAuthCallback();
-    await Promise.all([loadTrade(), loadSPXHistory(), loadSignals(), loadDiagonal(), loadStraddle()]);
+    await Promise.all([loadTrade(), loadSPXHistory(), loadSignals(), loadDiagonal(), loadStraddle(), loadBobf()]);
     updateLiveBadge();
     createSPXChart();
     rebuildSPXChart();
     render();
     renderDiagonal();
     renderStraddle();
+    renderBobf();
     await tick();
     pollTimer = setInterval(tick, 30_000);
     document.addEventListener('visibilitychange', () => {
