@@ -215,8 +215,11 @@
     #straddleSection  .diag-title span{color:#22d3ee;}
     #diagonalSection  .diag-card{border-top:3px solid #fb7185;background:linear-gradient(180deg,rgba(251,113,133,.06) 0%,var(--bg2) 60%);}
     #diagonalSection  .diag-title span{color:#fb7185;}
-    /* M8BF lives inside #mainContent — add the same treatment to its cards */
-    #mainContent .bf-card{border-top:3px solid var(--accent);background:linear-gradient(180deg,rgba(129,140,248,.06) 0%,var(--bg2) 60%);}
+    /* M8BF lives inside #mainContent — apply violet accent to both the
+       butterfly card (when triggered) and the diag-card (when waiting). */
+    #mainContent .bf-card,
+    #mainContent .diag-card{border-top:3px solid var(--accent);background:linear-gradient(180deg,rgba(129,140,248,.06) 0%,var(--bg2) 60%);}
+    #mainContent .diag-title span{color:var(--accent);}
     .diag-header{display:flex;align-items:center;gap:12px;margin-bottom:12px;}
     .diag-title{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:var(--text);letter-spacing:.04em;text-transform:uppercase;}
     .diag-title span{color:var(--accent);}
@@ -1438,34 +1441,35 @@ function render() {
     const mins = now.getHours() * 60 + now.getMinutes();
     const isMarketHours = !isWeekend && mins >= 570 && mins < 960;
     const win = getNextWindow();
+    const serverTimeET = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
 
-    let icon, title, sub;
+    let badge, badgeClass, statusText;
     if (isWeekend) {
-      icon = '😴';
-      title = 'Market Closed';
-      sub = 'Enjoy your weekend. Next window shown below.';
+      badge = 'CLOSED'; badgeClass = 'skip';
+      statusText = 'Market closed (weekend). Next M8BF window shown above.';
     } else if (!isMarketHours) {
-      icon = '🌙';
-      title = 'Market Closed';
-      sub = 'Check back during market hours (9:30 AM – 4:00 PM ET).';
+      badge = 'CLOSED'; badgeClass = 'skip';
+      statusText = 'Market closed. M8BF triggers automatically inside its weekday window during market hours.';
     } else {
-      icon = '📡';
-      title = 'Waiting for Signal';
-      sub = 'Monitoring. Trade appears automatically when triggered.';
+      badge = 'WAITING SIGNAL'; badgeClass = 'pending';
+      statusText = 'Monitoring Discord signals — M8BF trade card appears automatically when triggered.';
     }
 
-    const winHtml = win
-      ? `<div class="no-trade-window">
-           <span class="win-day">${win.label}</span>
-           <span class="win-time">Window: ${win.start} – ${win.end} ET</span>
-         </div>`
-      : '';
+    const winLine = win
+      ? `${win.label} · ${win.start} – ${win.end} ET`
+      : '9:32 AM ET';
+
+    // Match the diag-card pattern (BOBF/Straddle/Diagonal) so all four
+    // strategy cards look the same in their waiting state.
     main.innerHTML = `
-      <div class="no-trade">
-        <div class="no-trade-icon">${icon}</div>
-        <div class="no-trade-title">${title}</div>
-        ${winHtml}
-        <div class="no-trade-sub">${sub}</div>
+      <div class="diag-card">
+        <div class="diag-header">
+          <div class="diag-title"><span>M8BF</span> · ${winLine}</div>
+          <span class="diag-badge ${badgeClass}">${badge}</span>
+          <div style="flex:1"></div>
+          <span style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;">${serverTimeET} ET</span>
+        </div>
+        <div style="font-size:13px;color:var(--text2);padding:6px 0;">${statusText}</div>
       </div>
     `;
     return;
