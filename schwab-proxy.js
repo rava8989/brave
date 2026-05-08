@@ -1361,6 +1361,83 @@ function bobfEntryReady(typeInfo, spotNow, spxOpen, sma5, rsi14) {
 
 // Main entry flow — called from every cron tick during the window.
 // Idempotent via bobf_done_<date>: exits early once trade fires or window expires.
+// Static-filter pre-flight: runs ONCE per day at the morning signal block.
+// Catches RSI / type / calendar / VIX>23 disqualifications that won't change
+// intraday so we skip 60+ futile entry attempts in the 10:29-12:15 window.
+// Sets bobf_done_<date> with the rejection reason; handleBobfEntry then
+// short-circuits on every market tick.
+async function prefilterBobf(env, etNow, vixToday, vixYClose) {
+  const todayISO = isoDateET(etNow);
+  const doneKey = `bobf_done_${todayISO}`;
+  const existing = await env.SIGNAL_KV.get(doneKey);
+  if (existing) return { skipped: 'already-done', why: existing };
+
+  // 1. Type qualification (Fri vs Mon-Thu vix_up/down vs flat-overnight skip)
+  const typeInfo = determineBobfType(etNow, vixToday, vixYClose);
+  if (!typeInfo.type) {
+    await env.SIGNAL_KV.put(doneKey, `no-type:${typeInfo.reason}`, { expirationTtl: 86400 });
+    return { skipped: 'no-type', reason: typeInfo.reason };
+  }
+
+  // 2. Calendar blackouts + VIX>23 (mirrors signal-engine bobfBlocks)
+  const cpiDay   = cpiSch.includes(todayLong(etNow));
+  const nmDay    = isFirstTradeMo(etNow);
+  const nmMon    = isFirstTradeMon(etNow);
+  const vixExpDay = vixSch.includes(todayLong(etNow));
+  const opexDay  = opexSch.includes(todayLong(etNow));
+  const opex1    = opexSch.some(ds => isTodayBefore(ds, etNow));
+  const eom1     = isEomN(1, etNow);
+  const eom2     = isEomN(2, etNow);
+  const earnDay  = isEarningsDay(etNow);
+  const blackouts = [];
+  if (cpiDay) blackouts.push('CPI');
+  if (nmMon) blackouts.push('NM Mon');
+  if (vixExpDay) blackouts.push('VIX exp');
+  if (opexDay) blackouts.push('OPEX');
+  if (opex1) blackouts.push('OPEX-1');
+  if (eom2) blackouts.push('EOM-2');
+  if (eom1) blackouts.push('EOM-1');
+  if (earnDay) blackouts.push('earnings');
+  if (vixToday != null && vixToday > BOBF_VIX_MAX) blackouts.push(`VIX ${vixToday}>${BOBF_VIX_MAX}`);
+  if (blackouts.length) {
+    await env.SIGNAL_KV.put(doneKey, `blackout:${blackouts.join(',')}`, { expirationTtl: 86400 });
+    return { skipped: 'blackout', reasons: blackouts };
+  }
+
+  // 3. RSI(14) — daily-close-based, fixed for the entire trading day. If it's
+  //    out of bounds at 9:30 it'll still be out of bounds at 12:14.
+  let rsi14 = null;
+  try {
+    const histResp = await fetch(
+      `https://raw.githubusercontent.com/rava8989/brave/main/history_data.json?t=${Date.now()}`,
+      { headers: { 'User-Agent': 'schwab-proxy' } }
+    );
+    if (histResp.ok) {
+      const histData = await histResp.json();
+      const sortedPrior = histData
+        .filter(r => r.date < todayISO && r.spxClose != null)
+        .sort((a, b) => a.date.localeCompare(b.date));
+      const closes30 = sortedPrior.slice(-30).map(r => parseFloat(r.spxClose));
+      rsi14 = computeRSI14(closes30);
+    }
+  } catch (_) { /* leave handleBobfEntry to recheck */ }
+
+  if (rsi14 != null) {
+    if (typeInfo.type === 'friday' && (rsi14 < BOBF_FRIDAY_RSI_MIN || rsi14 > BOBF_FRIDAY_RSI_MAX)) {
+      await env.SIGNAL_KV.put(doneKey, `rsi:${rsi14.toFixed(1)} outside [${BOBF_FRIDAY_RSI_MIN},${BOBF_FRIDAY_RSI_MAX}]`, { expirationTtl: 86400 });
+      return { skipped: 'rsi-out', rsi14, type: 'friday' };
+    }
+    if (typeInfo.type === 'vix_down' && rsi14 > BOBF_VIX_DOWN_RSI_MAX) {
+      await env.SIGNAL_KV.put(doneKey, `rsi:${rsi14.toFixed(1)} > ${BOBF_VIX_DOWN_RSI_MAX}`, { expirationTtl: 86400 });
+      return { skipped: 'rsi-high', rsi14, type: 'vix_down' };
+    }
+  }
+
+  // All static filters pass — entry checks during 10:29-12:15 will evaluate
+  // the dynamic conditions (move-up %, SMA5).
+  return { passed: true, type: typeInfo.type, rsi14 };
+}
+
 async function handleBobfEntry(env, etNow, preChain = null) {
   const todayISO = isoDateET(etNow);
   const out = { date: todayISO, status: null };
@@ -1999,6 +2076,15 @@ async function handleScheduled(env) {
       }
     } catch (e) { console.warn('[strad] open failed:', e.message); }
   }
+
+  // 5c. BOBF static-filter pre-flight. Evaluates RSI/calendar/type/VIX>23 here
+  // (all known at 9:30, fixed for the day). If any disqualify, marks
+  // bobf_done_<date> so the 10:29-12:15 entry window short-circuits without
+  // running 100 useless chain/RSI checks. Best-effort — don't block Discord.
+  try {
+    const pf = await prefilterBobf(env, etNow, vixToday, vixYClose);
+    if (pf?.skipped) console.log(`[bobf] prefilter skipped: ${pf.skipped} ${pf.reason || (pf.reasons||[]).join(',')||''}`);
+  } catch (e) { console.warn('[bobf] prefilter failed:', e.message); }
 
   // 6. Build Discord message
   const vixValues = { yOpen: vixYOpen, yClose: vixYClose, todayOpen: vixToday };
