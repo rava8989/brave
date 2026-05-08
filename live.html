@@ -727,11 +727,17 @@ function renderStraddle() {
     let badge = 'WAITING SIGNAL', badgeClass = 'pending';
     let statusLine = 'Straddle fires automatically at 9:32 ET if signal allows.';
     if (skip) {
-      // Signal already fired at 9:30 and decided no straddle today — show why.
-      // signal.rec is e.g. "M8BF — Window 11:00-11:30" / "GXBF @ 9:36 AM" /
-      // "No Straddle (SPX gap ▲1.20%)" / "No Straddle (o2o 1.7 > 1.4)".
-      badge = 'SKIP'; badgeClass = 'skip';
-      statusLine = `No Straddle today — signal: ${skip.rec}`;
+      if (skip.theme === 'strad-missed') {
+        // Signal said straddle but the 9:32 cron didn't open one (failure
+        // inside openStraddleTrade or cron stall). User likely already made
+        // the trade decision manually — surface the gap.
+        badge = 'MISSED'; badgeClass = 'error';
+        statusLine = `Signal was Straddle but auto-open didn't happen — verify your broker manually. ${skip.rec || ''}`;
+      } else {
+        // signal.rec is e.g. "M8BF — Window 11:00-11:30" / "GXBF @ 9:36 AM"
+        badge = 'SKIP'; badgeClass = 'skip';
+        statusLine = `No Straddle today — signal: ${skip.rec}`;
+      }
     }
     sec.innerHTML = `
       <div class="diag-card">
