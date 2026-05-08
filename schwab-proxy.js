@@ -4136,8 +4136,22 @@ export default {
         const isWeekendB = etNowB.getDay() === 0 || etNowB.getDay() === 6;
         const isHolidayB = isHol(etNowB);
 
-        const openRaw = await env.SIGNAL_KV.get('bobf_open_trade');
-        const open = openRaw ? JSON.parse(openRaw) : null;
+        let openRaw = await env.SIGNAL_KV.get('bobf_open_trade');
+        let open = openRaw ? JSON.parse(openRaw) : null;
+
+        // Staleness-triggered self-refresh (defends against cron stalls)
+        if (open && (open.status === 'filled' || open.status === 'working') && !isWeekendB && !isHolidayB) {
+          const isMktHr = (etNowB.getHours() > 9 || (etNowB.getHours() === 9 && etNowB.getMinutes() >= 30)) && etNowB.getHours() < 16;
+          const ageMs = open.lastQuoteAt ? (Date.now() - new Date(open.lastQuoteAt).getTime()) : Infinity;
+          if (isMktHr && ageMs > 90_000) {
+            try {
+              const tk = await getAccessToken(env);
+              await refreshBobfLiveQuotes(env, tk, etNowB);
+              openRaw = await env.SIGNAL_KV.get('bobf_open_trade');
+              open = openRaw ? JSON.parse(openRaw) : null;
+            } catch (e) { console.warn('[bobf-today] on-demand refresh failed:', e.message); }
+          }
+        }
 
         const logRaw = await env.SIGNAL_KV.get('bobf_closed_log');
         const closedLog = logRaw ? JSON.parse(logRaw) : [];
@@ -4179,8 +4193,22 @@ export default {
         const isWeekendSt = etNowSt.getDay() === 0 || etNowSt.getDay() === 6;
         const isHolidaySt = isHol(etNowSt);
 
-        const openRaw = await env.SIGNAL_KV.get('straddle_open_trade');
-        const open = openRaw ? JSON.parse(openRaw) : null;
+        let openRaw = await env.SIGNAL_KV.get('straddle_open_trade');
+        let open = openRaw ? JSON.parse(openRaw) : null;
+
+        // Staleness-triggered self-refresh (defends against cron stalls)
+        if (open && (open.status === 'filled' || open.status === 'working') && !isWeekendSt && !isHolidaySt) {
+          const isMktHr = (etNowSt.getHours() > 9 || (etNowSt.getHours() === 9 && etNowSt.getMinutes() >= 30)) && etNowSt.getHours() < 16;
+          const ageMs = open.lastQuoteAt ? (Date.now() - new Date(open.lastQuoteAt).getTime()) : Infinity;
+          if (isMktHr && ageMs > 90_000) {
+            try {
+              const tk = await getAccessToken(env);
+              await refreshStraddleLiveQuotes(env, tk, etNowSt);
+              openRaw = await env.SIGNAL_KV.get('straddle_open_trade');
+              open = openRaw ? JSON.parse(openRaw) : null;
+            } catch (e) { console.warn('[strad-today] on-demand refresh failed:', e.message); }
+          }
+        }
 
         const logRaw = await env.SIGNAL_KV.get('straddle_closed_log');
         const closedLog = logRaw ? JSON.parse(logRaw) : [];
@@ -4255,8 +4283,30 @@ export default {
         const isWeekendDT = etNowDT.getDay() === 0 || etNowDT.getDay() === 6;
         const isHolidayDT = isHol(etNowDT);
 
-        const openRaw = await env.SIGNAL_KV.get('diagonal_open_trade');
-        const open = openRaw ? JSON.parse(openRaw) : null;
+        let openRaw = await env.SIGNAL_KV.get('diagonal_open_trade');
+        let open = openRaw ? JSON.parse(openRaw) : null;
+
+        // ── Staleness-triggered self-refresh ────────────────────────────────
+        // If we have an open trade and its lastQuoteAt is older than 90s,
+        // fetch fresh chain mids on this endpoint hit. Defends against
+        // Cloudflare cron stalls (recurring issue — observed 79-min stall
+        // 2026-05-08). Browser polls /diagonal-today every 30s, so the
+        // first stale call will refresh and subsequent calls hit warm KV.
+        if (open && open.status === 'open' && !isWeekendDT && !isHolidayDT) {
+          const isMarketHoursDT = (etNowDT.getHours() > 9 ||
+                                   (etNowDT.getHours() === 9 && etNowDT.getMinutes() >= 30)) &&
+                                  etNowDT.getHours() < 16;
+          const ageMs = open.lastQuoteAt ? (Date.now() - new Date(open.lastQuoteAt).getTime()) : Infinity;
+          if (isMarketHoursDT && ageMs > 90_000) {
+            try {
+              const refreshToken = await getAccessToken(env);
+              await refreshDiagonalLiveQuotes(env, refreshToken);
+              // Re-read to get the freshly written values
+              openRaw = await env.SIGNAL_KV.get('diagonal_open_trade');
+              open = openRaw ? JSON.parse(openRaw) : null;
+            } catch (e) { console.warn('[diag-today] on-demand refresh failed:', e.message); }
+          }
+        }
 
         const logRaw = await env.SIGNAL_KV.get('diagonal_closed_log');
         const closedLog = logRaw ? JSON.parse(logRaw) : [];
