@@ -876,125 +876,190 @@ async function loadDiagonal() {
   } catch { /* keep last known */ }
 }
 
+// Helper: format expiry ISO as "May 8" / "Jun 12"
+function _fmtDiagExp(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso + 'T12:00:00');
+  return d.toLocaleString('en-US',{month:'short',day:'numeric'});
+}
+
+// Render one diagonal "panel" — used for both the held-overnight panel
+// and today's-new-trade panel. `which` is 'overnight' or 'today' (drives
+// labels). `trade` is either the open KV record, the lastClosed record, or null.
+function _renderDiagPanel(which, trade, status, ctx) {
+  const { signal, vixPct20d, date, serverTimeET } = ctx;
+  const html = [];
+  // Header label varies by panel
+  const headerLabel = which === 'overnight'
+    ? `<span>Held overnight</span> · ${trade ? `${_fmtDiagExp(trade.openDate)} → ${_fmtDiagExp(trade.closeDate || date)}` : 'no overnight trade'}`
+    : `<span>Today's diagonal</span> · ${trade ? `${_fmtDiagExp(trade.openDate)} → ${_fmtDiagExp(trade.shortExp || '')}` : 'opens 12:30 ET'}`;
+
+  html.push(`<div class="diag-card">`);
+  html.push(`<div class="diag-header">`);
+  html.push(`<div class="diag-title">${headerLabel}</div>`);
+  html.push(`<span class="diag-badge ${status.badgeClass}">${status.badge}</span>`);
+  html.push(`<div style="flex:1"></div>`);
+  if (which === 'today' && vixPct20d != null) html.push(`<span style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;">VIX 20d: ${vixPct20d}%</span>`);
+  html.push(`</div>`);
+
+  // Body — placeholder when no trade, otherwise the live/closed render
+  if (!trade) {
+    html.push(`<div style="font-size:13px;color:var(--text2);padding:6px 0;">${status.statusText}</div>`);
+    if (which === 'today') {
+      html.push(`<div style="font-size:11px;color:var(--text3);margin-top:6px;">Server time: ${serverTimeET} ET · ${date}</div>`);
+    }
+    html.push(`</div>`);
+    return html.join('');
+  }
+
+  // Live/closed body
+  const isClosed = trade.status === 'closed' || trade.pnl != null;
+  const finalPnl = isClosed ? trade.pnl : trade.currentPnl;
+  const plClass = (finalPnl == null) ? '' : finalPnl > 0 ? 'diag-pl-pos' : finalPnl < 0 ? 'diag-pl-neg' : '';
+
+  html.push(`<div class="diag-grid">`);
+  if (isClosed) {
+    html.push(`  <div class="diag-stat"><div class="diag-stat-label">Final P&L</div><div class="diag-stat-value ${plClass}">${fmt$(trade.pnl)}</div><div class="diag-stat-sub">${trade.openDate} → ${trade.closeDate}</div></div>`);
+    html.push(`  <div class="diag-stat"><div class="diag-stat-label">Entry → Exit</div><div class="diag-stat-value">${trade.spotEntry?.toFixed(0)} → ${trade.spotExit?.toFixed(0)}</div><div class="diag-stat-sub">${trade.spotExit != null && trade.spotEntry != null ? (trade.spotExit-trade.spotEntry).toFixed(2) : '—'} pts</div></div>`);
+    html.push(`  <div class="diag-stat"><div class="diag-stat-label">Debit → Close value</div><div class="diag-stat-value">$${(trade.entryDebit*100).toFixed(0)} → $${(trade.closeValue*100).toFixed(0)}</div></div>`);
+  } else {
+    const move = trade.currentSpot != null && trade.spotEntry != null
+      ? (trade.currentSpot - trade.spotEntry).toFixed(2) : '—';
+    html.push(`  <div class="diag-stat"><div class="diag-stat-label">Live P&L</div><div class="diag-stat-value ${plClass}">${fmt$(trade.currentPnl)}</div><div class="diag-stat-sub">${trade.contracts || 1} contract</div></div>`);
+    html.push(`  <div class="diag-stat"><div class="diag-stat-label">SPX Now</div><div class="diag-stat-value">${trade.currentSpot != null ? trade.currentSpot.toFixed(2) : '—'}</div><div class="diag-stat-sub">Entry ${trade.spotEntry?.toFixed(2)} · ${move > 0 ? '+' : ''}${move}</div></div>`);
+    html.push(`  <div class="diag-stat"><div class="diag-stat-label">Debit Paid</div><div class="diag-stat-value">$${(trade.entryDebit*100).toFixed(0)}</div><div class="diag-stat-sub">Mid ${trade.entryDebit?.toFixed(2)}</div></div>`);
+    html.push(`  <div class="diag-stat"><div class="diag-stat-label">Current Value</div><div class="diag-stat-value">${trade.currentValue != null ? '$'+(trade.currentValue*100).toFixed(0) : '—'}</div><div class="diag-stat-sub">${trade.currentValue != null ? 'Mid '+trade.currentValue.toFixed(2) : ''}</div></div>`);
+  }
+  html.push(`</div>`);
+
+  // Position card
+  const debitDelta = (trade.currentValue != null && trade.entryDebit != null)
+    ? (trade.currentValue - trade.entryDebit) : null;
+  const deltaClass = debitDelta == null ? '' : debitDelta > 0 ? 'diag-pl-pos' : debitDelta < 0 ? 'diag-pl-neg' : '';
+  html.push(`<div class="diag-position">`);
+  html.push(`  <div class="diag-pos-title">Diagonal Position · ${trade.contracts || 1} contract${isClosed ? ' · CLOSED' : ''}</div>`);
+  html.push(`  <div class="diag-pos-headline">SPX ${trade.shortStrike}P <span class="diag-slash">/</span> ${trade.longStrike}P</div>`);
+  html.push(`  <div class="diag-pos-subline">put diagonal · 40-wide · spot ${trade.spotEntry?.toFixed(2)}${trade.currentSpot != null && !isClosed ? ' → '+trade.currentSpot.toFixed(2) : ''}${isClosed && trade.spotExit != null ? ' → '+trade.spotExit.toFixed(2) : ''}</div>`);
+  html.push(`  <div class="diag-pos-legs">`);
+  html.push(`    <div class="diag-pos-leg short">`);
+  html.push(`      <div class="diag-pos-leg-side">Short · sold</div>`);
+  html.push(`      <div class="diag-pos-leg-strike">${trade.shortStrike}P</div>`);
+  html.push(`      <div class="diag-pos-leg-meta">${_fmtDiagExp(trade.shortExp)} · ${trade.shortDte} DTE · 30 ITM</div>`);
+  html.push(`    </div>`);
+  html.push(`    <div class="diag-pos-leg long">`);
+  html.push(`      <div class="diag-pos-leg-side">Long · bought</div>`);
+  html.push(`      <div class="diag-pos-leg-strike">${trade.longStrike}P</div>`);
+  html.push(`      <div class="diag-pos-leg-meta">${_fmtDiagExp(trade.longExp)} · ${trade.longDte} DTE · 10 OTM</div>`);
+  html.push(`    </div>`);
+  html.push(`  </div>`);
+  if (trade.entryDebit != null && (trade.currentValue != null || trade.closeValue != null)) {
+    const valueShown = isClosed ? trade.closeValue : trade.currentValue;
+    html.push(`  <div class="diag-pos-pricing">`);
+    html.push(`    <div class="diag-pos-price"><div class="diag-pos-price-label">Entry debit</div><div class="diag-pos-price-value">$${trade.entryDebit?.toFixed(2)}</div></div>`);
+    html.push(`    <div class="diag-pos-price"><div class="diag-pos-price-label">${isClosed ? 'Close value' : 'Current'}</div><div class="diag-pos-price-value">$${valueShown?.toFixed(2)}</div></div>`);
+    html.push(`    <div class="diag-pos-price"><div class="diag-pos-price-label">Δ vs entry</div><div class="diag-pos-price-value ${deltaClass}">${debitDelta != null ? (debitDelta > 0 ? '+' : '')+debitDelta.toFixed(2) : '—'}</div></div>`);
+    html.push(`  </div>`);
+  }
+  html.push(`</div>`);
+
+  // Per-leg fills (only on live trades — closed trades shown via stat grid)
+  if (!isClosed && trade.entryShortMid != null) {
+    html.push(`<details style="margin-top:8px;">`);
+    html.push(`  <summary style="font-size:10px;color:var(--text3);cursor:pointer;text-transform:uppercase;letter-spacing:.08em;padding:4px 0;">show per-leg fills</summary>`);
+    html.push(`  <div style="margin-top:6px;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);">`);
+    html.push(`    <div class="diag-leg"><span class="side short">SHORT</span><span class="desc">${trade.shortStrike}P · ${_fmtDiagExp(trade.shortExp)} · ${trade.shortDte}DTE</span><span class="price">$${trade.entryShortMid?.toFixed(2)} → $${trade.currentShortMid?.toFixed(2)}</span></div>`);
+    html.push(`    <div class="diag-leg"><span class="side long">LONG</span><span class="desc">${trade.longStrike}P · ${_fmtDiagExp(trade.longExp)} · ${trade.longDte}DTE</span><span class="price">$${trade.entryLongMid?.toFixed(2)} → $${trade.currentLongMid?.toFixed(2)}</span></div>`);
+    html.push(`  </div>`);
+    html.push(`</details>`);
+  }
+
+  // Footer meta
+  if (!isClosed) {
+    const ageS = trade.lastQuoteAt ? Math.max(0, Math.round((Date.now() - new Date(trade.lastQuoteAt).getTime()) / 1000)) : null;
+    const ageStr = ageS == null ? '—' : ageS < 60 ? `${ageS}s ago` : `${Math.round(ageS/60)}m ago`;
+    html.push(`<div class="diag-meta">`);
+    html.push(`  <span>${status.statusText}</span>`);
+    html.push(`  <span>Quote age: ${ageStr}</span>`);
+    html.push(`  <span>Closes ~12:30 ET on ${_fmtDiagExp(trade.shortExp)}</span>`);
+    html.push(`</div>`);
+  } else {
+    html.push(`<div class="diag-meta"><span>${status.statusText}</span><span>Strikes: ${trade.shortStrike}/${trade.longStrike}P</span></div>`);
+  }
+  html.push(`</div>`);
+  return html.join('');
+}
+
 function renderDiagonal() {
   const sec = document.getElementById('diagonalSection');
   if (!diagonal) { sec.style.display = 'none'; return; }
   sec.style.display = '';
 
   const { open, lastClosed, signal, vixPct20d, date, isWeekend, isHoliday, serverTimeET } = diagonal;
+  const ctx = { signal, vixPct20d, date, serverTimeET };
 
-  // Determine the visible state — priority: error > open > closed (today) > signal preview
-  let badge, badgeClass, statusText;
-  if (open) {
-    badge = 'OPEN'; badgeClass = 'open';
-    statusText = `Trade live · entered ${open.openTimeET || ''} ET`;
-  } else if (lastClosed && lastClosed.closeDate === date) {
-    badge = 'CLOSED'; badgeClass = 'skip';
-    statusText = `Closed today · final P&L ${fmt$(lastClosed.pnl)}`;
-  } else if (isWeekend || isHoliday) {
-    badge = 'CLOSED'; badgeClass = 'skip';
-    statusText = isWeekend ? 'Market closed (weekend)' : 'Market closed (holiday)';
-  } else if (signal && signal.diagSkipCode) {
-    badge = 'SKIP'; badgeClass = 'skip';
-    statusText = signal.diagText;
-  } else if (signal && signal.diagGo === false && signal.diagBadge === '…') {
-    badge = 'PENDING'; badgeClass = 'pending';
-    statusText = signal.diagText;
-  } else if (signal && signal.diagGo) {
-    badge = 'WAITING 12:30 ET'; badgeClass = 'pending';
-    statusText = signal.diagText;
-  } else {
-    badge = '—'; badgeClass = 'skip';
-    statusText = 'No diagonal data';
+  // Split data into two panels:
+  //   overnightTrade — held trade, opened a prior session, closes/closed at
+  //                    today's 12:30 ET. Pre-12:30 → still in `open`.
+  //                    Post-12:30 → in `lastClosed` with closeDate=today.
+  //   todaysTrade    — newly opened today at 12:30 ET (`open` with
+  //                    openDate=today). Pre-12:30 → null (placeholder).
+  let overnightTrade = null, todaysTrade = null;
+  if (open && open.openDate === date) {
+    // open trade was opened TODAY → it's the new one
+    todaysTrade = open;
+    // The held-overnight from yesterday is already closed → lastClosed
+    if (lastClosed && lastClosed.closeDate === date) overnightTrade = lastClosed;
+  } else if (open && open.openDate < date) {
+    // open trade is from a prior session → it's the held-overnight one
+    overnightTrade = open;
+  }
+  // Edge case: only lastClosed (e.g. weekend lookback)
+  if (!overnightTrade && !todaysTrade && lastClosed && lastClosed.closeDate === date) {
+    overnightTrade = lastClosed;
   }
 
-  const sec_html = [];
-  sec_html.push(`<div class="diag-card">`);
-  sec_html.push(`<div class="diag-header">`);
-  sec_html.push(`<div class="diag-title"><span>Diagonal</span> · 12:30 ET</div>`);
-  sec_html.push(`<span class="diag-badge ${badgeClass}">${badge}</span>`);
-  sec_html.push(`<div style="flex:1"></div>`);
-  if (vixPct20d != null) sec_html.push(`<span style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;">VIX 20d: ${vixPct20d}%</span>`);
-  sec_html.push(`</div>`);
-
-  if (open) {
-    const plClass = open.currentPnl > 0 ? 'diag-pl-pos' : open.currentPnl < 0 ? 'diag-pl-neg' : '';
-    const move = open.currentSpot != null && open.spotEntry != null
-      ? (open.currentSpot - open.spotEntry).toFixed(2)
-      : '—';
-    sec_html.push(`<div class="diag-grid">`);
-    sec_html.push(`  <div class="diag-stat"><div class="diag-stat-label">Live P&L</div><div class="diag-stat-value ${plClass}">${fmt$(open.currentPnl)}</div><div class="diag-stat-sub">${open.contracts} contract</div></div>`);
-    sec_html.push(`  <div class="diag-stat"><div class="diag-stat-label">SPX Now</div><div class="diag-stat-value">${open.currentSpot != null ? open.currentSpot.toFixed(2) : '—'}</div><div class="diag-stat-sub">Entry ${open.spotEntry?.toFixed(2)} · ${move > 0 ? '+' : ''}${move}</div></div>`);
-    sec_html.push(`  <div class="diag-stat"><div class="diag-stat-label">Debit Paid</div><div class="diag-stat-value">$${(open.entryDebit*100).toFixed(0)}</div><div class="diag-stat-sub">Entry mid ${open.entryDebit?.toFixed(2)}</div></div>`);
-    sec_html.push(`  <div class="diag-stat"><div class="diag-stat-label">Current Value</div><div class="diag-stat-value">$${(open.currentValue*100).toFixed(0)}</div><div class="diag-stat-sub">Mid ${open.currentValue?.toFixed(2)}</div></div>`);
-    sec_html.push(`</div>`);
-
-    // Combined diagonal position card. Two leg cards side-by-side, then a
-    // 3-cell pricing footer (entry / current / Δ). Per-leg fills hidden behind
-    // a collapsed <details> for the rare case the user wants to verify.
-    const debitDelta = (open.currentValue - open.entryDebit);
-    const deltaClass = debitDelta > 0 ? 'diag-pl-pos' : debitDelta < 0 ? 'diag-pl-neg' : '';
-    // Format expiry as a short human-readable date e.g. "May 8" / "Jun 12"
-    const fmtExp = iso => {
-      if (!iso) return '—';
-      const d = new Date(iso + 'T12:00:00');
-      return d.toLocaleString('en-US',{month:'short',day:'numeric'});
+  // Status for each panel
+  const overnightStatus = (() => {
+    if (!overnightTrade) return null;
+    const isClosed = overnightTrade.status === 'closed' || overnightTrade.pnl != null;
+    if (isClosed) {
+      return {
+        badge: 'CLOSED', badgeClass: overnightTrade.pnl > 0 ? 'open' : overnightTrade.pnl < 0 ? 'error' : 'skip',
+        statusText: `Closed at 12:30 ET · final P&L ${fmt$(overnightTrade.pnl)}`,
+      };
+    }
+    return {
+      badge: 'LIVE · CLOSING TODAY', badgeClass: 'open',
+      statusText: `Held trade — closes at 12:30 ET today, then today's diagonal opens.`,
     };
-    sec_html.push(`<div class="diag-position">`);
-    sec_html.push(`  <div class="diag-pos-title">Diagonal Position · ${open.contracts} contract</div>`);
-    sec_html.push(`  <div class="diag-pos-headline">SPX ${open.shortStrike}P <span class="diag-slash">/</span> ${open.longStrike}P</div>`);
-    sec_html.push(`  <div class="diag-pos-subline">put diagonal · 40-wide · spot ${open.spotEntry?.toFixed(2)} → ${open.currentSpot?.toFixed(2)}</div>`);
-    sec_html.push(`  <div class="diag-pos-legs">`);
-    sec_html.push(`    <div class="diag-pos-leg short">`);
-    sec_html.push(`      <div class="diag-pos-leg-side">Short · sold</div>`);
-    sec_html.push(`      <div class="diag-pos-leg-strike">${open.shortStrike}P</div>`);
-    sec_html.push(`      <div class="diag-pos-leg-meta">${fmtExp(open.shortExp)} · ${open.shortDte} DTE · 30 ITM</div>`);
-    sec_html.push(`    </div>`);
-    sec_html.push(`    <div class="diag-pos-leg long">`);
-    sec_html.push(`      <div class="diag-pos-leg-side">Long · bought</div>`);
-    sec_html.push(`      <div class="diag-pos-leg-strike">${open.longStrike}P</div>`);
-    sec_html.push(`      <div class="diag-pos-leg-meta">${fmtExp(open.longExp)} · ${open.longDte} DTE · 10 OTM</div>`);
-    sec_html.push(`    </div>`);
-    sec_html.push(`  </div>`);
-    sec_html.push(`  <div class="diag-pos-pricing">`);
-    sec_html.push(`    <div class="diag-pos-price"><div class="diag-pos-price-label">Entry debit</div><div class="diag-pos-price-value">$${open.entryDebit?.toFixed(2)}</div></div>`);
-    sec_html.push(`    <div class="diag-pos-price"><div class="diag-pos-price-label">Current</div><div class="diag-pos-price-value">$${open.currentValue?.toFixed(2)}</div></div>`);
-    sec_html.push(`    <div class="diag-pos-price"><div class="diag-pos-price-label">Δ vs entry</div><div class="diag-pos-price-value ${deltaClass}">${debitDelta > 0 ? '+' : ''}${debitDelta.toFixed(2)}</div></div>`);
-    sec_html.push(`  </div>`);
-    sec_html.push(`</div>`);
+  })();
 
-    // Per-leg fills (collapsed — for cross-checking against your broker)
-    sec_html.push(`<details style="margin-top:8px;">`);
-    sec_html.push(`  <summary style="font-size:10px;color:var(--text3);cursor:pointer;text-transform:uppercase;letter-spacing:.08em;padding:4px 0;">show per-leg fills</summary>`);
-    sec_html.push(`  <div style="margin-top:6px;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);">`);
-    sec_html.push(`    <div class="diag-leg"><span class="side short">SHORT</span><span class="desc">${open.shortStrike}P · ${fmtExp(open.shortExp)} · ${open.shortDte}DTE</span><span class="price">$${open.entryShortMid?.toFixed(2)} → $${open.currentShortMid?.toFixed(2)}</span></div>`);
-    sec_html.push(`    <div class="diag-leg"><span class="side long">LONG</span><span class="desc">${open.longStrike}P · ${fmtExp(open.longExp)} · ${open.longDte}DTE</span><span class="price">$${open.entryLongMid?.toFixed(2)} → $${open.currentLongMid?.toFixed(2)}</span></div>`);
-    sec_html.push(`  </div>`);
-    sec_html.push(`</details>`);
+  const todaysStatus = (() => {
+    if (todaysTrade) {
+      return {
+        badge: 'OPEN', badgeClass: 'open',
+        statusText: `Trade live · entered ${todaysTrade.openTimeET || ''} ET`,
+      };
+    }
+    if (isWeekend || isHoliday) {
+      return { badge: 'CLOSED', badgeClass: 'skip', statusText: isWeekend ? 'Market closed (weekend)' : 'Market closed (holiday)' };
+    }
+    if (signal && signal.diagSkipCode) {
+      return { badge: 'SKIP', badgeClass: 'skip', statusText: signal.diagText };
+    }
+    if (signal && signal.diagGo === false && signal.diagBadge === '…') {
+      return { badge: 'PENDING', badgeClass: 'pending', statusText: signal.diagText };
+    }
+    if (signal && signal.diagGo) {
+      return { badge: 'WAITING 12:30 ET', badgeClass: 'pending', statusText: `${signal.diagText}. Trade auto-opens at 12:30 ET if signal still allows.` };
+    }
+    return { badge: '—', badgeClass: 'skip', statusText: 'No diagonal data' };
+  })();
 
-    const ageS = open.lastQuoteAt ? Math.round((Date.now() - new Date(open.lastQuoteAt).getTime()) / 1000) : null;
-    const ageStr = ageS == null ? '—' : ageS < 60 ? `${ageS}s ago` : `${Math.round(ageS/60)}m ago`;
-    sec_html.push(`<div class="diag-meta">`);
-    sec_html.push(`  <span>Status: ${statusText}</span>`);
-    sec_html.push(`  <span>Quote age: ${ageStr}</span>`);
-    sec_html.push(`  <span>Closes ~12:30 ET on ${open.shortExp}</span>`);
-    sec_html.push(`</div>`);
-  } else if (lastClosed && lastClosed.closeDate === date) {
-    const plClass = lastClosed.pnl > 0 ? 'diag-pl-pos' : lastClosed.pnl < 0 ? 'diag-pl-neg' : '';
-    sec_html.push(`<div class="diag-grid">`);
-    sec_html.push(`  <div class="diag-stat"><div class="diag-stat-label">Final P&L</div><div class="diag-stat-value ${plClass}">${fmt$(lastClosed.pnl)}</div><div class="diag-stat-sub">${lastClosed.openDate} → ${lastClosed.closeDate}</div></div>`);
-    sec_html.push(`  <div class="diag-stat"><div class="diag-stat-label">Entry → Exit</div><div class="diag-stat-value">${lastClosed.spotEntry?.toFixed(0)} → ${lastClosed.spotExit?.toFixed(0)}</div><div class="diag-stat-sub">Spot ${(lastClosed.spotExit-lastClosed.spotEntry).toFixed(2)}</div></div>`);
-    sec_html.push(`  <div class="diag-stat"><div class="diag-stat-label">Debit / Credit</div><div class="diag-stat-value">$${(lastClosed.entryDebit*100).toFixed(0)} → $${(lastClosed.closeValue*100).toFixed(0)}</div></div>`);
-    sec_html.push(`</div>`);
-    sec_html.push(`<div class="diag-meta"><span>${statusText}</span><span>Strikes: ${lastClosed.shortStrike}/${lastClosed.longStrike}P</span></div>`);
-    sec_html.push(`<div style="margin-top:8px;font-size:11px;color:var(--text3);">Next diagonal opens at 12:30 ET tomorrow if signal allows.</div>`);
-  } else {
-    // No open trade, no close today — show signal preview
-    sec_html.push(`<div style="font-size:14px;color:var(--text2);padding:6px 0;">${statusText}</div>`);
-    sec_html.push(`<div style="font-size:11px;color:var(--text3);margin-top:6px;">Server time: ${serverTimeET} ET · ${date}</div>`);
-  }
-  sec_html.push(`</div>`);
-  sec.innerHTML = sec_html.join('');
+  const html = [];
+  if (overnightTrade && overnightStatus) html.push(_renderDiagPanel('overnight', overnightTrade, overnightStatus, ctx));
+  html.push(_renderDiagPanel('today', todaysTrade, todaysStatus, ctx));
+  sec.innerHTML = html.join('');
 }
 
 // ─── Load today's trade status from worker ───────────────────────────────────
