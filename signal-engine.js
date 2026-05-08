@@ -280,7 +280,7 @@ export function computeDiagonalSignal(etDate, vixPct20d = null) {
 // Consumed by: schwab-proxy.js, index.html, history.html
 // ════════════════════════════════════════════════════════════════════
 
-export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate, prevWR = null, vixPct20d = null }) {
+export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate, prevWR = null, vixPct20d = null, rsi14 = null }) {
   const cpiDay = cpiSch.includes(todayLong(etDate));
   const dow = etDate.getDay();
   const isMon = dow === 1, isFri = dow === 5, isWed = dow === 3;
@@ -393,13 +393,44 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
   if (earningsDay) { const tickers = earningsSchedule.filter(e => e.date === todayLong(etDate)).map(e => e.ticker).join(','); bobfBlocks.push(`earnings (${tickers})`); }
   if (vixToday > T.VIX_MAX_BOBF) bobfBlocks.push("high VIX");
 
+  // ── BOBF type qualification + RSI gate (matches schwab-proxy.js prefilterBobf) ──
+  // Three BOBF types, each with its own RSI band:
+  //   Friday RSI BOBF   — Fri only, RSI must be in 40-65
+  //   BOBF Vix up       — Mon-Thu, overnight VIX up ≥ 0.01 pts (no RSI filter)
+  //   BOBF Vix down     — Mon-Thu, overnight VIX down ≥ 0.01 pts, RSI ≤ 70
+  // Flat overnight VIX on Mon-Thu = no qualifying type → block.
+  // RSI filter only evaluated when rsi14 is supplied (caller computes from
+  // history_data.json daily closes; null on the first session before history
+  // is fetched — block message defers until data arrives).
+  let bobfType = null;
+  if (isFri) {
+    bobfType = 'friday';
+    if (rsi14 != null && (rsi14 < 40 || rsi14 > 65)) {
+      bobfBlocks.push(`RSI ${rsi14.toFixed(1)} outside 40-65 band`);
+    }
+  } else if (dow >= 1 && dow <= 4) {
+    const oNightDelta = vixToday - vixYClose;  // positive = VIX up overnight
+    if (oNightDelta >= 0.01)       bobfType = 'vix_up';
+    else if (oNightDelta <= -0.01) bobfType = 'vix_down';
+    if (!bobfType) {
+      bobfBlocks.push('flat overnight VIX (no qualifying type)');
+    } else if (bobfType === 'vix_down' && rsi14 != null && rsi14 > 70) {
+      bobfBlocks.push(`RSI ${rsi14.toFixed(1)} > 70 (vix-down type)`);
+    }
+    // vix_up type has no RSI filter
+  }
+
   let bobfRec, bobfBadge;
   if (bobfBlocks.length) {
     bobfRec = `No BOBF (${bobfBlocks.join(", ")})`;
     bobfBadge = "BLOCKED";
   } else {
-    bobfRec = isFri ? "BOBF (Friday version)" : "BOBF in play";
-    bobfBadge = isFri ? "FRIDAY VERSION" : "IN PLAY";
+    // Type-specific labels so the dashboard / Discord message reflect which
+    // BOBF variant is actually queued for today.
+    if (bobfType === 'friday')        { bobfRec = "BOBF (Friday RSI)";       bobfBadge = "FRIDAY RSI"; }
+    else if (bobfType === 'vix_up')   { bobfRec = "BOBF (VIX up)";           bobfBadge = "VIX UP"; }
+    else if (bobfType === 'vix_down') { bobfRec = "BOBF (VIX down)";         bobfBadge = "VIX DOWN"; }
+    else                              { bobfRec = "BOBF in play";            bobfBadge = "IN PLAY"; }
   }
 
   // ── Build dimmed card texts for inactive strategies ──

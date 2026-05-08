@@ -1749,6 +1749,26 @@
     if(eom1)        br.push("EOM-1");
     if(earningsDay){ const tickers=SignalEngine.earningsSchedule.filter(e=>e.date===todayLong()).map(e=>e.ticker).join(','); br.push(`earnings (${tickers})`); }
     if(!isNaN(vToday)&&vToday>T.VIX_MAX_BOBF) br.push("high VIX");
+
+    // BOBF type qualification + RSI gate (mirrors signal-engine.js calculateSignal).
+    // Three types: Friday RSI / VIX up / VIX down. Each has its own RSI band.
+    let bobfType=null;
+    if(isFri){
+      bobfType='friday';
+      if(_spxRsi14!=null && (_spxRsi14<40 || _spxRsi14>65)){
+        br.push(`RSI ${_spxRsi14.toFixed(1)} outside 40-65 band`);
+      }
+    } else if(dow>=1 && dow<=4){
+      const oNightDelta = vToday - vYClose;  // positive = VIX up overnight
+      if(oNightDelta >=  0.01) bobfType='vix_up';
+      else if(oNightDelta <= -0.01) bobfType='vix_down';
+      if(!bobfType){
+        br.push('flat overnight VIX (no qualifying type)');
+      } else if(bobfType==='vix_down' && _spxRsi14!=null && _spxRsi14>70){
+        br.push(`RSI ${_spxRsi14.toFixed(1)} > 70 (vix-down type)`);
+      }
+    }
+
     if(br.length){
       cardBobf.className='scard active-block';
       bobfBadge.textContent='BLOCKED';
@@ -1758,8 +1778,13 @@
       bobfReason.innerHTML=`<span class="${cls}">${icon} ${vb&&!ob?'VIX level':'Hard rule'}</span>`;
     } else {
       cardBobf.className='scard active-ok';
-      bobfBadge.textContent=isFri?'FRIDAY VERSION':'IN PLAY';
-      bobfRec.textContent=isFri?'BOBF (Friday version)':'BOBF in play';
+      let badgeTxt, recTxt;
+      if(bobfType==='friday')        { badgeTxt='FRIDAY RSI';  recTxt='BOBF (Friday RSI)'; }
+      else if(bobfType==='vix_up')   { badgeTxt='VIX UP';      recTxt='BOBF (VIX up)'; }
+      else if(bobfType==='vix_down') { badgeTxt='VIX DOWN';    recTxt='BOBF (VIX down)'; }
+      else                           { badgeTxt='IN PLAY';     recTxt='BOBF in play'; }
+      bobfBadge.textContent=badgeTxt;
+      bobfRec.textContent=recTxt;
       bobfReason.textContent='';
     }
 
@@ -2275,15 +2300,36 @@
     }catch(e){ console.warn('[S3] VIX 20d fetch:', e); }
   }
 
-  /* ── Prior-day SPX change % — needed for the VIX DEAD regime check ── */
-  let _spxPriorDayChgPct = null;  // yesterday's SPX close vs day-before-yesterday's close, %
+  /* ── Prior-day SPX change % + RSI(14) on prior daily closes ──
+     One fetch (last ~45 days of daily SPX) covers two needs:
+     - _spxPriorDayChgPct (yesterday vs day-before-yesterday) → VIX DEAD regime
+     - _spxRsi14 (Wilder RSI on 14 prior closes) → BOBF type-aware gate */
+  let _spxPriorDayChgPct = null;
+  let _spxRsi14 = null;
+  function _wilderRsi14(closes){
+    if(closes.length < 15) return null;
+    let gain = 0, loss = 0;
+    for(let i = 1; i <= 14; i++){
+      const diff = closes[i] - closes[i-1];
+      if(diff > 0) gain += diff; else loss -= diff;
+    }
+    let avgGain = gain / 14, avgLoss = loss / 14;
+    for(let i = 15; i < closes.length; i++){
+      const diff = closes[i] - closes[i-1];
+      avgGain = (avgGain * 13 + Math.max(diff, 0)) / 14;
+      avgLoss = (avgLoss * 13 + Math.max(-diff, 0)) / 14;
+    }
+    if(avgLoss === 0) return 100;
+    return 100 - 100 / (1 + (avgGain / avgLoss));
+  }
   async function schwabFetchSpxPriorDayChg(){
     const token = await schwabGetToken();
     if(!token) return;
     try{
+      // 45 days covers both prior-day delta (last 2) and RSI(14) (last 15+)
       const end = new Date();
-      const start = new Date(end); start.setDate(start.getDate() - 10);
-      const url = `${SCHWAB.proxy()}/market/pricehistory?symbol=%24SPX&periodType=month&period=1&frequencyType=daily&frequency=1&startDate=${start.getTime()}&endDate=${end.getTime()}&needExtendedHoursData=false`;
+      const start = new Date(end); start.setDate(start.getDate() - 45);
+      const url = `${SCHWAB.proxy()}/market/pricehistory?symbol=%24SPX&periodType=month&period=2&frequencyType=daily&frequency=1&startDate=${start.getTime()}&endDate=${end.getTime()}&needExtendedHoursData=false`;
       const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       if(!resp.ok) throw new Error('HTTP ' + resp.status);
       const data = await resp.json();
@@ -2296,10 +2342,12 @@
         .filter(c => new Date(c.datetime).toDateString() !== todayStr)
         .map(c => c.close)
         .filter(v => v > 0);
-      if(priors.length < 2) return;
-      const yClose   = priors[priors.length - 1];
-      const yyClose  = priors[priors.length - 2];
-      _spxPriorDayChgPct = ((yClose - yyClose) / yyClose) * 100;
+      if(priors.length >= 2){
+        const yClose   = priors[priors.length - 1];
+        const yyClose  = priors[priors.length - 2];
+        _spxPriorDayChgPct = ((yClose - yyClose) / yyClose) * 100;
+      }
+      _spxRsi14 = _wilderRsi14(priors.slice(-30));
     }catch(e){ console.warn('[S3] SPX prior-day fetch:', e); }
   }
 

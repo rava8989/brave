@@ -2066,8 +2066,10 @@ async function handleScheduled(env) {
 
   // 4c. Fetch previous day's m8bfWR + last-20 vixClose from history_data.json.
   //     vixPct20d is required for the diagonal filter (VIX_MID 50–80% dead zone).
+  //     rsi14 is required for the BOBF type-aware gate (Friday 40-65 / vix-down ≤70).
   let prevWR = null;
   let vixPct20d = null;
+  let rsi14 = null;
   try {
     const histResp = await fetch(
       `https://raw.githubusercontent.com/rava8989/brave/main/history_data.json?t=${Date.now()}`,
@@ -2096,6 +2098,20 @@ async function handleScheduled(env) {
         vixPct20d = Math.round(100 * below / vix20.length);
         console.log(`[proxy] vixPct20d = ${vixPct20d}% (vixToday=${vixToday} vs last ${vix20.length} closes)`);
       }
+
+      // Compute RSI(14) on prior daily closes for the BOBF type-aware gate.
+      // Same data source the dashboard uses; ensures the Discord message and
+      // /trade endpoint show "No BOBF (RSI X.X outside 40-65)" instead of
+      // wrongly claiming BOBF is in play.
+      const closes30 = histData
+        .filter(r => r.date < todayISO && r.spxClose != null && r.spxClose > 0)
+        .sort((a, b) => a.date.localeCompare(b.date))
+        .slice(-30)
+        .map(r => parseFloat(r.spxClose));
+      if (closes30.length >= 15) {
+        rsi14 = computeRSI14(closes30);
+        console.log(`[proxy] rsi14 = ${rsi14?.toFixed(2)} (from ${closes30.length} prior closes)`);
+      }
     }
   } catch (e) { console.warn('[proxy] history fetch failed:', e.message || e); }
 
@@ -2108,6 +2124,7 @@ async function handleScheduled(env) {
     etDate: etNow,
     prevWR,
     vixPct20d,
+    rsi14,
   });
 
   // 5b. Open straddle if signal says so. Idempotent per day via straddle_open_trade
