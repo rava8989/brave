@@ -4286,12 +4286,38 @@ export default {
         let openRaw = await env.SIGNAL_KV.get('diagonal_open_trade');
         let open = openRaw ? JSON.parse(openRaw) : null;
 
-        // ── Staleness-triggered self-refresh ────────────────────────────────
+        // ── Self-heal #1: close+open lifecycle (cron-stall defense) ─────────
+        // The 12:30 ET close+open cycle is supposed to be triggered by the
+        // cron tick. If the cron stalls (recurring Cloudflare issue), the
+        // prior-day trade stays open and no new one opens. Self-heal here:
+        // if it's past 12:30 ET on a market day AND we have an open trade
+        // whose openDate is before today AND no diag_done_<today> key,
+        // run handleDiagonalTrade (which is idempotent — sets diag_done
+        // after success, so concurrent endpoint hits won't double-trigger).
+        if (open && open.openDate && open.openDate < todayDT && !isWeekendDT && !isHolidayDT) {
+          const past1230 = etNowDT.getHours() > 12 || (etNowDT.getHours() === 12 && etNowDT.getMinutes() >= 30);
+          const beforeMarketClose = etNowDT.getHours() < 16;
+          if (past1230 && beforeMarketClose) {
+            const diagDone = await env.SIGNAL_KV.get(`diag_done_${todayDT}`);
+            if (!diagDone) {
+              try {
+                console.log('[diag-today] cron-stall recovery: triggering close+open lifecycle');
+                await handleDiagonalTrade(env, etNowDT);
+                // handleDiagonalTrade writes both the close result AND the new
+                // trade. Re-read to pick up the new state.
+                openRaw = await env.SIGNAL_KV.get('diagonal_open_trade');
+                open = openRaw ? JSON.parse(openRaw) : null;
+                // Mark done so subsequent endpoint calls don't re-trigger
+                await env.SIGNAL_KV.put(`diag_done_${todayDT}`, 'self-heal', { expirationTtl: 86400 });
+              } catch (e) { console.warn('[diag-today] cron-stall recovery failed:', e.message); }
+            }
+          }
+        }
+
+        // ── Self-heal #2: stale live mids (cron-stall mid-trade) ────────────
         // If we have an open trade and its lastQuoteAt is older than 90s,
-        // fetch fresh chain mids on this endpoint hit. Defends against
-        // Cloudflare cron stalls (recurring issue — observed 79-min stall
-        // 2026-05-08). Browser polls /diagonal-today every 30s, so the
-        // first stale call will refresh and subsequent calls hit warm KV.
+        // fetch fresh chain mids on this endpoint hit. Browser polls every
+        // 30s so first stale poll triggers refresh, subsequent ones cache.
         if (open && open.status === 'open' && !isWeekendDT && !isHolidayDT) {
           const isMarketHoursDT = (etNowDT.getHours() > 9 ||
                                    (etNowDT.getHours() === 9 && etNowDT.getMinutes() >= 30)) &&
