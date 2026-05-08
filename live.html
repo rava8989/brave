@@ -205,7 +205,18 @@
 // ─── Diagonal section styles ────────────────────────────────────────────
 (function injectDiagonalCSS() {
   const css = `
-    .diag-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;box-shadow:var(--shadow);margin-bottom:16px;}
+    .diag-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;box-shadow:var(--shadow);margin-bottom:16px;position:relative;overflow:hidden;}
+    /* Per-strategy color accents — top border + subtle bg tint so each card
+       reads as its own strategy at a glance. M8BF stays violet (existing
+       accent), the three new cards each get their own hue. */
+    #bobfSection      .diag-card{border-top:3px solid #fbbf24;background:linear-gradient(180deg,rgba(251,191,36,.06) 0%,var(--bg2) 60%);}
+    #bobfSection      .diag-title span{color:#fbbf24;}
+    #straddleSection  .diag-card{border-top:3px solid #22d3ee;background:linear-gradient(180deg,rgba(34,211,238,.06) 0%,var(--bg2) 60%);}
+    #straddleSection  .diag-title span{color:#22d3ee;}
+    #diagonalSection  .diag-card{border-top:3px solid #fb7185;background:linear-gradient(180deg,rgba(251,113,133,.06) 0%,var(--bg2) 60%);}
+    #diagonalSection  .diag-title span{color:#fb7185;}
+    /* M8BF lives inside #mainContent — add the same treatment to its cards */
+    #mainContent .bf-card{border-top:3px solid var(--accent);background:linear-gradient(180deg,rgba(129,140,248,.06) 0%,var(--bg2) 60%);}
     .diag-header{display:flex;align-items:center;gap:12px;margin-bottom:12px;}
     .diag-title{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:var(--text);letter-spacing:.04em;text-transform:uppercase;}
     .diag-title span{color:var(--accent);}
