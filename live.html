@@ -184,6 +184,10 @@
 </div>
 
 <!-- Diagonal trade section (always visible — opens at 12:30 ET, closes next day 12:30 ET) -->
+<div class="main" id="straddleSection" style="display:none;">
+  <!-- Dynamically rendered by renderStraddle() -->
+</div>
+
 <div class="main" id="diagonalSection" style="display:none;">
   <!-- Dynamically rendered by renderDiagonal() -->
 </div>
@@ -495,6 +499,159 @@ function updateSPXChartTheme() {
   spxChart.options.scales.y.ticks.color = c.text;
   spxChart.options.scales.y.grid.color = c.grid;
   spxChart.update();
+}
+
+// ─── Straddle trade state ─────────────────────────────────────────────────────
+let straddle = null;
+async function loadStraddle() {
+  try {
+    const r = await fetchWithRetry(PROXY + '/straddle-today', { cache: 'no-store' });
+    if (r.ok) straddle = await r.json();
+  } catch { /* keep last known */ }
+}
+
+function renderStraddle() {
+  const sec = document.getElementById('straddleSection');
+  if (!straddle) { sec.style.display = 'none'; return; }
+  const { open, lastClosed, date, isWeekend, isHoliday, serverTimeET, workCutoffET } = straddle;
+
+  // Hide entirely on weekends + holidays unless we have a recent closed trade
+  if (isWeekend || isHoliday) {
+    if (!lastClosed || lastClosed.closeDate !== date) { sec.style.display = 'none'; return; }
+  }
+
+  // Don't show empty card pre-9:30 with no data
+  if (!open && !(lastClosed && lastClosed.closeDate === date)) {
+    // Still show a small placeholder so user knows the card exists
+    sec.style.display = '';
+    sec.innerHTML = `
+      <div class="diag-card">
+        <div class="diag-header">
+          <div class="diag-title"><span>Straddle</span> · 9:32 ET</div>
+          <span class="diag-badge pending">WAITING SIGNAL</span>
+          <div style="flex:1"></div>
+          <span style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;">${serverTimeET} ET</span>
+        </div>
+        <div style="font-size:13px;color:var(--text2);padding:6px 0;">
+          Straddle fires automatically at 9:32 ET if signal allows.
+        </div>
+      </div>`;
+    return;
+  }
+
+  sec.style.display = '';
+  const showTrade = open || (lastClosed && lastClosed.closeDate === date);
+  const t = open || lastClosed;
+  if (!t) { sec.style.display = 'none'; return; }
+
+  // Status badge
+  let badge, badgeClass, statusText;
+  switch (t.status) {
+    case 'filled':
+      badge = 'FILLED · LIVE'; badgeClass = 'open';
+      statusText = `Filled at $${t.fillDebit?.toFixed(2)} · ${t.fillTimeET || t.openTimeET} ET · max debit $${t.maxDebit?.toFixed(2)}`;
+      break;
+    case 'working':
+      badge = 'WORKING'; badgeClass = 'pending';
+      statusText = `Working limit @ $${t.maxDebit?.toFixed(2)} · current mid $${t.currentValue?.toFixed(2)} · cancels at ${workCutoffET} ET`;
+      break;
+    case 'expired':
+      badge = 'NO FILL'; badgeClass = 'skip';
+      statusText = `Order expired ${workCutoffET} ET — straddle never met max debit $${t.maxDebit?.toFixed(2)}`;
+      break;
+    case 'closed':
+      badge = 'CLOSED'; badgeClass = t.pnl >= 0 ? 'open' : 'error';
+      statusText = `Settled at SPX ${t.spxClose?.toFixed(2)} · final P&L ${fmt$(t.pnl)}`;
+      break;
+    default:
+      badge = (t.status || 'OPEN').toUpperCase(); badgeClass = 'pending';
+      statusText = `Status: ${t.status}`;
+  }
+
+  const debitDelta = (t.currentValue != null && t.entryDebit != null) ? (t.currentValue - t.entryDebit) : null;
+  const deltaClass = (debitDelta == null) ? '' : debitDelta > 0 ? 'diag-pl-pos' : debitDelta < 0 ? 'diag-pl-neg' : '';
+
+  const fmtExp = iso => {
+    if (!iso) return '—';
+    const d = new Date(iso + 'T12:00:00');
+    return d.toLocaleString('en-US',{month:'short',day:'numeric'});
+  };
+
+  const livePnl = (t.status === 'filled')
+    ? t.currentPnl
+    : (t.status === 'closed') ? t.pnl : null;
+  const plClass = livePnl == null ? '' : livePnl > 0 ? 'diag-pl-pos' : livePnl < 0 ? 'diag-pl-neg' : '';
+
+  const html = [];
+  html.push(`<div class="diag-card">`);
+  html.push(`<div class="diag-header">`);
+  html.push(`<div class="diag-title"><span>${t.badge || 'Straddle'}</span> · ${t.openTimeET || '9:32'} ET</div>`);
+  html.push(`<span class="diag-badge ${badgeClass}">${badge}</span>`);
+  html.push(`<div style="flex:1"></div>`);
+  html.push(`<span style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;">max debit $${t.maxDebit?.toFixed(2)}</span>`);
+  html.push(`</div>`);
+
+  // Stats grid (only meaningful when we have prices)
+  if (t.entryDebit != null) {
+    html.push(`<div class="diag-grid">`);
+    if (livePnl != null) {
+      html.push(`<div class="diag-stat"><div class="diag-stat-label">${t.status==='closed'?'Final':'Live'} P&L</div><div class="diag-stat-value ${plClass}">${fmt$(livePnl)}</div><div class="diag-stat-sub">${t.contracts} contract</div></div>`);
+    } else {
+      html.push(`<div class="diag-stat"><div class="diag-stat-label">P&L</div><div class="diag-stat-value">—</div><div class="diag-stat-sub">${t.status === 'working' ? 'pending fill' : ''}</div></div>`);
+    }
+    html.push(`<div class="diag-stat"><div class="diag-stat-label">SPX</div><div class="diag-stat-value">${t.currentSpot?.toFixed(2) ?? t.spxClose?.toFixed(2) ?? '—'}</div><div class="diag-stat-sub">Strike ${t.strike}</div></div>`);
+    html.push(`<div class="diag-stat"><div class="diag-stat-label">Entry debit</div><div class="diag-stat-value">$${(t.entryDebit*100).toFixed(0)}</div><div class="diag-stat-sub">$${t.entryDebit?.toFixed(2)} mid</div></div>`);
+    if (t.currentValue != null) {
+      html.push(`<div class="diag-stat"><div class="diag-stat-label">Current</div><div class="diag-stat-value">$${(t.currentValue*100).toFixed(0)}</div><div class="diag-stat-sub">${debitDelta != null ? `<span class="${deltaClass}">${debitDelta > 0 ? '+' : ''}${debitDelta.toFixed(2)}</span>` : ''}</div></div>`);
+    }
+    html.push(`</div>`);
+  }
+
+  // Position card
+  html.push(`<div class="diag-position">`);
+  html.push(`  <div class="diag-pos-title">Straddle Position · ${t.contracts || 1} contract</div>`);
+  html.push(`  <div class="diag-pos-headline">SPX ${t.strike}P <span class="diag-slash">/</span> ${t.strike}C</div>`);
+  html.push(`  <div class="diag-pos-subline">ATM straddle · 0DTE · spot ${t.spotEntry?.toFixed(2)}${t.currentSpot != null && t.currentSpot !== t.spotEntry ? ' → '+t.currentSpot.toFixed(2) : ''}</div>`);
+  html.push(`  <div class="diag-pos-legs">`);
+  html.push(`    <div class="diag-pos-leg long">`);  // calls = bought, use blue
+  html.push(`      <div class="diag-pos-leg-side">Long Call · bought</div>`);
+  html.push(`      <div class="diag-pos-leg-strike">${t.strike}C</div>`);
+  html.push(`      <div class="diag-pos-leg-meta">${fmtExp(t.expDate)} · 0DTE · ATM</div>`);
+  html.push(`    </div>`);
+  html.push(`    <div class="diag-pos-leg long">`);
+  html.push(`      <div class="diag-pos-leg-side">Long Put · bought</div>`);
+  html.push(`      <div class="diag-pos-leg-strike">${t.strike}P</div>`);
+  html.push(`      <div class="diag-pos-leg-meta">${fmtExp(t.expDate)} · 0DTE · ATM</div>`);
+  html.push(`    </div>`);
+  html.push(`  </div>`);
+  if (t.entryDebit != null && t.currentValue != null) {
+    html.push(`  <div class="diag-pos-pricing">`);
+    html.push(`    <div class="diag-pos-price"><div class="diag-pos-price-label">Entry debit</div><div class="diag-pos-price-value">$${t.entryDebit.toFixed(2)}</div></div>`);
+    html.push(`    <div class="diag-pos-price"><div class="diag-pos-price-label">${t.status === 'closed' ? 'Settled' : 'Current'}</div><div class="diag-pos-price-value">$${t.currentValue.toFixed(2)}</div></div>`);
+    html.push(`    <div class="diag-pos-price"><div class="diag-pos-price-label">Δ vs entry</div><div class="diag-pos-price-value ${deltaClass}">${debitDelta > 0 ? '+' : ''}${debitDelta.toFixed(2)}</div></div>`);
+    html.push(`  </div>`);
+  }
+  html.push(`</div>`);
+
+  // Per-leg fills toggle
+  if (t.entryCallMid != null) {
+    html.push(`<details style="margin-top:8px;">`);
+    html.push(`  <summary style="font-size:10px;color:var(--text3);cursor:pointer;text-transform:uppercase;letter-spacing:.08em;padding:4px 0;">show per-leg fills</summary>`);
+    html.push(`  <div style="margin-top:6px;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);">`);
+    html.push(`    <div class="diag-leg"><span class="side long">CALL</span><span class="desc">${t.strike}C · ${fmtExp(t.expDate)}</span><span class="price">$${t.entryCallMid?.toFixed(2)}${t.currentCallMid != null ? ' → $'+t.currentCallMid.toFixed(2) : ''}</span></div>`);
+    html.push(`    <div class="diag-leg"><span class="side long">PUT</span><span class="desc">${t.strike}P · ${fmtExp(t.expDate)}</span><span class="price">$${t.entryPutMid?.toFixed(2)}${t.currentPutMid != null ? ' → $'+t.currentPutMid.toFixed(2) : ''}</span></div>`);
+    html.push(`  </div>`);
+    html.push(`</details>`);
+  }
+
+  const ageS = t.lastQuoteAt ? Math.round((Date.now() - new Date(t.lastQuoteAt).getTime()) / 1000) : null;
+  const ageStr = ageS == null ? '—' : ageS < 60 ? `${ageS}s ago` : `${Math.round(ageS/60)}m ago`;
+  html.push(`<div class="diag-meta">`);
+  html.push(`  <span>${statusText}</span>`);
+  if (t.status === 'filled' || t.status === 'working') html.push(`  <span>Quote age: ${ageStr}</span>`);
+  html.push(`</div>`);
+  html.push(`</div>`);
+  sec.innerHTML = html.join('');
 }
 
 // ─── Diagonal trade state ─────────────────────────────────────────────────────
@@ -1222,8 +1379,9 @@ async function tick() {
   // Re-check trade state every tick — catches trigger/close without page refresh
   const prevTriggered = trade?.triggered;
   const prevStatus = trade?.status;
-  await Promise.all([loadTrade(), loadDiagonal()]);
+  await Promise.all([loadTrade(), loadDiagonal(), loadStraddle()]);
   renderDiagonal();
+  renderStraddle();
   const stateChanged = (trade?.triggered !== prevTriggered) || (trade?.status !== prevStatus);
   if (stateChanged) { render(); }
 
@@ -1263,12 +1421,13 @@ async function tick() {
 async function init() {
   try {
     checkOAuthCallback();
-    await Promise.all([loadTrade(), loadSPXHistory(), loadSignals(), loadDiagonal()]);
+    await Promise.all([loadTrade(), loadSPXHistory(), loadSignals(), loadDiagonal(), loadStraddle()]);
     updateLiveBadge();
     createSPXChart();
     rebuildSPXChart();
     render();
     renderDiagonal();
+    renderStraddle();
     await tick();
     pollTimer = setInterval(tick, 30_000);
     document.addEventListener('visibilitychange', () => {

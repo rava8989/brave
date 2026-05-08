@@ -542,6 +542,16 @@ async function handleEOD(env, etNow) {
     wroteFields = true;
   }
 
+  // Settle the live-tracked straddle (if any) at SPX close → writes stradPL.
+  // upsertHistoryGitHub conditional-overwrite means it won't clobber a manually-
+  // set stradPL — only fills if currently null.
+  if (spxClose != null) {
+    try {
+      const stradResult = await settleStraddleEOD(env, etNow, spxClose);
+      console.log('[strad] EOD settle:', JSON.stringify(stradResult));
+    } catch (e) { console.warn('[strad] EOD settle failed:', e.message); }
+  }
+
   // Append today's signals to TRADES database in backtester.html (reuse cached fullSigs)
   let appendResult = { appended: 0 };
   if (spxClose != null && fullSigs.length > 0) {
@@ -983,6 +993,212 @@ async function handleDiagonalTrade(env, etNow) {
   return out;
 }
 
+// ════════════════════════════════════════════════════════════════════
+// STRADDLE TRADE HANDLER (live)
+// Lifecycle:
+//   9:30-9:32 ET → if calculateSignal says theme==='strad', open trade
+//      Fetch ATM 0DTE call+put, compute mid debit
+//      If mid ≤ max_debit → fill at mid
+//      Else → place working limit at max_debit, status='working'
+//   Every 2-min market tick before 13:30 ET → refresh working orders.
+//      If current mid ≤ max_debit → fill, status='filled'
+//   13:30 ET → expire any still-working orders, status='expired'
+//   16:15 ET (EOD) → if filled, compute pnl using SPX close, write stradPL
+// Max debit: NM Straddle = $32, EOM/plain Straddle = $35.
+// KV keys:
+//   straddle_open_trade  — current trade or null
+//   straddle_done_<date> — idempotency for EOD record
+// ════════════════════════════════════════════════════════════════════
+
+const STRADDLE_MAX_DEBIT_NM   = 32.00;   // NM Straddle: $3,200 max risk
+const STRADDLE_MAX_DEBIT_OTHER = 35.00;  // EOM + plain Straddle: $3,500 max risk
+const STRADDLE_WORK_CUTOFF_HR  = 13;     // 13:30 ET cutoff
+const STRADDLE_WORK_CUTOFF_MIN = 30;
+
+// Pick a call OR put quote at the requested strike from chain map.
+function pickContractFromChain(expDateMap, expISO, strike) {
+  const targetKey = Object.keys(expDateMap).find(k => k.startsWith(expISO + ':'));
+  if (!targetKey) return null;
+  const strikes = expDateMap[targetKey];
+  for (const offset of [0, -5, 5, -10, 10]) {
+    const k = String(strike + offset).includes('.') ? String(strike + offset) : String(strike + offset) + '.0';
+    if (strikes[k] && strikes[k][0]) {
+      const q = strikes[k][0];
+      return {
+        strike: parseFloat(q.strikePrice ?? (strike + offset)),
+        bid: q.bid, ask: q.ask,
+        mid: (q.bid != null && q.ask != null) ? (q.bid + q.ask) / 2 : null,
+        symbol: q.symbol,
+      };
+    }
+  }
+  return null;
+}
+
+// Fetch full SPX option chain (call+put) for a single expiry. Used for
+// straddle entry + monitoring. Mirrors GEX fetch pattern.
+async function fetchSpxFullChain(token, expDate, env) {
+  const baseParams = `symbol=%24SPX&strikeCount=20&fromDate=${expDate}&toDate=${expDate}&includeUnderlyingQuote=true&strategy=SINGLE`;
+  const [callData, putData] = await Promise.all([
+    fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/chains?${baseParams}&contractType=CALL`, token, env),
+    fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/chains?${baseParams}&contractType=PUT`, token, env),
+  ]);
+  const spot = callData.underlyingPrice || callData.underlying?.last
+            || putData.underlyingPrice  || putData.underlying?.last;
+  return {
+    spot,
+    callExpDateMap: callData.callExpDateMap || {},
+    putExpDateMap:  putData.putExpDateMap  || {},
+  };
+}
+
+function straddleMaxDebit(badge) {
+  // badge = 'NM STRADDLE' | 'EOM STRADDLE' | 'STRADDLE'
+  return badge === 'NM STRADDLE' ? STRADDLE_MAX_DEBIT_NM : STRADDLE_MAX_DEBIT_OTHER;
+}
+
+// Open or work a straddle. Called from the morning signal block once per day.
+// `signal` is the calculateSignal result; we expect signal.theme === 'strad'.
+async function openStraddleTrade(env, token, etNow, signal) {
+  const todayISO = isoDateET(etNow);
+  const expISO = todayISO;  // 0DTE — same-day expiry
+  const { spot, callExpDateMap, putExpDateMap } = await fetchSpxFullChain(token, expISO, env);
+  if (!spot) throw new Error('Straddle open: no spot price in chain response');
+
+  const strike = snap5(spot);
+  const callLeg = pickContractFromChain(callExpDateMap, expISO, strike);
+  const putLeg  = pickContractFromChain(putExpDateMap,  expISO, strike);
+  if (!callLeg || !putLeg) throw new Error(`Straddle open: missing leg @ ${strike} for ${expISO}`);
+  if (callLeg.mid == null || putLeg.mid == null) throw new Error('Straddle open: missing bid/ask');
+
+  const debit = callLeg.mid + putLeg.mid;
+  const maxDebit = straddleMaxDebit(signal.badge || 'STRADDLE');
+
+  const trade = {
+    openDate: todayISO,
+    openTimeET: `${String(etNow.getHours()).padStart(2,'0')}:${String(etNow.getMinutes()).padStart(2,'0')}`,
+    badge: signal.badge || 'STRADDLE',
+    spotEntry: parseFloat(spot.toFixed(2)),
+    strike,
+    expDate: expISO,
+    callSymbol: callLeg.symbol,
+    putSymbol:  putLeg.symbol,
+    entryCallMid: parseFloat(callLeg.mid.toFixed(2)),
+    entryPutMid:  parseFloat(putLeg.mid.toFixed(2)),
+    entryCallBid: callLeg.bid, entryCallAsk: callLeg.ask,
+    entryPutBid:  putLeg.bid,  entryPutAsk:  putLeg.ask,
+    entryDebit: parseFloat(debit.toFixed(2)),
+    maxDebit,
+    contracts: 1,
+    // Live fields
+    currentSpot: parseFloat(spot.toFixed(2)),
+    currentCallMid: parseFloat(callLeg.mid.toFixed(2)),
+    currentPutMid:  parseFloat(putLeg.mid.toFixed(2)),
+    currentValue:   parseFloat(debit.toFixed(2)),
+    currentPnl: 0,
+    lastQuoteAt: new Date().toISOString(),
+    // Status
+    status: debit <= maxDebit ? 'filled' : 'working',
+    fillDebit: debit <= maxDebit ? parseFloat(debit.toFixed(2)) : null,
+    fillTimeET: debit <= maxDebit ? `${String(etNow.getHours()).padStart(2,'0')}:${String(etNow.getMinutes()).padStart(2,'0')}` : null,
+    workingExpiry: `${todayISO} 13:30 ET`,
+  };
+  return trade;
+}
+
+// Refresh live mids on the open straddle. Also handles working→filled and
+// working→expired transitions.
+async function refreshStraddleLiveQuotes(env, token, etNow) {
+  const raw = await env.SIGNAL_KV.get('straddle_open_trade');
+  if (!raw) return null;
+  const trade = JSON.parse(raw);
+  if (trade.status === 'expired' || trade.status === 'closed') return trade;
+
+  // Past cutoff and still working → expire
+  const pastCutoff = etNow.getHours() > STRADDLE_WORK_CUTOFF_HR ||
+                     (etNow.getHours() === STRADDLE_WORK_CUTOFF_HR && etNow.getMinutes() >= STRADDLE_WORK_CUTOFF_MIN);
+  if (trade.status === 'working' && pastCutoff) {
+    trade.status = 'expired';
+    trade.expiredAt = new Date().toISOString();
+    await env.SIGNAL_KV.put('straddle_open_trade', JSON.stringify(trade));
+    return trade;
+  }
+
+  try {
+    const { spot, callExpDateMap, putExpDateMap } = await fetchSpxFullChain(token, trade.expDate, env);
+    const c = pickContractFromChain(callExpDateMap, trade.expDate, trade.strike);
+    const p = pickContractFromChain(putExpDateMap,  trade.expDate, trade.strike);
+    if (!c || !p || c.mid == null || p.mid == null) return trade;
+    const newDebit = c.mid + p.mid;
+    trade.currentSpot   = spot ? parseFloat(spot.toFixed(2)) : trade.currentSpot;
+    trade.currentCallMid = parseFloat(c.mid.toFixed(2));
+    trade.currentPutMid  = parseFloat(p.mid.toFixed(2));
+    trade.currentValue   = parseFloat(newDebit.toFixed(2));
+
+    // Working → filled if price drops to the limit
+    if (trade.status === 'working' && newDebit <= trade.maxDebit) {
+      trade.status = 'filled';
+      trade.fillDebit = parseFloat(newDebit.toFixed(2));
+      trade.fillTimeET = `${String(etNow.getHours()).padStart(2,'0')}:${String(etNow.getMinutes()).padStart(2,'0')}`;
+      // Re-snapshot leg fills at fill time
+      trade.entryCallMid = parseFloat(c.mid.toFixed(2));
+      trade.entryPutMid  = parseFloat(p.mid.toFixed(2));
+      trade.entryDebit   = parseFloat(newDebit.toFixed(2));
+    }
+
+    // Live P&L only meaningful when filled
+    if (trade.status === 'filled') {
+      trade.currentPnl = Math.round((trade.currentValue - trade.entryDebit) * 100 * trade.contracts);
+    }
+    trade.lastQuoteAt = new Date().toISOString();
+    await env.SIGNAL_KV.put('straddle_open_trade', JSON.stringify(trade));
+  } catch (e) {
+    console.warn('[strad] refresh failed:', e.message);
+  }
+  return trade;
+}
+
+// EOD: settle the straddle at SPX close. Records stradPL.
+// `spxClose` provided by handleEOD (from Schwab quote).
+async function settleStraddleEOD(env, etNow, spxClose) {
+  const raw = await env.SIGNAL_KV.get('straddle_open_trade');
+  if (!raw) return { status: 'no-trade' };
+  const trade = JSON.parse(raw);
+  if (trade.openDate !== isoDateET(etNow)) return { status: 'wrong-date', openDate: trade.openDate };
+  if (trade.status === 'closed' || trade.status === 'expired') {
+    // Working order that never filled → no trade, no P&L
+    if (trade.status === 'expired') {
+      // Still mark in history so the day shows "no trade" cleanly?
+      // Per existing convention stradPL=null for skip, 0 means "traded, broke even"
+      // Leave null — the EOD cron handles m8bf etc. similarly.
+    }
+    return { status: trade.status };
+  }
+  if (trade.status !== 'filled') return { status: trade.status };
+
+  // Intrinsic value at expiry: |spxClose - strike|
+  const closeIntrinsic = Math.abs(spxClose - trade.strike);
+  const pnl = Math.round((closeIntrinsic - trade.entryDebit) * 100 * trade.contracts);
+
+  trade.status = 'closed';
+  trade.closeDate = isoDateET(etNow);
+  trade.spxClose = parseFloat(spxClose.toFixed(2));
+  trade.closeValue = parseFloat(closeIntrinsic.toFixed(2));
+  trade.pnl = pnl;
+  await env.SIGNAL_KV.put('straddle_open_trade', JSON.stringify(trade));
+
+  // Append to closed log
+  const logRaw = await env.SIGNAL_KV.get('straddle_closed_log');
+  const log = logRaw ? JSON.parse(logRaw) : [];
+  log.unshift(trade);
+  await env.SIGNAL_KV.put('straddle_closed_log', JSON.stringify(log.slice(0, 30)));
+
+  // Commit stradPL to history_data.json
+  await upsertHistoryGitHub(env, trade.openDate, { stradPL: pnl });
+
+  return { status: 'settled', pnl, strike: trade.strike, debit: trade.entryDebit, closeValue: closeIntrinsic };
+}
+
 async function handleScheduled(env) {
   const etNow = toET();
   const dow = etNow.getDay();
@@ -1076,13 +1292,14 @@ async function handleScheduled(env) {
     }
   }
 
-  // ── Refresh live quotes on the open diagonal every market tick ──
+  // ── Refresh live quotes on the open diagonal AND straddle every market tick ──
   if (isMarket) {
     try {
       const schwabToken = await getAccessToken(env);
       await refreshDiagonalLiveQuotes(env, schwabToken);
+      await refreshStraddleLiveQuotes(env, schwabToken, etNow);
     } catch (e) {
-      console.warn('[diag] live refresh failed:', e.message);
+      console.warn('[live] refresh failed:', e.message);
     }
   }
 
@@ -1335,6 +1552,22 @@ async function handleScheduled(env) {
     prevWR,
     vixPct20d,
   });
+
+  // 5b. Open straddle if signal says so. Idempotent per day via straddle_open_trade
+  // (only fire if no current trade for today). Errors here MUST NOT abort the
+  // Discord post — straddle is a best-effort live-tracking layer on top.
+  if (signal.theme === 'strad') {
+    try {
+      const existingRaw = await env.SIGNAL_KV.get('straddle_open_trade');
+      const existing = existingRaw ? JSON.parse(existingRaw) : null;
+      if (!existing || existing.openDate !== isoDateET(etNow)) {
+        const stradToken = await getAccessToken(env);
+        const trade = await openStraddleTrade(env, stradToken, etNow, signal);
+        await env.SIGNAL_KV.put('straddle_open_trade', JSON.stringify(trade));
+        console.log(`[strad] opened ${trade.status} K=${trade.strike} debit=${trade.entryDebit} maxDebit=${trade.maxDebit}`);
+      }
+    } catch (e) { console.warn('[strad] open failed:', e.message); }
+  }
 
   // 6. Build Discord message
   const vixValues = { yOpen: vixYOpen, yClose: vixYClose, todayOpen: vixToday };
@@ -3154,6 +3387,45 @@ export default {
     // The cron refreshes mids every 2 min so this endpoint just reads KV
     // (zero Schwab API cost). On stale data the live page can show an age
     // indicator using `lastQuoteAt`.
+    // ── GET /straddle-today ── Public live straddle state (no auth)
+    // Returns the currently-open/working/expired/closed straddle trade plus
+    // the most recent closed straddle. Live mids refreshed by the cron, so
+    // this is a cheap KV read (no Schwab API call here).
+    if (url.pathname === '/straddle-today' && request.method === 'GET') {
+      const publicCors = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Max-Age': '86400',
+      };
+      try {
+        const etNowSt = toET(new Date());
+        const todaySt = isoDateET(etNowSt);
+        const isWeekendSt = etNowSt.getDay() === 0 || etNowSt.getDay() === 6;
+        const isHolidaySt = isHol(etNowSt);
+
+        const openRaw = await env.SIGNAL_KV.get('straddle_open_trade');
+        const open = openRaw ? JSON.parse(openRaw) : null;
+
+        const logRaw = await env.SIGNAL_KV.get('straddle_closed_log');
+        const closedLog = logRaw ? JSON.parse(logRaw) : [];
+        const lastClosed = closedLog[0] || null;
+
+        return jsonResp({
+          date: todaySt,
+          isWeekend: isWeekendSt,
+          isHoliday: isHolidaySt,
+          open,                                  // current trade or null
+          lastClosed,                            // most recent settled trade
+          serverTimeET: `${String(etNowSt.getHours()).padStart(2,'0')}:${String(etNowSt.getMinutes()).padStart(2,'0')}`,
+          maxDebits: { NM: STRADDLE_MAX_DEBIT_NM, EOM: STRADDLE_MAX_DEBIT_OTHER, plain: STRADDLE_MAX_DEBIT_OTHER },
+          workCutoffET: '13:30',
+        }, 200, publicCors);
+      } catch (e) {
+        return jsonResp({ error: e.message }, 500, publicCors);
+      }
+    }
+
     if (url.pathname === '/diagonal-today' && request.method === 'GET') {
       const publicCors = {
         'Access-Control-Allow-Origin': '*',
