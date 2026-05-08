@@ -1360,7 +1360,7 @@ function bobfEntryReady(typeInfo, spotNow, spxOpen, sma5, rsi14) {
   const moveUp = (spotNow - spxOpen) / spxOpen;
   if (typeInfo.type === 'friday') {
     if (moveUp < BOBF_FRIDAY_MOVE_MIN)  return { ready: false, reason: `move-up ${(moveUp*100).toFixed(2)}% < 0.10%` };
-    if (rsi14 < BOBF_FRIDAY_RSI_MIN || rsi14 > BOBF_FRIDAY_RSI_MAX) return { ready: false, reason: `RSI ${rsi14.toFixed(1)} outside [40,65]` };
+    if (rsi14 < BOBF_FRIDAY_RSI_MIN || rsi14 > BOBF_FRIDAY_RSI_MAX) return { ready: false, reason: `RSI ${rsi14.toFixed(1)} outside ${BOBF_FRIDAY_RSI_MIN}-${BOBF_FRIDAY_RSI_MAX} band` };
   } else if (typeInfo.type === 'vix_up') {
     if (moveUp < BOBF_VIX_UP_MOVE_MIN)  return { ready: false, reason: `move-up ${(moveUp*100).toFixed(2)}% < 0.20%` };
   } else if (typeInfo.type === 'vix_down') {
@@ -1440,7 +1440,7 @@ async function prefilterBobf(env, etNow, vixToday, vixYClose) {
 
   if (rsi14 != null) {
     if (typeInfo.type === 'friday' && (rsi14 < BOBF_FRIDAY_RSI_MIN || rsi14 > BOBF_FRIDAY_RSI_MAX)) {
-      await env.SIGNAL_KV.put(doneKey, `rsi:${rsi14.toFixed(1)} outside [${BOBF_FRIDAY_RSI_MIN},${BOBF_FRIDAY_RSI_MAX}]`, { expirationTtl: 86400 });
+      await env.SIGNAL_KV.put(doneKey, `rsi:${rsi14.toFixed(1)} outside ${BOBF_FRIDAY_RSI_MIN}-${BOBF_FRIDAY_RSI_MAX} band`, { expirationTtl: 86400 });
       return { skipped: 'rsi-out', rsi14, type: 'friday' };
     }
     if (typeInfo.type === 'vix_down' && rsi14 > BOBF_VIX_DOWN_RSI_MAX) {
