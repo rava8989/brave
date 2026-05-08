@@ -714,7 +714,7 @@ async function loadStraddle() {
 function renderStraddle() {
   const sec = document.getElementById('straddleSection');
   if (!straddle) { sec.style.display = 'none'; return; }
-  const { open, lastClosed, date, isWeekend, isHoliday, serverTimeET, workCutoffET } = straddle;
+  const { open, lastClosed, skip, date, isWeekend, isHoliday, serverTimeET, workCutoffET } = straddle;
 
   // Hide entirely on weekends + holidays unless we have a recent closed trade
   if (isWeekend || isHoliday) {
@@ -723,19 +723,25 @@ function renderStraddle() {
 
   // Don't show empty card pre-9:30 with no data
   if (!open && !(lastClosed && lastClosed.closeDate === date)) {
-    // Still show a small placeholder so user knows the card exists
     sec.style.display = '';
+    let badge = 'WAITING SIGNAL', badgeClass = 'pending';
+    let statusLine = 'Straddle fires automatically at 9:32 ET if signal allows.';
+    if (skip) {
+      // Signal already fired at 9:30 and decided no straddle today — show why.
+      // signal.rec is e.g. "M8BF — Window 11:00-11:30" / "GXBF @ 9:36 AM" /
+      // "No Straddle (SPX gap ▲1.20%)" / "No Straddle (o2o 1.7 > 1.4)".
+      badge = 'SKIP'; badgeClass = 'skip';
+      statusLine = `No Straddle today — signal: ${skip.rec}`;
+    }
     sec.innerHTML = `
       <div class="diag-card">
         <div class="diag-header">
           <div class="diag-title"><span>Straddle</span> · 9:32 ET</div>
-          <span class="diag-badge pending">WAITING SIGNAL</span>
+          <span class="diag-badge ${badgeClass}">${badge}</span>
           <div style="flex:1"></div>
           <span style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;">${serverTimeET} ET</span>
         </div>
-        <div style="font-size:13px;color:var(--text2);padding:6px 0;">
-          Straddle fires automatically at 9:32 ET if signal allows.
-        </div>
+        <div style="font-size:13px;color:var(--text2);padding:6px 0;">${statusLine}</div>
       </div>`;
     return;
   }

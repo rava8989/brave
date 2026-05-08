@@ -2124,6 +2124,18 @@ async function handleScheduled(env) {
         console.log(`[strad] opened ${trade.status} K=${trade.strike} debit=${trade.entryDebit} maxDebit=${trade.maxDebit}`);
       }
     } catch (e) { console.warn('[strad] open failed:', e.message); }
+  } else {
+    // Signal said no straddle today — record the reason so the live page
+    // shows "No Straddle (xxx)" instead of "WAITING SIGNAL" forever.
+    // signal.rec is e.g. "M8BF — Window 11:00-11:30" / "GXBF @ 9:36 AM" /
+    // "No Straddle (SPX gap ▲1.20%)" / "No Straddle (o2o 1.7 > 1.4)".
+    try {
+      await env.SIGNAL_KV.put(`straddle_skip_${isoDateET(etNow)}`, JSON.stringify({
+        theme: signal.theme,
+        rec: signal.rec,
+        recordedAt: new Date().toISOString(),
+      }), { expirationTtl: 86400 });
+    } catch (_) { /* non-critical */ }
   }
 
   // 5c. BOBF static-filter pre-flight. Evaluates RSI/calendar/type/VIX>23 here
@@ -4021,12 +4033,17 @@ export default {
         const closedLog = logRaw ? JSON.parse(logRaw) : [];
         const lastClosed = closedLog[0] || null;
 
+        // Skip reason recorded at 9:30 if signal.theme !== 'strad' that day.
+        const skipRaw = await env.SIGNAL_KV.get(`straddle_skip_${todaySt}`);
+        const skip = skipRaw ? JSON.parse(skipRaw) : null;
+
         return jsonResp({
           date: todaySt,
           isWeekend: isWeekendSt,
           isHoliday: isHolidaySt,
           open,                                  // current trade or null
           lastClosed,                            // most recent settled trade
+          skip,                                  // {theme, rec} when signal said no-straddle today
           serverTimeET: `${String(etNowSt.getHours()).padStart(2,'0')}:${String(etNowSt.getMinutes()).padStart(2,'0')}`,
           maxDebits: { NM: STRADDLE_MAX_DEBIT_NM, EOM: STRADDLE_MAX_DEBIT_OTHER, plain: STRADDLE_MAX_DEBIT_OTHER },
           workCutoffET: '13:30',
