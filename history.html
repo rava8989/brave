@@ -73,9 +73,14 @@
     .table-wrap{padding:16px 24px;}
     table{width:100%;border-collapse:collapse;font-size:12px;min-width:1200px;}
     thead th{position:sticky;top:50px;z-index:5;}
-    th{background:var(--bg2);border-bottom:2px solid var(--border);padding:8px 10px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);cursor:pointer;user-select:none;white-space:nowrap;}
+    /* Header — bright color + accent underline so columns are clearly readable
+       on dark theme. Was --text3 (#475569 in dark) which had near-zero contrast
+       against --bg2 (#1e293b). */
+    th{background:var(--bg3);border-bottom:2px solid var(--accent);padding:10px 10px;text-align:left;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text);cursor:pointer;user-select:none;white-space:nowrap;}
+    [data-theme="dark"] th{color:#e2e8f0;background:#1a2942;border-bottom-color:#818cf8;}
     th:hover{color:var(--accent);}
-    th .sort-arrow{font-size:9px;margin-left:3px;opacity:.4;}
+    th .sort-arrow{font-size:10px;margin-left:4px;opacity:.6;}
+    th.sorted{color:var(--accent);}
     th.sorted .sort-arrow{opacity:1;color:var(--accent);}
     td{padding:7px 10px;border-bottom:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:12px;white-space:nowrap;}
     tr:hover td{background:var(--bg3);}
