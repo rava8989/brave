@@ -1537,6 +1537,20 @@ function render() {
     } else if (!isMarketHours) {
       badge = 'CLOSED'; badgeClass = 'skip';
       statusText = 'Market closed. M8BF triggers automatically inside its weekday window during market hours.';
+    } else if (trade?.status === 'banned') {
+      // CPI / EOM / EOM-1 / OPEX-1 / VIX-exp / earnings / NM-Straddle day
+      badge = 'SKIP'; badgeClass = 'skip';
+      statusText = trade.reason || 'No M8BF today (banned day)';
+    } else if (trade?.status === 'no_signal') {
+      // Window passed, no qualifying Discord signal arrived
+      badge = 'NO SIGNAL'; badgeClass = 'skip';
+      statusText = 'M8BF window passed without a qualifying signal. No trade today.';
+    } else if (trade?.status === 'waiting') {
+      // Pre-window OR in-window with no signal yet — same UX, different cause
+      badge = 'WAITING SIGNAL'; badgeClass = 'pending';
+      statusText = trade.window
+        ? `Monitoring Discord signals during ${trade.window} ET window — trade appears automatically when triggered.`
+        : 'Monitoring Discord signals — M8BF trade card appears automatically when triggered.';
     } else {
       badge = 'WAITING SIGNAL'; badgeClass = 'pending';
       statusText = 'Monitoring Discord signals — M8BF trade card appears automatically when triggered.';

@@ -4926,6 +4926,27 @@ export default {
           return jsonResp({ date: todayT, triggered: false, status: 'banned', reason: `No M8BF (${reason})` }, 200, corsHeaders);
         }
 
+        // ── Cron-stall self-heal: if the last cron tick is stale AND we're
+        // in market hours, force a Discord poll on demand so today's
+        // signals_today gets refreshed. Without this, when cron stalls during
+        // the M8BF window the signals never get captured and live page shows
+        // 'no signal' forever even if Discord did post one.
+        const isMktHrT = (etNowT.getHours() > 9 || (etNowT.getHours() === 9 && etNowT.getMinutes() >= 30)) && etNowT.getHours() < 16;
+        if (isMktHrT) {
+          const lastRunRaw = await env.SIGNAL_KV.get('last_run');
+          const lastRun = lastRunRaw ? JSON.parse(lastRunRaw) : null;
+          const lastRunMs = lastRun?.date ? new Date(lastRun.date).getTime() : 0;
+          const ageMs = Date.now() - lastRunMs;
+          if (ageMs > 5 * 60 * 1000) {  // >5 min stale → poll now
+            try {
+              if (env.DISCORD_USER_TOKEN) {
+                const pollResult = await pollDiscordSignals(env);
+                console.log('[/trade] cron-stall self-heal poll:', JSON.stringify(pollResult));
+              }
+            } catch (e) { console.warn('[/trade] cron-stall poll failed:', e.message); }
+          }
+        }
+
         const sigRaw = await env.SIGNAL_KV.get('signals_today');
         const sigData = sigRaw ? JSON.parse(sigRaw) : { date: '', signals: [] };
 
