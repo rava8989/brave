@@ -1596,14 +1596,7 @@ function render() {
     return;
   }
 
-  // Compact M8BF card mirroring BOBF's .diag-card layout. CRITICAL: keep the
-  // same element IDs the tick() in-place patches expect (#statPL, #statPLSub,
-  // #statSPX, #statIntrinsic, #statIntrinsicSub) so live SPX/PnL keep updating
-  // every 30s without touching tick() or init(). renderBFViz / updatePayoffChart
-  // are harmless no-ops here — their target DOM (bfViz / payoffCanvas) is gone
-  // and both helpers early-return on null.
-  document.getElementById('spxChartSection').style.display = 'none';
-
+  document.getElementById('spxChartSection').style.display = '';
   const currentPL = (trade.status === 'closed' && trade.final_pl !== null)
     ? trade.final_pl
     : (spxPrice !== null ? computePL(trade, spxPrice) : null);
@@ -1612,89 +1605,74 @@ function render() {
     ? Math.min(Math.max(0, Math.min(spxPrice - trade.bf_lower, trade.bf_upper - spxPrice)), (trade.bf_upper - trade.bf_lower) / 2)
     : null;
 
-  const debitDelta = (currentIntrinsic != null) ? (currentIntrinsic - trade.premium) : null;
-  const deltaClass = (debitDelta == null) ? '' : debitDelta > 0 ? 'diag-pl-pos' : debitDelta < 0 ? 'diag-pl-neg' : '';
-  const plCls      = currentPL == null ? '' : currentPL > 0 ? 'diag-pl-pos' : currentPL < 0 ? 'diag-pl-neg' : '';
-
-  let badge, badgeClass, statusText;
-  if (trade.status === 'closed') {
-    badge = 'CLOSED'; badgeClass = (currentPL ?? 0) >= 0 ? 'open' : 'error';
-    statusText = `M8BF settled · SPX close ${fmtSpx(trade.spx_close)} · final P&L ${fmt$(currentPL)}`;
-  } else {
-    badge = 'FILLED · LIVE'; badgeClass = 'open';
-    statusText = `M8BF filled at $${trade.premium?.toFixed(2)} · ${trade.signal_time || '—'} ET${trade.window ? ' (window '+trade.window+')' : ''}`;
-  }
-
-  const cp = (trade.cp || trade.optionType || 'PUT').toUpperCase();
-  const cpInitial = cp[0];
-  const wingWidth = (trade.bf_upper - trade.bf_lower) / 2;
-  const beLow  = (trade.bf_lower + trade.premium).toFixed(0);
-  const beHigh = (trade.bf_upper - trade.premium).toFixed(0);
-  const maxProfit = Math.round((wingWidth - trade.premium) * 100);
-
   main.innerHTML = `
-    <div class="diag-card">
-      <div class="diag-header">
-        <div class="diag-title"><span>M8BF</span> · ${trade.signal_time || trade.window || '—'} ET</div>
-        <span class="diag-badge ${badgeClass}">${badge}</span>
-        <div style="flex:1"></div>
-        ${trade.t1 != null ? `<span style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;">T1 ${trade.t1} · spread ${trade.center - trade.bf_lower} · max +$${maxProfit}</span>` : ''}
+    ${trade.status === 'closed' ? `
+    <div class="closed-banner ${currentPL >= 0 ? 'win' : 'loss'}">
+      TRADE CLOSED · Final P&L: ${fmt$(currentPL)} · SPX Close: ${fmtSpx(trade.spx_close)}
+    </div>` : ''}
+
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="stat-label">SPX Now</div>
+        <div class="stat-value" id="statSPX">${fmtSpx(spxPrice)}</div>
+        <div class="stat-sub">Entry window: ${trade.window || '—'}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Premium Paid</div>
+        <div class="stat-value">$${(trade.premium * 100).toFixed(0)}</div>
+        <div class="stat-sub">${trade.premium.toFixed(2)} per share × 100</div>
       </div>
 
-      <div class="diag-grid">
-        <div class="diag-stat">
-          <div class="diag-stat-label">${trade.status === 'closed' ? 'Final' : 'Live'} P&amp;L</div>
-          <div class="diag-stat-value ${plCls}" id="statPL">${currentPL != null ? fmt$(currentPL) : '—'}</div>
-          <div class="diag-stat-sub" id="statPLSub">${currentPL == null ? '' : currentPL >= 0 ? 'Profit' : 'Loss'}</div>
-        </div>
-        <div class="diag-stat">
-          <div class="diag-stat-label">SPX</div>
-          <div class="diag-stat-value" id="statSPX">${spxPrice != null ? fmtSpx(spxPrice) : (trade.spx_close != null ? fmtSpx(trade.spx_close) : '—')}</div>
-          <div class="diag-stat-sub">Center ${trade.center}</div>
-        </div>
-        <div class="diag-stat">
-          <div class="diag-stat-label">Entry debit</div>
-          <div class="diag-stat-value">$${Math.round(trade.premium*100)}</div>
-          <div class="diag-stat-sub">$${trade.premium.toFixed(2)} mid</div>
-        </div>
-        <div class="diag-stat">
-          <div class="diag-stat-label">${trade.status === 'closed' ? 'Settled' : 'Current'}</div>
-          <div class="diag-stat-value" id="statIntrinsic">${currentIntrinsic != null ? '$' + Math.round(currentIntrinsic*100) : '—'}</div>
-          <div class="diag-stat-sub" id="statIntrinsicSub">${currentIntrinsic != null ? currentIntrinsic.toFixed(2) + ' per share' : ''}</div>
-        </div>
+      <div class="stat-card">
+        <div class="stat-label">Signal Time</div>
+        <div class="stat-value" style="font-size:16px">${trade.signal_time || '—'}</div>
+        <div class="stat-sub">${trade.date || '—'} ET</div>
       </div>
-
-      <div class="diag-position">
-        <div class="diag-pos-title">M8 Butterfly · 1× (qty 1 / 2 / 1)</div>
-        <div class="diag-pos-headline">SPX ${trade.bf_lower} <span class="diag-slash">/</span> ${trade.center} <span class="diag-slash">/</span> ${trade.bf_upper} <span style="font-size:13px;color:var(--text3);">${cp}</span></div>
-        <div class="diag-pos-subline">${trade.date || '—'} · 0DTE · wing ±${wingWidth} · BE ${beLow}–${beHigh}</div>
-        <div class="diag-pos-legs" style="grid-template-columns:1fr 1fr 1fr;">
-          <div class="diag-pos-leg long">
-            <div class="diag-pos-leg-side">+1 Long lower</div>
-            <div class="diag-pos-leg-strike">${trade.bf_lower}${cpInitial}</div>
-            <div class="diag-pos-leg-meta">wing</div>
-          </div>
-          <div class="diag-pos-leg short">
-            <div class="diag-pos-leg-side">−2 Short body</div>
-            <div class="diag-pos-leg-strike">${trade.center}${cpInitial}</div>
-            <div class="diag-pos-leg-meta">body</div>
-          </div>
-          <div class="diag-pos-leg long">
-            <div class="diag-pos-leg-side">+1 Long upper</div>
-            <div class="diag-pos-leg-strike">${trade.bf_upper}${cpInitial}</div>
-            <div class="diag-pos-leg-meta">wing</div>
-          </div>
-        </div>
-        ${currentIntrinsic != null ? `
-        <div class="diag-pos-pricing">
-          <div class="diag-pos-price"><div class="diag-pos-price-label">Entry debit</div><div class="diag-pos-price-value">$${trade.premium.toFixed(2)}</div></div>
-          <div class="diag-pos-price"><div class="diag-pos-price-label">${trade.status === 'closed' ? 'Settled' : 'Current'}</div><div class="diag-pos-price-value">$${currentIntrinsic.toFixed(2)}</div></div>
-          <div class="diag-pos-price"><div class="diag-pos-price-label">Δ vs entry</div><div class="diag-pos-price-value ${deltaClass}">${debitDelta > 0 ? '+' : ''}${debitDelta.toFixed(2)}</div></div>
-        </div>` : ''}
+      <div class="stat-card">
+        <div class="stat-label">Max Profit</div>
+        <div class="stat-value green">$${Math.round(((trade.bf_upper - trade.bf_lower) / 2 - trade.premium) * 100)}</div>
+        <div class="stat-sub">At SPX = ${trade.center}</div>
       </div>
+    </div>
 
-      <div class="diag-meta">
-        <span>${statusText}</span>
+    <div class="bf-card">
+      <div class="bf-title">Butterfly Structure · ${trade.bf_lower} / ${trade.center} / ${trade.bf_upper}</div>
+      <div class="bf-viz" id="bfViz"></div>
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-header">
+        <span class="chart-title">Risk Profile · Payoff at Expiry</span>
+        <div class="chart-header-spacer"></div>
+        <span class="last-update">
+          Max +$${Math.round(((trade.bf_upper-trade.bf_lower)/2 - trade.premium)*100)} &nbsp;·&nbsp;
+          Max -$${Math.round(trade.premium*100)} &nbsp;·&nbsp;
+          BE ${(trade.bf_lower+trade.premium).toFixed(0)} – ${(trade.bf_upper-trade.premium).toFixed(0)}
+        </span>
+      </div>
+      <div class="chart-wrap" style="height:220px;">
+        <canvas id="payoffCanvas"></canvas>
+      </div>
+    </div>
+
+    <div class="details-card">
+      <div class="details-title">Trade Details</div>
+      <div class="details-grid">
+        <div class="detail-row"><span class="detail-label">Date</span><span class="detail-val">${trade.date}</span></div>
+        <div class="detail-row"><span class="detail-label">Signal Time (ET)</span><span class="detail-val">${trade.signal_time}</span></div>
+        <div class="detail-row"><span class="detail-label">Window</span><span class="detail-val">${trade.window || '—'}</span></div>
+        <div class="detail-row"><span class="detail-label">Center</span><span class="detail-val">${trade.center}</span></div>
+        <div class="detail-row"><span class="detail-label">Lower Strike</span><span class="detail-val">${trade.bf_lower}</span></div>
+        <div class="detail-row"><span class="detail-label">Upper Strike</span><span class="detail-val">${trade.bf_upper}</span></div>
+        <div class="detail-row"><span class="detail-label">Wing Width</span><span class="detail-val">${(trade.bf_upper - trade.bf_lower) / 2}</span></div>
+        <div class="detail-row"><span class="detail-label">Premium</span><span class="detail-val">${trade.premium.toFixed(2)}</span></div>
+        <div class="detail-row"><span class="detail-label">Max Loss</span><span class="detail-val" style="color:var(--red)">-$${Math.round(trade.premium * 100)}</span></div>
+        <div class="detail-row"><span class="detail-label">Max Profit</span><span class="detail-val" style="color:var(--green)">+$${Math.round(((trade.bf_upper - trade.bf_lower) / 2 - trade.premium) * 100)}</span></div>
+        <div class="detail-row"><span class="detail-label">Status</span><span class="detail-val">${(trade.status || 'open').toUpperCase()}</span></div>
+        <div class="detail-row"><span class="detail-label">T1 (M8BF)</span><span class="detail-val">${trade.t1 !== undefined ? trade.t1 : trade.center + 5}</span></div>
+        <div class="detail-row"><span class="detail-label">Breakeven Low</span><span class="detail-val">${(trade.bf_lower + trade.premium).toFixed(1)}</span></div>
+        <div class="detail-row"><span class="detail-label">Breakeven High</span><span class="detail-val">${(trade.bf_upper - trade.premium).toFixed(1)}</span></div>
+        <div class="detail-row"><span class="detail-label">Profit Zone</span><span class="detail-val">${(trade.bf_lower+trade.premium).toFixed(0)} – ${(trade.bf_upper-trade.premium).toFixed(0)}</span></div>
       </div>
     </div>
   `;
