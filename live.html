@@ -552,7 +552,7 @@ async function loadBobf() {
 function renderBobf() {
   const sec = document.getElementById('bobfSection');
   if (!bobf) { sec.style.display = 'none'; return; }
-  const { open, lastClosed, doneState, date, isWeekend, isHoliday, serverTimeET, windowET, maxPremiumFriday } = bobf;
+  const { open, lastClosed, doneState, date, isWeekend, isHoliday, serverTimeET, windowET, maxPremiumFriday, static: bobfStatic } = bobf;
 
   if (isWeekend || isHoliday) {
     if (!lastClosed || lastClosed.closeDate !== date) { sec.style.display = 'none'; return; }
@@ -581,8 +581,22 @@ function renderBobf() {
       // Defensive catch-all for any future done-state we forgot to map.
       placeholderText = `No BOBF today — ${doneState}`;
       placeholderBadge = 'SKIP'; placeholderClass = 'skip';
+    } else if (bobfStatic && bobfStatic.label) {
+      // Static filters passed — name today's BOBF type so the user knows what's loaded.
+      placeholderText = `${bobfStatic.label} armed — entry window ${windowET} ET. First minute filters pass → trade fires.`;
     } else {
       placeholderText = `BOBF entry window: ${windowET} ET. First minute filters pass → trade fires.`;
+    }
+    // Static-filter readout (RSI · SMA5 · type) — always show when available so
+    // the user can sanity-check today's gate state before the trade fires.
+    let staticReadout = '';
+    if (bobfStatic && bobfStatic.rsi14 != null && bobfStatic.sma5 != null) {
+      const rsiVal = bobfStatic.rsi14.toFixed(1);
+      const smaVal = bobfStatic.sma5.toFixed(0);
+      const gateNote = bobfStatic.type === 'friday' ? ' · gate 40-65'
+                     : bobfStatic.type === 'vix_down' ? ' · gate ≤70'
+                     : '';
+      staticReadout = `<span style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;">RSI ${rsiVal} · SMA5 ${smaVal}${gateNote}</span>`;
     }
     sec.innerHTML = `
       <div class="diag-card">
@@ -590,7 +604,8 @@ function renderBobf() {
           <div class="diag-title"><span>BOBF</span> · ${windowET} ET</div>
           <span class="diag-badge ${placeholderClass}">${placeholderBadge}</span>
           <div style="flex:1"></div>
-          <span style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;">${serverTimeET} ET</span>
+          ${staticReadout}
+          <span style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-left:8px;">${serverTimeET} ET</span>
         </div>
         <div style="font-size:13px;color:var(--text2);padding:6px 0;">${placeholderText}</div>
       </div>`;
