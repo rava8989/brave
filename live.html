@@ -1153,6 +1153,31 @@ function checkOAuthCallback() {
 let lastSpxTimestamp = null;
 
 async function refreshSPX() {
+  // Primary: worker /spx-history (live Schwab ticks, written every cron tick by
+  // schwab-proxy.js — replaces the dead Windows-machine→spx_live.json pipeline).
+  // Returns {date, data:[{time, price}, ...]}. Last element is the latest tick.
+  try {
+    const r = await fetchWithRetry(PROXY + '/spx-history', { cache: 'no-store' });
+    if (r.ok) {
+      const d = await r.json();
+      const ticks = d?.data || [];
+      const last = ticks[ticks.length - 1];
+      if (last && last.price && d.date) {
+        const nowET = getNowET();
+        const [dy, dmo, dd] = d.date.split('-').map(Number);
+        const sameDay = (nowET.getFullYear() === dy && (nowET.getMonth()+1) === dmo && nowET.getDate() === dd);
+        if (sameDay) {
+          spxPrice = last.price;
+          lastSpxTimestamp = Date.now();
+          schwabConnected = true;
+          return true;
+        }
+      }
+    }
+  } catch { /* fall through to GH raw fallback */ }
+
+  // Fallback: legacy spx_live.json on GitHub raw (Windows-machine pipeline, may
+  // be stale if that machine isn't running).
   try {
     const r = await fetchWithRetry(RAW + 'spx_live.json?v=' + Date.now(), { cache: 'no-store' });
     if (!r.ok) return false;
