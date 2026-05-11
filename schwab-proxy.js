@@ -366,7 +366,7 @@ async function handleEOD(env, etNow) {
       if (fullSigs.length > 0) {
         const signals = fullSigs.map(s => ({
           time: s.time, center: s.center, lower: s.lower, upper: s.upper,
-          t1: s.t1, premium: s.premium, cp: s.cp ?? 0, banned: isBanned(s.center, s.t1),
+          t1: s.t1, premium: s.premium, cp: s.cp ?? 0, banned: isBanned(s.center, s.lower),
         }));
         await env.SIGNAL_KV.put('signals_today', JSON.stringify({ date: todayISO, signals }));
         console.log(`[eod] Re-scraped ${signals.length} signals for ${todayISO}`);
@@ -469,7 +469,7 @@ async function handleEOD(env, etNow) {
           if (!sig.time) continue;
           const [h, m] = sig.time.split(':').map(Number);
           const mins = h * 60 + m;
-          if (mins >= winLo && mins < winHi && !isBanned(sig.center, sig.t1)) {
+          if (mins >= winLo && mins < winHi && !isBanned(sig.center, sig.lower)) {
             qualifying = sig;
             break;
           }
@@ -590,12 +590,18 @@ function parseDiscordSignal(content) {
   return { center, upper, lower, t1, premium, cp };
 }
 
-function isBanned(center, t1) {
+// M8BF banned-strike check. Combo rule keyed by SPREAD%100 = (center-lower)%100,
+// NOT t1%100. Matches backtester.html / strike_analysis.js canonical logic.
+// Previous version using t1 mod wrongly banned center=7395 t1=7400 lower=7355
+// (real spread mod = 40 → not in COMBO_BANS), losing Friday 2026-05-08 M8BF.
+function isBanned(center, lower) {
   const FULL_BANS = new Set([10, 25, 35, 40, 65, 80]);
   const COMBO_BANS = { 0: 95, 20: 15, 55: 50, 65: 60, 85: 90 };
   if (FULL_BANS.has(center % 100)) return true;
-  const t1Mod = t1 % 100;
-  if (COMBO_BANS[t1Mod] !== undefined && center % 100 === COMBO_BANS[t1Mod]) return true;
+  if (lower != null) {
+    const spreadMod = ((center - lower) % 100 + 100) % 100;
+    if (COMBO_BANS[spreadMod] !== undefined && center % 100 === COMBO_BANS[spreadMod]) return true;
+  }
   return false;
 }
 
@@ -671,7 +677,7 @@ async function pollDiscordSignals(env) {
       t1: sig.t1,
       premium: sig.premium,
       cp: sig.cp ?? 0,
-      banned: isBanned(sig.center, sig.t1),
+      banned: isBanned(sig.center, sig.lower),
       msgId: msg.id,
     });
     seenMsgIds.add(msg.id);
@@ -3308,7 +3314,7 @@ async function backfillMissingPL(env, targetDates = null) {
         if (!sig.time) continue;
         const [h, m] = sig.time.split(':').map(Number);
         const mins = h * 60 + m;
-        if (mins >= winLo && mins < winHi && !isBanned(sig.center, sig.t1)) {
+        if (mins >= winLo && mins < winHi && !isBanned(sig.center, sig.lower)) {
           qualifying = sig;
           break;
         }
@@ -3412,7 +3418,7 @@ async function appendTradesToBacktester(env, todayISO, etNow, signals, spxClose,
     if (maxp <= 0) continue;
     const intrinsic = Math.max(0, Math.min(spxClose - sig.lower, sig.upper - spxClose));
     const prof = Math.round((intrinsic - sig.premium) * 100);
-    const banned = isBanned(sig.center, sig.t1);
+    const banned = isBanned(sig.center, sig.lower);
     newRows.push([todayISO, dayIdx, bucket, sig.premium, spr, prof, maxp, sig.center, banned]);
   }
 
@@ -3675,7 +3681,7 @@ export default {
           t1: s.t1,
           premium: s.premium,
           cp: s.cp ?? 0,
-          banned: isBanned(s.center, s.t1),
+          banned: isBanned(s.center, s.lower),
         }));
         await env.SIGNAL_KV.put('signals_today', JSON.stringify({ date: dateISO, signals }));
         return jsonResp({ date: dateISO, total: signals.length, banned: signals.filter(s => s.banned).length }, 200, { 'Access-Control-Allow-Origin': '*' });
@@ -4130,7 +4136,7 @@ export default {
             signals: sigs.slice(0, 100).map(s => ({
               time: s.time, center: s.center, t1: s.t1,
               lower: s.lower, upper: s.upper, premium: s.premium,
-              banned: isBanned(s.center, s.t1),
+              banned: isBanned(s.center, s.lower),
             })),
           }, 200, { 'Access-Control-Allow-Origin': '*' });
         } catch (e) {
@@ -4641,7 +4647,7 @@ export default {
             const allSigs = await fetchAllDiscordSignalsForDate(env.DISCORD_USER_TOKEN, '1048242197029458040', rescrapeDate);
             const signals = allSigs.map(s => ({
               time: s.time, center: s.center, lower: s.lower, upper: s.upper,
-              t1: s.t1, premium: s.premium, cp: s.cp ?? 0, banned: isBanned(s.center, s.t1),
+              t1: s.t1, premium: s.premium, cp: s.cp ?? 0, banned: isBanned(s.center, s.lower),
             }));
             await env.SIGNAL_KV.put('signals_today', JSON.stringify({ date: rescrapeDate, signals }));
             console.log(`[gex] Rescrape complete: ${signals.length} signals for ${rescrapeDate}`);
