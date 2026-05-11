@@ -683,7 +683,7 @@ function renderBobf() {
 
   // Position card: 3-leg butterfly (1 long lower, 2 short body, 1 long upper)
   html.push(`<div class="diag-position">`);
-  html.push(`  <div class="diag-pos-title">Broken-wing call butterfly · ${t.contracts || 1}× (qty 1 / 2 / 1)</div>`);
+  html.push(`  <div class="diag-pos-title">OTM call butterfly · ${t.contracts || 1}× (qty 1 / 2 / 1)</div>`);
   html.push(`  <div class="diag-pos-headline">SPX ${t.lowerStrike} <span class="diag-slash">/</span> ${t.bodyStrike} <span class="diag-slash">/</span> ${t.upperStrike} <span style="font-size:13px;color:var(--text3);">CALL</span></div>`);
   html.push(`  <div class="diag-pos-subline">${fmtExp(t.expDate)} · 0DTE · spot ${t.spotEntry?.toFixed(2)}${t.currentSpot != null && t.currentSpot !== t.spotEntry ? ' → '+t.currentSpot.toFixed(2) : ''}</div>`);
   html.push(`  <div class="diag-pos-legs" style="grid-template-columns:1fr 1fr 1fr;">`);
