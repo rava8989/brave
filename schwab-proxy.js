@@ -852,6 +852,20 @@ async function refreshDiagonalLiveQuotes(env, token, preChain = null) {
   const trade = JSON.parse(raw);
   if (trade.status !== 'open') return null;
 
+  // DEFENSIVE: phantom-trade cleanup. If today's close+open lifecycle already
+  // ran (diag_done_<today> set) AND the open trade is from a prior day, the
+  // delete in handleDiagonalTrade silently failed (CF KV occasionally drops
+  // a write). Clear it now and bail — no quotes to refresh on a closed trade.
+  const todayISO = isoDateET(toET());
+  if (trade.openDate && trade.openDate < todayISO) {
+    const diagDone = await env.SIGNAL_KV.get(`diag_done_${todayISO}`);
+    if (diagDone) {
+      console.warn(`[diag] phantom open trade detected (openDate=${trade.openDate}, diag_done set) — clearing`);
+      await env.SIGNAL_KV.delete('diagonal_open_trade');
+      return null;
+    }
+  }
+
   // Re-fetch the chain spanning both leg expiries — but reuse master chain
   // if it covers what we need (it almost always will).
   try {
@@ -4389,6 +4403,20 @@ export default {
 
         let openRaw = await env.SIGNAL_KV.get('diagonal_open_trade');
         let open = openRaw ? JSON.parse(openRaw) : null;
+
+        // ── Self-heal #0: phantom-trade cleanup ─────────────────────────────
+        // If today's close+open lifecycle already ran but the KV.delete after
+        // close silently failed, the prior-day trade sticks around as a ghost
+        // and keeps getting refreshed. Detect on first endpoint hit and clear.
+        if (open && open.openDate && open.openDate < todayDT && open.status === 'open') {
+          const diagDone = await env.SIGNAL_KV.get(`diag_done_${todayDT}`);
+          if (diagDone) {
+            console.warn(`[diag-today] phantom open trade (openDate=${open.openDate}) — clearing`);
+            await env.SIGNAL_KV.delete('diagonal_open_trade');
+            open = null;
+            openRaw = null;
+          }
+        }
 
         // ── Self-heal #1: close+open lifecycle (cron-stall defense) ─────────
         // The 12:30 ET close+open cycle is supposed to be triggered by the
