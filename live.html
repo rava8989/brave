@@ -117,6 +117,9 @@
     .footer a{color:var(--accent);text-decoration:none;}
 
     /* SPX LIVE CHART SECTION */
+    /* Force the SPX dot chart hidden (per user request). !important defeats the
+       inline style="display:''" that render()'s active-trade branch sets. */
+    .spx-chart-section,#spxChartSection{display:none!important;}
     .spx-chart-section{max-width:1100px;margin:20px auto 0;padding:0 24px;}
     .legend-dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;}
     .legend-item{display:flex;align-items:center;font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;}
@@ -166,9 +169,9 @@
 </div>
 
 <!-- SPX + SIGNALS CHART — hidden per user request (chart with dots). DOM kept so
-     legacy show/hide calls (renderM8BF waiting/active branches, init, tick) still
-     find the element and don't throw. Nothing else needs to know it's invisible. -->
-<div class="spx-chart-section" id="spxChartSection" style="display:none !important;">
+     legacy show/hide calls (render waiting/active branches) still find the
+     element and don't throw. Display is forced none in the stylesheet below. -->
+<div class="spx-chart-section" id="spxChartSection">
   <div class="chart-card">
     <div class="chart-header">
       <span class="chart-title" id="spxChartTitle">SPX Live · M8BF Signals</span>
