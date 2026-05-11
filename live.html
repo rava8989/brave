@@ -891,8 +891,8 @@ function _renderDiagPanel(which, trade, status, ctx) {
   const html = [];
   // Header label varies by panel
   const headerLabel = which === 'overnight'
-    ? `<span>Yesterday's diagonal</span> · ${trade ? `${_fmtDiagExp(trade.openDate)} → ${_fmtDiagExp(trade.closeDate || date)}` : 'no trade yesterday'}`
-    : `<span>Today's diagonal</span> · ${trade ? `${_fmtDiagExp(trade.openDate)} → ${_fmtDiagExp(trade.shortExp || '')}` : 'opens 12:30 ET'}`;
+    ? `<span>Current diagonal</span> · ${trade ? `${_fmtDiagExp(trade.openDate)} → ${_fmtDiagExp(trade.closeDate || date)}` : 'no open trade'}`
+    : `<span>Next diagonal</span> · ${trade ? `${_fmtDiagExp(trade.openDate)} → ${_fmtDiagExp(trade.shortExp || '')}` : 'opens 12:30 ET'}`;
 
   html.push(`<div class="diag-card">`);
   html.push(`<div class="diag-header">`);
