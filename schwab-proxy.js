@@ -4101,6 +4101,73 @@ export default {
       }
     }
 
+    // ── GET /m8bf-backfill?date=YYYY-MM-DD ── Force-recompute m8bfPL + WR
+    // for a specific historical date by re-scraping Discord. Bypasses the
+    // "only if m8bfPL is null" guard in backfillMissingPL so we can fix
+    // days where the cron stalled, set m8bfPL=0 by default, but real
+    // Discord signals exist. Auth-required.
+    if (url.pathname === '/m8bf-backfill' && request.method === 'GET') {
+      const secret = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
+      if (!secret || secret !== env.SYNC_SECRET) {
+        return jsonResp({ error: 'Unauthorized' }, 401, { 'Access-Control-Allow-Origin': '*' });
+      }
+      const targetDate = url.searchParams.get('date');
+      if (!targetDate || !/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
+        return jsonResp({ error: 'date param required (YYYY-MM-DD)' }, 400, { 'Access-Control-Allow-Origin': '*' });
+      }
+      try {
+        // First null out the existing m8bfPL so backfill picks it up
+        // (the function's null-check is bypassed by targetDates anyway,
+        // but we want a clean re-write).
+        const ghHeaders = {
+          'Authorization': `Bearer ${env.GITHUB_TOKEN}`,
+          'Accept': 'application/vnd.github+json',
+          'User-Agent': 'schwab-proxy-worker/1.0',
+          'X-GitHub-Api-Version': '2022-11-28',
+        };
+        const apiUrl = 'https://api.github.com/repos/rava8989/brave/contents/history_data.json';
+        const getR = await fetch(apiUrl, { headers: ghHeaders });
+        const meta = await getR.json();
+        const content = JSON.parse(atob(meta.content.replace(/\n/g, '')));
+        const idx = content.findIndex(r => r.date === targetDate);
+        if (idx < 0) return jsonResp({ error: `Date ${targetDate} not found in history` }, 404, { 'Access-Control-Allow-Origin': '*' });
+        const before = { m8bfPL: content[idx].m8bfPL, m8bfWR: content[idx].m8bfWR };
+        delete content[idx].m8bfPL;
+        delete content[idx].m8bfWR;
+        // Write back temporarily so backfill sees null
+        const putR = await fetch(apiUrl, {
+          method: 'PUT',
+          headers: { ...ghHeaders, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: `auto: clear m8bfPL/WR for ${targetDate} before recompute`,
+            content: btoa(JSON.stringify(content, null, 0)),
+            sha: meta.sha,
+          }),
+        });
+        if (!putR.ok) return jsonResp({ error: `pre-clear failed: ${putR.status}` }, 500, { 'Access-Control-Allow-Origin': '*' });
+
+        // Now run backfill on this specific date — it'll re-scrape Discord
+        // history for the date and recompute m8bfPL + m8bfWR.
+        const result = await backfillMissingPL(env, [targetDate]);
+
+        // Re-read to show what got written
+        const verifyR = await fetch(apiUrl, { headers: ghHeaders });
+        const verifyMeta = await verifyR.json();
+        const verifyContent = JSON.parse(atob(verifyMeta.content.replace(/\n/g, '')));
+        const after = verifyContent.find(r => r.date === targetDate) || {};
+
+        return jsonResp({
+          ok: true,
+          date: targetDate,
+          before,
+          after: { m8bfPL: after.m8bfPL, m8bfWR: after.m8bfWR },
+          backfillResult: result,
+        }, 200, { 'Access-Control-Allow-Origin': '*' });
+      } catch (e) {
+        return jsonResp({ error: e.message, stack: e.stack }, 500, { 'Access-Control-Allow-Origin': '*' });
+      }
+    }
+
     if (url.pathname === '/diagonal-trigger' && request.method === 'GET') {
       const secret = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
       if (!secret || secret !== env.SYNC_SECRET) {
