@@ -120,6 +120,17 @@
     /* Force the SPX dot chart hidden (per user request). !important defeats the
        inline style="display:''" that render()'s active-trade branch sets. */
     .spx-chart-section,#spxChartSection{display:none!important;}
+
+    /* Fixed total-P&L panel on the left side of the page. Hidden on screens
+       too narrow to keep the strategy cards centered without overlap. */
+    .live-total-card{position:fixed;left:24px;top:90px;width:240px;background:var(--bg2);border:1px solid var(--border);border-top:3px solid var(--accent);border-radius:var(--radius);padding:18px 20px;box-shadow:var(--shadow);z-index:50;font-family:'JetBrains Mono',monospace;}
+    .live-total-card .ltc-label{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.08em;font-weight:700;margin-bottom:6px;font-family:inherit;}
+    .live-total-card .ltc-total{font-size:28px;font-weight:700;line-height:1.1;}
+    .live-total-card .ltc-rows{margin-top:12px;display:flex;flex-direction:column;gap:7px;}
+    .live-total-card .ltc-row{display:flex;justify-content:space-between;font-size:11px;}
+    .live-total-card .ltc-name{color:var(--text3);}
+    .live-total-card .ltc-note{margin-top:12px;font-size:9px;color:var(--text3);font-family:inherit;line-height:1.4;}
+    @media (max-width:1400px){.live-total-card{display:none;}}
     .spx-chart-section{max-width:1100px;margin:20px auto 0;padding:0 24px;}
     .legend-dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;}
     .legend-item{display:flex;align-items:center;font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;}
@@ -187,6 +198,9 @@
     </div>
   </div>
 </div>
+
+<!-- Total Live P&L panel — fixed left, populated by renderLiveTotal() -->
+<div class="live-total-card" id="liveTotalCard"></div>
 
 <!-- Strategy cards — M8BF first (primary), then BOBF, Straddle, Diagonal -->
 <div class="main" id="mainContent">
@@ -1366,6 +1380,71 @@ function renderBFViz(trade, spxNow) {
   `;
 }
 
+// ─── Today's Total Live P&L (left-side fixed panel) ──────────────────────────
+// Sums P&L from each strategy active today. Diagonal counts on its CLOSE date
+// (so the May-N→May-(N+1) trade is included in May-(N+1)'s total). A diagonal
+// that OPENS today is excluded — it'll show up in next trading day's total.
+function renderLiveTotal() {
+  const card = document.getElementById('liveTotalCard');
+  if (!card) return;
+  const nowET = getNowET();
+  const today = `${nowET.getFullYear()}-${String(nowET.getMonth()+1).padStart(2,'0')}-${String(nowET.getDate()).padStart(2,'0')}`;
+
+  // M8BF
+  let m8bfPL = null;
+  if (trade && trade.triggered && trade.date === today) {
+    if (trade.status === 'closed' && trade.final_pl != null) m8bfPL = trade.final_pl;
+    else if (spxPrice !== null) m8bfPL = computePL(trade, spxPrice);
+  }
+
+  // BOBF — live open on today, or closed earlier today
+  let bobfPL = null;
+  const bobfOpen = bobf?.open;
+  const bobfLast = bobf?.lastClosed;
+  if (bobfOpen?.openDate === today && bobfOpen.currentPnl != null) bobfPL = bobfOpen.currentPnl;
+  else if (bobfLast?.openDate === today && bobfLast.pnl != null) bobfPL = bobfLast.pnl;
+
+  // Straddle — same pattern
+  let stradPL = null;
+  const stradOpen = straddle?.open;
+  const stradLast = straddle?.lastClosed;
+  if (stradOpen?.openDate === today && stradOpen.currentPnl != null) stradPL = stradOpen.currentPnl;
+  else if (stradLast?.openDate === today && stradLast.pnl != null) stradPL = stradLast.pnl;
+
+  // Diagonal — count if it CLOSED today (already realized) or is the prior-day
+  // open about to close today (unrealized). EXCLUDE diagonal opened today.
+  let diagPL = null;
+  const diagOpen = diagonal?.open;
+  const diagLast = diagonal?.lastClosed;
+  if (diagLast?.closeDate === today && diagLast.pnl != null) {
+    diagPL = diagLast.pnl;
+  } else if (diagOpen?.currentPnl != null && diagOpen.openDate !== today) {
+    diagPL = diagOpen.currentPnl;
+  }
+
+  const parts = [
+    { name: 'M8BF',     pl: m8bfPL },
+    { name: 'BOBF',     pl: bobfPL },
+    { name: 'Straddle', pl: stradPL },
+    { name: 'Diagonal', pl: diagPL  },
+  ];
+  const total = parts.reduce((s, p) => s + (p.pl ?? 0), 0);
+  const anyData = parts.some(p => p.pl != null);
+  const totalCls = !anyData ? '' : total > 0 ? 'diag-pl-pos' : total < 0 ? 'diag-pl-neg' : '';
+
+  const rowsHtml = parts.map(p => {
+    const cls = p.pl == null ? '' : p.pl > 0 ? 'diag-pl-pos' : p.pl < 0 ? 'diag-pl-neg' : '';
+    return `<div class="ltc-row"><span class="ltc-name">${p.name}</span><span class="${cls}">${p.pl == null ? '—' : fmt$(p.pl)}</span></div>`;
+  }).join('');
+
+  card.innerHTML = `
+    <div class="ltc-label">Today's Live P&amp;L</div>
+    <div class="ltc-total ${totalCls}">${anyData ? fmt$(total) : '—'}</div>
+    <div class="ltc-rows">${rowsHtml}</div>
+    <div class="ltc-note">Diagonal counted on close date — trades opening today appear in tomorrow's total.</div>
+  `;
+}
+
 // ─── SPX ticker update ───────────────────────────────────────────────────────
 function updateSPXTicker() {
   document.getElementById('spxPrice').textContent = spxPrice ? fmtSpx(spxPrice) : '—';
@@ -1780,6 +1859,9 @@ async function tick() {
     else ageEl.textContent = Math.round(ageSecs / 60) + 'm ago';
     ageEl.style.color = ageSecs > 120 ? 'var(--red)' : 'var(--text3)';
   }
+
+  // Refresh the left-side total panel after every tick (cheap, just reads state).
+  try { renderLiveTotal(); } catch (e) { console.warn('renderLiveTotal failed:', e); }
 }
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
@@ -1794,6 +1876,7 @@ async function init() {
     renderDiagonal();
     renderStraddle();
     renderBobf();
+    try { renderLiveTotal(); } catch (e) { console.warn('renderLiveTotal init failed:', e); }
     await tick();
     pollTimer = setInterval(tick, 30_000);
     document.addEventListener('visibilitychange', () => {
