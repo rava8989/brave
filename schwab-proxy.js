@@ -4112,6 +4112,31 @@ export default {
         return jsonResp({ error: 'Unauthorized' }, 401, { 'Access-Control-Allow-Origin': '*' });
       }
       const targetDate = url.searchParams.get('date');
+      const verbose = url.searchParams.get('verbose') === '1';
+      if (verbose && targetDate) {
+        // Just dump raw scraped signals for the date — no writing
+        try {
+          const dcToken = env.DISCORD_USER_TOKEN;
+          const channelId = '1048242197029458040';
+          const sigs = await fetchAllDiscordSignalsForDate(dcToken, channelId, targetDate);
+          const etD = toET(new Date(targetDate + 'T20:00:00Z'));
+          const dow = etD.getDay();
+          const win = getM8BFWindow(dow, targetDate);
+          return jsonResp({
+            date: targetDate,
+            dow,
+            windowMinutes: win,
+            totalSignalsScraped: sigs.length,
+            signals: sigs.slice(0, 100).map(s => ({
+              time: s.time, center: s.center, t1: s.t1,
+              lower: s.lower, upper: s.upper, premium: s.premium,
+              banned: isBanned(s.center, s.t1),
+            })),
+          }, 200, { 'Access-Control-Allow-Origin': '*' });
+        } catch (e) {
+          return jsonResp({ error: e.message }, 500, { 'Access-Control-Allow-Origin': '*' });
+        }
+      }
       if (!targetDate || !/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
         return jsonResp({ error: 'date param required (YYYY-MM-DD)' }, 400, { 'Access-Control-Allow-Origin': '*' });
       }
