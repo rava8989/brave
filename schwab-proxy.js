@@ -4477,6 +4477,59 @@ export default {
       }
     }
 
+    // ── GET /heartbeat?token=... ── External 1-min cron replacement.
+    // Cloudflare Workers' built-in cron scheduler drops ticks silently
+    // (recurring issue — see live page self-heal endpoints elsewhere).
+    // External monitors (cron-job.org, UptimeRobot Pro, GH Actions, etc.)
+    // hit this endpoint every minute during market hours and force
+    // handleScheduled() to run — bypassing CF's mood.
+    //
+    // Dedicated token (HEARTBEAT_TOKEN secret, separate from SYNC_SECRET)
+    // so the URL is safe to paste into 3rd-party monitor config without
+    // exposing the master admin secret.
+    //
+    // Logs last_heartbeat_at in KV so the user can verify the external
+    // monitor is actually hitting us.
+    if (url.pathname === '/heartbeat' && request.method === 'GET') {
+      const tokenH = url.searchParams.get('token');
+      if (!tokenH || tokenH !== env.HEARTBEAT_TOKEN) {
+        return jsonResp({ error: 'Unauthorized — bad/missing token param' }, 401,
+          { 'Access-Control-Allow-Origin': '*' });
+      }
+      const startMs = Date.now();
+      let scheduledResult, error = null;
+      try {
+        scheduledResult = await handleScheduled(env);
+      } catch (e) {
+        error = e.message;
+        scheduledResult = { status: 'error', error: e.message };
+      }
+      // Stamp KV so user can verify external pings are arriving
+      try {
+        await env.SIGNAL_KV.put('last_heartbeat', JSON.stringify({
+          at: new Date().toISOString(),
+          ranMs: Date.now() - startMs,
+          status: scheduledResult?.status || 'unknown',
+          ua: request.headers.get('User-Agent') || '',
+          ip: request.headers.get('cf-connecting-ip') || '',
+        }));
+      } catch (_) { /* non-critical */ }
+      // Also stamp last_run for the existing /health monitor age check
+      try {
+        await env.SIGNAL_KV.put('last_run', JSON.stringify({
+          ...(scheduledResult || {}),
+          date: new Date().toISOString(),
+          source: 'heartbeat',
+        }));
+      } catch (_) {}
+      return jsonResp({
+        ok: !error,
+        ranMs: Date.now() - startMs,
+        status: scheduledResult?.status || 'unknown',
+        error,
+      }, error ? 500 : 200, { 'Access-Control-Allow-Origin': '*' });
+    }
+
     if (url.pathname === '/health' && request.method === 'GET') {
       const publicCors = {
         'Access-Control-Allow-Origin': '*',
@@ -4621,6 +4674,13 @@ export default {
             updatedAt: gexUpdatedAtIso,
             age_s: gexAgeS,
           },
+          heartbeat: await (async () => {
+            const hb = await env.SIGNAL_KV.get('last_heartbeat');
+            if (!hb) return { configured: false };
+            const p = JSON.parse(hb);
+            const ageS = Math.round((Date.now() - new Date(p.at).getTime()) / 1000);
+            return { configured: true, lastAt: p.at, age_s: ageS, status: p.status, ranMs: p.ranMs };
+          })(),
           alarming,
           alerts,
         }, 200, publicCors);
