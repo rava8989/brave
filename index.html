@@ -700,18 +700,42 @@
 
     <hr class="divider">
     <h3>BOBF</h3>
+    <p>Broken-wing call butterfly on SPX 0DTE, entered between <strong>10:29 AM and 12:15 PM ET</strong>.
+       Structure: short 2× call body, long 1× call body−30, long 1× call body+30. Three variants
+       run side-by-side — exactly one fires per day based on the calendar and overnight VIX.</p>
+    <p><strong>Shared rules (all 3 variants):</strong></p>
     <ul>
-      <li><a href="https://optionomega.com/share/gd2bRi16syr3R1UaGVUE" target="_blank" rel="noopener">OptionOmega – BOBF base</a></li>
-      <li><strong>Not traded</strong> on all 7 earnings days: MSFT, META, GOOGL, AMZN, AAPL, NVDA, TSLA.</li>
-      <li><strong>Not traded</strong> on monthly VIX expiration days.</li>
-      <li><strong>Not traded</strong> on OPEX.</li>
-      <li><strong>Not traded</strong> on OPEX-1 (day before OPEX).</li>
-      <li><strong>Not traded</strong> on EOM-2 and EOM-1.</li>
-      <li><strong>Not traded</strong> on the first trading Monday of the month (NM Monday).</li>
-      <li>Maximum VIX allowed: <strong>23</strong>. Blocked if VIX &gt; 23.</li>
-      <li>Modified version traded on Fridays.</li>
-      <li><a href="https://optionomega.com/share/cVLL2DfdpiGiLekplKPs" target="_blank" rel="noopener">OptionOmega – Friday version</a></li>
+      <li>Entry window <strong>10:29 AM – 12:15 PM ET</strong>. One position, one contract per day.</li>
+      <li><strong>SPX must be above the 5-day SMA</strong> (prior daily closes).</li>
+      <li><strong>VIX ≤ 23</strong> — blocked above.</li>
+      <li><strong>Not traded</strong> on: CPI days · monthly VIX expiration · OPEX · OPEX-1 · EOM-2 · EOM-1 · NM Monday · all 7 earnings days (MSFT, META, GOOGL, AMZN, AAPL, NVDA, TSLA).</li>
     </ul>
+    <p><strong>1. Friday RSI BOBF</strong> — <em>Fridays only</em>
+       (<a href="https://optionomega.com/share/cVLL2DfdpiGiLekplKPs" target="_blank" rel="noopener">OptionOmega</a>)</p>
+    <ul>
+      <li>Body offset <strong>±15</strong>, wings body±30.</li>
+      <li><strong>RSI(14) ∈ [40, 65]</strong> on prior daily closes — outside the band, no trade.</li>
+      <li>Move-up from open ≥ <strong>0.10%</strong>.</li>
+      <li>Max premium <strong>$12</strong> — working limit cancels at 12:15 ET if mid never drops to ≤ $12.</li>
+    </ul>
+    <p><strong>2. BOBF VIX up</strong> — <em>Mon–Thu</em>, overnight VIX rose
+       (<a href="https://optionomega.com/share/gd2bRi16syr3R1UaGVUE" target="_blank" rel="noopener">OptionOmega</a>)</p>
+    <ul>
+      <li>Body offset <strong>±25</strong>, wings body±30.</li>
+      <li><strong>Overnight VIX move ≥ +0.01 pts</strong> (VIX today open &gt; VIX yesterday close).</li>
+      <li><strong>No RSI filter</strong> — fires regardless of momentum band.</li>
+      <li>Move-up from open ≥ <strong>0.20%</strong> (no upper cap).</li>
+      <li>Fills at first qualifying minute — no premium ceiling.</li>
+    </ul>
+    <p><strong>3. BOBF VIX down</strong> — <em>Mon–Thu</em>, overnight VIX fell</p>
+    <ul>
+      <li>Body offset <strong>±25</strong>, wings body±30.</li>
+      <li><strong>Overnight VIX move ≤ −0.01 pts</strong> (VIX today open &lt; VIX yesterday close).</li>
+      <li><strong>RSI(14) ≤ 70</strong> — blocked above 70.</li>
+      <li>Move-up from open in <strong>[0.20%, 0.70%]</strong> — too flat or too hot both block.</li>
+      <li>Fills at first qualifying minute — no premium ceiling.</li>
+    </ul>
+    <p class="muted-note" style="margin-top:6px">Flat-overnight Mon–Thu (|ΔVIX| &lt; 0.01) qualifies for neither vix_up nor vix_down → no BOBF that day.</p>
     <div class="strategy-image"><img src="./BOBF.jpg" alt="BOBF" loading="lazy" /></div>
 
     <hr class="divider">
