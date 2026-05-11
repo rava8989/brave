@@ -165,8 +165,10 @@
   <button class="theme-toggle" id="themeToggle" title="Toggle theme"></button>
 </div>
 
-<!-- SPX + SIGNALS CHART (always visible during market hours) -->
-<div class="spx-chart-section" id="spxChartSection">
+<!-- SPX + SIGNALS CHART — hidden per user request (chart with dots). DOM kept so
+     legacy show/hide calls (renderM8BF waiting/active branches, init, tick) still
+     find the element and don't throw. Nothing else needs to know it's invisible. -->
+<div class="spx-chart-section" id="spxChartSection" style="display:none !important;">
   <div class="chart-card">
     <div class="chart-header">
       <span class="chart-title" id="spxChartTitle">SPX Live · M8BF Signals</span>
