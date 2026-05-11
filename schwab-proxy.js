@@ -3531,7 +3531,7 @@ async function appendTradesToBacktester(env, todayISO, etNow, signals, spxClose,
 // ════════════════════════════════════════════════════════════════════
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const origin = request.headers.get('Origin') || '';
     if (!env.ALLOWED_ORIGIN) {
       console.error('ALLOWED_ORIGIN env var is not set — all cross-origin requests will be blocked');
@@ -4496,38 +4496,46 @@ export default {
         return jsonResp({ error: 'Unauthorized — bad/missing token param' }, 401,
           { 'Access-Control-Allow-Origin': '*' });
       }
+      // Respond instantly with 200. Run handleScheduled() in the background
+      // via ctx.waitUntil() so cron-job.org (and other 30s-timeout monitors)
+      // don't log timeouts on the busy 9:30 ET tick. Cloudflare keeps the
+      // worker alive up to its wall-clock budget to complete the background
+      // task — even if the client connection closed.
       const startMs = Date.now();
-      let scheduledResult, error = null;
-      try {
-        scheduledResult = await handleScheduled(env);
-      } catch (e) {
-        error = e.message;
-        scheduledResult = { status: 'error', error: e.message };
+      const runScheduled = async () => {
+        let scheduledResult, error = null;
+        try {
+          scheduledResult = await handleScheduled(env);
+        } catch (e) {
+          error = e.message;
+          scheduledResult = { status: 'error', error: e.message };
+        }
+        const ranMs = Date.now() - startMs;
+        try {
+          await env.SIGNAL_KV.put('last_heartbeat', JSON.stringify({
+            at: new Date().toISOString(),
+            ranMs,
+            status: scheduledResult?.status || 'unknown',
+            error,
+            ua: request.headers.get('User-Agent') || '',
+            ip: request.headers.get('cf-connecting-ip') || '',
+          }));
+        } catch (_) {}
+        try {
+          await env.SIGNAL_KV.put('last_run', JSON.stringify({
+            ...(scheduledResult || {}),
+            date: new Date().toISOString(),
+            source: 'heartbeat',
+          }));
+        } catch (_) {}
+      };
+      if (ctx && typeof ctx.waitUntil === 'function') {
+        ctx.waitUntil(runScheduled());
+        return jsonResp({ ok: true, queued: true }, 200, { 'Access-Control-Allow-Origin': '*' });
       }
-      // Stamp KV so user can verify external pings are arriving
-      try {
-        await env.SIGNAL_KV.put('last_heartbeat', JSON.stringify({
-          at: new Date().toISOString(),
-          ranMs: Date.now() - startMs,
-          status: scheduledResult?.status || 'unknown',
-          ua: request.headers.get('User-Agent') || '',
-          ip: request.headers.get('cf-connecting-ip') || '',
-        }));
-      } catch (_) { /* non-critical */ }
-      // Also stamp last_run for the existing /health monitor age check
-      try {
-        await env.SIGNAL_KV.put('last_run', JSON.stringify({
-          ...(scheduledResult || {}),
-          date: new Date().toISOString(),
-          source: 'heartbeat',
-        }));
-      } catch (_) {}
-      return jsonResp({
-        ok: !error,
-        ranMs: Date.now() - startMs,
-        status: scheduledResult?.status || 'unknown',
-        error,
-      }, error ? 500 : 200, { 'Access-Control-Allow-Origin': '*' });
+      // Fallback: synchronous (e.g., in `wrangler dev` without ctx)
+      await runScheduled();
+      return jsonResp({ ok: true, ranMs: Date.now() - startMs }, 200, { 'Access-Control-Allow-Origin': '*' });
     }
 
     if (url.pathname === '/health' && request.method === 'GET') {
