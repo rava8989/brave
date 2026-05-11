@@ -4258,6 +4258,11 @@ export default {
         const doneKey = `bobf_done_${todayB}`;
         const doneState = await env.SIGNAL_KV.get(doneKey);
 
+        // Surface the prefilter cache (RSI, SMA5, spxOpen, type, etc.)
+        // so the live page can show today's RSI/SMA without re-fetching.
+        const staticRaw = await env.SIGNAL_KV.get(`bobf_static_${todayB}`);
+        const staticData = staticRaw ? JSON.parse(staticRaw) : null;
+
         return jsonResp({
           date: todayB,
           isWeekend: isWeekendB,
@@ -4265,6 +4270,7 @@ export default {
           open,
           lastClosed,
           doneState,
+          static: staticData,  // {rsi14, sma5, spxOpen, vixToday, vixYClose, type, label, bodyOffset}
           serverTimeET: `${String(etNowB.getHours()).padStart(2,'0')}:${String(etNowB.getMinutes()).padStart(2,'0')}`,
           windowET: '10:29 - 12:15',
           maxPremiumFriday: BOBF_FRIDAY_MAX_PREMIUM,
