@@ -4251,6 +4251,16 @@ export default {
         let openRaw = await env.SIGNAL_KV.get('bobf_open_trade');
         let open = openRaw ? JSON.parse(openRaw) : null;
 
+        // Stale-trade filter: settleBobfEOD overwrites bobf_open_trade with the
+        // settled (status='closed') trade instead of deleting it, so on the next
+        // trading day the slot still holds yesterday's closed trade. The render
+        // logic treats anything in `open` as today's active position. Drop it
+        // here — the settled trade is already preserved in bobf_closed_log and
+        // surfaces as `lastClosed`, so no data is lost.
+        if (open && (open.openDate !== todayB || open.status === 'closed' || open.status === 'expired')) {
+          open = null;
+        }
+
         // Staleness-triggered self-refresh (defends against cron stalls)
         if (open && (open.status === 'filled' || open.status === 'working') && !isWeekendB && !isHolidayB) {
           const isMktHr = (etNowB.getHours() > 9 || (etNowB.getHours() === 9 && etNowB.getMinutes() >= 30)) && etNowB.getHours() < 16;
@@ -4313,6 +4323,13 @@ export default {
 
         let openRaw = await env.SIGNAL_KV.get('straddle_open_trade');
         let open = openRaw ? JSON.parse(openRaw) : null;
+
+        // Stale-trade filter (mirrors /bobf-today): drop the open slot if it
+        // holds a prior-day or already-settled trade. The closed_log entry
+        // surfaces as `lastClosed` so no data is lost.
+        if (open && (open.openDate !== todaySt || open.status === 'closed' || open.status === 'expired')) {
+          open = null;
+        }
 
         // Staleness-triggered self-refresh (defends against cron stalls)
         if (open && (open.status === 'filled' || open.status === 'working') && !isWeekendSt && !isHolidaySt) {

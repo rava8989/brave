@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>M8BF Strike Ending Analysis — Full Week</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#0d1117; color:#c9d1d9; font-family:'SF Mono','Fira Code','Consolas',monospace; padding:24px; }
+h1 { text-align:center; color:#58a6ff; font-size:20px; margin-bottom:18px; letter-spacing:1px; }
+.day-section { margin-bottom:28px; }
+.day-header { font-size:16px; font-weight:700; color:#f0f6fc; margin-bottom:6px; padding:6px 12px; background:#161b22; border-left:4px solid #58a6ff; border-radius:4px; display:flex; justify-content:space-between; align-items:center; }
+.day-header .window { color:#8b949e; font-size:13px; font-weight:400; }
+table { width:100%; border-collapse:collapse; font-size:13px; }
+thead th { background:#161b22; color:#8b949e; text-align:right; padding:5px 10px; border-bottom:2px solid #30363d; font-weight:600; text-transform:uppercase; font-size:11px; letter-spacing:0.5px; }
+thead th:first-child { text-align:center; }
+tbody td { padding:4px 10px; text-align:right; border-bottom:1px solid #21262d; }
+tbody td:first-child { text-align:center; font-weight:700; color:#f0f6fc; }
+tbody tr:hover { background:#161b22; }
+.positive { color:#3fb950; }
+.negative { color:#f85149; }
+.neutral { color:#8b949e; }
+.win-high { color:#3fb950; font-weight:700; }
+.win-mid { color:#d29922; }
+.win-low { color:#f85149; }
+tfoot td { border-top:2px solid #30363d; font-weight:700; color:#f0f6fc; padding:6px 10px; background:#161b22; }
+.grid { display:grid; grid-template-columns:1fr 1fr; gap:24px; }
+.full-width { grid-column: 1 / -1; }
+@media (max-width:900px) { .grid { grid-template-columns:1fr; } }
+.summary-row { display:flex; justify-content:center; gap:40px; margin-bottom:20px; }
+.summary-item { text-align:center; }
+.summary-item .val { font-size:22px; font-weight:700; color:#3fb950; }
+.summary-item .lbl { font-size:11px; color:#8b949e; text-transform:uppercase; letter-spacing:1px; }
+</style>
+</head>
+<body>
+<h1>M8BF BUTTERFLY — STRIKE ENDING ANALYSIS (FULL WEEK)</h1>
+<div class="summary-row">
+  <div class="summary-item"><div class="val" id="sumTrades">—</div><div class="lbl">Total Trades</div></div>
+  <div class="summary-item"><div class="val" id="sumWin">—</div><div class="lbl">Win Rate</div></div>
+  <div class="summary-item"><div class="val" id="sumPL">—</div><div class="lbl">Total P/L</div></div>
+  <div class="summary-item"><div class="val" id="sumAvg">—</div><div class="lbl">Avg P/L</div></div>
+</div>
+<div class="grid" id="tables"></div>
+
+<script>
+// Paste TRADES inline — we'll load from the backtester
+</script>
+<script>
+// We'll build this from the analysis data directly
+const DOW_NAMES = ['MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY'];
+const M8BF_WIN_LABELS = {0:'10:00 – 10:30',1:'13:30 – 14:00',2:'12:00 – 12:30',3:'11:00 – 11:30',4:'13:00 – 13:30'};
+
+// Data will be injected by Node script
+const DATA = {"0":[{"last2":5,"wins":11,"totalPL":18830,"trades":13,"winPct":85},{"last2":20,"wins":0,"totalPL":-250,"trades":1,"winPct":0},{"last2":30,"wins":0,"totalPL":-910,"trades":1,"winPct":0},{"last2":45,"wins":7,"totalPL":6411,"trades":9,"winPct":78},{"last2":55,"wins":2,"totalPL":-668,"trades":5,"winPct":40},{"last2":60,"wins":0,"totalPL":-633,"trades":1,"winPct":0},{"last2":70,"wins":2,"totalPL":1774,"trades":3,"winPct":67},{"last2":75,"wins":1,"totalPL":-446,"trades":2,"winPct":50},{"last2":85,"wins":1,"totalPL":2000,"trades":1,"winPct":100},{"last2":95,"wins":5,"totalPL":2306,"trades":9,"winPct":56}],"1":[{"last2":0,"wins":1,"totalPL":1676,"trades":2,"winPct":50},{"last2":5,"wins":10,"totalPL":4937,"trades":17,"winPct":59},{"last2":15,"wins":0,"totalPL":-291,"trades":1,"winPct":0},{"last2":20,"wins":1,"totalPL":666,"trades":1,"winPct":100},{"last2":30,"wins":2,"totalPL":1438,"trades":3,"winPct":67},{"last2":45,"wins":11,"totalPL":6969,"trades":12,"winPct":92},{"last2":50,"wins":1,"totalPL":-738,"trades":2,"winPct":50},{"last2":55,"wins":6,"totalPL":641,"trades":10,"winPct":60},{"last2":70,"wins":2,"totalPL":1951,"trades":2,"winPct":100},{"last2":75,"wins":4,"totalPL":3225,"trades":5,"winPct":80},{"last2":85,"wins":2,"totalPL":2019,"trades":2,"winPct":100},{"last2":95,"wins":5,"totalPL":5764,"trades":7,"winPct":71}],"2":[{"last2":5,"wins":2,"totalPL":-3640,"trades":8,"winPct":25},{"last2":15,"wins":0,"totalPL":-569,"trades":2,"winPct":0},{"last2":20,"wins":3,"totalPL":1486,"trades":4,"winPct":75},{"last2":30,"wins":1,"totalPL":986,"trades":1,"winPct":100},{"last2":45,"wins":6,"totalPL":9371,"trades":10,"winPct":60},{"last2":50,"wins":3,"totalPL":3764,"trades":4,"winPct":75},{"last2":55,"wins":3,"totalPL":-638,"trades":7,"winPct":43},{"last2":70,"wins":2,"totalPL":1368,"trades":3,"winPct":67},{"last2":75,"wins":0,"totalPL":-21,"trades":1,"winPct":0},{"last2":95,"wins":8,"totalPL":4796,"trades":14,"winPct":57}],"3":[{"last2":0,"wins":1,"totalPL":190,"trades":1,"winPct":100},{"last2":5,"wins":5,"totalPL":3218,"trades":8,"winPct":63},{"last2":15,"wins":2,"totalPL":2629,"trades":2,"winPct":100},{"last2":20,"wins":1,"totalPL":1742,"trades":1,"winPct":100},{"last2":45,"wins":7,"totalPL":8748,"trades":8,"winPct":88},{"last2":50,"wins":1,"totalPL":352,"trades":1,"winPct":100},{"last2":55,"wins":4,"totalPL":3429,"trades":5,"winPct":80},{"last2":70,"wins":2,"totalPL":-136,"trades":3,"winPct":67},{"last2":75,"wins":2,"totalPL":1920,"trades":2,"winPct":100},{"last2":85,"wins":1,"totalPL":-193,"trades":2,"winPct":50},{"last2":95,"wins":4,"totalPL":2101,"trades":9,"winPct":44}],"4":[{"last2":5,"wins":9,"totalPL":5028,"trades":16,"winPct":56},{"last2":30,"wins":1,"totalPL":737,"trades":1,"winPct":100},{"last2":45,"wins":10,"totalPL":2513,"trades":15,"winPct":67},{"last2":50,"wins":1,"totalPL":-44,"trades":2,"winPct":50},{"last2":55,"wins":12,"totalPL":5985,"trades":13,"winPct":92},{"last2":70,"wins":1,"totalPL":1181,"trades":1,"winPct":100},{"last2":75,"wins":2,"totalPL":2115,"trades":2,"winPct":100},{"last2":85,"wins":2,"totalPL":1034,"trades":2,"winPct":100},{"last2":95,"wins":6,"totalPL":3825,"trades":10,"winPct":60}]};
+
+function fmt$(v) {
+  if (v === 0) return '<span class="neutral">$0</span>';
+  const cls = v > 0 ? 'positive' : 'negative';
+  const sign = v > 0 ? '+' : '';
+  return `<span class="${cls}">${sign}$${v.toLocaleString()}</span>`;
+}
+function fmtWin(pct) {
+  const cls = pct >= 70 ? 'win-high' : pct >= 55 ? 'win-mid' : 'win-low';
+  return `<span class="${cls}">${pct}%</span>`;
+}
+
+function buildTable(dayData, dow) {
+  const sec = document.createElement('div');
+  sec.className = 'day-section';
+  sec.innerHTML = `<div class="day-header"><span>${DOW_NAMES[dow]}</span><span class="window">${M8BF_WIN_LABELS[dow]}</span></div>`;
+
+  let html = `<table><thead><tr><th>Last2</th><th>Win %</th><th>Avg P/L</th><th>Total P/L</th><th>Trades</th></tr></thead><tbody>`;
+
+  let totalPL = 0, totalTrades = 0, totalWins = 0;
+  for (const row of dayData) {
+    const avgPL = row.trades > 0 ? Math.round(row.totalPL / row.trades) : 0;
+    html += `<tr>
+      <td>${String(row.last2).padStart(2,'0')}</td>
+      <td>${fmtWin(row.winPct)}</td>
+      <td>${fmt$(avgPL)}</td>
+      <td>${fmt$(row.totalPL)}</td>
+      <td>${row.trades}</td>
+    </tr>`;
+    totalPL += row.totalPL;
+    totalTrades += row.trades;
+    totalWins += row.wins;
+  }
+  const totalWinPct = totalTrades > 0 ? Math.round(totalWins / totalTrades * 100) : 0;
+  const totalAvg = totalTrades > 0 ? Math.round(totalPL / totalTrades) : 0;
+  html += `</tbody><tfoot><tr>
+    <td>ALL</td><td>${fmtWin(totalWinPct)}</td><td>${fmt$(totalAvg)}</td><td>${fmt$(totalPL)}</td><td>${totalTrades}</td>
+  </tr></tfoot></table>`;
+
+  sec.innerHTML += html;
+  return sec;
+}
+
+function render() {
+  if (!DATA) return;
+  const container = document.getElementById('tables');
+  let grandPL = 0, grandTrades = 0, grandWins = 0;
+
+  for (let dow = 0; dow < 5; dow++) {
+    const dayData = DATA[dow] || [];
+    container.appendChild(buildTable(dayData, dow));
+    for (const r of dayData) { grandPL += r.totalPL; grandTrades += r.trades; grandWins += r.wins; }
+  }
+
+  document.getElementById('sumTrades').textContent = grandTrades;
+  document.getElementById('sumWin').textContent = (grandTrades > 0 ? Math.round(grandWins/grandTrades*100) : 0) + '%';
+  document.getElementById('sumPL').textContent = '$' + grandPL.toLocaleString();
+  document.getElementById('sumPL').className = grandPL >= 0 ? 'val positive' : 'val negative';
+  document.getElementById('sumAvg').textContent = '$' + (grandTrades > 0 ? Math.round(grandPL/grandTrades) : 0).toLocaleString();
+}
+render();
+</script>
+</body>
+</html>
