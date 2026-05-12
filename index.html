@@ -1329,7 +1329,9 @@
     let err=false;
     if(isNaN(vToday))        {document.getElementById('err-todayOpen').textContent='Required';err=true;}
     if(!isNaN(vToday)&&(vToday<8||vToday>90)){document.getElementById('err-todayOpen').textContent='VIX must be 8\u201390';err=true;}
-    if(isNaN(vYClose))       {document.getElementById('err-yesterdayClose').textContent='Required';err=true;}
+    // yesterdayClose only feeds Sigma 3 (overnight VIX drop, etc.) \u2014 not needed
+    // on CPI days where only Diagonal trades. Same logic as yesterdayOpen.
+    if(!cpiDay&&isNaN(vYClose))       {document.getElementById('err-yesterdayClose').textContent='Required (non-CPI day)';err=true;}
     if(!isNaN(vYClose)&&(vYClose<8||vYClose>90)){document.getElementById('err-yesterdayClose').textContent='VIX must be 8\u201390';err=true;}
     if(!cpiDay&&isNaN(vYOpen)){document.getElementById('err-yesterdayOpen').textContent='Required (non-CPI day)';err=true;}
     if(!cpiDay&&!isNaN(vYOpen)&&(vYOpen<8||vYOpen>90)){document.getElementById('err-yesterdayOpen').textContent='VIX must be 8\u201390';err=true;}
@@ -1354,10 +1356,16 @@
       Object.entries(tmapCpi).forEach(([id,v])=>{document.getElementById(id).style.display=v?'inline-flex':'none';if(v)anyTagCpi=true;});
       document.getElementById('tagSep').style.display=anyTagCpi?'inline':'none';
       // update overnight drop / o2o display so user still sees the market numbers
-      const oNightCpi=vYClose-vToday;
+      // (gracefully handle missing vYClose — only vToday is required on CPI days)
       const dEl=document.getElementById('overnightDropDisplay');
-      dEl.textContent=oNightCpi.toFixed(2);
-      dEl.className='mv'+(oNightCpi>0?' dn':oNightCpi<0?' up':'');
+      if (!isNaN(vYClose)) {
+        const oNightCpi=vYClose-vToday;
+        dEl.textContent=oNightCpi.toFixed(2);
+        dEl.className='mv'+(oNightCpi>0?' dn':oNightCpi<0?' up':'');
+      } else {
+        dEl.textContent='—';
+        dEl.className='mv';
+      }
       const oEl=document.getElementById('openDiffDisplay'), oNote=document.getElementById('openDiffNote');
       oEl.textContent='—';oNote.style.display='inline-flex';
       document.getElementById('resultDayLabel').textContent=tradeWdLabel();
