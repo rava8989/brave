@@ -563,9 +563,9 @@
     on intraday data.
   </div>
 
-  <!-- CPI DAY HARD BLOCK — replaces entire calculator on CPI days -->
+  <!-- CPI DAY — Sigma 3 hard block. Diagonal companion still trades. -->
   <div id="cpiBlockBanner" class="cpi-blocker" style="display:none;">
-    <div class="cpi-blocker-title">CPI day, no trades today</div>
+    <div class="cpi-blocker-title">CPI day — Sigma 3 (M8BF · Straddle · GXBF · BOBF) blocked. Diagonal companion still trades — see card below.</div>
   </div>
 
   <!-- 4 SIGNAL CARDS — single column -->
@@ -1273,11 +1273,13 @@
 
   /* ====== COPY ====== */
   function copySignal(){
-    // CPI day — hard block, emit a simple banner text
+    // CPI day — Sigma 3 hard block, but Diagonal still trades. Include the
+    // diagonal line in the copy text so the Discord post is accurate.
     if(isCpi()){
       const date = document.getElementById('todayDate').textContent;
       const day  = document.getElementById('dayLabel').textContent;
-      const txt = `\`\`\`\n📅 ${date} — ${day}\n${'─'.repeat(32)}\n📊 CPI DAY — NO TRADES\nAll strategies hard-blocked:\n  • M8BF\n  • Straddle\n  • GXBF\n  • BOBF\n  • Long Call\n\`\`\`\n*Not financial advice. For informational purposes only.*`;
+      const diag = (document.getElementById('diagRec') || {}).textContent || '—';
+      const txt = `\`\`\`\n📅 ${date} — ${day}\n${'─'.repeat(32)}\n📊 CPI DAY — Sigma 3 blocked:\n  • M8BF · Straddle · GXBF · BOBF\nDiagonal │ ${diag}\n\`\`\`\n*Not financial advice. For informational purposes only.*`;
       navigator.clipboard.writeText(txt).then(()=>{
         const btns = document.querySelectorAll('.btn-s');
         btns.forEach(b=>{ if(b.textContent==='Copy All'){b.textContent='Copied!'; setTimeout(()=>b.textContent='Copy All',1800);} });
@@ -1333,13 +1335,18 @@
     if(!cpiDay&&!isNaN(vYOpen)&&(vYOpen<8||vYOpen>90)){document.getElementById('err-yesterdayOpen').textContent='VIX must be 8\u201390';err=true;}
     if(err) return;
 
-    // CPI DAY HARD BLOCK — short-circuit the entire calculator
-    // Show the big CPI blocker banner, hide the 4 card stack, and exit.
-    // Data scraping, history recording, and WR tracking all continue normally
-    // via the worker — only the browser UI is collapsed here.
+    // CPI DAY — Sigma 3 hard block (M8BF/Straddle/GXBF/BOBF). Diagonal is a
+    // separate companion strategy with its own filter stack — CPI is NOT in
+    // it (see signal-engine.js line 228), so the diagonal card still renders
+    // and trades today. We hide the 4 Sigma cards individually, show the CPI
+    // banner, and compute the diagonal signal inline before returning.
     if(isCpi()){
       document.getElementById('cpiBlockBanner').style.display='block';
-      document.getElementById('signalStack').style.display='none';
+      document.getElementById('signalStack').style.display='';  // keep stack visible for Diagonal
+      ['cardM8bf','cardStrad','cardGxbf','cardBobf'].forEach(id=>{
+        const el=document.getElementById(id); if(el) el.style.display='none';
+      });
+      const _cardDiagEl=document.getElementById('cardDiag'); if(_cardDiagEl) _cardDiagEl.style.display='';
       const sgw=document.getElementById('strikeGridWrap'); if(sgw) sgw.style.display='none';
       // keep tag row updated so the "📊 CPI" chip shows
       const tmapCpi={cpiTag:true,fedTag:isFed(),opexTag:isOpex(),postOpexTag:SignalEngine.opexSch.some(isTodayAfter),eomTag:isLastTradeMo(new Date())};
@@ -1354,8 +1361,42 @@
       const oEl=document.getElementById('openDiffDisplay'), oNote=document.getElementById('openDiffNote');
       oEl.textContent='—';oNote.style.display='inline-flex';
       document.getElementById('resultDayLabel').textContent=tradeWdLabel();
-      // clear any "today's trade" pill
-      ['pillM8bf','pillStrad','pillGxbf','pillBobf','pillDiag'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display='none';});
+      // clear Sigma 3 "today's trade" pills (Diagonal pill handled by its own renderer)
+      ['pillM8bf','pillStrad','pillGxbf','pillBobf'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display='none';});
+
+      // ── DIAGONAL signal (companion — runs on CPI days) ────────────────────
+      // Mirrors the full Diagonal render block below (lines 1483+). Uses
+      // computeDiagonalSignal from signal-engine.js — single source of truth.
+      let _diagVixPct = null;
+      if (_vix20dCloses && _vix20dCloses.length >= 10 && !isNaN(vToday)) {
+        const below = _vix20dCloses.filter(c => c < vToday).length;
+        _diagVixPct = Math.round(100 * below / _vix20dCloses.length);
+      }
+      const _diagSig = (typeof SignalEngine !== 'undefined' && SignalEngine.computeDiagonalSignal)
+        ? SignalEngine.computeDiagonalSignal(new Date(), _diagVixPct)
+        : null;
+      const diagRecCpi   = document.getElementById('diagRec');
+      const diagReasonCpi= document.getElementById('diagReason');
+      const diagBadgeCpi = document.getElementById('diagBadge');
+      const cardDiagCpi  = document.getElementById('cardDiag');
+      const pillDiagCpi  = document.getElementById('pillDiag');
+      if (_diagSig) {
+        diagRecCpi.textContent   = _diagSig.diagText;
+        diagBadgeCpi.textContent = _diagSig.diagBadge;
+        if (_diagSig.diagGo) {
+          cardDiagCpi.className = 'scard active-ok';
+          diagReasonCpi.textContent = 'Short 1 DTE SPX put +30 pts ITM · long 25 DTE SPX put −40 pts below short. Entry 12:30–15:00 ET; exit same clock time next trading day. Diagonal is NOT CPI-blocked.';
+          if (pillDiagCpi) pillDiagCpi.style.display = '';
+        } else if (_diagSig.diagSkipCode) {
+          cardDiagCpi.className = 'scard active-block';
+          diagReasonCpi.textContent = '';
+          if (pillDiagCpi) pillDiagCpi.style.display = 'none';
+        } else {
+          cardDiagCpi.className = 'scard';
+          diagReasonCpi.textContent = '';
+          if (pillDiagCpi) pillDiagCpi.style.display = 'none';
+        }
+      }
       return;
     }
     // Not a CPI day — restore the normal calculator layout
