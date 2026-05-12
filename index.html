@@ -1273,19 +1273,9 @@
 
   /* ====== COPY ====== */
   function copySignal(){
-    // CPI day — Sigma 3 hard block, but Diagonal still trades. Include the
-    // diagonal line in the copy text so the Discord post is accurate.
-    if(isCpi()){
-      const date = document.getElementById('todayDate').textContent;
-      const day  = document.getElementById('dayLabel').textContent;
-      const diag = (document.getElementById('diagRec') || {}).textContent || '—';
-      const txt = `\`\`\`\n📅 ${date} — ${day}\n${'─'.repeat(32)}\n📊 CPI DAY — Sigma 3 blocked:\n  • M8BF · Straddle · GXBF · BOBF\nDiagonal │ ${diag}\n\`\`\`\n*Not financial advice. For informational purposes only.*`;
-      navigator.clipboard.writeText(txt).then(()=>{
-        const btns = document.querySelectorAll('.btn-s');
-        btns.forEach(b=>{ if(b.textContent==='Copy All'){b.textContent='Copied!'; setTimeout(()=>b.textContent='Copy All',1800);} });
-      });
-      return;
-    }
+    // CPI day handled by the same card-by-card format as normal days now.
+    // No special early-return — Sigma 3 cards already say 'No X (CPI day)'
+    // from calculateStrategy(), Diagonal shows its real signal.
     const m8bf = document.getElementById('m8bfRec').textContent;
     const m8bfR= document.getElementById('m8bfReason').textContent;
     const strad= document.getElementById('stradRec').textContent;
@@ -1337,26 +1327,38 @@
     if(!cpiDay&&!isNaN(vYOpen)&&(vYOpen<8||vYOpen>90)){document.getElementById('err-yesterdayOpen').textContent='VIX must be 8\u201390';err=true;}
     if(err) return;
 
-    // CPI DAY — Sigma 3 hard block (M8BF/Straddle/GXBF/BOBF). Diagonal is a
-    // separate companion strategy with its own filter stack — CPI is NOT in
-    // it (see signal-engine.js line 228), so the diagonal card still renders
-    // and trades today. We hide the 4 Sigma cards individually, show the CPI
-    // banner, and compute the diagonal signal inline before returning.
+    // CPI DAY — render every card normally, each Sigma 3 card shows its own
+    // 'No X (CPI day)' status. No giant banner. Diagonal renders its real
+    // signal (CPI is not in its filter stack — see signal-engine.js line 228).
     if(isCpi()){
-      document.getElementById('cpiBlockBanner').style.display='block';
-      document.getElementById('signalStack').style.display='';  // keep stack visible for Diagonal
-      ['cardM8bf','cardStrad','cardGxbf','cardBobf'].forEach(id=>{
-        const el=document.getElementById(id); if(el) el.style.display='none';
+      const cpiBanner=document.getElementById('cpiBlockBanner'); if(cpiBanner) cpiBanner.style.display='none';
+      document.getElementById('signalStack').style.display='';
+      // All 5 cards visible
+      ['cardM8bf','cardStrad','cardGxbf','cardBobf','cardDiag'].forEach(id=>{
+        const el=document.getElementById(id); if(el) el.style.display='';
       });
-      const _cardDiagEl=document.getElementById('cardDiag'); if(_cardDiagEl) _cardDiagEl.style.display='';
       const sgw=document.getElementById('strikeGridWrap'); if(sgw) sgw.style.display='none';
-      // keep tag row updated so the "📊 CPI" chip shows
+
+      // Mark each Sigma 3 card as CPI-blocked (its own status, same as any
+      // calendar block — matches how non-CPI 'No X (EOM)' / 'No X (NM)' render).
+      const setSigmaBlocked = (recId, reasonId, badgeId, cardId, label) => {
+        const rec = document.getElementById(recId);     if (rec)    rec.textContent    = `No ${label} (CPI day)`;
+        const reason = document.getElementById(reasonId); if (reason) reason.textContent = 'CPI release day — strategy not traded.';
+        const badge = document.getElementById(badgeId); if (badge)  badge.textContent  = 'SKIP';
+        const card  = document.getElementById(cardId);  if (card)   card.className     = 'scard active-block';
+      };
+      setSigmaBlocked('m8bfRec',  'm8bfReason',  'm8bfBadge',  'cardM8bf',  'M8BF');
+      setSigmaBlocked('stradRec', 'stradReason', 'stradBadge', 'cardStrad', 'Straddle');
+      setSigmaBlocked('gxbfRec',  'gxbfReason',  'gxbfBadge',  'cardGxbf',  'GXBF');
+      setSigmaBlocked('bobfRec',  'bobfReason',  'bobfBadge',  'cardBobf',  'BOBF');
+
+      // Tag row (📊 CPI chip etc.)
       const tmapCpi={cpiTag:true,fedTag:isFed(),opexTag:isOpex(),postOpexTag:SignalEngine.opexSch.some(isTodayAfter),eomTag:isLastTradeMo(new Date())};
       let anyTagCpi=false;
       Object.entries(tmapCpi).forEach(([id,v])=>{document.getElementById(id).style.display=v?'inline-flex':'none';if(v)anyTagCpi=true;});
       document.getElementById('tagSep').style.display=anyTagCpi?'inline':'none';
-      // update overnight drop / o2o display so user still sees the market numbers
-      // (gracefully handle missing vYClose — only vToday is required on CPI days)
+
+      // Overnight-drop display — gracefully shows '—' if user didn't enter vYClose
       const dEl=document.getElementById('overnightDropDisplay');
       if (!isNaN(vYClose)) {
         const oNightCpi=vYClose-vToday;
@@ -1369,12 +1371,11 @@
       const oEl=document.getElementById('openDiffDisplay'), oNote=document.getElementById('openDiffNote');
       oEl.textContent='—';oNote.style.display='inline-flex';
       document.getElementById('resultDayLabel').textContent=tradeWdLabel();
-      // clear Sigma 3 "today's trade" pills (Diagonal pill handled by its own renderer)
+      // Sigma 3 today's-trade pills don't apply on CPI
       ['pillM8bf','pillStrad','pillGxbf','pillBobf'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display='none';});
 
-      // ── DIAGONAL signal (companion — runs on CPI days) ────────────────────
-      // Mirrors the full Diagonal render block below (lines 1483+). Uses
-      // computeDiagonalSignal from signal-engine.js — single source of truth.
+      // ── DIAGONAL (companion — runs on CPI days, has its own filter stack) ──
+      // Uses SignalEngine.computeDiagonalSignal — single source of truth.
       let _diagVixPct = null;
       if (_vix20dCloses && _vix20dCloses.length >= 10 && !isNaN(vToday)) {
         const below = _vix20dCloses.filter(c => c < vToday).length;
