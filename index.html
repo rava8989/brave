@@ -3110,7 +3110,10 @@
     renderSched(SignalEngine.vixSch,  'vixExpirySchedule');
     renderEarnings();
     refreshCross(); buildStatus(); buildNextEvents(); updateHeader();
+    // On CPI days only Diagonal trades, and Diagonal only needs today's VIX
+    // open. Disable both yesterday fields so the user knows they're not needed.
     document.getElementById('yesterdayOpen').disabled=isCpi();
+    document.getElementById('yesterdayClose').disabled=isCpi();
     loadInputs(); // #7: restore today's inputs if available
     schwabInit(); // Schwab integration
     loadM8BFPatternNotes();
