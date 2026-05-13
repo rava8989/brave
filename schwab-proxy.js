@@ -984,6 +984,13 @@ async function handleDiagonalTrade(env, etNow, preChain = null) {
       const histData = await histResp.json();
       const todayRow = histData.find(r => r.date === todayISO);
       vixToday = todayRow?.vixOpen != null ? parseFloat(todayRow.vixOpen) : null;
+      // Same fallback as /diagonal-today: prior vixClose if today's vixOpen missing.
+      if (vixToday == null) {
+        const prior = histData
+          .filter(r => r.date < todayISO && r.vixClose != null && r.vixClose > 0)
+          .sort((a, b) => a.date.localeCompare(b.date));
+        if (prior.length) vixToday = parseFloat(prior[prior.length - 1].vixClose);
+      }
       const vix20 = histData
         .filter(r => r.date < todayISO && r.vixClose != null && r.vixClose > 0)
         .sort((a, b) => a.date.localeCompare(b.date))
@@ -1473,6 +1480,16 @@ async function prefilterBobf(env, etNow, vixToday, vixYClose) {
       await env.SIGNAL_KV.put(doneKey, `rsi:${rsi14.toFixed(1)} > ${BOBF_VIX_DOWN_RSI_MAX}`, { expirationTtl: 86400 });
       return { skipped: 'rsi-high', rsi14, type: 'vix_down' };
     }
+  }
+
+  // SAFETY: if today's spxOpen is missing from history (morning signal block
+  // failed — Schwab outage etc.), the entry handler can't compute move-up%
+  // and will silently never fire. Mark this loudly so the live page shows
+  // "data-stale" instead of "window-passed" after the fact.
+  if (spxOpen == null) {
+    await env.SIGNAL_KV.put(doneKey, 'data-stale: spxOpen missing — morning signal block failed to write today\'s row', { expirationTtl: 86400 });
+    console.warn(`[bobf] data-stale for ${todayISO}: spxOpen null, prefilter cannot evaluate entry conditions`);
+    return { skipped: 'data-stale', reason: 'spxOpen missing in history_data.json' };
   }
 
   // Cache the day's static inputs for handleBobfEntry to reuse every tick.
@@ -4500,6 +4517,20 @@ export default {
             const histData = await histResp.json();
             const todayRow = histData.find(r => r.date === todayDT);
             vixToday = todayRow?.vixOpen != null ? parseFloat(todayRow.vixOpen) : null;
+            // FALLBACK: if morning signal block didn't write today's vixOpen
+            // (Schwab outage at 9:30 AM), use the most recent vixClose from
+            // history. Slightly off (close vs open) but typically within a few
+            // basis points and beats "no signal at all". Keeps VIX 20d
+            // percentile working without any live Schwab dependency.
+            if (vixToday == null) {
+              const prior = histData
+                .filter(r => r.date < todayDT && r.vixClose != null && r.vixClose > 0)
+                .sort((a, b) => a.date.localeCompare(b.date));
+              if (prior.length) {
+                vixToday = parseFloat(prior[prior.length - 1].vixClose);
+                console.warn(`[diag-today] vixOpen missing for ${todayDT}; falling back to prior vixClose=${vixToday}`);
+              }
+            }
             const vix20 = histData
               .filter(r => r.date < todayDT && r.vixClose != null && r.vixClose > 0)
               .sort((a, b) => a.date.localeCompare(b.date))

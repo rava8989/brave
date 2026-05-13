@@ -592,6 +592,9 @@ function renderBobf() {
     } else if (doneState && doneState.startsWith('rsi')) {
       placeholderText = `No BOBF today — RSI ${doneState.replace('rsi:','')}`;
       placeholderBadge = 'SKIP'; placeholderClass = 'skip';
+    } else if (doneState && doneState.startsWith('data-stale')) {
+      placeholderText = `Data stale — morning signal block failed to write today's SPX open. BOBF can't evaluate entry conditions until history is backfilled.`;
+      placeholderBadge = 'STALE'; placeholderClass = 'skip';
     } else if (doneState === 'window-passed') {
       placeholderText = `Window closed — no BOBF qualified today`;
       placeholderBadge = 'NO TRADE'; placeholderClass = 'skip';
