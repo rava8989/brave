@@ -2082,12 +2082,18 @@ async function handleScheduled(env) {
 
   if (vixYClose === null) throw new Error('Could not determine yesterday VIX close');
 
-  // 3. Get today's VIX open = first print AT OR AFTER 9:30 ET.
-  //    Cron fires at 9:30:00 ET. VIX's first post-open print can arrive anywhere
-  //    from 9:30:00 to ~9:30:30 depending on market conditions. We poll until we
-  //    actually see a tick with tradeTime >= 9:30 ET — not a fixed number of
-  //    attempts. Max wait: 120s after 9:30 (if VIX hasn't printed by 9:32, the
-  //    market has bigger problems).
+  // 3. Get today's VIX open = first NEW print AT OR AFTER 9:30 ET.
+  //    VIX is a calculated index — Cboe republishes a new value every ~15s.
+  //    The first poll we issue may return a cached/stale tick (Schwab's edge
+  //    caches the last published value), which can show a pre-open snapshot
+  //    timestamped at 9:30:00 but reflecting pre-market data. Bug observed
+  //    2026-05-13: first tick showed 18.25 (yesterday's vintage) while the
+  //    9:31 minute bar opened at 17.98.
+  //
+  //    Fix: poll FAST (200ms), record the first observed tradeTime as
+  //    "baseline", and only accept a tick whose tradeTime has advanced past
+  //    that baseline AND is >= 9:30:00 ET. That guarantees we see a
+  //    genuinely-new Cboe publication, not Schwab's cached pre-open snapshot.
   //
   //    Why not candles/openPrice:
   //    - Schwab's pricehistory for $VIX can lag 60-90 min behind real time
@@ -2095,28 +2101,33 @@ async function handleScheduled(env) {
   //      e.g. 2026-04-14: openPrice=18.73 but first print was 18.25
   const quoteUrl = `https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`;
   let vixToday = null;
-  const maxWaitMs = 120_000; // 2 minutes total budget from NOW (not from 9:30 absolute)
-  const pollIntervalMs = 1500;
-  // Deadline is relative to when this handler runs — works for the 9:30 cron
-  // AND for /gex fallback hits at 9:32+ ET (absolute-to-9:30 would short-circuit
-  // the loop with "after 0 attempts" for any recovery attempt after 9:32 ET,
-  // which is exactly how 2026-04-24's morning signal stayed dead).
+  const maxWaitMs = 120_000;
+  const pollIntervalMs = 200;  // tight loop — Cboe pubs ~every 15s, catch ASAP
   const deadlineMs = Date.now() + maxWaitMs;
   let attempt = 0;
+  let baselineTradeTime = null;  // first tradeTime we see — proves "tick advanced"
   while (Date.now() < deadlineMs) {
     attempt++;
     const vixQuote = await fetchSchwabJSON(quoteUrl, token, env);
     const vixQ = vixQuote?.['$VIX']?.quote;
     if (vixQ?.lastPrice && vixQ?.tradeTime) {
-      const tradeET = toET(new Date(vixQ.tradeTime));
+      const tt = vixQ.tradeTime;
+      const tradeET = toET(new Date(tt));
       const tradeMin = tradeET.getHours() * 60 + tradeET.getMinutes();
-      // Accept only if trade is today AND at or after 9:30 ET (i.e., post-open)
-      if (tradeET.toDateString() === todayStr && tradeMin >= 570) {
+      const isToday = tradeET.toDateString() === todayStr;
+      const postOpen = tradeMin >= 570;
+
+      // First observed tradeTime becomes the baseline.
+      if (baselineTradeTime === null) {
+        baselineTradeTime = tt;
+        console.log(`[proxy] VIX baseline tick: lastPrice=${vixQ.lastPrice}, tradeTime=${tradeET.toTimeString().slice(0,8)} ET (waiting for next publication)`);
+      } else if (tt > baselineTradeTime && isToday && postOpen) {
+        // Accept: tradeTime has advanced AND is post-9:30 ET = genuinely new
+        // Cboe publication.
         vixToday = parseFloat(vixQ.lastPrice.toFixed(2));
-        console.log(`[proxy] VIX open ${vixToday} (tradeTime ${tradeET.toTimeString().slice(0,8)} ET, attempt ${attempt})`);
+        console.log(`[proxy] VIX open ${vixToday} (tradeTime ${tradeET.toTimeString().slice(0,8)} ET, advanced from baseline, attempt ${attempt})`);
         break;
       }
-      console.log(`[proxy] VIX tick pre-open (tradeTime ${tradeET.toTimeString().slice(0,8)} ET), waiting for first post-9:30 tick...`);
     }
     await new Promise(r => setTimeout(r, pollIntervalMs));
   }
