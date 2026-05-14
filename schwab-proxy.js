@@ -293,6 +293,132 @@ async function fetchSchwabJSON(url, token, env) {
 // ════════════════════════════════════════════════════════════════════
 // SCHEDULED HANDLER (Cron Trigger)
 // ════════════════════════════════════════════════════════════════════
+// TASTYTRADE BACKUP CLIENT (OAuth2 — refresh token never expires)
+// ────────────────────────────────────────────────────────────────────
+// Free with funded Tastytrade account. Used as a redundant data source
+// when Schwab fails (e.g., token expired at 9:30 AM).
+//
+// OAuth2 flow:
+//   1. User registers an OAuth app at my.tastytrade.com (one-time).
+//   2. User visits /tasty-oauth-start (browser) → redirected to Tastytrade
+//      authorize page → approves → Tastytrade redirects back to
+//      /tasty-oauth-callback with ?code=...
+//   3. Callback exchanges code for refresh_token, stores it in KV.
+//   4. Going forward, getTastyAccessToken() uses refresh_token to mint
+//      short-lived (15 min) access tokens. Refresh token never expires.
+// ════════════════════════════════════════════════════════════════════
+
+const TASTY_BASE = 'https://api.tastyworks.com';
+const TASTY_AUTH_BASE = 'https://my.tastytrade.com';
+const TASTY_REDIRECT_URI = 'https://schwab-proxy.ravamt4.workers.dev/tasty-oauth-callback';
+
+// Common headers required by current Tastytrade API
+function tastyHeaders(extra = {}) {
+  return {
+    'Accept': 'application/json',
+    'Accept-Version': '20251101',
+    'User-Agent': 'schwab-proxy-worker/1.0',
+    ...extra,
+  };
+}
+
+// Build the authorize URL the user visits to grant access
+function tastyAuthorizeUrl(env) {
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id: env.TASTYTRADE_CLIENT_ID,
+    redirect_uri: TASTY_REDIRECT_URI,
+    scope: 'read',
+  });
+  return `${TASTY_AUTH_BASE}/auth.html?${params}`;
+}
+
+// Exchange the OAuth `code` from the callback for access_token + refresh_token
+async function tastyExchangeCode(env, code) {
+  const body = new URLSearchParams({
+    grant_type: 'authorization_code',
+    code,
+    client_id: env.TASTYTRADE_CLIENT_ID,
+    client_secret: env.TASTYTRADE_CLIENT_SECRET,
+    redirect_uri: TASTY_REDIRECT_URI,
+  });
+  const resp = await fetch(`${TASTY_BASE}/oauth/token`, {
+    method: 'POST',
+    headers: tastyHeaders({ 'Content-Type': 'application/x-www-form-urlencoded' }),
+    body,
+  });
+  if (!resp.ok) {
+    const txt = await resp.text();
+    throw new Error(`Tastytrade code-exchange HTTP ${resp.status}: ${txt.slice(0, 300)}`);
+  }
+  return resp.json();  // { access_token, refresh_token, expires_in, ... }
+}
+
+// Get a short-lived access token. Uses cached one if still fresh, else
+// refreshes via the long-lived refresh_token (stored in KV).
+async function getTastyAccessToken(env) {
+  // Try cache (access tokens live ~15 min)
+  const cached = await env.SIGNAL_KV.get('tasty_access_token');
+  if (cached) {
+    const obj = JSON.parse(cached);
+    if (obj.expires_at > Date.now() + 60_000) return obj.access_token;  // 60s buffer
+  }
+  // Refresh
+  const refresh = await env.SIGNAL_KV.get('tasty_refresh_token');
+  if (!refresh) throw new Error('Tastytrade refresh_token missing — visit /tasty-oauth-start to authorize');
+  if (!env.TASTYTRADE_CLIENT_SECRET) throw new Error('TASTYTRADE_CLIENT_SECRET not configured');
+
+  const body = new URLSearchParams({
+    grant_type: 'refresh_token',
+    client_secret: env.TASTYTRADE_CLIENT_SECRET,
+    refresh_token: refresh,
+  });
+  const resp = await fetch(`${TASTY_BASE}/oauth/token`, {
+    method: 'POST',
+    headers: tastyHeaders({ 'Content-Type': 'application/x-www-form-urlencoded' }),
+    body,
+  });
+  if (!resp.ok) {
+    const txt = await resp.text();
+    throw new Error(`Tastytrade token refresh HTTP ${resp.status}: ${txt.slice(0, 300)}`);
+  }
+  const data = await resp.json();
+  const accessToken = data.access_token;
+  const expiresIn = data.expires_in || 900;  // default 15 min
+  await env.SIGNAL_KV.put('tasty_access_token', JSON.stringify({
+    access_token: accessToken,
+    expires_at: Date.now() + (expiresIn * 1000),
+  }), { expirationTtl: expiresIn });
+  // Refresh token may rotate on refresh — if a new one came back, save it
+  if (data.refresh_token && data.refresh_token !== refresh) {
+    await env.SIGNAL_KV.put('tasty_refresh_token', data.refresh_token);
+  }
+  return accessToken;
+}
+
+// Get latest VIX quote via Tastytrade. Returns { price, asOf, source }.
+// Endpoint per tastyware/tastytrade SDK: /market-data/{instrumentType}/{symbol}
+// VIX is InstrumentType.INDEX → "Index", path /market-data/Index/VIX
+async function tastyGetVix(env) {
+  const token = await getTastyAccessToken(env);
+  const url = `${TASTY_BASE}/market-data/Index/VIX`;
+  const resp = await fetch(url, { headers: tastyHeaders({ 'Authorization': `Bearer ${token}` }) });
+  if (!resp.ok) {
+    const txt = await resp.text();
+    throw new Error(`Tastytrade VIX HTTP ${resp.status}: ${txt.slice(0, 200)}`);
+  }
+  const body = await resp.json();
+  const d = body?.data || body;  // payload may be wrapped
+  // Prefer last (real-time), fall back to mid/mark/bid
+  const price = d?.last ?? d?.['last-price'] ?? d?.mid ?? d?.mark ?? d?.bid;
+  const asOf  = d?.['updated-at'] || d?.['quote-time'] || d?.timestamp;
+  if (price == null) {
+    throw new Error(`Tastytrade VIX: no usable price field in payload: ${JSON.stringify(d).slice(0, 250)}`);
+  }
+  return { price: parseFloat(price), asOf, source: 'tastytrade', endpoint: '/market-data/Index/VIX', raw: d };
+}
+
+// ════════════════════════════════════════════════════════════════════
 
 async function handleEOD(env, etNow) {
   const todayISO = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
@@ -2082,7 +2208,35 @@ async function handleScheduled(env) {
 
   if (vixYClose === null) throw new Error('Could not determine yesterday VIX close');
 
-  // 3. Get today's VIX open = first NEW print AT OR AFTER 9:30 ET.
+  // 3. Get today's VIX open.
+  //
+  // TASTYTRADE PRIMARY: Tastytrade's /market-data/Index/VIX returns an
+  // `open` field that's already the settled session open — no polling, no
+  // race conditions, no edge-cache issues. One API call gets us what we
+  // need. Refresh token never expires so this stays alive longer than
+  // Schwab's 7-day OAuth cycle.
+  //
+  // SCHWAB FALLBACK: if Tastytrade fails for any reason, fall back to the
+  // existing Schwab quote-polling logic (poll-fast-until-tradeTime-advances).
+  let vixToday = null;
+  try {
+    const tasty = await tastyGetVix(env);
+    // Use the `open` field from Tastytrade's market-data payload — that's
+    // today's settled session open. The `last` field is current value.
+    const openFromTasty = tasty.raw?.open;
+    if (openFromTasty != null && !isNaN(parseFloat(openFromTasty))) {
+      vixToday = parseFloat(parseFloat(openFromTasty).toFixed(2));
+      console.log(`[proxy] VIX open ${vixToday} via Tastytrade /market-data/Index/VIX (last=${tasty.price})`);
+    }
+  } catch (e) {
+    console.warn('[proxy] Tastytrade VIX open failed, falling back to Schwab polling:', e.message);
+  }
+
+  // SCHWAB FALLBACK BELOW (only runs if Tastytrade didn't produce a value)
+  if (vixToday !== null) {
+    // Tastytrade gave us a value — skip Schwab polling entirely
+  } else {
+    // Original Schwab quote-polling logic. Kept verbatim as the secondary path.
   //    VIX is a calculated index — Cboe republishes a new value every ~15s.
   //    The first poll we issue may return a cached/stale tick (Schwab's edge
   //    caches the last published value), which can show a pre-open snapshot
@@ -2100,7 +2254,6 @@ async function handleScheduled(env) {
   //    - Schwab's quote.openPrice is unreliable for calculated indices (VIX)
   //      e.g. 2026-04-14: openPrice=18.73 but first print was 18.25
   const quoteUrl = `https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`;
-  let vixToday = null;
   const maxWaitMs = 120_000;
   const pollIntervalMs = 200;  // tight loop — Cboe pubs ~every 15s, catch ASAP
   const deadlineMs = Date.now() + maxWaitMs;
@@ -2133,6 +2286,7 @@ async function handleScheduled(env) {
   }
 
   if (vixToday === null) throw new Error(`VIX post-open tick not yet available after ${attempt} attempts over ~2 minutes`);
+  }  // end Schwab-fallback else block
 
   // 4. Fetch SPX quote → gap % + today's SPX open
   let spxGapPct = null;
@@ -4629,6 +4783,84 @@ export default {
       // Fallback: synchronous (e.g., in `wrangler dev` without ctx)
       await runScheduled();
       return jsonResp({ ok: true, ranMs: Date.now() - startMs }, 200, { 'Access-Control-Allow-Origin': '*' });
+    }
+
+    // GET /tasty-oauth-start — kick off Tastytrade OAuth.
+    // Visit this in a browser → redirects to Tastytrade authorize page →
+    // user approves → Tastytrade redirects back to /tasty-oauth-callback.
+    if (url.pathname === '/tasty-oauth-start' && request.method === 'GET') {
+      if (!env.TASTYTRADE_CLIENT_ID) {
+        return jsonResp({ error: 'TASTYTRADE_CLIENT_ID not configured' }, 500, { 'Access-Control-Allow-Origin': '*' });
+      }
+      return Response.redirect(tastyAuthorizeUrl(env), 302);
+    }
+
+    // GET /tasty-oauth-callback?code=... — Tastytrade redirects here after
+    // the user approves. Exchanges code for refresh_token, stores it in KV,
+    // and shows a confirmation page.
+    if (url.pathname === '/tasty-oauth-callback' && request.method === 'GET') {
+      const code = url.searchParams.get('code');
+      const err  = url.searchParams.get('error');
+      if (err) {
+        return new Response(`<h1>OAuth error</h1><p>${err}: ${url.searchParams.get('error_description') || ''}</p>`,
+          { status: 400, headers: { 'Content-Type': 'text/html' } });
+      }
+      if (!code) {
+        return new Response(`<h1>Missing code parameter</h1>`,
+          { status: 400, headers: { 'Content-Type': 'text/html' } });
+      }
+      try {
+        const tokens = await tastyExchangeCode(env, code);
+        if (!tokens.refresh_token) throw new Error('no refresh_token in response: ' + JSON.stringify(tokens).slice(0, 300));
+        // Persist refresh token (long-lived) and cache access token
+        await env.SIGNAL_KV.put('tasty_refresh_token', tokens.refresh_token);
+        if (tokens.access_token) {
+          await env.SIGNAL_KV.put('tasty_access_token', JSON.stringify({
+            access_token: tokens.access_token,
+            expires_at: Date.now() + ((tokens.expires_in || 900) * 1000),
+          }), { expirationTtl: tokens.expires_in || 900 });
+        }
+        return new Response(
+          `<html><body style="font-family:system-ui;padding:40px;background:#0f1117;color:#e5e7eb">
+            <h1 style="color:#22c55e">✓ Tastytrade connected</h1>
+            <p>Refresh token saved. The worker can now mint access tokens automatically.</p>
+            <p>Test it: <a style="color:#818cf8" href="/tasty-vix-test">/tasty-vix-test</a></p>
+          </body></html>`,
+          { status: 200, headers: { 'Content-Type': 'text/html' } }
+        );
+      } catch (e) {
+        return new Response(
+          `<html><body style="font-family:system-ui;padding:40px;background:#0f1117;color:#e5e7eb">
+            <h1 style="color:#ef4444">OAuth callback failed</h1>
+            <pre>${e.message}</pre>
+          </body></html>`,
+          { status: 500, headers: { 'Content-Type': 'text/html' } }
+        );
+      }
+    }
+
+    // GET /tasty-vix-test — debug endpoint to verify Tastytrade VIX path
+    // Returns the current VIX price as Tastytrade sees it, plus session
+    // status and which endpoint shape worked. No auth required — read-only
+    // debug. Behind public CORS like /health.
+    if (url.pathname === '/tasty-vix-test' && request.method === 'GET') {
+      const publicCors = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Max-Age': '86400',
+      };
+      try {
+        const cached = await env.SIGNAL_KV.get('tasty_session_token');
+        const result = await tastyGetVix(env);
+        return jsonResp({
+          ok: true,
+          sessionCached: !!cached,
+          vix: result,
+        }, 200, publicCors);
+      } catch (e) {
+        return jsonResp({ ok: false, error: e.message }, 500, publicCors);
+      }
     }
 
     if (url.pathname === '/health' && request.method === 'GET') {
