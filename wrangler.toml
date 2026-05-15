@@ -18,6 +18,12 @@ crons = [
 binding = "SIGNAL_KV"
 id = "be47dd5d2fb34ec79e5a34f0e241f125"
 
+# DISCORD_TOKEN (secret) replaces the standalone discord-proxy worker.
+# Set via: npx wrangler secret put DISCORD_TOKEN
+# When DISCORD_TOKEN is present, sendDiscordDM bypasses the service binding
+# and posts DMs directly. The binding below is kept as a fallback until the
+# standalone discord-proxy worker is retired.
+
 [[services]]
 binding = "DISCORD_PROXY"
 service = "discord-proxy"

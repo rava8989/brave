@@ -54,6 +54,114 @@ async function recordRefreshHealth(env, ok, msg = null) {
   }
 }
 
+// ── Discord DM send (consolidates the standalone discord-proxy worker) ──
+// Priority order, first available wins:
+//   1. env.DISCORD_TOKEN (direct in-worker send — preferred, one less worker)
+//   2. env.DISCORD_PROXY service binding (legacy; kept until standalone retired)
+//   3. proxyUrl arg (legacy public URL)
+// Returns {ok, status?, data?, error?}. Never throws — caller decides on retry.
+async function sendDiscordDM(env, userId, message, proxyUrl = null) {
+  if (!userId || !message) return { ok: false, error: 'missing userId/message' };
+
+  // Path 1: native — DM via DISCORD_TOKEN directly
+  if (env.DISCORD_TOKEN) {
+    try {
+      const dmResp = await fetch('https://discord.com/api/v10/users/@me/channels', {
+        method: 'POST',
+        headers: { 'Authorization': `Bot ${env.DISCORD_TOKEN}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ recipient_id: userId }),
+      });
+      if (!dmResp.ok) {
+        const txt = await dmResp.text();
+        return { ok: false, status: dmResp.status, error: `DM channel ${dmResp.status}: ${txt.slice(0, 200)}` };
+      }
+      const dm = await dmResp.json();
+      const msgResp = await fetch(`https://discord.com/api/v10/channels/${dm.id}/messages`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bot ${env.DISCORD_TOKEN}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: String(message).slice(0, 2000) }),
+      });
+      let data;
+      try { data = await msgResp.json(); } catch { data = { raw: 'non-json' }; }
+      if (!msgResp.ok) return { ok: false, status: msgResp.status, data, error: `send ${msgResp.status}` };
+      return { ok: true, status: 200, data, source: 'native' };
+    } catch (e) {
+      return { ok: false, error: 'native: ' + e.message };
+    }
+  }
+
+  // Path 2: service binding (legacy discord-proxy worker)
+  if (env.DISCORD_PROXY) {
+    try {
+      const hdrs = { 'Content-Type': 'application/json' };
+      if (env.PROXY_SECRET) hdrs['Authorization'] = `Bearer ${env.PROXY_SECRET}`;
+      const r = await env.DISCORD_PROXY.fetch(new Request('https://dummy/', {
+        method: 'POST', headers: hdrs,
+        body: JSON.stringify({ userId, message: String(message).slice(0, 2000) }),
+      }));
+      let data; try { data = await r.json(); } catch { data = { raw: 'non-json' }; }
+      return { ok: r.ok, status: r.status, data, source: 'service-binding',
+               ...(r.ok ? {} : { error: `service ${r.status}` }) };
+    } catch (e) {
+      return { ok: false, error: 'service: ' + e.message };
+    }
+  }
+
+  // Path 3: HTTP proxyUrl
+  if (proxyUrl && proxyUrl.startsWith('https://')) {
+    try {
+      const hdrs = { 'Content-Type': 'application/json' };
+      if (env.PROXY_SECRET) hdrs['Authorization'] = `Bearer ${env.PROXY_SECRET}`;
+      const r = await fetch(proxyUrl, {
+        method: 'POST', headers: hdrs,
+        body: JSON.stringify({ userId, message: String(message).slice(0, 2000) }),
+      });
+      let data; try { data = await r.json(); } catch { data = { raw: 'non-json' }; }
+      return { ok: r.ok, status: r.status, data, source: 'http-url',
+               ...(r.ok ? {} : { error: `http ${r.status}` }) };
+    } catch (e) {
+      return { ok: false, error: 'http: ' + e.message };
+    }
+  }
+
+  return { ok: false, error: 'no Discord transport available (no DISCORD_TOKEN/DISCORD_PROXY/proxyUrl)' };
+}
+
+// ── Centralized event logger ──
+// Appends to daily_log_<isoDateET> KV. Cap 200 newest entries per day, 7-day
+// TTL. FIRE-AND-FORGET: failures are swallowed so logging never breaks the
+// calling code path. Read back via GET /logs?date=YYYY-MM-DD (auth-required).
+// Use sparingly — log only signal-grade events (signal sent/failed, trade
+// open/close, phantom cleanup, auto-recovery, alerts), not every tick.
+async function logEvent(env, level, tag, msg, data = null) {
+  try {
+    const now = new Date();
+    const etNow = (typeof toET === 'function') ? toET(now) : now;
+    const dateISO = (typeof isoDateET === 'function')
+      ? isoDateET(etNow)
+      : `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
+    const key = `daily_log_${dateISO}`;
+    const entry = {
+      ts: now.toISOString(),
+      etTime: `${String(etNow.getHours()).padStart(2,'0')}:${String(etNow.getMinutes()).padStart(2,'0')}:${String(etNow.getSeconds()).padStart(2,'0')}`,
+      level, tag, msg,
+      ...(data ? { data } : {}),
+    };
+    let arr = [];
+    try {
+      const raw = await env.SIGNAL_KV.get(key);
+      arr = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(arr)) arr = [];
+    } catch { arr = []; }
+    arr.unshift(entry);
+    if (arr.length > 200) arr = arr.slice(0, 200);
+    await env.SIGNAL_KV.put(key, JSON.stringify(arr), { expirationTtl: 7 * 86400 });
+  } catch (e) {
+    // Never let logging break the main flow
+    console.warn('[logEvent] swallowed:', e.message);
+  }
+}
+
 function checkRateLimit(request) {
   const ip = request.headers.get('CF-Connecting-IP') || request.headers.get('X-Forwarded-For') || 'unknown';
   const now = Date.now();
@@ -544,12 +652,8 @@ async function handleEOD(env, etNow) {
   // STEP 2 — gap/o2o/signal-based bans (need vixOpen/spxOpen, only run if morning wrote them).
   if (!m8bfBlockedByLive) {
     try {
-      const histResp0 = await fetch(
-        `https://raw.githubusercontent.com/rava8989/brave/main/history_data.json?t=${Date.now()}`,
-        { headers: { 'Cache-Control': 'no-cache' } }
-      );
-      if (histResp0.ok) {
-        const hist0 = await histResp0.json();
+      const hist0 = await getHistory(env);
+      if (Array.isArray(hist0) && hist0.length) {
         const todayE = hist0.find(e => e.date === todayISO);
         // Find prior trading day for vixYClose / vixYOpen
         const prior = hist0
@@ -620,12 +724,8 @@ async function handleEOD(env, etNow) {
   // Backfill vixOpen/spxOpen if morning signal missed them
   let vixOpen = null, spxOpen = null;
   try {
-    const histResp = await fetch(
-      `https://raw.githubusercontent.com/rava8989/brave/main/history_data.json?t=${Date.now()}`,
-      { headers: { 'Cache-Control': 'no-cache' } }
-    );
-    if (histResp.ok) {
-      const hist = await histResp.json();
+    const hist = await getHistory(env);
+    if (Array.isArray(hist) && hist.length) {
       const todayEntry = hist.find(e => e.date === todayISO);
       if (todayEntry && todayEntry.vixOpen == null && token) {
         // Fetch VIX open from candles
@@ -987,6 +1087,8 @@ async function refreshDiagonalLiveQuotes(env, token, preChain = null) {
     const diagDone = await env.SIGNAL_KV.get(`diag_done_${todayISO}`);
     if (diagDone) {
       console.warn(`[diag] phantom open trade detected (openDate=${trade.openDate}, diag_done set) — clearing`);
+      await logEvent(env, 'warn', 'diag-phantom', 'phantom open trade cleared at refresh path',
+                     { openDate: trade.openDate });
       await env.SIGNAL_KV.delete('diagonal_open_trade');
       return null;
     }
@@ -1102,12 +1204,8 @@ async function handleDiagonalTrade(env, etNow, preChain = null) {
   let vixPct20d = null;
   let vixToday = null;
   try {
-    const histResp = await fetch(
-      `https://raw.githubusercontent.com/rava8989/brave/main/history_data.json?t=${Date.now()}`,
-      { headers: { 'User-Agent': 'schwab-proxy' } }
-    );
-    if (histResp.ok) {
-      const histData = await histResp.json();
+    const histData = await getHistory(env);
+    if (Array.isArray(histData) && histData.length) {
       const todayRow = histData.find(r => r.date === todayISO);
       vixToday = todayRow?.vixOpen != null ? parseFloat(todayRow.vixOpen) : null;
       // Same fallback as /diagonal-today: prior vixClose if today's vixOpen missing.
@@ -1291,10 +1389,8 @@ async function openStraddleTrade(env, token, etNow, signal, preChain = null) {
   } catch (_) { /* fall through */ }
   if (spxOpen == null) {
     try {
-      const histResp = await fetch(`https://raw.githubusercontent.com/rava8989/brave/main/history_data.json?t=${Date.now()}`,
-        { headers: { 'User-Agent': 'schwab-proxy' } });
-      if (histResp.ok) {
-        const hist = await histResp.json();
+      const hist = await getHistory(env);
+      if (Array.isArray(hist) && hist.length) {
         const todayRow = hist.find(r => r.date === todayISO);
         if (todayRow?.spxOpen != null) {
           spxOpen = parseFloat(todayRow.spxOpen);
@@ -1618,12 +1714,8 @@ async function prefilterBobf(env, etNow, vixToday, vixYClose) {
   //    history_data.json from GitHub on every tick (~106 saved fetches/day).
   let rsi14 = null, sma5 = null, spxOpen = null;
   try {
-    const histResp = await fetch(
-      `https://raw.githubusercontent.com/rava8989/brave/main/history_data.json?t=${Date.now()}`,
-      { headers: { 'User-Agent': 'schwab-proxy' } }
-    );
-    if (histResp.ok) {
-      const histData = await histResp.json();
+    const histData = await getHistory(env);
+    if (Array.isArray(histData) && histData.length) {
       const todayRow = histData.find(r => r.date === todayISO);
       spxOpen = todayRow?.spxOpen != null ? parseFloat(todayRow.spxOpen) : null;
       const sortedPrior = histData
@@ -1646,14 +1738,35 @@ async function prefilterBobf(env, etNow, vixToday, vixYClose) {
     }
   }
 
-  // SAFETY: if today's spxOpen is missing from history (morning signal block
-  // failed — Schwab outage etc.), the entry handler can't compute move-up%
-  // and will silently never fire. Mark this loudly so the live page shows
-  // "data-stale" instead of "window-passed" after the fact.
+  // SAFETY + AUTO-RECOVERY: if today's spxOpen is missing from history
+  // (morning signal block failed — Schwab outage etc.), the entry handler
+  // can't compute move-up% and will silently never fire. Don't give up
+  // immediately: try to recover from Schwab NOW (the 9:30 candle exists
+  // by 10:29 when prefilter runs). Only mark data-stale if recovery fails.
   if (spxOpen == null) {
-    await env.SIGNAL_KV.put(doneKey, 'data-stale: spxOpen missing — morning signal block failed to write today\'s row', { expirationTtl: 86400 });
-    console.warn(`[bobf] data-stale for ${todayISO}: spxOpen null, prefilter cannot evaluate entry conditions`);
-    return { skipped: 'data-stale', reason: 'spxOpen missing in history_data.json' };
+    console.warn(`[bobf] spxOpen missing for ${todayISO}, attempting auto-recovery from Schwab 9:30 candle...`);
+    try {
+      const recovered = await recoverOpenPricesFromSchwab(env, etNow);
+      if (recovered.spxOpen != null) {
+        spxOpen = recovered.spxOpen;
+        const fields = { spxOpen };
+        if (recovered.vixOpen != null) fields.vixOpen = recovered.vixOpen;
+        try {
+          await upsertHistoryGitHub(env, todayISO, fields);
+          console.log(`[bobf] auto-recovery wrote spxOpen=${spxOpen}${recovered.vixOpen != null ? ` vixOpen=${recovered.vixOpen}` : ''} for ${todayISO}`);
+          await logEvent(env, 'warn', 'bobf-recover', 'auto-recovered missing spxOpen from Schwab 9:30 candle', fields);
+        } catch (writeErr) {
+          console.warn('[bobf] auto-recovery history write failed:', writeErr.message);
+        }
+      }
+    } catch (e) {
+      console.warn('[bobf] auto-recovery failed:', e.message);
+    }
+  }
+  if (spxOpen == null) {
+    await env.SIGNAL_KV.put(doneKey, 'data-stale: spxOpen missing — morning signal block failed and auto-recovery also failed', { expirationTtl: 86400 });
+    console.warn(`[bobf] data-stale for ${todayISO}: spxOpen null even after recovery, prefilter cannot evaluate entry conditions`);
+    return { skipped: 'data-stale', reason: 'spxOpen missing in history_data.json (recovery failed)' };
   }
 
   // Cache the day's static inputs for handleBobfEntry to reuse every tick.
@@ -1692,13 +1805,13 @@ async function handleBobfEntry(env, etNow, preChain = null) {
     sma5 = s.sma5; rsi14 = s.rsi14;
     typeInfo = { type: s.type, label: s.label, bodyOffset: s.bodyOffset };
   } else {
-    // Cache miss (e.g. cold start, prefilter never ran) — fall back to GitHub fetch
+    // Cache miss (e.g. cold start, prefilter never ran) — fall back to KV history
     let histData;
     try {
-      const histResp = await fetch(`https://raw.githubusercontent.com/rava8989/brave/main/history_data.json?t=${Date.now()}`,
-        { headers: { 'User-Agent': 'schwab-proxy' } });
-      if (!histResp.ok) return { ...out, status: 'error', error: `history fetch ${histResp.status}` };
-      histData = await histResp.json();
+      histData = await getHistory(env);
+      if (!Array.isArray(histData) || !histData.length) {
+        return { ...out, status: 'error', error: 'history empty (KV not seeded)' };
+      }
     } catch (e) { return { ...out, status: 'error', error: 'history fetch: ' + e.message }; }
 
     const todayRow = histData.find(r => r.date === todayISO);
@@ -1786,6 +1899,30 @@ async function handleBobfEntry(env, etNow, preChain = null) {
 
   const debit = lowerLeg.mid - 2 * bodyLeg.mid + upperLeg.mid;
 
+  // ── Item 9: live VIX validator (defense-in-depth) ──
+  // vixToday above is the cached morning 9:30 print. By trade-fire time
+  // (10:29-12:15 ET) VIX may have spiked above the BOBF gate. Re-pull live
+  // VIX and re-check the gate. If violated, abort THIS tick without marking
+  // done — next 2-min tick re-checks; VIX may revert.
+  try {
+    const liveVixQ = await fetchSchwabJSON(
+      'https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote',
+      token, env);
+    const liveVix = liveVixQ?.['$VIX']?.quote?.lastPrice;
+    if (liveVix != null && liveVix > BOBF_VIX_MAX) {
+      console.warn(`[bobf-validate] live VIX ${liveVix.toFixed(2)} > ${BOBF_VIX_MAX} — aborting fire`);
+      await logEvent(env, 'warn', 'bobf-validate',
+        `live VIX spiked above ${BOBF_VIX_MAX} at fire time, aborting`,
+        { liveVix: parseFloat(liveVix.toFixed(2)), vixOpenCached: vixToday, gate: BOBF_VIX_MAX });
+      return { ...out, status: 'vix-spiked',
+               liveVix: parseFloat(liveVix.toFixed(2)),
+               gate: BOBF_VIX_MAX, type: typeInfo.type };
+    }
+  } catch (vErr) {
+    // Don't block trade on validator failure — falls through to existing logic
+    console.warn('[bobf-validate] live VIX fetch failed:', vErr.message);
+  }
+
   // Friday max-premium logic (working order pattern). VIX_UP / VIX_DOWN: no cap.
   let status, fillDebit = null, fillTimeET = null, maxDebit = null;
   if (typeInfo.type === 'friday') {
@@ -1842,6 +1979,9 @@ async function handleBobfEntry(env, etNow, preChain = null) {
   // working orders: leave doneKey unset so subsequent ticks can flip working→filled
 
   console.log(`[bobf] opened ${status} type=${typeInfo.type} body=${kBody} debit=${debit.toFixed(2)} maxDebit=${maxDebit ?? '-'}`);
+  await logEvent(env, 'info', 'bobf-open', `opened ${status} type=${typeInfo.type}`, {
+    body: kBody, debit: parseFloat(debit.toFixed(2)), maxDebit, type: typeInfo.type,
+  });
   return { ...out, status: 'opened', type: typeInfo.type, trade: { strikes: [kLower, kBody, kUpper], debit, status } };
 }
 
@@ -2067,6 +2207,67 @@ async function handleScheduled(env) {
     catch (e) { bobfResult = { bobf: 'error', error: e.message }; console.warn('[bobf] entry failed:', e.message); }
   }
 
+  // ── 9:35 ET morning-signal self-check + Discord alert ──
+  // If by 9:35 ET we still don't have a 'sent' marker for today's morning
+  // signal, fire ONE Discord alert so silent failures don't rot for hours.
+  // Most failures self-heal within 1-2 cron ticks; this only catches the
+  // "stuck for 5+ min" case (Schwab outage, stuck claim, cron stall, etc.).
+  // Rate-limited via `morning_alert_<date>` flag (24-hr TTL).
+  const morningAlertKey = `morning_alert_${todayISO}`;
+  try {
+    const past935 = etHour > 9 || (etHour === 9 && etMin >= 35);
+    if (past935 && isMarket) {
+      const alreadyAlerted = await env.SIGNAL_KV.get(morningAlertKey);
+      const currentStatus = await env.SIGNAL_KV.get(`morning_signal_${todayISO}`);
+      // An in-flight 'claim:' means a tick is actively sending RIGHT NOW
+      // (claims are ≤40s and self-release). That is NOT "missing" — it's
+      // in-progress. Only alarm on GENUINE absence (null/expired). This
+      // kills the false "Morning signal MISSING" DM that fired during the
+      // self-heal recovery window on 2026-05-15.
+      const inFlight = !!(currentStatus && currentStatus.startsWith('claim:'));
+      if (!alreadyAlerted && currentStatus !== 'sent' && !inFlight) {
+        const minsLate = (etHour - 9) * 60 + etMin - 30;
+        const stRaw = await env.SIGNAL_KV.get('schwab_refresh_state');
+        const refreshState = stRaw ? JSON.parse(stRaw) : null;
+        const schwabHealthy = !refreshState || refreshState.ok !== false;
+        const claimStuck = !!(currentStatus && currentStatus.startsWith('claim:'));
+        const reasons = [];
+        if (!schwabHealthy) {
+          const errs = refreshState?.consecutiveErrors || 0;
+          reasons.push(`Schwab refresh degraded (${errs} errors)`);
+        }
+        if (claimStuck) {
+          const parts = currentStatus.split(':');
+          const claimAgeMs = parts[2] ? Date.now() - parseInt(parts[2], 10) : 0;
+          reasons.push(`stuck claim (age ${Math.round(claimAgeMs/1000)}s)`);
+        }
+        if (!currentStatus) reasons.push('no claim yet — cron may have stalled');
+        const dcRaw = await env.SIGNAL_KV.get('discord_config');
+        if (dcRaw) {
+          const dc = JSON.parse(dcRaw);
+          if (dc.channelId) {
+            const result = await sendDiscordDM(env, dc.channelId,
+              `🚨 **Morning signal MISSING** — ${minsLate} min past 9:30 ET\n` +
+              `State: \`${currentStatus || 'none'}\`\n` +
+              (reasons.length ? `Suspected: ${reasons.join('; ')}\n` : '') +
+              `→ Check worker logs, hit \`/trigger\` to retry, or re-auth Schwab via dashboard.`,
+              dc.proxyUrl);
+            if (result.ok) {
+              await env.SIGNAL_KV.put(morningAlertKey, 'sent', { expirationTtl: 86400 });
+              console.warn(`[morning-check] FIRED ALERT: ${minsLate} min late, status=${currentStatus || 'none'} via ${result.source}`);
+              await logEvent(env, 'error', 'morning-check', `morning signal ${minsLate} min late — Discord alert sent`,
+                             { status: currentStatus || null, reasons, source: result.source });
+            } else {
+              console.warn('[morning-check] post failed:', result.error);
+            }
+          }
+        }
+      }
+    }
+  } catch (selfCheckErr) {
+    console.error('[morning-check] failed:', selfCheckErr.message);
+  }
+
   // ── Morning signal: retries every cron tick until sent ──
   const morningDoneKey = `morning_signal_${todayISO}`;
   const morningDone = await env.SIGNAL_KV.get(morningDoneKey);
@@ -2131,16 +2332,16 @@ async function handleScheduled(env) {
   }
 
   // ── Stuck-claim self-heal + notify ──
-  // Claims carry a timestamp suffix (claim:<uuid>:<ms>). If we find one >2 min
+  // Claims carry a timestamp suffix (claim:<uuid>:<ms>). If we find one >40s
   // old here (post-9:30 ET) it means the previous tick crashed between claim
-  // and 'sent' — the handler either threw inside the try/catch at scheduled()
-  // or quietly ran out of wall-clock. Short-TTL (300s) auto-expires within 5 min,
-  // but we self-heal faster and DM a warning so the silence isn't silent.
+  // and 'sent'. The send path is now ≤~35s, so a claim older than 40s is
+  // genuinely dead — clear it immediately and let THIS tick retry. Combined
+  // with the 90s claim TTL, an orphaned claim can never block more than ~40s.
   if (morningDone && morningDone.startsWith('claim:')) {
     const parts = morningDone.split(':');
     const claimTsMs = parseInt(parts[2] || '0', 10);
     const ageMs = claimTsMs ? Date.now() - claimTsMs : 0;
-    if (claimTsMs && ageMs > 120_000) {
+    if (claimTsMs && ageMs > 40_000) {
       const ageS = Math.round(ageMs / 1000);
       console.warn(`[proxy] Stuck claim detected (age ${ageS}s) — clearing and notifying`);
       await env.SIGNAL_KV.delete(morningDoneKey);
@@ -2149,25 +2350,19 @@ async function handleScheduled(env) {
         const dcRaw = await env.SIGNAL_KV.get('discord_config');
         if (dcRaw) {
           const dc = JSON.parse(dcRaw);
-          if (dc.proxyUrl && dc.channelId) {
-            const errHeaders = { 'Content-Type': 'application/json' };
-            if (env.PROXY_SECRET) errHeaders['Authorization'] = `Bearer ${env.PROXY_SECRET}`;
-            await fetch(dc.proxyUrl, {
-              method: 'POST',
-              headers: errHeaders,
-              body: JSON.stringify({
-                userId: dc.channelId,
-                message: `⚠️ **Stuck morning claim** (${ageS}s old) — cleared, retrying this tick.`,
-              }),
-            });
+          if (dc.channelId) {
+            await sendDiscordDM(env, dc.channelId,
+              `⚠️ **Stuck morning claim** (${ageS}s old) — cleared, retrying this tick.`,
+              dc.proxyUrl);
           }
         }
       } catch (notifyErr) {
         console.warn('[proxy] stuck-claim notify failed:', notifyErr.message || notifyErr);
       }
       // Fall through: acquire a fresh claim below
-    } else if (claimTsMs && ageMs <= 120_000) {
-      // Another tick owns a fresh claim — don't stomp it
+    } else if (claimTsMs && ageMs <= 40_000) {
+      // Another tick owns a fresh claim (<40s, still actively sending) —
+      // don't stomp it. It will either finish ('sent') or self-release.
       return {
         status: 'claim_in_flight',
         claim: morningDone,
@@ -2184,12 +2379,14 @@ async function handleScheduled(env) {
   // because the slot claim used to live ~30s later (after VIX/SPX fetches).
   // We write a unique token, wait for KV to propagate, then verify our token won.
   //
-  // TTL is 300s (5 min), not 86400s: zombie claims auto-expire within one cron
-  // window instead of blocking a whole trading day. The 'sent' marker below
-  // still uses 86400s so successful signals don't re-fire.
+  // TTL is 90s (not 300s, not 86400s): the send path is now fast (≤~35s:
+  // 20s VIX race + 12s fallback + quick compute/post), so a healthy claim
+  // never lives long. If a tick is hard-killed mid-send, the claim
+  // self-expires within 90s and the next minute's cron re-fires — no
+  // 3-min stuck-claim window. 'sent' marker still uses 86400s.
   const claimToken = crypto.randomUUID();
   const claimValue = `claim:${claimToken}:${Date.now()}`;
-  await env.SIGNAL_KV.put(morningDoneKey, claimValue, { expirationTtl: 300 });
+  await env.SIGNAL_KV.put(morningDoneKey, claimValue, { expirationTtl: 90 });
   await new Promise(r => setTimeout(r, 1500)); // let concurrent ticks also write
   const claimCheck = await env.SIGNAL_KV.get(morningDoneKey, { cacheTtl: 30 });
   if (claimCheck !== claimValue) {
@@ -2257,11 +2454,17 @@ async function handleScheduled(env) {
   // racing both, we get the FIRST genuine new VIX publication regardless
   // of which vendor's CDN updates first.
   //
-  // 5-min budget covers cases where Cboe takes until 9:35 to publish.
+  // PER-TICK budget: 20s, NOT 5 min. The cron fires every minute during
+  // market hours, so the cron itself is the retry loop. Holding the claim
+  // across a 5-min in-tick poll was the root cause of stuck claims —
+  // Cloudflare kills the cron tick long before 5 min, orphaning the claim
+  // for ~3 min until self-heal. 20s catches the first genuine Cboe
+  // publication (they republish ~every 15s); if this tick juuust misses,
+  // the next minute's tick catches it. Signal lands 9:30:xx, worst 9:31:xx.
   let vixToday = null;
   let vixSource = null;
   {
-    const maxWaitMs = 5 * 60_000;
+    const maxWaitMs = 20_000;
     const pollIntervalMs = 500;
     const deadlineMs = Date.now() + maxWaitMs;
     const startedAt = Date.now();
@@ -2346,7 +2549,7 @@ async function handleScheduled(env) {
   //    - Schwab's quote.openPrice is unreliable for calculated indices (VIX)
   //      e.g. 2026-04-14: openPrice=18.73 but first print was 18.25
   const quoteUrl = `https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`;
-  const maxWaitMs = 120_000;
+  const maxWaitMs = 12_000;  // per-tick — cron retries next minute, never hold claim long
   const pollIntervalMs = 200;  // tight loop — Cboe pubs ~every 15s, catch ASAP
   const deadlineMs = Date.now() + maxWaitMs;
   let attempt = 0;
@@ -2377,7 +2580,17 @@ async function handleScheduled(env) {
     await new Promise(r => setTimeout(r, pollIntervalMs));
   }
 
-  if (vixToday === null) throw new Error(`VIX post-open tick not yet available after ${attempt} attempts over ~2 minutes`);
+  if (vixToday === null) {
+    // VIX not published yet THIS tick. Do NOT throw (that would noise an
+    // error DM) and do NOT leave the claim sitting (that orphans it →
+    // stuck-claim → ~3 min silence). RELEASE the claim and bail cleanly;
+    // the next cron tick (≤60s) re-claims fresh and tries again. By then
+    // Cboe has definitely published. Net: at most 1 extra minute, no spam,
+    // no stuck claim — vs the old 5-min-poll-then-orphan failure mode.
+    await env.SIGNAL_KV.delete(morningDoneKey);
+    console.warn(`[proxy] VIX not ready this tick (${attempt} attempts) — claim released, cron retries next minute`);
+    return { status: 'vix_pending_retry', time: `${etHour}:${String(etMin).padStart(2,'0')} ET` };
+  }
   }  // end Schwab-fallback else block
 
   // 4. Fetch SPX quote → gap % + today's SPX open
@@ -2419,12 +2632,8 @@ async function handleScheduled(env) {
   let vixPct20d = null;
   let rsi14 = null;
   try {
-    const histResp = await fetch(
-      `https://raw.githubusercontent.com/rava8989/brave/main/history_data.json?t=${Date.now()}`,
-      { headers: { 'User-Agent': 'schwab-proxy' } }
-    );
-    if (histResp.ok) {
-      const histData = await histResp.json();
+    const histData = await getHistory(env);
+    if (Array.isArray(histData) && histData.length) {
       // Find the most recent entry before today that has m8bfWR
       const sorted = histData
         .filter(r => r.date < todayISO && r.m8bfWR != null)
@@ -2498,65 +2707,36 @@ async function handleScheduled(env) {
   // 7. Slot already claimed at the top of the morning block. Reuse the same key.
   const msDoneKey = morningDoneKey;
 
-  // 8. Post to Discord
+  // 8. Post to Discord (via consolidated helper — tries DISCORD_TOKEN first)
   const dcRaw = await env.SIGNAL_KV.get('discord_config');
   if (!dcRaw) { await env.SIGNAL_KV.delete(msDoneKey); throw new Error('No Discord config in KV — sync from browser'); }
   const dc = JSON.parse(dcRaw);
 
-  const dcHeaders = { 'Content-Type': 'application/json' };
-  if (env.PROXY_SECRET) dcHeaders['Authorization'] = `Bearer ${env.PROXY_SECRET}`;
-  const dcBody = JSON.stringify({ userId: dc.channelId /* actually Discord user ID */, message: message.slice(0, 2000) });
-
-  let dcResp;
-  try {
-    if (env.DISCORD_PROXY) {
-      dcResp = await env.DISCORD_PROXY.fetch(new Request('https://dummy/', {
-        method: 'POST',
-        headers: dcHeaders,
-        body: dcBody,
-      }));
-    } else if (dc.proxyUrl && dc.proxyUrl.startsWith('https://')) {
-      dcResp = await fetch(dc.proxyUrl, {
-        method: 'POST',
-        headers: dcHeaders,
-        body: dcBody,
-      });
-    } else {
-      throw new Error('No DISCORD_PROXY binding and no valid proxyUrl — cannot send Discord DM');
-    }
-  } catch (e) {
-    // Send failed — release the slot so next cron tick can retry
-    await env.SIGNAL_KV.delete(msDoneKey);
-    throw e;
-  }
-  let dcData;
-  try { dcData = await dcResp.json(); } catch { dcData = { error: `Non-JSON response (HTTP ${dcResp.status})` }; }
-  if (!dcResp.ok) {
+  const result = await sendDiscordDM(env, dc.channelId, message.slice(0, 2000), dc.proxyUrl);
+  let dcData = result.data || {};
+  if (!result.ok) {
     // Retry once on 429 (rate limit) after Retry-After delay
-    if (dcResp.status === 429 && dcData.retry_after) {
+    if (result.status === 429 && dcData.retry_after) {
       await new Promise(r => setTimeout(r, (dcData.retry_after + 0.5) * 1000));
-      let retryResp;
-      if (env.DISCORD_PROXY) {
-        retryResp = await env.DISCORD_PROXY.fetch(new Request('https://dummy/', { method: 'POST', headers: dcHeaders, body: dcBody }));
-      } else {
-        retryResp = await fetch(dc.proxyUrl, { method: 'POST', headers: dcHeaders, body: dcBody });
-      }
-      let retryData;
-      try { retryData = await retryResp.json(); } catch { retryData = { error: `Non-JSON (HTTP ${retryResp.status})` }; }
-      if (!retryResp.ok) {
+      const retry = await sendDiscordDM(env, dc.channelId, message.slice(0, 2000), dc.proxyUrl);
+      if (!retry.ok) {
         await env.SIGNAL_KV.delete(msDoneKey);
-        throw new Error('Discord post failed after retry: ' + JSON.stringify(retryData));
+        throw new Error('Discord post failed after retry: ' + JSON.stringify(retry));
       }
-      // Mark as fully sent
       await env.SIGNAL_KV.put(msDoneKey, 'sent', { expirationTtl: 86400 });
-      return retryData;
+      return retry.data || { ok: true };
     }
     await env.SIGNAL_KV.delete(msDoneKey);
-    throw new Error('Discord post failed: ' + JSON.stringify(dcData));
+    throw new Error('Discord post failed: ' + (result.error || JSON.stringify(dcData)));
   }
 
   // Mark morning signal as fully sent
   await env.SIGNAL_KV.put(msDoneKey, 'sent', { expirationTtl: 86400 });
+  await logEvent(env, 'info', 'morning', 'signal posted to Discord', {
+    rec: signal.rec, badge: signal.badge, theme: signal.theme,
+    vix: { todayOpen: vixToday, yOpen: vixYOpen, yClose: vixYClose },
+    spxOpen: spxTodayOpen, spxGapPct,
+  });
 
   // ════════════════════════════════════════════════════════════════════
   // POST-DISCORD WORK (deferred until after the message went out)
@@ -2581,10 +2761,51 @@ async function handleScheduled(env) {
       const existingRaw = await env.SIGNAL_KV.get('straddle_open_trade');
       const existing = existingRaw ? JSON.parse(existingRaw) : null;
       if (!existing || existing.openDate !== isoDateET(etNow)) {
-        const stradToken = await getAccessToken(env);
-        const trade = await openStraddleTrade(env, stradToken, etNow, signal, masterChain);
-        await env.SIGNAL_KV.put('straddle_open_trade', JSON.stringify(trade));
-        console.log(`[strad] opened ${trade.status} K=${trade.strike} debit=${trade.entryDebit} maxDebit=${trade.maxDebit}`);
+        // ── Item 9: pre-trade signal validator ──
+        // Re-pull VIX from a fresh source (Tasty) and recompute theme.
+        // If theme flips (rare, but caught May-14-like off-strategy fires),
+        // abort with skip reason instead of opening a phantom trade.
+        let validatorAborted = false;
+        try {
+          const freshVix = await tastyGetVix(env);
+          if (freshVix != null) {
+            const drift = Math.abs(freshVix - vixToday);
+            // Recompute signal with the fresh VIX
+            const freshSig = calculateSignal({
+              vixToday: freshVix, vixYOpen, vixYClose, spxGapPct,
+              etDate: etNow, prevWR, vixPct20d, rsi14,
+            });
+            if (freshSig.theme !== 'strad') {
+              validatorAborted = true;
+              console.warn(`[strad-validate] ABORT: theme flipped (morning vix ${vixToday} → fresh ${freshVix.toFixed(2)}, theme=${freshSig.theme})`);
+              await logEvent(env, 'error', 'strad-validate',
+                `aborted open: theme flipped at fire time`,
+                { morningVix: vixToday, freshVix: parseFloat(freshVix.toFixed(2)),
+                  drift: parseFloat(drift.toFixed(2)),
+                  morningTheme: 'strad', freshTheme: freshSig.theme });
+              // Record skip reason so live page shows correct status
+              await env.SIGNAL_KV.put(`straddle_skip_${isoDateET(etNow)}`, JSON.stringify({
+                theme: freshSig.theme,
+                rec: `Pre-trade validator aborted (vix drift ${drift.toFixed(2)}): ${freshSig.rec}`,
+                recordedAt: new Date().toISOString(),
+                source: 'pre-trade-validator',
+              }), { expirationTtl: 86400 });
+            } else if (drift > 0.5) {
+              console.log(`[strad-validate] drift ${drift.toFixed(2)} but theme=strad — proceeding`);
+            }
+          }
+        } catch (vErr) {
+          console.warn('[strad-validate] fresh VIX fetch failed (proceeding):', vErr.message);
+        }
+        if (!validatorAborted) {
+          const stradToken = await getAccessToken(env);
+          const trade = await openStraddleTrade(env, stradToken, etNow, signal, masterChain);
+          await env.SIGNAL_KV.put('straddle_open_trade', JSON.stringify(trade));
+          console.log(`[strad] opened ${trade.status} K=${trade.strike} debit=${trade.entryDebit} maxDebit=${trade.maxDebit}`);
+          await logEvent(env, 'info', 'strad-open', `opened ${trade.status}`, {
+            strike: trade.strike, entryDebit: trade.entryDebit, maxDebit: trade.maxDebit,
+          });
+        }
       }
     } catch (e) { console.warn('[strad] open failed:', e.message); }
   } else {
@@ -3141,88 +3362,230 @@ async function commitGexToGitHub(env, gexData) {
 }
 
 // ════════════════════════════════════════════════════════════════════
-// GITHUB HISTORY UPSERT
-// Reads history_data.json from GitHub, merges fields for dateStr,
-// commits back. Requires GITHUB_TOKEN env var (repo: rava8989/brave).
+// KV-BACKED HISTORY STORE (Item 5)
+// ────────────────────────────────────────────────────────────────────
+// Single source of truth: KV key `history_data` (JSON array).
+// Worker writes are fast (~10ms) and atomic per key. GitHub mirror
+// happens asynchronously after each KV write so git history is preserved
+// but no caller waits for the 1-2s PUT.
+//
+// First read on a fresh deploy falls back to GitHub raw (one-time seed),
+// then everything stays in KV. POST /history-migrate forces a re-seed.
 // ════════════════════════════════════════════════════════════════════
 
-async function upsertHistoryGitHub(env, dateStr, fields, _retries = 3) {
-  const token = env.GITHUB_TOKEN;
-  if (!token) throw new Error('GITHUB_TOKEN not set');
+const HISTORY_KV_KEY = 'history_data';
+const HISTORY_GH_RAW = 'https://raw.githubusercontent.com/rava8989/brave/main/history_data.json';
 
-  const apiUrl = 'https://api.github.com/repos/rava8989/brave/contents/history_data.json';
-  const ghHeaders = {
-    'Authorization': `Bearer ${token}`,
-    'Accept': 'application/vnd.github+json',
-    'User-Agent': 'schwab-proxy-worker/1.0',
-    'X-GitHub-Api-Version': '2022-11-28',
-  };
+async function getHistory(env) {
+  // Primary read: KV (fast)
+  try {
+    const raw = await env.SIGNAL_KV.get(HISTORY_KV_KEY);
+    if (raw) {
+      const data = JSON.parse(raw);
+      if (Array.isArray(data) && data.length > 0) return data;
+    }
+  } catch (e) {
+    console.warn('[history] KV read failed, falling back to GitHub:', e.message);
+  }
+  // Fallback: GitHub raw (cold start, or KV was wiped). Also seeds KV.
+  try {
+    const ghResp = await fetch(`${HISTORY_GH_RAW}?t=${Date.now()}`,
+      { headers: { 'User-Agent': 'schwab-proxy', 'Cache-Control': 'no-cache' } });
+    if (!ghResp.ok) throw new Error(`GitHub raw ${ghResp.status}`);
+    const data = await ghResp.json();
+    if (Array.isArray(data)) {
+      // Seed KV so subsequent reads are fast (do NOT await — fire-and-forget)
+      try { await env.SIGNAL_KV.put(HISTORY_KV_KEY, JSON.stringify(data)); } catch (_) {}
+      return data;
+    }
+    throw new Error('GitHub raw returned non-array');
+  } catch (e) {
+    console.error('[history] GitHub fallback failed:', e.message);
+    return [];
+  }
+}
 
-  for (let attempt = 0; attempt < _retries; attempt++) {
-    // 1. Fetch current file (fresh SHA each attempt)
+async function setHistory(env, contentArray, opts = {}) {
+  // Snapshot pre-write state to KV backups index (re-uses Item 4 helper).
+  if (!opts.skipBackup) {
+    try {
+      const prev = await getHistory(env);
+      await backupHistorySnapshot(env, prev, opts.dateStr || 'kv-write', opts.fields || {});
+    } catch (e) {
+      console.warn('[history] backup before setHistory failed:', e.message);
+    }
+  }
+  // Primary write: KV (atomic per key, ~10ms)
+  await env.SIGNAL_KV.put(HISTORY_KV_KEY, JSON.stringify(contentArray));
+}
+
+async function mirrorHistoryToGitHub(env, contentArray, message) {
+  // Async GitHub mirror — preserves git history but doesn't block writes.
+  // Errors logged but never thrown (mirroring failure must not break trades).
+  if (!env.GITHUB_TOKEN) return { skipped: 'no GITHUB_TOKEN' };
+  try {
+    const apiUrl = 'https://api.github.com/repos/rava8989/brave/contents/history_data.json';
+    const ghHeaders = {
+      'Authorization': `Bearer ${env.GITHUB_TOKEN}`,
+      'Accept': 'application/vnd.github+json',
+      'User-Agent': 'schwab-proxy-worker/1.0',
+      'X-GitHub-Api-Version': '2022-11-28',
+    };
     const getResp = await fetch(apiUrl, { headers: ghHeaders });
-    if (!getResp.ok) throw new Error(`GitHub GET failed: ${getResp.status}`);
+    if (!getResp.ok) throw new Error(`GH GET ${getResp.status}`);
     const meta = await getResp.json();
-    const sha = meta.sha;
-    const content = JSON.parse(atob(meta.content.replace(/\n/g, '')));
-
-    // 2. Upsert today's row
-    const idx = content.findIndex(r => r.date === dateStr);
-    if (idx >= 0) {
-      for (const [k, v] of Object.entries(fields)) {
-        const alwaysOverwrite = ['vixClose', 'spxClose', 'm8bfWR'].includes(k);
-        if (alwaysOverwrite || content[idx][k] == null) content[idx][k] = v;
-      }
-    } else {
-      content.push({ date: dateStr, ...fields });
-      content.sort((a, b) => a.date.localeCompare(b.date));
-    }
-
-    // 3. Ensure 10 future trading day placeholders always exist (skip weekends + holidays)
-    const today = dateStr;
-    const lastDate = content[content.length - 1]?.date || today;
-    const futureRows = content.filter(r => r.date > today).length;
-    if (futureRows < 10) {
-      const needed = 10 - futureRows;
-      let d = new Date(lastDate + 'T12:00:00Z');
-      let added = 0;
-      const existingDates = new Set(content.map(r => r.date));
-      while (added < needed) {
-        d.setUTCDate(d.getUTCDate() + 1);
-        const dow = d.getUTCDay();
-        if (dow === 0 || dow === 6) continue;
-        if (isHol(d)) continue; // skip market holidays
-        const iso = d.toISOString().slice(0, 10);
-        if (!existingDates.has(iso)) {
-          content.push({ date: iso });
-          existingDates.add(iso);
-          added++;
-        }
-      }
-      content.sort((a, b) => a.date.localeCompare(b.date));
-    }
-
-    // 4. Push back
     const putResp = await fetch(apiUrl, {
       method: 'PUT',
       headers: { ...ghHeaders, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        message: `auto: history update for ${dateStr} (${Object.keys(fields).join(', ')})`,
-        content: btoa(JSON.stringify(content, null, 0)),
-        sha,
+        message: message || 'auto: KV mirror',
+        content: btoa(JSON.stringify(contentArray, null, 0)),
+        sha: meta.sha,
       }),
     });
-
-    if (putResp.ok) return; // success
-
-    // 409 = SHA conflict — retry with fresh SHA
-    if (putResp.status === 409 && attempt < _retries - 1) {
-      console.warn(`[github] SHA conflict on attempt ${attempt + 1}, retrying…`);
-      continue;
+    if (!putResp.ok) {
+      const err = await putResp.text();
+      throw new Error(`GH PUT ${putResp.status}: ${err.slice(0, 200)}`);
     }
+    return { ok: true };
+  } catch (e) {
+    console.warn('[history-mirror] failed (KV state still good):', e.message);
+    return { ok: false, error: e.message };
+  }
+}
 
-    const err = await putResp.text();
-    throw new Error(`GitHub PUT failed: ${putResp.status} — ${err}`);
+// ════════════════════════════════════════════════════════════════════
+// GITHUB HISTORY UPSERT (legacy name — now writes KV first, mirrors to GH)
+// Same merge semantics: alwaysOverwrite=['vixClose','spxClose','m8bfWR'].
+// ════════════════════════════════════════════════════════════════════
+
+// ── Recover today's spxOpen + vixOpen from Schwab 9:30 candle ──
+// Used as auto-recovery when the morning signal block failed to write them
+// to history (Schwab outage at 9:30, claim stuck, etc.). The first 1-min
+// candle at 9:30 ET has the OPEN of the regular session — this matches TOS.
+// Returns { spxOpen, vixOpen } with either field possibly null if its
+// candle didn't materialize.
+async function recoverOpenPricesFromSchwab(env, etNow) {
+  const token = await getAccessToken(env);
+  const todayDateStr = etNow.toDateString();
+  const baseUrl = (sym) =>
+    `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=${sym}&periodType=day&period=2&frequencyType=minute&frequency=1&needExtendedHoursData=false`;
+
+  async function fetchOpen(symbol) {
+    try {
+      const hist = await fetchSchwabJSON(baseUrl(symbol), token, env);
+      const cs = hist.candles || [];
+      // Prefer the exact 9:30 minute bar; fall back to the first bar in
+      // 9:30-9:35 if 9:30 itself is missing.
+      const todayCandles = cs.filter(c => toET(new Date(c.datetime)).toDateString() === todayDateStr);
+      todayCandles.sort((a, b) => a.datetime - b.datetime);
+      const exact930 = todayCandles.find(c => {
+        const d = toET(new Date(c.datetime));
+        return d.getHours() === 9 && d.getMinutes() === 30;
+      });
+      const fallback = todayCandles.find(c => {
+        const d = toET(new Date(c.datetime));
+        return d.getHours() === 9 && d.getMinutes() >= 30 && d.getMinutes() <= 35;
+      });
+      const pick = exact930 || fallback;
+      return pick?.open != null ? parseFloat(pick.open.toFixed(2)) : null;
+    } catch (e) {
+      console.warn(`[recover-open] ${symbol} fetch failed:`, e.message);
+      return null;
+    }
+  }
+
+  const [spxOpen, vixOpen] = await Promise.all([fetchOpen('%24SPX'), fetchOpen('%24VIX')]);
+  return { spxOpen, vixOpen };
+}
+
+// ── Snapshot the PRE-WRITE history state into KV (last 10 only) ──
+// Defense against bad writes: any field overwrite, deleted row, or schema
+// regression can be inspected/restored from these. Each backup is its own
+// KV key (cheap reads); an index key tracks them for rotation.
+async function backupHistorySnapshot(env, contentJson, dateStr, fields) {
+  const ts = new Date().toISOString();
+  const backupKey = `history_backup_${ts}`;
+  try {
+    await env.SIGNAL_KV.put(backupKey, JSON.stringify(contentJson), { expirationTtl: 14 * 86400 });
+    let idx = [];
+    try {
+      const idxRaw = await env.SIGNAL_KV.get('history_backups_index');
+      idx = idxRaw ? JSON.parse(idxRaw) : [];
+      if (!Array.isArray(idx)) idx = [];
+    } catch { idx = []; }
+    idx.unshift({ key: backupKey, ts, dateStr, fields: Object.keys(fields || {}) });
+    while (idx.length > 10) {
+      const drop = idx.pop();
+      try { await env.SIGNAL_KV.delete(drop.key); } catch (delErr) {
+        console.warn('[history-backup] rotate delete failed:', delErr.message);
+      }
+    }
+    await env.SIGNAL_KV.put('history_backups_index', JSON.stringify(idx));
+  } catch (e) {
+    // Non-fatal: write proceeds even if backup fails. Don't block trading.
+    console.warn('[history-backup] snapshot failed:', e.message);
+  }
+}
+
+async function upsertHistoryGitHub(env, dateStr, fields, _retries = 3) {
+  // 1. Read current state from KV (Item 5 — primary store)
+  const content = await getHistory(env);
+  if (!Array.isArray(content) || content.length === 0) {
+    throw new Error('history KV empty — run POST /history-migrate to seed from GitHub first');
+  }
+
+  // 1a. Backup PRE-WRITE state to KV (Item 4)
+  await backupHistorySnapshot(env, content, dateStr, fields);
+
+  // 2. Upsert today's row (same merge semantics as before)
+  const idx = content.findIndex(r => r.date === dateStr);
+  if (idx >= 0) {
+    for (const [k, v] of Object.entries(fields)) {
+      const alwaysOverwrite = ['vixClose', 'spxClose', 'm8bfWR'].includes(k);
+      if (alwaysOverwrite || content[idx][k] == null) content[idx][k] = v;
+    }
+  } else {
+    content.push({ date: dateStr, ...fields });
+    content.sort((a, b) => a.date.localeCompare(b.date));
+  }
+
+  // 3. Ensure 10 future trading day placeholders always exist (skip weekends + holidays)
+  const today = dateStr;
+  const lastDate = content[content.length - 1]?.date || today;
+  const futureRows = content.filter(r => r.date > today).length;
+  if (futureRows < 10) {
+    const needed = 10 - futureRows;
+    let d = new Date(lastDate + 'T12:00:00Z');
+    let added = 0;
+    const existingDates = new Set(content.map(r => r.date));
+    while (added < needed) {
+      d.setUTCDate(d.getUTCDate() + 1);
+      const dow = d.getUTCDay();
+      if (dow === 0 || dow === 6) continue;
+      if (isHol(d)) continue;
+      const iso = d.toISOString().slice(0, 10);
+      if (!existingDates.has(iso)) {
+        content.push({ date: iso });
+        existingDates.add(iso);
+        added++;
+      }
+    }
+    content.sort((a, b) => a.date.localeCompare(b.date));
+  }
+
+  // 4. Primary write to KV — atomic, ~10ms (no merge conflicts ever)
+  await setHistory(env, content, { dateStr, fields, skipBackup: true });
+
+  // 5. Mirror to GitHub asynchronously (git history + backup; never blocks).
+  //    We swallow errors here so a flaky GitHub doesn't break trading.
+  if (env.GITHUB_TOKEN) {
+    try {
+      await mirrorHistoryToGitHub(env, content,
+        `auto: history update for ${dateStr} (${Object.keys(fields).join(', ')})`);
+    } catch (e) {
+      console.warn('[history-mirror] non-fatal:', e.message);
+    }
   }
 }
 
@@ -4290,6 +4653,205 @@ export default {
       }
     }
 
+    // ── POST /discord-send ── Browser/external endpoint that lets us retire
+    // the standalone discord-proxy worker. Same body shape as the legacy
+    // worker: { userId, message }. Optionally accepts Bearer PROXY_SECRET.
+    if (url.pathname === '/discord-send' && request.method === 'POST') {
+      const cors = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      };
+      // Optional PROXY_SECRET check (mirrors discord-proxy's lenient behavior)
+      if (env.PROXY_SECRET) {
+        const auth = request.headers.get('Authorization') || '';
+        // Allow browser CORS (no Authorization header from same-origin XHR);
+        // for direct API calls, require the secret.
+        const origin = request.headers.get('Origin') || '';
+        const fromBrowser = origin.length > 0;
+        const validAuth = auth === `Bearer ${env.PROXY_SECRET}`;
+        if (!fromBrowser && !validAuth) {
+          return jsonResp({ ok: false, error: 'Unauthorized' }, 401, cors);
+        }
+      }
+      try {
+        const body = await request.json();
+        const result = await sendDiscordDM(env, body.userId, body.message);
+        return jsonResp(result, result.ok ? 200 : 500, cors);
+      } catch (e) {
+        return jsonResp({ ok: false, error: e.message }, 400, cors);
+      }
+    }
+
+    // ── GET /history ── Public read of the KV-backed history store.
+    //   GET /history                  → full array
+    //   GET /history?date=YYYY-MM-DD  → single date row
+    //   GET /history?since=YYYY-MM-DD → all rows >= date
+    // Public CORS (no auth) — same audience as raw.githubusercontent.com was.
+    if (url.pathname === '/history' && request.method === 'GET') {
+      const cors = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        // Short cache so writes propagate quickly (KV is fast anyway)
+        'Cache-Control': 'public, max-age=15',
+      };
+      try {
+        const data = await getHistory(env);
+        const dateQ = url.searchParams.get('date');
+        const sinceQ = url.searchParams.get('since');
+        if (dateQ) {
+          const row = (data || []).find(r => r.date === dateQ) || null;
+          return jsonResp({ date: dateQ, row }, 200, cors);
+        }
+        if (sinceQ) {
+          const rows = (data || []).filter(r => r.date >= sinceQ);
+          return jsonResp({ since: sinceQ, count: rows.length, rows }, 200, cors);
+        }
+        return jsonResp(data || [], 200, cors);
+      } catch (e) {
+        return jsonResp({ error: e.message }, 500, cors);
+      }
+    }
+
+    // ── POST /history-migrate ── Force-seed KV from GitHub raw.
+    // One-time call after deploy (or after KV wipe). Returns row count + diff.
+    if (url.pathname === '/history-migrate' && request.method === 'POST') {
+      const secret = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
+      if (!secret || secret !== env.SYNC_SECRET) {
+        return jsonResp({ error: 'Unauthorized' }, 401, { 'Access-Control-Allow-Origin': '*' });
+      }
+      const cors = { 'Access-Control-Allow-Origin': '*' };
+      try {
+        const ghResp = await fetch(`${HISTORY_GH_RAW}?t=${Date.now()}`,
+          { headers: { 'User-Agent': 'schwab-proxy', 'Cache-Control': 'no-cache' } });
+        if (!ghResp.ok) return jsonResp({ error: `GitHub raw ${ghResp.status}` }, 500, cors);
+        const ghData = await ghResp.json();
+        if (!Array.isArray(ghData)) return jsonResp({ error: 'GitHub raw returned non-array' }, 500, cors);
+        // Snapshot current KV state before overwriting
+        let prevCount = 0;
+        try {
+          const prev = await env.SIGNAL_KV.get(HISTORY_KV_KEY);
+          if (prev) {
+            const p = JSON.parse(prev);
+            prevCount = Array.isArray(p) ? p.length : 0;
+            await backupHistorySnapshot(env, p, 'pre-migrate', { source: 'history-migrate' });
+          }
+        } catch (_) {}
+        await env.SIGNAL_KV.put(HISTORY_KV_KEY, JSON.stringify(ghData));
+        await logEvent(env, 'info', 'history-migrate', 'KV seeded from GitHub raw',
+                       { prevCount, newCount: ghData.length });
+        return jsonResp({
+          migrated: true, prevCount, newCount: ghData.length,
+          delta: ghData.length - prevCount,
+        }, 200, cors);
+      } catch (e) {
+        return jsonResp({ error: e.message }, 500, cors);
+      }
+    }
+
+    // ── GET /logs ── Read daily event log from KV. Auth required.
+    //   GET /logs                            → today's events
+    //   GET /logs?date=YYYY-MM-DD            → that day's events
+    //   GET /logs?date=...&level=error|warn  → filter by level
+    //   GET /logs?date=...&tag=morning       → filter by tag
+    if (url.pathname === '/logs' && request.method === 'GET') {
+      const secret = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
+      if (!secret || secret !== env.SYNC_SECRET) {
+        return jsonResp({ error: 'Unauthorized' }, 401, { 'Access-Control-Allow-Origin': '*' });
+      }
+      const cors = { 'Access-Control-Allow-Origin': '*' };
+      try {
+        const etNowLg = toET(new Date());
+        const dateParam = url.searchParams.get('date') || isoDateET(etNowLg);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+          return jsonResp({ error: 'invalid date format (need YYYY-MM-DD)' }, 400, cors);
+        }
+        const levelFilter = url.searchParams.get('level');
+        const tagFilter = url.searchParams.get('tag');
+        const raw = await env.SIGNAL_KV.get(`daily_log_${dateParam}`);
+        let entries = raw ? JSON.parse(raw) : [];
+        if (!Array.isArray(entries)) entries = [];
+        if (levelFilter) entries = entries.filter(e => e.level === levelFilter);
+        if (tagFilter) entries = entries.filter(e => e.tag === tagFilter);
+        return jsonResp({ date: dateParam, count: entries.length, entries }, 200, cors);
+      } catch (e) {
+        return jsonResp({ error: e.message }, 500, cors);
+      }
+    }
+
+    // ── GET /history-backups ── List/inspect/restore pre-write history snapshots.
+    //   GET  /history-backups                    → list last 10 backup metadata
+    //   GET  /history-backups?key=<backupKey>    → return full JSON content of one backup
+    //   POST /history-backups?restore=<key>      → push that backup back to GitHub (DESTRUCTIVE)
+    // All operations require X-Sync-Secret. Restores REPLACE current history.
+    if (url.pathname === '/history-backups') {
+      const secret = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
+      if (!secret || secret !== env.SYNC_SECRET) {
+        return jsonResp({ error: 'Unauthorized' }, 401, { 'Access-Control-Allow-Origin': '*' });
+      }
+      const cors = { 'Access-Control-Allow-Origin': '*' };
+      try {
+        if (request.method === 'GET') {
+          const key = url.searchParams.get('key');
+          if (key) {
+            if (!key.startsWith('history_backup_')) {
+              return jsonResp({ error: 'invalid key prefix' }, 400, cors);
+            }
+            const raw = await env.SIGNAL_KV.get(key);
+            if (!raw) return jsonResp({ error: 'backup not found (may have expired)' }, 404, cors);
+            return jsonResp({ key, content: JSON.parse(raw) }, 200, cors);
+          }
+          const idxRaw = await env.SIGNAL_KV.get('history_backups_index');
+          const idx = idxRaw ? JSON.parse(idxRaw) : [];
+          return jsonResp({ backups: idx, count: idx.length }, 200, cors);
+        }
+        if (request.method === 'POST') {
+          const restoreKey = url.searchParams.get('restore');
+          if (!restoreKey) return jsonResp({ error: 'missing ?restore=<key>' }, 400, cors);
+          if (!restoreKey.startsWith('history_backup_')) {
+            return jsonResp({ error: 'invalid key prefix' }, 400, cors);
+          }
+          const backupRaw = await env.SIGNAL_KV.get(restoreKey);
+          if (!backupRaw) return jsonResp({ error: 'backup not found' }, 404, cors);
+          const restoredContent = JSON.parse(backupRaw);
+          // Push directly to GitHub, bypassing the upsert merge logic
+          const token = env.GITHUB_TOKEN;
+          if (!token) return jsonResp({ error: 'GITHUB_TOKEN not set' }, 500, cors);
+          const apiUrl = 'https://api.github.com/repos/rava8989/brave/contents/history_data.json';
+          const ghHeaders = {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/vnd.github+json',
+            'User-Agent': 'schwab-proxy-worker/1.0',
+            'X-GitHub-Api-Version': '2022-11-28',
+          };
+          const getResp = await fetch(apiUrl, { headers: ghHeaders });
+          if (!getResp.ok) return jsonResp({ error: `GitHub GET ${getResp.status}` }, 500, cors);
+          const meta = await getResp.json();
+          // Snapshot the CURRENT state before overwriting (safety net for the restore itself)
+          const currentContent = JSON.parse(atob(meta.content.replace(/\n/g, '')));
+          await backupHistorySnapshot(env, currentContent, 'pre-restore', { restoredFrom: restoreKey });
+          const putResp = await fetch(apiUrl, {
+            method: 'PUT',
+            headers: { ...ghHeaders, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              message: `restore: history rewound to backup ${restoreKey}`,
+              content: btoa(JSON.stringify(restoredContent, null, 0)),
+              sha: meta.sha,
+            }),
+          });
+          if (!putResp.ok) {
+            const err = await putResp.text();
+            return jsonResp({ error: `GitHub PUT ${putResp.status}: ${err}` }, 500, cors);
+          }
+          return jsonResp({ restored: restoreKey, rows: restoredContent.length }, 200, cors);
+        }
+        return jsonResp({ error: 'method not allowed' }, 405, cors);
+      } catch (e) {
+        return jsonResp({ error: e.message }, 500, cors);
+      }
+    }
+
     // ── GET /schwab-health ── Public circuit-breaker endpoint
     // Returns current Schwab refresh-token health so the dashboard can
     // display a red "re-authenticate now" banner when KV says the token
@@ -4567,6 +5129,28 @@ export default {
         const staticRaw = await env.SIGNAL_KV.get(`bobf_static_${todayB}`);
         const staticData = staticRaw ? JSON.parse(staticRaw) : null;
 
+        // ── Calendar-blackout PREVIEW ──
+        // The prefilter only runs at 9:30 ET, so before then `doneState` is
+        // null and the live page wrongly shows "trade fires". Compute BOBF's
+        // OWN calendar blackouts here (VIX-independent ones only) so the card
+        // can show "No BOBF — OPEX" pre-market. This is a READ-ONLY mirror of
+        // the prefilterBobf calendar block — it changes NO strategy rule, it
+        // just surfaces the existing one earlier. Per strategy-independence:
+        // this reflects BOBF's own rules, not any other strategy's.
+        let blackoutPreview = null;
+        if (!isWeekendB && !isHolidayB) {
+          const _bo = [];
+          if (cpiSch.includes(todayLong(etNowB)))        _bo.push('CPI');
+          if (isFirstTradeMon(etNowB))                   _bo.push('NM Mon');
+          if (vixSch.includes(todayLong(etNowB)))        _bo.push('VIX exp');
+          if (opexSch.includes(todayLong(etNowB)))       _bo.push('OPEX');
+          if (opexSch.some(ds => isTodayBefore(ds, etNowB))) _bo.push('OPEX-1');
+          if (isEomN(2, etNowB))                         _bo.push('EOM-2');
+          if (isEomN(1, etNowB))                         _bo.push('EOM-1');
+          if (isEarningsDay(etNowB))                     _bo.push('earnings');
+          if (_bo.length) blackoutPreview = _bo.join(',');
+        }
+
         return jsonResp({
           date: todayB,
           isWeekend: isWeekendB,
@@ -4574,6 +5158,7 @@ export default {
           open,
           lastClosed,
           doneState,
+          blackoutPreview,    // calendar-only blackout string, or null (VIX>23 not included — needs live VIX)
           static: staticData,  // {rsi14, sma5, spxOpen, vixToday, vixYClose, type, label, bodyOffset}
           serverTimeET: `${String(etNowB.getHours()).padStart(2,'0')}:${String(etNowB.getMinutes()).padStart(2,'0')}`,
           windowET: '10:29 - 12:15',
@@ -4604,11 +5189,44 @@ export default {
         let openRaw = await env.SIGNAL_KV.get('straddle_open_trade');
         let open = openRaw ? JSON.parse(openRaw) : null;
 
-        // Stale-trade filter (mirrors /bobf-today): drop the open slot if it
-        // holds a prior-day or already-settled trade. The closed_log entry
-        // surfaces as `lastClosed` so no data is lost.
-        if (open && (open.openDate !== todaySt || open.status === 'closed' || open.status === 'expired')) {
+        // ── Self-heal #0: phantom-trade cleanup ─────────────────────────────
+        // Mirrors the Diagonal pattern (line 4879). Three cases:
+        //  (a) Prior-day trade left in open slot — close+open lifecycle failed
+        //      to KV.delete after settle. Refresh loop keeps mutating ghost.
+        //  (b) Today's slot holds an already-closed/expired trade — settle
+        //      wrote the closed_log entry but didn't drop the open key.
+        //  (c) Off-strategy phantom (observed 2026-05-14): trade exists for
+        //      today, but morning signal said theme!='strad'. Means it fired
+        //      on stale/wrong data and slipped through the gate. Delete it
+        //      so live page reflects the morning signal's actual outcome.
+        if (open && open.openDate && open.openDate < todaySt) {
+          console.warn(`[strad-today] phantom #a: prior-day open (openDate=${open.openDate}) — clearing`);
+          await env.SIGNAL_KV.delete('straddle_open_trade');
+          await logEvent(env, 'warn', 'strad-phantom', `phantom #a cleared: prior-day open`, { openDate: open.openDate, todayDate: todaySt });
           open = null;
+          openRaw = null;
+        } else if (open && (open.status === 'closed' || open.status === 'expired')) {
+          console.warn(`[strad-today] phantom #b: open slot held ${open.status} trade — clearing`);
+          await env.SIGNAL_KV.delete('straddle_open_trade');
+          await logEvent(env, 'warn', 'strad-phantom', `phantom #b cleared: open slot held ${open.status} trade`, { status: open.status });
+          open = null;
+          openRaw = null;
+        } else if (open && open.openDate === todaySt) {
+          try {
+            const morningDataRaw = await env.SIGNAL_KV.get(`morning_signal_data_${todaySt}`);
+            if (morningDataRaw) {
+              const morningData = JSON.parse(morningDataRaw);
+              if (morningData.theme && morningData.theme !== 'strad') {
+                console.warn(`[strad-today] phantom #c: off-strategy open (morning theme=${morningData.theme}) — clearing`);
+                await env.SIGNAL_KV.delete('straddle_open_trade');
+                await logEvent(env, 'error', 'strad-phantom', `phantom #c cleared: off-strategy open`, { openTheme: 'strad', morningTheme: morningData.theme });
+                open = null;
+                openRaw = null;
+              }
+            }
+          } catch (phantomErr) {
+            console.warn('[strad-today] phantom-c check failed:', phantomErr.message);
+          }
         }
 
         // Staleness-triggered self-refresh (defends against cron stalls)
@@ -4710,6 +5328,8 @@ export default {
           if (diagDone) {
             console.warn(`[diag-today] phantom open trade (openDate=${open.openDate}) — clearing`);
             await env.SIGNAL_KV.delete('diagonal_open_trade');
+            await logEvent(env, 'warn', 'diag-phantom', 'phantom open trade cleared at endpoint',
+                           { openDate: open.openDate, todayDate: todayDT });
             open = null;
             openRaw = null;
           }
@@ -4772,12 +5392,8 @@ export default {
         // Fetch vixPct20d via the same path the cron uses.
         let vixPct20d = null, vixToday = null, sigPreview = null;
         try {
-          const histResp = await fetch(
-            `https://raw.githubusercontent.com/rava8989/brave/main/history_data.json?t=${Date.now()}`,
-            { headers: { 'User-Agent': 'schwab-proxy' } }
-          );
-          if (histResp.ok) {
-            const histData = await histResp.json();
+          const histData = await getHistory(env);
+          if (Array.isArray(histData) && histData.length) {
             const todayRow = histData.find(r => r.date === todayDT);
             vixToday = todayRow?.vixOpen != null ? parseFloat(todayRow.vixOpen) : null;
             // FALLBACK: if morning signal block didn't write today's vixOpen
@@ -5604,20 +6220,20 @@ export default {
           const dcRaw = await env.SIGNAL_KV.get('discord_config');
           if (dcRaw) {
             const dc = JSON.parse(dcRaw);
-            if (dc.proxyUrl && dc.channelId) {
+            if (dc.channelId) {
               const minsSinceOK = st.lastSuccess ? Math.round((Date.now() - st.lastSuccess) / 60000) : null;
-              const headers = { 'Content-Type': 'application/json' };
-              if (env.PROXY_SECRET) headers['Authorization'] = `Bearer ${env.PROXY_SECRET}`;
-              await fetch(dc.proxyUrl, {
-                method: 'POST',
-                headers,
-                body: JSON.stringify({
-                  userId: dc.channelId,
-                  message: `🚨 **Schwab refresh degraded** — ${errs} consecutive errors${minsSinceOK ? ` (${minsSinceOK} min since last success)` : ''}.\nMessage: \`${(st.msg || '').slice(0, 150)}\`\n→ Re-authenticate Schwab in dashboard, then hit \`/health?refresh=now\` to recover.`,
-                }),
-              });
-              await env.SIGNAL_KV.put('schwab_alert_last_ms', String(Date.now()), { expirationTtl: 86400 });
-              console.log('[cron] Posted Schwab degraded alert');
+              const alertResult = await sendDiscordDM(env, dc.channelId,
+                `🚨 **Schwab refresh degraded** — ${errs} consecutive errors${minsSinceOK ? ` (${minsSinceOK} min since last success)` : ''}.\nMessage: \`${(st.msg || '').slice(0, 150)}\`\n→ Re-authenticate Schwab in dashboard, then hit \`/health?refresh=now\` to recover.`,
+                dc.proxyUrl);
+              if (alertResult.ok) {
+                await env.SIGNAL_KV.put('schwab_alert_last_ms', String(Date.now()), { expirationTtl: 86400 });
+                console.log('[cron] Posted Schwab degraded alert via', alertResult.source);
+                await logEvent(env, 'error', 'schwab-degraded',
+                  `${errs} consecutive Schwab refresh errors — Discord alert sent`,
+                  { errs, minsSinceOK, msg: (st.msg || '').slice(0, 150) });
+              } else {
+                console.warn('[cron] Schwab degraded alert post failed:', alertResult.error);
+              }
             }
           }
         }
@@ -5639,14 +6255,11 @@ export default {
         const dcRaw = await env.SIGNAL_KV.get('discord_config');
         if (dcRaw) {
           const dc = JSON.parse(dcRaw);
-          if (dc.proxyUrl && dc.channelId) {
-            const errHeaders = { 'Content-Type': 'application/json' };
-            if (env.PROXY_SECRET) errHeaders['Authorization'] = `Bearer ${env.PROXY_SECRET}`;
-            await fetch(dc.proxyUrl, {
-              method: 'POST',
-              headers: errHeaders,
-              body: JSON.stringify({ userId: dc.channelId, message: `⚠️ **Signal Error**\n\`${e.message}\`\nCheck schwab-proxy logs.` }),
-            });
+          if (dc.channelId) {
+            await sendDiscordDM(env, dc.channelId,
+              `⚠️ **Signal Error**\n\`${e.message}\`\nCheck schwab-proxy logs.`,
+              dc.proxyUrl);
+            await logEvent(env, 'error', 'cron-error', e.message);
           }
         }
       } catch (notifyErr) {
