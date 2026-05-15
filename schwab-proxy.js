@@ -2246,57 +2246,62 @@ async function handleScheduled(env) {
 
   if (vixYClose === null) throw new Error('Could not determine yesterday VIX close');
 
-  // 3. Get today's VIX open.
+  // 3. Get today's VIX open = FIRST CHANGE in VIX after 9:30:00 ET.
   //
-  // CORRECT METHOD (after audit 2026-05-14): Schwab pricehistory's 09:31
-  // 1-minute bar `open` field. That's the value TOS and Tastytrade UI both
-  // display. Both APIs' `quote.openPrice` and `market-data.open` return a
-  // different value (often 0.04 off) — unreliable for VIX.
+  // No sleeping. Cron fires at 9:30 sharp, we start polling immediately.
+  // First poll captures the BASELINE (likely still showing yesterday's
+  // close or a pre-open value). We then keep polling fast (250ms) and
+  // watch for the first VIX update that DIFFERS from the baseline.
+  // That changed value IS the first new VIX print of today's session.
   //
-  // To use the 09:31 bar we have to WAIT until ~9:32:00 ET for the bar to
-  // finalize. Cron fires at 9:30 sharp, so we sleep briefly. If the bar
-  // isn't there yet after 2 min total, fall back to live quote polling.
+  // Why this works: VIX is a calculated index that Cboe republishes every
+  // ~15s. The pre-9:30 cached value persists in Schwab's quote endpoint
+  // briefly after open until Cboe publishes the first new value (typically
+  // at 09:31:00, occasionally as late as 09:32-33 if SPX options take
+  // longer to settle).
   let vixToday = null;
-  try {
-    // Sleep until 9:32:15 ET if we're earlier — 09:31 bar should be queryable.
-    const targetMs = (() => {
-      const t = new Date(etNow);
-      t.setHours(9, 32, 15, 0);
-      return t.getTime();
-    })();
-    const sleepMs = targetMs - Date.now();
-    if (sleepMs > 0 && sleepMs < 180_000) {
-      console.log(`[proxy] Waiting ${Math.round(sleepMs/1000)}s for 09:31 VIX bar to finalize`);
-      await new Promise(r => setTimeout(r, sleepMs));
-    }
-    // Query pricehistory for today's 1-min bars
-    const dayStartMs = (() => { const t = new Date(etNow); t.setHours(4,0,0,0); return t.getTime(); })();
-    const phUrl = `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24VIX&periodType=day&period=2&frequencyType=minute&frequency=1&startDate=${dayStartMs}&endDate=${Date.now()}&needExtendedHoursData=true`;
-    const ph = await fetchSchwabJSON(phUrl, token, env);
-    if (ph?.candles?.length) {
-      // Find first bar at or after 9:30 ET today
-      const todayStr2 = etNow.toDateString();
-      const firstBar = ph.candles
-        .filter(c => {
-          const d = toET(new Date(c.datetime));
-          return d.toDateString() === todayStr2 && (d.getHours() * 60 + d.getMinutes()) >= 570;
-        })
-        .sort((a, b) => a.datetime - b.datetime)[0];
-      if (firstBar) {
-        vixToday = parseFloat(firstBar.open.toFixed(2));
-        const t = toET(new Date(firstBar.datetime));
-        console.log(`[proxy] VIX open ${vixToday} from Schwab pricehistory ${t.toTimeString().slice(0,8)} ET bar`);
+  {
+    const quoteUrl = `https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`;
+    const maxWaitMs = 5 * 60_000;  // 5 minutes — covers 9:30 → 9:35 if late
+    const pollIntervalMs = 250;
+    const deadlineMs = Date.now() + maxWaitMs;
+    let baselinePrice = null, baselineTradeTime = null;
+    let attempt = 0;
+    while (Date.now() < deadlineMs) {
+      attempt++;
+      try {
+        const vixQuote = await fetchSchwabJSON(quoteUrl, token, env);
+        const vixQ = vixQuote?.['$VIX']?.quote;
+        if (vixQ?.lastPrice != null && vixQ?.tradeTime != null) {
+          const price = parseFloat(vixQ.lastPrice.toFixed(2));
+          const tt = vixQ.tradeTime;
+          if (baselinePrice === null) {
+            // First observation — record as baseline.
+            baselinePrice = price;
+            baselineTradeTime = tt;
+            console.log(`[proxy] VIX baseline: ${price} at tradeTime ${toET(new Date(tt)).toTimeString().slice(0,8)} ET (waiting for change)`);
+          } else if (price !== baselinePrice || tt !== baselineTradeTime) {
+            // First CHANGE — this is the first new VIX print.
+            vixToday = price;
+            console.log(`[proxy] VIX FIRST PRINT: ${vixToday} (baseline was ${baselinePrice}, attempt ${attempt}, ${Math.round((Date.now() - (deadlineMs - maxWaitMs))/1000)}s after 9:30)`);
+            break;
+          }
+        }
+      } catch (e) {
+        console.warn(`[proxy] VIX poll #${attempt} failed:`, e.message);
       }
+      await new Promise(r => setTimeout(r, pollIntervalMs));
     }
-  } catch (e) {
-    console.warn('[proxy] pricehistory 09:31 bar fetch failed:', e.message);
+    if (vixToday === null) {
+      // Never changed in 5 min — use baseline as last resort.
+      vixToday = baselinePrice;
+      console.warn(`[proxy] VIX never changed in 5min, using baseline ${baselinePrice} (this is suspicious)`);
+    }
   }
 
-  // SCHWAB QUOTE-POLLING FALLBACK (only if pricehistory didn't return)
-  if (vixToday !== null) {
-    // Got VIX from pricehistory 09:31 bar — skip quote polling
-  } else {
-    // Last-resort fallback to live quote polling (less accurate but never empty).
+  // If by some catastrophic failure vixToday is still null, fall back to old polling logic.
+  if (vixToday === null) {
+    // Last-resort fallback to live quote polling.
   //    VIX is a calculated index — Cboe republishes a new value every ~15s.
   //    The first poll we issue may return a cached/stale tick (Schwab's edge
   //    caches the last published value), which can show a pre-open snapshot
