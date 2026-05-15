@@ -2409,14 +2409,8 @@ async function handleScheduled(env) {
     }
   } catch (e) { console.warn('[proxy]', e.message || e); }
 
-  // 4b. Write vixOpen + spxOpen to history_data.json via GitHub API
-  // todayISO already declared at top of handleScheduled
-  try {
-    await upsertHistoryGitHub(env, todayISO, {
-      vixOpen: vixToday,
-      ...(spxTodayOpen != null ? { spxOpen: spxTodayOpen } : {}),
-    });
-  } catch (e) { console.warn('[proxy]', e.message || e); }
+  // 4b. GitHub PUT for vixOpen + spxOpen is DEFERRED until after Discord post
+  // (it takes ~1-2s and would block the Discord message — runs after section 9).
 
   // 4c. Fetch previous day's m8bfWR + last-20 vixClose from history_data.json.
   //     vixPct20d is required for the diagonal filter (VIX_MID 50–80% dead zone).
@@ -2494,42 +2488,8 @@ async function handleScheduled(env) {
     }), { expirationTtl: 86400 });
   } catch (_) { /* non-critical */ }
 
-  // 5b. Open straddle if signal says so. Idempotent per day via straddle_open_trade
-  // (only fire if no current trade for today). Errors here MUST NOT abort the
-  // Discord post — straddle is a best-effort live-tracking layer on top.
-  if (signal.theme === 'strad') {
-    try {
-      const existingRaw = await env.SIGNAL_KV.get('straddle_open_trade');
-      const existing = existingRaw ? JSON.parse(existingRaw) : null;
-      if (!existing || existing.openDate !== isoDateET(etNow)) {
-        const stradToken = await getAccessToken(env);
-        const trade = await openStraddleTrade(env, stradToken, etNow, signal, masterChain);
-        await env.SIGNAL_KV.put('straddle_open_trade', JSON.stringify(trade));
-        console.log(`[strad] opened ${trade.status} K=${trade.strike} debit=${trade.entryDebit} maxDebit=${trade.maxDebit}`);
-      }
-    } catch (e) { console.warn('[strad] open failed:', e.message); }
-  } else {
-    // Signal said no straddle today — record the reason so the live page
-    // shows "No Straddle (xxx)" instead of "WAITING SIGNAL" forever.
-    // signal.rec is e.g. "M8BF — Window 11:00-11:30" / "GXBF @ 9:36 AM" /
-    // "No Straddle (SPX gap ▲1.20%)" / "No Straddle (o2o 1.7 > 1.4)".
-    try {
-      await env.SIGNAL_KV.put(`straddle_skip_${isoDateET(etNow)}`, JSON.stringify({
-        theme: signal.theme,
-        rec: signal.rec,
-        recordedAt: new Date().toISOString(),
-      }), { expirationTtl: 86400 });
-    } catch (_) { /* non-critical */ }
-  }
-
-  // 5c. BOBF static-filter pre-flight. Evaluates RSI/calendar/type/VIX>23 here
-  // (all known at 9:30, fixed for the day). If any disqualify, marks
-  // bobf_done_<date> so the 10:29-12:15 entry window short-circuits without
-  // running 100 useless chain/RSI checks. Best-effort — don't block Discord.
-  try {
-    const pf = await prefilterBobf(env, etNow, vixToday, vixYClose);
-    if (pf?.skipped) console.log(`[bobf] prefilter skipped: ${pf.skipped} ${pf.reason || (pf.reasons||[]).join(',')||''}`);
-  } catch (e) { console.warn('[bobf] prefilter failed:', e.message); }
+  // 5b/5c: Straddle entry + BOBF prefilter are DEFERRED until after the Discord
+  // post (they take ~500ms+ each and would block the message). Run after section 9.
 
   // 6. Build Discord message
   const vixValues = { yOpen: vixYOpen, yClose: vixYClose, todayOpen: vixToday };
@@ -2597,6 +2557,51 @@ async function handleScheduled(env) {
 
   // Mark morning signal as fully sent
   await env.SIGNAL_KV.put(msDoneKey, 'sent', { expirationTtl: 86400 });
+
+  // ════════════════════════════════════════════════════════════════════
+  // POST-DISCORD WORK (deferred until after the message went out)
+  // ────────────────────────────────────────────────────────────────────
+  // Everything here was previously running BEFORE Discord, delaying the
+  // message by 2-5 seconds. Now Discord fires first, then these run.
+  // Each block is wrapped in try/catch so a failure here doesn't break
+  // the morning_signal_<today>='sent' state (already marked).
+  // ════════════════════════════════════════════════════════════════════
+
+  // a) GitHub PUT — write vixOpen + spxOpen to history_data.json
+  try {
+    await upsertHistoryGitHub(env, todayISO, {
+      vixOpen: vixToday,
+      ...(spxTodayOpen != null ? { spxOpen: spxTodayOpen } : {}),
+    });
+  } catch (e) { console.warn('[proxy/post] GitHub PUT:', e.message || e); }
+
+  // b) Open straddle if signal says so, OR record skip reason
+  if (signal.theme === 'strad') {
+    try {
+      const existingRaw = await env.SIGNAL_KV.get('straddle_open_trade');
+      const existing = existingRaw ? JSON.parse(existingRaw) : null;
+      if (!existing || existing.openDate !== isoDateET(etNow)) {
+        const stradToken = await getAccessToken(env);
+        const trade = await openStraddleTrade(env, stradToken, etNow, signal, masterChain);
+        await env.SIGNAL_KV.put('straddle_open_trade', JSON.stringify(trade));
+        console.log(`[strad] opened ${trade.status} K=${trade.strike} debit=${trade.entryDebit} maxDebit=${trade.maxDebit}`);
+      }
+    } catch (e) { console.warn('[strad] open failed:', e.message); }
+  } else {
+    try {
+      await env.SIGNAL_KV.put(`straddle_skip_${isoDateET(etNow)}`, JSON.stringify({
+        theme: signal.theme,
+        rec: signal.rec,
+        recordedAt: new Date().toISOString(),
+      }), { expirationTtl: 86400 });
+    } catch (_) { /* non-critical */ }
+  }
+
+  // c) BOBF static-filter pre-flight
+  try {
+    const pf = await prefilterBobf(env, etNow, vixToday, vixYClose);
+    if (pf?.skipped) console.log(`[bobf] prefilter skipped: ${pf.skipped} ${pf.reason || (pf.reasons||[]).join(',')||''}`);
+  } catch (e) { console.warn('[bobf] prefilter failed:', e.message); }
 
   return {
     status: 'success',
