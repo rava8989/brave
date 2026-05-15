@@ -1272,7 +1272,45 @@ async function openStraddleTrade(env, token, etNow, signal, preChain = null) {
   const { spot, callExpDateMap, putExpDateMap } = chain;
   if (!spot) throw new Error('Straddle open: no spot price in chain response');
 
-  const requestedK = snap5(spot);
+  // Straddle CENTER = SPX OPEN (rounded to nearest 5), NOT spot-at-entry.
+  // The morning signal block writes spxOpen to morning_signal_data_<today>
+  // KV right before this runs (same handleScheduled invocation). Fall back
+  // to history_data.json if KV is missing (e.g. /straddle-recovery path).
+  // Final fallback to spot-at-entry preserves the old behavior if both
+  // sources fail, but logs loudly so the bug is visible.
+  let spxOpen = null, anchorSource = null;
+  try {
+    const msdRaw = await env.SIGNAL_KV.get(`morning_signal_data_${todayISO}`);
+    if (msdRaw) {
+      const msd = JSON.parse(msdRaw);
+      if (msd.spxOpen != null && !isNaN(parseFloat(msd.spxOpen))) {
+        spxOpen = parseFloat(msd.spxOpen);
+        anchorSource = 'morning_signal_data KV';
+      }
+    }
+  } catch (_) { /* fall through */ }
+  if (spxOpen == null) {
+    try {
+      const histResp = await fetch(`https://raw.githubusercontent.com/rava8989/brave/main/history_data.json?t=${Date.now()}`,
+        { headers: { 'User-Agent': 'schwab-proxy' } });
+      if (histResp.ok) {
+        const hist = await histResp.json();
+        const todayRow = hist.find(r => r.date === todayISO);
+        if (todayRow?.spxOpen != null) {
+          spxOpen = parseFloat(todayRow.spxOpen);
+          anchorSource = 'history_data.json';
+        }
+      }
+    } catch (_) { /* fall through */ }
+  }
+  if (spxOpen == null) {
+    spxOpen = spot;
+    anchorSource = 'spot-at-entry (FALLBACK — spxOpen missing)';
+    console.warn(`[strad] spxOpen unavailable, using spot ${spot} as center anchor`);
+  }
+  const requestedK = snap5(spxOpen);
+  console.log(`[strad] center anchor: spxOpen=${spxOpen} → strike=${requestedK} (source: ${anchorSource}, spot-now=${spot})`);
+
   // Find closest strike to spot that BOTH the call and put maps have, with
   // valid bid/ask on both. Walk outward from the requested strike in $5 steps.
   // Avoids the "fuzz lands call on 7355, put on 7350" mismatch that previously
@@ -2397,6 +2435,7 @@ async function handleScheduled(env) {
     await env.SIGNAL_KV.put(`morning_signal_data_${isoDateET(etNow)}`, JSON.stringify({
       ...signal,
       vixToday, vixYOpen, vixYClose, spxGapPct, prevWR, vixPct20d, rsi14,
+      spxOpen: spxTodayOpen,  // ← straddle center anchor (snap5 of this)
       computedAt: new Date().toISOString(),
     }), { expirationTtl: 86400 });
   } catch (_) { /* non-critical */ }
