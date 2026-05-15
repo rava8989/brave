@@ -584,7 +584,7 @@ function renderBobf() {
     sec.style.display = '';
     let placeholderText, placeholderBadge = 'WAITING SIGNAL', placeholderClass = 'pending';
     if (doneState && doneState.startsWith('blackout')) {
-      placeholderText = `No BOBF today — blackout (${doneState.replace('blackout:','')})`;
+      placeholderText = `No BOBF today — ${doneState.replace('blackout:','')}`;
       placeholderBadge = 'SKIP'; placeholderClass = 'skip';
     } else if (doneState && doneState.startsWith('no-type')) {
       placeholderText = `No BOBF today — ${doneState.replace('no-type:','')}`;
@@ -773,9 +773,8 @@ function renderStraddle() {
         badge = 'MISSED'; badgeClass = 'error';
         statusLine = `Signal was Straddle but auto-open didn't happen — verify your broker manually. ${skip.rec || ''}`;
       } else {
-        // signal.rec is e.g. "M8BF — Window 11:00-11:30" / "GXBF @ 9:36 AM"
         badge = 'SKIP'; badgeClass = 'skip';
-        statusLine = `No Straddle today — signal: ${skip.rec}`;
+        statusLine = `No Straddle today`;
       }
     }
     sec.innerHTML = `
