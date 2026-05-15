@@ -1161,7 +1161,17 @@ function buildSpecialDayText(s) {
 // Tap the "Show all" button at the bottom to expand if you need older history.
 const IS_MOBILE = /Mobi|Android|iPhone|iPad/.test(navigator.userAgent) || window.innerWidth < 768;
 let tableShowAll = !IS_MOBILE;
-const TABLE_DEFAULT_LIMIT = 90;
+// Mobile renders only the last N rows by default. This is the dominant
+// iOS-Safari memory lever: the table sits in an overflow-x:auto wrapper at
+// min-width:1200px, so WebKit tiles a (1200 x docHeight x 9 retina) backing
+// store. 90 rows => ~4300px tall => that backing store trips the iOS
+// WebContent jetsam watchdog ("a problem repeatedly occurred"). 25 rows
+// cuts the composited area ~3.6x. Totals/stats are computed over ALL rows
+// separately (see the totals loop in renderTable), so numbers are
+// unaffected; the "Show all N rows" button still expands on demand.
+// Desktop is unaffected (tableShowAll = !IS_MOBILE => renders all rows;
+// this constant is only consulted on mobile).
+const TABLE_DEFAULT_LIMIT = IS_MOBILE ? 25 : 90;
 
 function renderTable() {
   let h = '<div class="table-wrap"><table><thead><tr>';
@@ -1321,6 +1331,14 @@ function ensureMobileChartsCTA() {
     if (el) el.style.display = 'none';
   }
   document.getElementById('monteCarloCard').style.display = 'none';
+
+  // Release every chart <canvas> backing store. Even a display:none canvas
+  // holds a width*height*4*9 (iPhone DPR-3) buffer in WebKit. Shrinking to
+  // 0x0 frees it immediately; Chart.js re-sizes the canvas to its container
+  // when the user taps "Show charts", so this is fully reversible and safe.
+  for (const cv of document.querySelectorAll('.chart-card canvas, #monteCarloCard canvas')) {
+    cv.width = 0; cv.height = 0;
+  }
 
   // Inject the CTA once, right above the chart cards (which sit before
   // #content / the table in the DOM). Place after the dashboardWrap close.
