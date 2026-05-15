@@ -2248,33 +2248,55 @@ async function handleScheduled(env) {
 
   // 3. Get today's VIX open.
   //
-  // TASTYTRADE PRIMARY: Tastytrade's /market-data/Index/VIX returns an
-  // `open` field that's already the settled session open — no polling, no
-  // race conditions, no edge-cache issues. One API call gets us what we
-  // need. Refresh token never expires so this stays alive longer than
-  // Schwab's 7-day OAuth cycle.
+  // CORRECT METHOD (after audit 2026-05-14): Schwab pricehistory's 09:31
+  // 1-minute bar `open` field. That's the value TOS and Tastytrade UI both
+  // display. Both APIs' `quote.openPrice` and `market-data.open` return a
+  // different value (often 0.04 off) — unreliable for VIX.
   //
-  // SCHWAB FALLBACK: if Tastytrade fails for any reason, fall back to the
-  // existing Schwab quote-polling logic (poll-fast-until-tradeTime-advances).
+  // To use the 09:31 bar we have to WAIT until ~9:32:00 ET for the bar to
+  // finalize. Cron fires at 9:30 sharp, so we sleep briefly. If the bar
+  // isn't there yet after 2 min total, fall back to live quote polling.
   let vixToday = null;
   try {
-    const tasty = await tastyGetVix(env);
-    // Use the `open` field from Tastytrade's market-data payload — that's
-    // today's settled session open. The `last` field is current value.
-    const openFromTasty = tasty.raw?.open;
-    if (openFromTasty != null && !isNaN(parseFloat(openFromTasty))) {
-      vixToday = parseFloat(parseFloat(openFromTasty).toFixed(2));
-      console.log(`[proxy] VIX open ${vixToday} via Tastytrade /market-data/Index/VIX (last=${tasty.price})`);
+    // Sleep until 9:32:15 ET if we're earlier — 09:31 bar should be queryable.
+    const targetMs = (() => {
+      const t = new Date(etNow);
+      t.setHours(9, 32, 15, 0);
+      return t.getTime();
+    })();
+    const sleepMs = targetMs - Date.now();
+    if (sleepMs > 0 && sleepMs < 180_000) {
+      console.log(`[proxy] Waiting ${Math.round(sleepMs/1000)}s for 09:31 VIX bar to finalize`);
+      await new Promise(r => setTimeout(r, sleepMs));
+    }
+    // Query pricehistory for today's 1-min bars
+    const dayStartMs = (() => { const t = new Date(etNow); t.setHours(4,0,0,0); return t.getTime(); })();
+    const phUrl = `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24VIX&periodType=day&period=2&frequencyType=minute&frequency=1&startDate=${dayStartMs}&endDate=${Date.now()}&needExtendedHoursData=true`;
+    const ph = await fetchSchwabJSON(phUrl, token, env);
+    if (ph?.candles?.length) {
+      // Find first bar at or after 9:30 ET today
+      const todayStr2 = etNow.toDateString();
+      const firstBar = ph.candles
+        .filter(c => {
+          const d = toET(new Date(c.datetime));
+          return d.toDateString() === todayStr2 && (d.getHours() * 60 + d.getMinutes()) >= 570;
+        })
+        .sort((a, b) => a.datetime - b.datetime)[0];
+      if (firstBar) {
+        vixToday = parseFloat(firstBar.open.toFixed(2));
+        const t = toET(new Date(firstBar.datetime));
+        console.log(`[proxy] VIX open ${vixToday} from Schwab pricehistory ${t.toTimeString().slice(0,8)} ET bar`);
+      }
     }
   } catch (e) {
-    console.warn('[proxy] Tastytrade VIX open failed, falling back to Schwab polling:', e.message);
+    console.warn('[proxy] pricehistory 09:31 bar fetch failed:', e.message);
   }
 
-  // SCHWAB FALLBACK BELOW (only runs if Tastytrade didn't produce a value)
+  // SCHWAB QUOTE-POLLING FALLBACK (only if pricehistory didn't return)
   if (vixToday !== null) {
-    // Tastytrade gave us a value — skip Schwab polling entirely
+    // Got VIX from pricehistory 09:31 bar — skip quote polling
   } else {
-    // Original Schwab quote-polling logic. Kept verbatim as the secondary path.
+    // Last-resort fallback to live quote polling (less accurate but never empty).
   //    VIX is a calculated index — Cboe republishes a new value every ~15s.
   //    The first poll we issue may return a cached/stale tick (Schwab's edge
   //    caches the last published value), which can show a pre-open snapshot
