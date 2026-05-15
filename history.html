@@ -503,7 +503,18 @@ const earningsSchedule = [
 
 const T = { DROP_GXBF: 0.65, O2O_M8BF: 1.4, VIX_MAX_GXBF: 25, VIX_MAX_BOBF: 23, SPX_GAP_THRESHOLD: 0.9 };
 
-function dateLong(d) { return d.toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' }); }
+// PERF (iPhone crash fix): toLocaleDateString is ~100-1000x slower than a
+// manual format and is called tens of thousands of times synchronously in
+// init() (calculateSignal runs ~436x, each doing 6+ schedule lookups via
+// todayLong + isTodayBefore/After scans). On a fast Mac that's ~2s; on a
+// slower iPhone CPU it blocked the main thread long enough to trip iOS's
+// unresponsive-page watchdog ("a problem repeatedly occurred"). This manual
+// formatter returns a BYTE-IDENTICAL string ("May 15, 2026" — month long,
+// no leading zero, no padding), so every schedule.includes(todayLong(d))
+// comparison still matches exactly. Zero logic/number change.
+const _MONTHS_LONG = ['January','February','March','April','May','June',
+  'July','August','September','October','November','December'];
+function dateLong(d) { return `${_MONTHS_LONG[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`; }
 const todayLong = d => dateLong(d);
 const isWkend = d => { const w = d.getDay(); return w === 0 || w === 6; };
 const isHol = d => holidays.includes(dateLong(d));
