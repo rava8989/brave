@@ -2341,38 +2341,38 @@
       schwabSetStatus('error', 'Data fetch failed: ' + e.message);
     }
 
-    // Also fetch 20-day VIX history + prior-day SPX change (non-blocking)
+    // Prior-day SPX change + RSI (needs Schwab). VIX 20-day is loaded
+    // separately from history_data.json on page init — no Schwab needed,
+    // so it works for everyone regardless of who opens the calculator.
     Promise.all([
-      schwabFetchVix20dCloses(),
       schwabFetchSpxPriorDayChg(),
     ]).then(()=>calculateStrategy()).catch(e=>console.warn('[S3] regime fetch:', e));
   }
 
-  /* ── VIX 20-day percentile: fetch last ~30 daily closes, cache for UI ── */
+  /* ── VIX 20-day percentile: from stored history, NOT Schwab ──
+     Uses the last 20 prior daily vixClose values straight out of
+     history_data.json. Today's VIX comes from the "Today VIX Open"
+     input (manually entered, or auto-filled in the morning). This
+     needs NO Schwab token, so it works for EVERY visitor — mobile,
+     someone else's computer, anyone — not just the connected machine. */
   let _vix20dCloses = null;  // array of prior daily closes, most recent last
-  async function schwabFetchVix20dCloses(){
-    const token = await schwabGetToken();
-    if(!token) return;
+  async function loadVix20dFromHistory(){
     try{
-      // ~45 days of daily VIX candles — buffer for weekends/holidays, we need 20 trading days
-      const end = new Date();
-      const start = new Date(end); start.setDate(start.getDate() - 45);
-      const url = `${SCHWAB.proxy()}/market/pricehistory?symbol=%24VIX&periodType=month&period=2&frequencyType=daily&frequency=1&startDate=${start.getTime()}&endDate=${end.getTime()}&needExtendedHoursData=false`;
-      const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      const resp = await fetchWithRetry('./history_data.json');
       if(!resp.ok) throw new Error('HTTP ' + resp.status);
       const data = await resp.json();
-      const candles = data?.candles;
-      if(!candles?.length) return;
-      candles.sort((a,b)=>a.datetime - b.datetime);
-      const todayStr = new Date().toDateString();
-      // Prior daily closes only (exclude today's incomplete candle)
-      const priors = candles
-        .filter(c => new Date(c.datetime).toDateString() !== todayStr)
-        .map(c => c.close)
-        .filter(v => v > 0);
-      // Keep last 20 (most recent 20 prior trading days)
-      _vix20dCloses = priors.slice(-20);
-    }catch(e){ console.warn('[S3] VIX 20d fetch:', e); }
+      // vixClose is only set on completed prior days. Today's row has
+      // vixOpen but no vixClose yet, and future placeholder rows have
+      // neither — so filtering on a valid vixClose yields prior days only.
+      const priors = data
+        .filter(r => r.vixClose != null && parseFloat(r.vixClose) > 0)
+        .sort((a,b) => a.date.localeCompare(b.date))
+        .map(r => parseFloat(r.vixClose));
+      if(priors.length){
+        _vix20dCloses = priors.slice(-20);  // most recent 20 prior trading days
+        calculateStrategy();
+      }
+    }catch(e){ console.warn('[vix20d] history load:', e); }
   }
 
   /* ── Prior-day SPX change % + RSI(14) on prior daily closes ──
@@ -3116,6 +3116,7 @@
     document.getElementById('yesterdayClose').disabled=isCpi();
     loadInputs(); // #7: restore today's inputs if available
     schwabInit(); // Schwab integration
+    loadVix20dFromHistory(); // VIX 20-day from history_data.json (no Schwab — works for all visitors)
     loadM8BFPatternNotes();
     discordStatus(); // Discord bot status
     document.getElementById('resultDayLabel').textContent=tradeWdLabel();

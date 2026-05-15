@@ -607,9 +607,9 @@ function renderBobf() {
       placeholderBadge = 'SKIP'; placeholderClass = 'skip';
     } else if (bobfStatic && bobfStatic.label) {
       // Static filters passed — name today's BOBF type so the user knows what's loaded.
-      placeholderText = `${bobfStatic.label} armed — entry window ${windowET} ET. First minute filters pass → trade fires.`;
+      placeholderText = `${bobfStatic.label} armed — entry window ${windowET} ET.`;
     } else {
-      placeholderText = `BOBF entry window: ${windowET} ET. First minute filters pass → trade fires.`;
+      placeholderText = `BOBF entry window: ${windowET} ET.`;
     }
     // Static-filter readout (RSI · SMA5 · type) — always show when available so
     // the user can sanity-check today's gate state before the trade fires.
