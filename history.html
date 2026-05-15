@@ -211,8 +211,17 @@
       .nav{flex-wrap:wrap;}
       .nav a{padding:8px 10px;}
       .range-btns{flex-wrap:wrap;}
-      .header{padding:10px 14px;gap:10px;}
+      .header{padding:10px 14px;gap:10px;position:static;top:auto;}
       .table-wrap{padding:8px;overflow-x:auto;}
+      /* iOS Safari fix: a position:sticky <thead> inside this overflow-x:auto
+         wrapper, with a 1200px-wide table on a ~390px DPR-3 screen, forces
+         WebKit to allocate a huge tiled composited backing store (full scroll
+         width x doc height x 9 for retina). That blows the WKWebView memory
+         watchdog and jettisons the tab ("crashes into darkness") even though
+         the JS heap is tiny. Dropping sticky on mobile removes the oversized
+         composited layer. Plain overflow-x scrolling is fine in WebKit.
+         Desktop is untouched (rule is inside @media max-width:768px). */
+      thead th{position:static;top:auto;}
       .stats-grid{padding:8px;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));}
       .strat-toggles{padding:8px 8px 0;}
       .filter-bar{padding:8px 8px 0;gap:8px;}
