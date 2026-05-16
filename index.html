@@ -2257,7 +2257,7 @@
         // Sort by time
         yCandles.sort((a,b) => a.datetime - b.datetime);
         // Convert candle timestamp to ET hours/minutes
-        const toET = ts => new Date(new Date(ts).toLocaleString('en-US', { timeZone: 'America/New_York' }));
+        const toET = ts => _toETSafe(ts);
         // Yesterday open = first candle at 9:30 AM ET
         const openCandle = yCandles.find(c => {
           const d = toET(c.datetime);
@@ -2290,8 +2290,8 @@
       if(yClose) markAutoFilled('yesterdayClose', yClose);
 
       // If today already has a 9:30 print, fill that too (use ET for hour check)
-      const toET_today = ts => new Date(new Date(ts).toLocaleString('en-US', { timeZone: 'America/New_York' }));
-      const etTodayStr = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' })).toDateString();
+      const toET_today = ts => _toETSafe(ts);
+      const etTodayStr = _toETSafe(now).toDateString();
       const todayCandles = candles.filter(c => toET_today(c.datetime).toDateString() === etTodayStr);
       // First candle at or after 9:30 AM ET (handles VIX lag of 1-2 min)
       const todayOpenCandle = todayCandles
@@ -2317,7 +2317,7 @@
           if(yDate){
             const spxYCandles = spxCandles.filter(c => new Date(c.datetime).toDateString() === yDate);
             spxYCandles.sort((a,b) => a.datetime - b.datetime);
-            const toET_close = ts => new Date(new Date(ts).toLocaleString('en-US', { timeZone: 'America/New_York' }));
+            const toET_close = ts => _toETSafe(ts);
           const spxCloseCandle = spxYCandles.slice().reverse().find(c => {
               const d = toET_close(c.datetime);
               return (d.getHours() === 16 && d.getMinutes() >= 10) || d.getHours() > 16;
@@ -2325,7 +2325,7 @@
             if(spxCloseCandle) spxYClose = spxCloseCandle.close;
           }
           // Today's 9:30 open (use ET for hour check)
-          const toET_spx = ts => new Date(new Date(ts).toLocaleString('en-US', { timeZone: 'America/New_York' }));
+          const toET_spx = ts => _toETSafe(ts);
           const spxTodayCandles = spxCandles.filter(c => toET_spx(c.datetime).toDateString() === etTodayStr);
           const spxOpenCandle = spxTodayCandles
             .filter(c => { const d=toET_spx(c.datetime); return d.getHours()>9||(d.getHours()===9&&d.getMinutes()>=30); })
@@ -2426,8 +2426,23 @@
     }catch(e){ console.warn('[S3] SPX prior-day fetch:', e); }
   }
 
+  // Safari-safe ET conversion. new Date(x.toLocaleString('en-US',{timeZone:
+  // 'America/New_York'})) returns Invalid Date on iPhone/WebKit (modern
+  // toLocaleString emits a U+202F before AM/PM that Safari's parser rejects;
+  // Chrome/V8 tolerate it). formatToParts + numeric Date ctor has no string
+  // parse → byte-identical on V8/Chrome (verified DST/midnight/year-boundary),
+  // works on Safari. Hoisted top-level so every site in this script can use it.
+  function _toETSafe(d){
+    const dt = (d instanceof Date) ? d : new Date(d);
+    const p = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York',
+      year:'numeric', month:'2-digit', day:'2-digit',
+      hour:'2-digit', minute:'2-digit', second:'2-digit', hourCycle:'h23' })
+      .formatToParts(dt).reduce((a,x)=>(a[x.type]=x.value,a),{});
+    return new Date(+p.year, +p.month-1, +p.day, +p.hour, +p.minute, +p.second);
+  }
+
   function isTradingDay(date){
-    const d = new Date(date.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const d = _toETSafe(date);
     const day = d.getDay();
     if (day === 0 || day === 6) return false; // not Sunday or Saturday
     const dateStr = d.toLocaleDateString('en-US', {month:'long', day:'numeric', year:'numeric'});
@@ -2440,7 +2455,7 @@
   function schwabScheduleStream(){
     // Calculate ms until next 9:30 AM ET
     const now = new Date();
-    const etNow = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const etNow = _toETSafe(now);
     const etTarget = new Date(etNow);
     etTarget.setHours(9, 30, 0, 0);
 
@@ -2489,7 +2504,7 @@
         // Fetch last 2 hours of 1-min candles and look for the exact 9:30 AM ET candle
         const pollNow = new Date();
         const pollStart = new Date(pollNow.getTime() - 2 * 60 * 60 * 1000);
-        const toET_poll = ts => new Date(new Date(ts).toLocaleString('en-US', { timeZone: 'America/New_York' }));
+        const toET_poll = ts => _toETSafe(ts);
         const url = `${SCHWAB.proxy()}/market/pricehistory?symbol=%24VIX&periodType=day&period=1&frequencyType=minute&frequency=1&startDate=${pollStart.getTime()}&endDate=${pollNow.getTime()}&needExtendedHoursData=false`;
         const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
         if(!resp.ok) throw new Error('HTTP ' + resp.status);

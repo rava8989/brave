@@ -335,7 +335,7 @@ async function fetchWithRetry(url, opts = {}, retries = 3, baseDelay = 1000) {
 
 // ─── Market Hours (ET) ───────────────────────────────────────────────────────
 function getNowET() {
-  return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  return _toETSafe(new Date());
 }
 function getMarketStatus() {
   const now = getNowET();
@@ -1639,10 +1639,24 @@ function updatePayoffChart(spxNow) {
 }
 
 // ─── RENDER ──────────────────────────────────────────────────────────────────
+// Safari-safe ET conversion. new Date(x.toLocaleString('en-US',{timeZone:
+// 'America/New_York'})) returns Invalid Date on iPhone/WebKit (U+202F before
+// AM/PM that Safari's parser rejects; Chrome/V8 tolerate it). formatToParts +
+// numeric Date ctor has no string parse → byte-identical on V8/Chrome
+// (verified), works on Safari.
+function _toETSafe(d){
+  const dt = (d instanceof Date) ? d : new Date(d);
+  const p = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York',
+    year:'numeric', month:'2-digit', day:'2-digit',
+    hour:'2-digit', minute:'2-digit', second:'2-digit', hourCycle:'h23' })
+    .formatToParts(dt).reduce((a,x)=>(a[x.type]=x.value,a),{});
+  return new Date(+p.year, +p.month-1, +p.day, +p.hour, +p.minute, +p.second);
+}
+
 function isTradeToday() {
   if (!trade || !trade.date) return false;
   const now = new Date();
-  const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const et = _toETSafe(now);
   const todayStr = et.getFullYear() + '-' + String(et.getMonth()+1).padStart(2,'0') + '-' + String(et.getDate()).padStart(2,'0');
   return trade.date === todayStr;
 }
