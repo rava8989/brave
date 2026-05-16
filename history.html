@@ -383,31 +383,48 @@
   <!-- Position-Sizing Calculator — standalone, lightweight (no canvas / no
        Chart.js / no Intl-in-loop), always visible incl. mobile. It computes
        arithmetic from YOUR inputs; it does not recommend anything. -->
+  <style>
+    .sz-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px 18px;padding:16px 18px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;margin-bottom:14px;}
+    .sz-field{display:flex;flex-direction:column;gap:5px;}
+    .sz-label{font-size:11px;font-weight:600;color:var(--text2);display:flex;align-items:center;gap:5px;}
+    .sz-dot{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;border:1px solid var(--text3);color:var(--text3);font-size:9px;font-weight:700;cursor:help;position:relative;}
+    .sz-dot[data-tip]:hover::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 8px);left:0;background:var(--bg2);border:1px solid var(--border);padding:8px 10px;border-radius:6px;font-size:11px;font-weight:400;color:var(--text2);width:240px;white-space:normal;text-align:left;box-shadow:var(--shadow);z-index:30;}
+    .sz-input{font-family:'JetBrains Mono',monospace;font-size:13px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);width:100%;box-sizing:border-box;}
+    .sz-input:focus{outline:none;border-color:var(--accent);}
+    .sz-wrap{position:relative;}
+    .sz-wrap.sz-d::after{content:'$';position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text3);font:12px 'JetBrains Mono',monospace;pointer-events:none;}
+    .sz-wrap.sz-d .sz-input{padding-left:20px;}
+    .sz-wrap.sz-p::after{content:'%';position:absolute;right:10px;top:50%;transform:translateY(-50%);color:var(--text3);font:12px 'JetBrains Mono',monospace;pointer-events:none;}
+  </style>
   <div class="chart-card" id="sizingCard" style="margin-top:16px">
     <div style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Position-Sizing Calculator</div>
     <div style="font-size:11px;color:var(--text3);margin-bottom:14px;line-height:1.5;">
-      You set every input. This shows the arithmetic only — it does not tell you what to trade. Numbers are 1-contract backtest drawdowns (mid-fills, no slippage/fees) so live is worse. Not financial advice.
+      You set every input. Computes the arithmetic only — it does not tell you what to trade. 1-contract backtest drawdowns (mid-fills, no slippage/fees) → live is worse. Not financial advice.
     </div>
-    <div style="display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;margin-bottom:14px;">
-      <label style="font-size:11px;color:var(--text2);">Account&nbsp;$<br>
-        <input id="szAcct" type="number" value="55000" step="1000" min="0"
-          style="margin-top:3px;width:110px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px 8px;font-family:'JetBrains Mono',monospace;font-size:13px;"
-          oninput="_sizingCompute()"></label>
-      <label style="font-size:11px;color:var(--text2);">Risk budget&nbsp;% of account<br>
-        <input id="szRisk" type="number" value="25" step="1" min="0" max="100"
-          style="margin-top:3px;width:80px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px 8px;font-family:'JetBrains Mono',monospace;font-size:13px;"
-          oninput="_sizingCompute()"></label>
-      <label style="font-size:11px;color:var(--text2);">Stress&nbsp;× backtest DD<br>
-        <input id="szStress" type="number" value="2" step="0.5" min="1" max="5"
-          style="margin-top:3px;width:70px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px 8px;font-family:'JetBrains Mono',monospace;font-size:13px;"
-          oninput="_sizingCompute()"></label>
-      <div style="font-size:11px;color:var(--text2);">Slice method<br>
-        <span style="display:inline-flex;margin-top:3px;gap:0;">
-          <button id="szModeOpt"  class="schwab-btn primary" onclick="_sizingMode('opt')"  style="border-radius:6px 0 0 6px;font-size:11px;padding:6px 10px;">Optimizer weights</button>
-          <button id="szModeRP"   class="schwab-btn"         onclick="_sizingMode('rp')"   style="border-radius:0 6px 6px 0;font-size:11px;padding:6px 10px;">Risk-parity (1÷DD)</button>
-        </span>
-      </div>
+
+    <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.05em;margin:2px 0 8px;">Capital &amp; Risk</div>
+    <div class="sz-grid" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr))">
+      <div class="sz-field"><label class="sz-label" for="szCap">Starting Capital</label>
+        <div class="sz-wrap sz-d"><input id="szCap" class="sz-input" type="number" value="55000" min="1" step="1000" oninput="_sizingCompute()"></div></div>
+      <div class="sz-field"><label class="sz-label" for="szMaxRisk">Max Total Risk <span class="sz-dot" data-tip="The most of your capital you'll let the whole book draw down, as a %. Risk pool = capital × this.">ⓘ</span></label>
+        <div class="sz-wrap sz-p"><input id="szMaxRisk" class="sz-input" type="number" value="25" min="1" max="100" step="1" oninput="_sizingCompute()"></div></div>
+      <div class="sz-field"><label class="sz-label" for="szStress">Stress × backtest DD <span class="sz-dot" data-tip="Live drawdown is worse than backtest (mid-fills, no slippage/fees, fat 0DTE tails). Historical DD × this. 1.5–2× is common.">ⓘ</span></label>
+        <input id="szStress" class="sz-input" type="number" value="2" min="1" max="5" step="0.5" oninput="_sizingCompute()"></div>
     </div>
+
+    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px;font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.05em;margin:2px 0 8px;">
+      Risk % per strategy
+      <button onclick="_sizingUseOptimizer()" class="schwab-btn primary" style="font-size:11px;padding:5px 12px;text-transform:none;letter-spacing:0;">Use Optimizer %</button>
+      <span id="szWeightSum" style="font-weight:500;color:var(--text3);text-transform:none;letter-spacing:0;"></span>
+    </div>
+    <div class="sz-grid">
+      <div class="sz-field"><label class="sz-label" for="szW_m8bf">M8BF</label><div class="sz-wrap sz-p"><input id="szW_m8bf" class="sz-input" type="number" value="20" min="0" max="100" step="1" oninput="_sizingCompute()"></div></div>
+      <div class="sz-field"><label class="sz-label" for="szW_strad">Straddle</label><div class="sz-wrap sz-p"><input id="szW_strad" class="sz-input" type="number" value="20" min="0" max="100" step="1" oninput="_sizingCompute()"></div></div>
+      <div class="sz-field"><label class="sz-label" for="szW_gxbf">GXBF</label><div class="sz-wrap sz-p"><input id="szW_gxbf" class="sz-input" type="number" value="20" min="0" max="100" step="1" oninput="_sizingCompute()"></div></div>
+      <div class="sz-field"><label class="sz-label" for="szW_bobf">BOBF</label><div class="sz-wrap sz-p"><input id="szW_bobf" class="sz-input" type="number" value="20" min="0" max="100" step="1" oninput="_sizingCompute()"></div></div>
+      <div class="sz-field"><label class="sz-label" for="szW_diagonal">Diagonal</label><div class="sz-wrap sz-p"><input id="szW_diagonal" class="sz-input" type="number" value="20" min="0" max="100" step="1" oninput="_sizingCompute()"></div></div>
+    </div>
+
     <div id="sizingCalcResults" style="font-size:12px;color:var(--text3);">Loading history…</div>
   </div>
 
@@ -1340,7 +1357,6 @@ const CHART_SECTIONS = [
 // NO Date parsing, NO canvas — cannot reintroduce the iOS main-thread stall.
 const _SZ_KEYS = [['m8bf','M8BF','m8bfPL'],['strad','Straddle','stradPL'],
   ['gxbf','GXBF','gxbfPL'],['bobf','BOBF','bobfPL'],['diagonal','Diagonal','diagPL']];
-let _szMode = 'opt';
 
 function _szPerStratMaxDD() {
   const out = {};
@@ -1376,32 +1392,43 @@ function _szCombined(contracts, stress) {
   }
   return { maxDD: Math.abs(mdd) * s, worstDay: Math.abs(worst) * s };
 }
-function _sizingMode(m) {
-  _szMode = m;
-  document.getElementById('szModeOpt').className = 'schwab-btn' + (m==='opt'?' primary':'');
-  document.getElementById('szModeRP').className  = 'schwab-btn' + (m==='rp' ?' primary':'');
+function _sizingUseOptimizer() {
+  // Pull the Allocation Optimizer's current weights into the per-strategy %
+  // fields. (Run that card's "Optimize (Best Sharpe)" first to refresh
+  // best-Sharpe weights.) Pure field copy — nothing heavy runs here.
+  const map = { m8bf:'szW_m8bf', strad:'szW_strad', gxbf:'szW_gxbf', bobf:'szW_bobf', diagonal:'szW_diagonal' };
+  for (const k in map) {
+    const el = document.getElementById(map[k]);
+    if (el && typeof allocWeights !== 'undefined' && allocWeights[k] != null) el.value = allocWeights[k];
+  }
   _sizingCompute();
 }
+
 function _sizingCompute() {
   const el = document.getElementById('sizingCalcResults');
   if (!el) return;
   if (!allRows || !allRows.length) { el.textContent = 'Loading history…'; return; }
-  const acct   = Math.max(0, parseFloat(document.getElementById('szAcct').value)   || 0);
-  const riskPct= Math.max(0, parseFloat(document.getElementById('szRisk').value)   || 0);
-  const stress = Math.max(1, parseFloat(document.getElementById('szStress').value) || 1);
-  const dd = _szPerStratMaxDD();
-  const pool = acct * riskPct / 100;
+  const cap     = Math.max(0, parseFloat(document.getElementById('szCap').value)     || 0);
+  const maxRisk = Math.max(0, parseFloat(document.getElementById('szMaxRisk').value) || 0);
+  const stress  = Math.max(1, parseFloat(document.getElementById('szStress').value)  || 1);
 
-  // Weights: optimizer (reads the live allocation sliders) vs risk-parity 1/stressedDD
-  const w = {};
-  if (_szMode === 'opt') {
-    const tot = (allocWeights.m8bf+allocWeights.strad+allocWeights.gxbf+allocWeights.bobf+allocWeights.diagonal) || 1;
-    for (const [k] of _SZ_KEYS) w[k] = allocWeights[k] / tot;
-  } else {
-    let inv = {}, s = 0;
-    for (const [k] of _SZ_KEYS) { const sdd = (dd[k]*stress) || 1; inv[k] = 1/sdd; s += inv[k]; }
-    for (const [k] of _SZ_KEYS) w[k] = inv[k] / (s || 1);
+  // Per-strategy risk % the USER set. Normalized internally so it still
+  // works if they don't sum to 100 (mirrors the Allocation Optimizer).
+  const rawW = {}; let sumW = 0;
+  for (const [k] of _SZ_KEYS) {
+    const v = Math.max(0, parseFloat(document.getElementById('szW_' + k).value) || 0);
+    rawW[k] = v; sumW += v;
   }
+  const sumEl = document.getElementById('szWeightSum');
+  if (sumEl) sumEl.innerHTML = (sumW === 100)
+    ? 'sum 100% ✓'
+    : `sum ${sumW}% — <span style="color:#f59e0b">normalized to 100%</span>`;
+
+  const dd = _szPerStratMaxDD();
+  const pool = cap * maxRisk / 100;
+  const denom = sumW || 1;
+  const w = {};
+  for (const [k] of _SZ_KEYS) w[k] = rawW[k] / denom;
 
   const contracts = {};
   let body = '';
@@ -1409,48 +1436,48 @@ function _sizingCompute() {
     const sdd    = dd[k] * stress;
     const sleeve = pool * w[k];
     const ratio  = sdd > 0 ? sleeve / sdd : 0;
-    const traded = dd[k] > 0;          // strategy has history
-    // Every active strategy runs at least 1 contract (base). The math tells
-    // you when you can justify MORE. ratio < 1 = pool can't even cover the
-    // base 1 at this stress => undercapitalized (flag it red, still counts
-    // as 1 in the combined-risk number so risk is NEVER understated).
+    const traded = dd[k] > 0;
+    // Every active strategy runs at least 1 contract (base). The math only
+    // says when you can justify MORE. ratio < 1 = pool can't even cover the
+    // base 1 at this stress => under-capitalized (flagged; still counts as 1
+    // in the combined-risk number so risk is NEVER understated).
     const ct = traded ? Math.max(1, Math.floor(ratio)) : 0;
     contracts[k] = ct;
     let ctTxt;
-    if (!traded)            ctTxt = '<span style="color:var(--text3)">—</span>';
-    else if (ratio < 1)     ctTxt = `<span style="color:#ef4444;font-weight:700">1 ⚠ under-capitalized</span>`;
-    else                    ctTxt = `<span style="color:#22c55e;font-weight:700">${ct}</span>`;
-    body += `<tr><td>${label}</td><td>${(w[k]*100).toFixed(0)}%</td>`
+    if (!traded)        ctTxt = '<span style="color:var(--text3)">—</span>';
+    else if (ratio < 1) ctTxt = `<span style="color:#ef4444;font-weight:700">1 ⚠ under-capitalized</span>`;
+    else                ctTxt = `<span style="color:#22c55e;font-weight:700">${ct}</span>`;
+    body += `<tr><td>${label}</td><td>${rawW[k]}% → ${(w[k]*100).toFixed(0)}%</td>`
          +  `<td>$${Math.round(sleeve).toLocaleString()}</td>`
          +  `<td>$${Math.round(dd[k]).toLocaleString()}</td>`
          +  `<td>$${Math.round(sdd).toLocaleString()}</td>`
          +  `<td>${ratio.toFixed(2)}</td><td>${ctTxt}</td></tr>`;
   }
   const comb = _szCombined(contracts, stress);
-  const pctAcct = acct ? (comb.maxDD/acct*100) : 0;
+  const pctCap = cap ? (comb.maxDD/cap*100) : 0;
   const headroom = pool - comb.maxDD;
   const hColor = headroom >= 0 ? '#22c55e' : '#ef4444';
 
   el.innerHTML =
-    `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:560px">
+    `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:580px">
       <thead><tr style="color:var(--text3);text-align:left">
-        <th style="padding:6px">Strategy</th><th style="padding:6px">Weight</th>
+        <th style="padding:6px">Strategy</th><th style="padding:6px">Risk % (set→norm)</th>
         <th style="padding:6px">Sleeve $</th><th style="padding:6px">Backtest DD (1ct)</th>
         <th style="padding:6px">Stressed DD</th><th style="padding:6px">Ratio</th>
         <th style="padding:6px">Contracts</th></tr></thead>
       <tbody>${body.replace(/<td>/g,'<td style="padding:6px">')}</tbody></table></div>
     <div style="margin-top:12px;padding:10px 12px;background:var(--bg3);border-radius:8px;font-size:12px;line-height:1.6;">
-      <b>Risk pool</b> ($${Math.round(pool).toLocaleString()} = ${riskPct}% of $${Math.round(acct).toLocaleString()})
-      &nbsp;·&nbsp; <b>Combined stressed max DD</b> at this mix:
+      <b>Risk pool</b> ($${Math.round(pool).toLocaleString()} = ${maxRisk}% of $${Math.round(cap).toLocaleString()})
+      &nbsp;·&nbsp; <b>Combined stressed max DD</b>:
       <span style="color:#ef4444;font-weight:700">$${Math.round(comb.maxDD).toLocaleString()}</span>
-      (${pctAcct.toFixed(1)}% of account)
+      (${pctCap.toFixed(1)}% of capital)
       &nbsp;·&nbsp; worst combined day <span style="color:#ef4444">$${Math.round(comb.worstDay).toLocaleString()}</span>
       &nbsp;·&nbsp; headroom vs pool: <span style="color:${hColor};font-weight:700">$${Math.round(headroom).toLocaleString()}</span>
       <div style="margin-top:6px;color:var(--text3)">
-        Every active strategy counts as <b>at least 1 contract</b> (your base); the math only tells you when a sleeve can justify <b>more</b>.
-        <span style="color:#ef4444">⚠ under-capitalized</span> = your pool can't even cover that strategy's base contract at this stress (risk is still counted as 1, never understated).
-        Negative headroom = this mix's stressed drawdown exceeds your own risk pool.
-        Toggle Optimizer vs Risk-parity to see how the slice changes who scales — same data, different philosophy. You decide which (if any) to use.
+        Every active strategy counts as <b>at least 1 contract</b> (your base); the math only says when a sleeve can justify <b>more</b>.
+        <span style="color:#ef4444">⚠ under-capitalized</span> = the pool can't cover that strategy's base contract at this stress (still counted as 1 — risk never understated).
+        Negative headroom = this mix's stressed drawdown exceeds your Max Total Risk pool.
+        "Use Optimizer %" fills the fields from the Allocation Optimizer above — run its Optimize button first to refresh best-Sharpe.
       </div>
     </div>`;
 }
