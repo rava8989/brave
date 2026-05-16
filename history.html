@@ -395,6 +395,20 @@
     .sz-wrap.sz-d::after{content:'$';position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text3);font:12px 'JetBrains Mono',monospace;pointer-events:none;}
     .sz-wrap.sz-d .sz-input{padding-left:20px;}
     .sz-wrap.sz-p::after{content:'%';position:absolute;right:10px;top:50%;transform:translateY(-50%);color:var(--text3);font:12px 'JetBrains Mono',monospace;pointer-events:none;}
+    /* diagonal-style PERFORMANCE stat cards */
+    .sz-stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin:6px 0 18px;}
+    .sz-card{padding:14px 16px;border-radius:8px;border:1px solid var(--border);background:var(--bg2);box-shadow:var(--shadow);display:flex;flex-direction:column;gap:5px;}
+    .sz-card.g{background:rgba(34,197,94,.07);border-color:rgba(34,197,94,.22);}
+    .sz-card.r{background:rgba(239,68,68,.07);border-color:rgba(239,68,68,.22);}
+    .sz-card .l{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);}
+    .sz-card .v{font-family:'JetBrains Mono',monospace;font-size:17px;font-weight:700;color:var(--text);letter-spacing:-.02em;}
+    .sz-card.c{flex-direction:row;align-items:stretch;gap:0;padding:0;overflow:hidden;}
+    .sz-card.c .h{flex:1;padding:14px;display:flex;flex-direction:column;gap:5px;}
+    .sz-card.c .h + .h{border-left:1px solid var(--border);}
+    .sz-sub{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);margin:14px 0 6px;}
+    .sz-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px;}
+    .sz-mini{border:1px solid var(--border);border-radius:6px;padding:8px 10px;background:var(--bg2);font-size:11px;}
+    .sz-mini b{color:var(--text);} .sz-mini span{color:var(--text3);}
   </style>
   <div class="chart-card" id="sizingCard" style="margin-top:16px">
     <div style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Multi-Strategy Backtest</div>
@@ -1398,6 +1412,7 @@ function _szKPIs(series, startCap) {
   return {
     pl: total, cagr: cagr*100, maxDDpct: mddPct*100, mar,
     winPct: (wins/series.length)*100, avgTrade: total/series.length,
+    avgWin: wins ? sumWin/wins : 0, avgLoss: losses ? sumLoss/losses : 0,
     maxWin: maxWin===-Infinity?0:maxWin, maxLoss: maxLoss===Infinity?0:maxLoss,
     trades: series.length, winners: wins, endCap,
   };
@@ -1493,50 +1508,61 @@ function _sizingRun() {
   }
   const tot = _szKPIs(combo, cap);
 
-  const rowHtml = (label, k, kpi, bold) => {
-    const b   = bold ? 'font-weight:700;background:var(--bg3)' : '';
-    const slv = bold ? '—' : fmt$(sleeveOf[k]);
-    const cnt = bold ? '—'
-      : (ct[k] === 0 ? '<span style="color:var(--text3)">0 (0% slice)</span>'
-        : under[k] ? `<span style="color:#ef4444;font-weight:700">${ct[k]} ⚠</span>`
-        : `<span style="color:#22c55e;font-weight:700">${ct[k]}</span>`);
-    if (!kpi) return `<tr style="${b}"><td style="padding:6px">${label}</td><td style="padding:6px">${slv}</td><td style="padding:6px;text-align:center">${cnt}</td><td colspan="9" style="padding:6px;color:var(--text3)">${(!bold && ct[k]===0) ? 'excluded — 0% slice' : 'no trades'}</td></tr>`;
-    return `<tr style="${b}">
-      <td style="padding:6px">${label}</td>
-      <td style="padding:6px">${slv}</td>
-      <td style="padding:6px;text-align:center">${cnt}</td>
-      <td style="padding:6px;${cl(kpi.pl)}">${fmt$(kpi.pl)}</td>
-      <td style="padding:6px;${cl(kpi.cagr)}">${kpi.cagr.toFixed(1)}%</td>
-      <td style="padding:6px;color:#ef4444">${kpi.maxDDpct.toFixed(1)}%</td>
-      <td style="padding:6px">${kpi.mar.toFixed(2)}</td>
-      <td style="padding:6px">${kpi.winPct.toFixed(1)}%</td>
-      <td style="padding:6px;${cl(kpi.avgTrade)}">${fmt$(kpi.avgTrade)}</td>
-      <td style="padding:6px;color:#22c55e">${fmt$(kpi.maxWin)}</td>
-      <td style="padding:6px;color:#ef4444">${fmt$(kpi.maxLoss)}</td>
-      <td style="padding:6px">${kpi.winners}/${kpi.trades}</td></tr>`;
+  if (!tot) {
+    el.innerHTML = '<div style="padding:12px;color:var(--text3)">No strategy allocated — set a per-strategy % above 0 and press RUN.</div>';
+    return;
+  }
+
+  const card  = (label, val, kls) => `<div class="sz-card ${kls||''}"><div class="l">${label}</div><div class="v">${val}</div></div>`;
+  const cmpd  = (l1,v1,l2,v2) => `<div class="sz-card c"><div class="h"><div class="l">${l1}</div><div class="v">${v1}</div></div><div class="h"><div class="l">${l2}</div><div class="v">${v2}</div></div></div>`;
+  const na    = '<span style="color:var(--text3);font-weight:400">n/a</span>';
+
+  // PERFORMANCE — combined TOTAL, exact diagonal stat-card grid
+  const perf = `
+    <div class="sz-sub">Performance — combined account (TOTAL)</div>
+    <div class="sz-stats">
+      ${card('P/L', fmt$(tot.pl), tot.pl>=0?'g':'r')}
+      ${card('CAGR', tot.cagr.toFixed(1)+'%', tot.cagr>=0?'g':'r')}
+      ${card('Max Drawdown', tot.maxDDpct.toFixed(1)+'%', 'r')}
+      ${card('MAR Ratio', tot.mar.toFixed(2), 'g')}
+      ${card('Win Percentage', tot.winPct.toFixed(1)+'%')}
+      ${card('Total Premium', na)}
+      ${card('Capture Rate', na)}
+      ${cmpd('Starting Capital', fmt$(cap), 'Ending Capital', fmt$(tot.endCap))}
+      ${card('Avg Per Trade', fmt$(tot.avgTrade), tot.avgTrade>=0?'g':'r')}
+      ${card('Avg Winner', fmt$(tot.avgWin), 'g')}
+      ${card('Avg Loser', fmt$(tot.avgLoss), 'r')}
+      ${card('Max Winner', fmt$(tot.maxWin), 'g')}
+      ${card('Max Loser', fmt$(tot.maxLoss), 'r')}
+      ${card('Avg Minutes In Trade', na)}
+      ${cmpd('Trades', String(tot.trades), 'Winners', String(tot.winners))}
+    </div>`;
+
+  // Per-strategy compact strip
+  const cl2 = n => n >= 0 ? 'color:#22c55e' : 'color:#ef4444';
+  const mini = ([label,k,kpi]) => {
+    const c = ct[k]===0 ? '<span style="color:var(--text3)">0% slice</span>'
+      : under[k] ? `<span style="color:#ef4444;font-weight:700">${ct[k]}ct ⚠</span>`
+      : `<span style="color:#22c55e;font-weight:700">${ct[k]}ct</span>`;
+    if (!kpi) return `<div class="sz-mini"><b>${label}</b> &nbsp; ${c} &nbsp; <span>excluded</span></div>`;
+    return `<div class="sz-mini"><b>${label}</b> &nbsp; ${c} &nbsp;
+      <span>P/L</span> <b style="${cl2(kpi.pl)}">${fmt$(kpi.pl)}</b> &nbsp;
+      <span>CAGR</span> <b style="${cl2(kpi.cagr)}">${kpi.cagr.toFixed(1)}%</b> &nbsp;
+      <span>DD</span> <b style="color:#ef4444">${kpi.maxDDpct.toFixed(1)}%</b> &nbsp;
+      <span>MAR</span> <b>${kpi.mar.toFixed(2)}</b> &nbsp;
+      <span>Win</span> <b>${kpi.winPct.toFixed(1)}%</b> &nbsp;
+      <span>Sleeve</span> <b>${fmt$(sleeveOf[k])}</b></div>`;
   };
 
-  el.innerHTML =
-    `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:860px">
-      <thead><tr style="color:var(--text3);text-align:left">
-        <th style="padding:6px">Strategy</th><th style="padding:6px">Sleeve $</th>
-        <th style="padding:6px;text-align:center">Contracts</th>
-        <th style="padding:6px">P/L</th><th style="padding:6px">CAGR</th>
-        <th style="padding:6px">MaxDD%</th><th style="padding:6px">MAR</th>
-        <th style="padding:6px">Win%</th><th style="padding:6px">Avg/Trade</th>
-        <th style="padding:6px">Max Win</th><th style="padding:6px">Max Loss</th>
-        <th style="padding:6px">W/Trades</th></tr></thead>
-      <tbody>
-        ${rows.map(([l,k,kpi]) => rowHtml(l,k,kpi,false)).join('')}
-        ${rowHtml('TOTAL (combined account)', null, tot, true)}
-      </tbody></table></div>
-    <div style="margin-top:12px;padding:10px 12px;background:var(--bg3);border-radius:8px;font-size:11px;line-height:1.6;color:var(--text3)">
+  el.innerHTML = perf
+    + `<div class="sz-sub">Per strategy</div><div class="sz-strip">${rows.map(mini).join('')}</div>`
+    + `<div style="margin-top:14px;padding:10px 12px;background:var(--bg3);border-radius:8px;font-size:11px;line-height:1.6;color:var(--text3)">
       Risk pool <b>${fmt$(pool)}</b> = ${riskPct}% of ${fmt$(cap)}, sliced by your per-strategy %.
-      Contracts = floor( sleeve ÷ [ strategy 1-lot historical max DD × ${stress}× stress ] ), min 1 for any allocated strategy.
-      <span style="color:#ef4444">⚠</span> = sleeve can't cover even one stressed contract (still run as 1 — risk never understated); <b>0 (0% slice)</b> = you excluded it.
-      KPIs compound off the <b>${fmt$(cap)}</b> account; per-strategy CAGR/MaxDD% use that same base for comparability, <b>TOTAL</b> is the real shared account.
-      Backtest mid-fills, no slippage/fees, fat 0DTE tails not fully shown → live is worse. Premium / Capture Rate / Avg Minutes aren't in the data so they're omitted.
-      Informational only — not financial advice; it does not tell you what to trade.
+      Contracts = floor( sleeve ÷ [ strategy 1-lot historical max DD × ${stress}× stress ] ), min 1 per allocated strategy.
+      <span style="color:#ef4444">⚠</span> = sleeve can't cover one stressed contract (still run as 1 — risk never understated); 0% slice = excluded.
+      Compounded off the <b>${fmt$(cap)}</b> account; <b>TOTAL</b> is the real shared balance, per-strategy uses the same base for comparability.
+      Backtest mid-fills, no slippage/fees → live worse. Total Premium / Capture Rate / Avg Minutes aren't in history_data.json (shown n/a, not faked).
+      Informational only — not financial advice.
     </div>`;
 }
 
