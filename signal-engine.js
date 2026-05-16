@@ -130,7 +130,23 @@ export const T = {
 // ════════════════════════════════════════════════════════════════════
 
 export function toET(d = new Date()) {
-  return new Date(d.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  // Engine-agnostic ET conversion. The old form
+  //   new Date(d.toLocaleString('en-US', { timeZone: 'America/New_York' }))
+  // breaks on Safari/WebKit (iPhone): modern toLocaleString emits a U+202F
+  // narrow-no-break-space before AM/PM and Safari's date parser returns
+  // Invalid Date for that string (Chrome/V8 tolerate it). That made every
+  // calculateSignal() call on history.html throw → page failed on iPhone.
+  //
+  // formatToParts + the numeric Date constructor has NO string-parsing step,
+  // so it yields the SAME local wall-clock fields on V8 (worker), Chrome AND
+  // Safari — behaviour is byte-identical to the old code on V8/Chrome.
+  const p = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(d).reduce((a, x) => (a[x.type] = x.value, a), {});
+  return new Date(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second);
 }
 
 export function dateLong(d) {
