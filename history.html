@@ -399,25 +399,36 @@
   <div class="chart-card" id="sizingCard" style="margin-top:16px">
     <div style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Multi-Strategy Backtest</div>
     <div style="font-size:11px;color:var(--text3);margin-bottom:14px;line-height:1.5;">
-      Compounds the historical per-1-lot daily P/L × your contracts off Starting Capital, then shows the diagonal-style KPI grid per strategy and combined. Backtest (mid-fills, no slippage/fees) → live is worse. Informational only — not financial advice.
+      Starting Capital → Overall Risk % (the risk pool) → sliced by your per-strategy % → contracts → press RUN for the diagonal-style KPI grid per strategy + combined. Backtest (mid-fills, no slippage/fees) → live is worse. Informational only — not financial advice.
     </div>
 
-    <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.05em;margin:2px 0 8px;">Funds &amp; Allocation</div>
-    <div class="sz-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
+    <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.05em;margin:2px 0 8px;">Funds &amp; Risk</div>
+    <div class="sz-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">
       <div class="sz-field"><label class="sz-label" for="szCap">Starting Capital</label>
-        <div class="sz-wrap sz-d"><input id="szCap" class="sz-input" type="number" value="100000" min="1" step="1000" oninput="_sizingCompute()"></div></div>
-      <div class="sz-field"><label class="sz-label" for="szC_m8bf">M8BF contracts</label><input id="szC_m8bf" class="sz-input" type="number" value="1" min="0" max="100" step="1" oninput="_sizingCompute()"></div>
-      <div class="sz-field"><label class="sz-label" for="szC_strad">Straddle contracts</label><input id="szC_strad" class="sz-input" type="number" value="1" min="0" max="100" step="1" oninput="_sizingCompute()"></div>
-      <div class="sz-field"><label class="sz-label" for="szC_gxbf">GXBF contracts</label><input id="szC_gxbf" class="sz-input" type="number" value="1" min="0" max="100" step="1" oninput="_sizingCompute()"></div>
-      <div class="sz-field"><label class="sz-label" for="szC_bobf">BOBF contracts</label><input id="szC_bobf" class="sz-input" type="number" value="1" min="0" max="100" step="1" oninput="_sizingCompute()"></div>
-      <div class="sz-field"><label class="sz-label" for="szC_diagonal">Diagonal contracts</label><input id="szC_diagonal" class="sz-input" type="number" value="1" min="0" max="100" step="1" oninput="_sizingCompute()"></div>
-    </div>
-    <div style="margin:2px 0 12px;">
-      <button onclick="_sizingUseOptimizer()" class="schwab-btn primary" style="font-size:11px;padding:5px 12px;">Use Optimizer Weighting</button>
-      <span style="font-size:11px;color:var(--text3);margin-left:8px;">sets contracts ∝ the Allocation Optimizer's weights (run its Optimize first)</span>
+        <div class="sz-wrap sz-d"><input id="szCap" class="sz-input" type="number" value="100000" min="1" step="1000"></div></div>
+      <div class="sz-field"><label class="sz-label" for="szRisk">Overall Risk <span class="sz-dot" data-tip="The most of capital you'll commit as the total risk pool, as a %. Pool = capital × this. Sliced by the per-strategy % below.">ⓘ</span></label>
+        <div class="sz-wrap sz-p"><input id="szRisk" class="sz-input" type="number" value="25" min="1" max="100" step="1"></div></div>
+      <div class="sz-field"><label class="sz-label" for="szStress">Stress × DD <span class="sz-dot" data-tip="Capital-per-contract = each strategy's historical 1-lot max drawdown × this (the $ needed to safely run 1 contract). 1.5–2× assumes live is worse than backtest. Override per strategy below if you want.">ⓘ</span></label>
+        <input id="szStress" class="sz-input" type="number" value="2" min="1" max="5" step="0.5"></div>
     </div>
 
-    <div id="sizingCalcResults" style="font-size:12px;color:var(--text3);">Loading history…</div>
+    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px;font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.05em;margin:2px 0 8px;">
+      Risk % per strategy
+      <button onclick="_sizingUseOptimizer()" class="schwab-btn" style="font-size:11px;padding:5px 12px;text-transform:none;letter-spacing:0;">Use Optimizer %</button>
+      <span id="szWeightSum" style="font-weight:500;color:var(--text3);text-transform:none;letter-spacing:0;"></span>
+    </div>
+    <div class="sz-grid">
+      <div class="sz-field"><label class="sz-label" for="szW_m8bf">M8BF</label><div class="sz-wrap sz-p"><input id="szW_m8bf" class="sz-input" type="number" value="20" min="0" max="100" step="1"></div></div>
+      <div class="sz-field"><label class="sz-label" for="szW_strad">Straddle</label><div class="sz-wrap sz-p"><input id="szW_strad" class="sz-input" type="number" value="20" min="0" max="100" step="1"></div></div>
+      <div class="sz-field"><label class="sz-label" for="szW_gxbf">GXBF</label><div class="sz-wrap sz-p"><input id="szW_gxbf" class="sz-input" type="number" value="20" min="0" max="100" step="1"></div></div>
+      <div class="sz-field"><label class="sz-label" for="szW_bobf">BOBF</label><div class="sz-wrap sz-p"><input id="szW_bobf" class="sz-input" type="number" value="20" min="0" max="100" step="1"></div></div>
+      <div class="sz-field"><label class="sz-label" for="szW_diagonal">Diagonal</label><div class="sz-wrap sz-p"><input id="szW_diagonal" class="sz-input" type="number" value="20" min="0" max="100" step="1"></div></div>
+    </div>
+    <div style="margin:4px 0 14px;">
+      <button onclick="_sizingRun()" class="schwab-btn primary" style="font-size:13px;font-weight:700;padding:9px 28px;">▶ RUN</button>
+    </div>
+
+    <div id="sizingCalcResults" style="font-size:12px;color:var(--text3);">Set Starting Capital, Overall Risk %, the per-strategy % slices, then press <b>RUN</b>.</div>
   </div>
 
   <div id="content">
@@ -1391,90 +1402,147 @@ function _szKPIs(series, startCap) {
     trades: series.length, winners: wins, endCap,
   };
 }
-function _sizingUseOptimizer() {
-  // Set per-strategy CONTRACTS ∝ the Allocation Optimizer's weights
-  // (smallest non-zero weight → 1 contract; others scaled & rounded;
-  // 0 weight → 0). Run that card's "Optimize (Best Sharpe)" first.
-  if (typeof allocWeights === 'undefined') return;
-  const pos = _SZ_KEYS.map(([k]) => allocWeights[k] || 0).filter(v => v > 0);
-  const minW = pos.length ? Math.min(...pos) : 1;
-  for (const [k] of _SZ_KEYS) {
-    const w = allocWeights[k] || 0;
-    const el = document.getElementById('szC_' + k);
-    if (el) el.value = w > 0 ? Math.max(1, Math.round(w / minW)) : 0;
-  }
-  _sizingCompute();
+function _szUpdateSum() {
+  let s = 0;
+  for (const [k] of _SZ_KEYS) s += Math.max(0, parseFloat(document.getElementById('szW_'+k).value) || 0);
+  const el = document.getElementById('szWeightSum');
+  if (el) el.innerHTML = (s === 100) ? 'sum 100% ✓'
+    : `sum ${s}% — <span style="color:#f59e0b">normalized to 100%</span>`;
 }
-function _sizingCompute() {
+function _sizingUseOptimizer() {
+  // Fill the per-strategy RISK % fields from the Allocation Optimizer's
+  // current weights. Run that card's "Optimize (Best Sharpe)" first.
+  if (typeof allocWeights === 'undefined') return;
+  for (const [k] of _SZ_KEYS) {
+    const el = document.getElementById('szW_' + k);
+    if (el && allocWeights[k] != null) el.value = allocWeights[k];
+  }
+  _szUpdateSum();
+}
+// Historical 1-lot max drawdown ($) per strategy — the natural
+// "capital to safely run 1 contract" measure (no margin data exists).
+function _szDD1lot() {
+  const out = {};
+  for (const [k,, f] of _SZ_KEYS) {
+    let cum=0, peak=0, mdd=0;
+    for (const r of allRows) {
+      const v = r[f];
+      if (v == null || v === 0) continue;
+      cum += v; if (cum > peak) peak = cum;
+      const dd = cum - peak; if (dd < mdd) mdd = dd;
+    }
+    out[k] = Math.abs(mdd) || 0;
+  }
+  return out;
+}
+function _sizingReady() {
+  // Data-load hook. RUN-driven — do NOT auto-compute; just keep the prompt.
+  const el = document.getElementById('sizingCalcResults');
+  if (el && !el.dataset.ran) el.innerHTML =
+    'Set Starting Capital, Overall Risk %, the per-strategy % slices, then press <b>RUN</b>.';
+  _szUpdateSum();
+}
+function _sizingRun() {
   const el = document.getElementById('sizingCalcResults');
   if (!el) return;
-  if (!allRows || !allRows.length) { el.textContent = 'Loading history…'; return; }
-  const startCap = Math.max(1, parseFloat(document.getElementById('szCap').value) || 1);
-  const ct = {};
-  for (const [k] of _SZ_KEYS)
-    ct[k] = Math.max(0, Math.floor(parseFloat(document.getElementById('szC_'+k).value) || 0));
+  if (!allRows || !allRows.length) { el.textContent = 'History still loading — press RUN again in a moment.'; return; }
+  el.dataset.ran = '1';
+
+  const cap     = Math.max(1, parseFloat(document.getElementById('szCap').value)    || 1);
+  const riskPct = Math.max(0, parseFloat(document.getElementById('szRisk').value)   || 0);
+  const stress  = Math.max(1, parseFloat(document.getElementById('szStress').value) || 1);
+
+  const rawW = {}; let sumW = 0;
+  for (const [k] of _SZ_KEYS) {
+    const v = Math.max(0, parseFloat(document.getElementById('szW_'+k).value) || 0);
+    rawW[k] = v; sumW += v;
+  }
+  _szUpdateSum();
+  const denom = sumW || 1;
+  const pool  = cap * riskPct / 100;
+  const dd    = _szDD1lot();
 
   const fmt$ = n => (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString();
   const cl   = n => n > 0 ? 'color:#22c55e' : n < 0 ? 'color:#ef4444' : 'color:var(--text3)';
 
+  const ct = {}, sleeveOf = {}, under = {};
+  for (const [k] of _SZ_KEYS) {
+    const sleeve = pool * (rawW[k] / denom);
+    const perCt  = (dd[k] || 0) * stress;        // capital needed per 1 contract
+    sleeveOf[k]  = sleeve;
+    if (rawW[k] <= 0) { ct[k] = 0; under[k] = false; continue; }   // 0% slice = excluded
+    const raw = perCt > 0 ? sleeve / perCt : 0;
+    ct[k] = Math.max(1, Math.floor(raw));        // any allocated strat trades ≥1
+    under[k] = raw < 1;                          // sleeve can't cover stressed 1-ct
+  }
+
   const rows = [];
   for (const [k,label,f] of _SZ_KEYS) {
     const series = [];
-    for (const r of allRows) {
+    if (ct[k] > 0) for (const r of allRows) {
       const v = r[f];
       if (v != null && v !== 0) series.push({ date: r.date, pnl: v * ct[k] });
     }
-    rows.push([label, ct[k], _szKPIs(series, startCap)]);
+    rows.push([label, k, _szKPIs(series, cap)]);
   }
   const combo = [];
   for (const r of allRows) {
     let day=0, traded=false;
-    for (const [k,,f] of _SZ_KEYS) { const v=r[f]; if (v!=null && v!==0) { day += v*ct[k]; traded=true; } }
+    for (const [k,,f] of _SZ_KEYS) { const v=r[f]; if (v!=null && v!==0 && ct[k]>0) { day += v*ct[k]; traded=true; } }
     if (traded) combo.push({ date: r.date, pnl: day });
   }
-  const tot = _szKPIs(combo, startCap);
+  const tot = _szKPIs(combo, cap);
 
-  const rowHtml = (label, c, k, bold) => {
-    if (!k) return `<tr><td style="padding:6px">${label}</td><td style="padding:6px;text-align:center">${c}</td><td colspan="9" style="padding:6px;color:var(--text3)">no trades</td></tr>`;
-    const b = bold ? 'font-weight:700;background:var(--bg3)' : '';
+  const rowHtml = (label, k, kpi, bold) => {
+    const b   = bold ? 'font-weight:700;background:var(--bg3)' : '';
+    const slv = bold ? '—' : fmt$(sleeveOf[k]);
+    const cnt = bold ? '—'
+      : (ct[k] === 0 ? '<span style="color:var(--text3)">0 (0% slice)</span>'
+        : under[k] ? `<span style="color:#ef4444;font-weight:700">${ct[k]} ⚠</span>`
+        : `<span style="color:#22c55e;font-weight:700">${ct[k]}</span>`);
+    if (!kpi) return `<tr style="${b}"><td style="padding:6px">${label}</td><td style="padding:6px">${slv}</td><td style="padding:6px;text-align:center">${cnt}</td><td colspan="9" style="padding:6px;color:var(--text3)">${(!bold && ct[k]===0) ? 'excluded — 0% slice' : 'no trades'}</td></tr>`;
     return `<tr style="${b}">
       <td style="padding:6px">${label}</td>
-      <td style="padding:6px;text-align:center">${c === '' ? '—' : c}</td>
-      <td style="padding:6px;${cl(k.pl)}">${fmt$(k.pl)}</td>
-      <td style="padding:6px;${cl(k.cagr)}">${k.cagr.toFixed(1)}%</td>
-      <td style="padding:6px;color:#ef4444">${k.maxDDpct.toFixed(1)}%</td>
-      <td style="padding:6px">${k.mar.toFixed(2)}</td>
-      <td style="padding:6px">${k.winPct.toFixed(1)}%</td>
-      <td style="padding:6px;${cl(k.avgTrade)}">${fmt$(k.avgTrade)}</td>
-      <td style="padding:6px;color:#22c55e">${fmt$(k.maxWin)}</td>
-      <td style="padding:6px;color:#ef4444">${fmt$(k.maxLoss)}</td>
-      <td style="padding:6px">${k.winners}/${k.trades}</td></tr>`;
+      <td style="padding:6px">${slv}</td>
+      <td style="padding:6px;text-align:center">${cnt}</td>
+      <td style="padding:6px;${cl(kpi.pl)}">${fmt$(kpi.pl)}</td>
+      <td style="padding:6px;${cl(kpi.cagr)}">${kpi.cagr.toFixed(1)}%</td>
+      <td style="padding:6px;color:#ef4444">${kpi.maxDDpct.toFixed(1)}%</td>
+      <td style="padding:6px">${kpi.mar.toFixed(2)}</td>
+      <td style="padding:6px">${kpi.winPct.toFixed(1)}%</td>
+      <td style="padding:6px;${cl(kpi.avgTrade)}">${fmt$(kpi.avgTrade)}</td>
+      <td style="padding:6px;color:#22c55e">${fmt$(kpi.maxWin)}</td>
+      <td style="padding:6px;color:#ef4444">${fmt$(kpi.maxLoss)}</td>
+      <td style="padding:6px">${kpi.winners}/${kpi.trades}</td></tr>`;
   };
 
   el.innerHTML =
-    `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:780px">
+    `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:860px">
       <thead><tr style="color:var(--text3);text-align:left">
-        <th style="padding:6px">Strategy</th><th style="padding:6px;text-align:center">Contracts</th>
+        <th style="padding:6px">Strategy</th><th style="padding:6px">Sleeve $</th>
+        <th style="padding:6px;text-align:center">Contracts</th>
         <th style="padding:6px">P/L</th><th style="padding:6px">CAGR</th>
         <th style="padding:6px">MaxDD%</th><th style="padding:6px">MAR</th>
         <th style="padding:6px">Win%</th><th style="padding:6px">Avg/Trade</th>
         <th style="padding:6px">Max Win</th><th style="padding:6px">Max Loss</th>
         <th style="padding:6px">W/Trades</th></tr></thead>
       <tbody>
-        ${rows.map(([l,c,k]) => rowHtml(l,c,k,false)).join('')}
-        ${rowHtml('TOTAL (combined account)', '', tot, true)}
+        ${rows.map(([l,k,kpi]) => rowHtml(l,k,kpi,false)).join('')}
+        ${rowHtml('TOTAL (combined account)', null, tot, true)}
       </tbody></table></div>
     <div style="margin-top:12px;padding:10px 12px;background:var(--bg3);border-radius:8px;font-size:11px;line-height:1.6;color:var(--text3)">
-      Compounded off <b>${fmt$(startCap)}</b> Starting Capital over the full history (per-1-lot daily P/L × your Contracts).
-      Per-strategy CAGR/MaxDD% use the same Starting Capital base for comparability; <b>TOTAL</b> is the real combined account (all strategies share one balance).
-      Backtest mid-fills, no slippage/fees, fat 0DTE tails not fully represented → live is worse. <b>Total Premium / Capture Rate / Avg Minutes</b> aren't in history_data.json so they're omitted.
-      "Use Optimizer Weighting" sets contracts ∝ the Allocation Optimizer's weights (run its Optimize first). Informational only — not financial advice; it does not tell you what to trade.
+      Risk pool <b>${fmt$(pool)}</b> = ${riskPct}% of ${fmt$(cap)}, sliced by your per-strategy %.
+      Contracts = floor( sleeve ÷ [ strategy 1-lot historical max DD × ${stress}× stress ] ), min 1 for any allocated strategy.
+      <span style="color:#ef4444">⚠</span> = sleeve can't cover even one stressed contract (still run as 1 — risk never understated); <b>0 (0% slice)</b> = you excluded it.
+      KPIs compound off the <b>${fmt$(cap)}</b> account; per-strategy CAGR/MaxDD% use that same base for comparability, <b>TOTAL</b> is the real shared account.
+      Backtest mid-fills, no slippage/fees, fat 0DTE tails not fully shown → live is worse. Premium / Capture Rate / Avg Minutes aren't in the data so they're omitted.
+      Informational only — not financial advice; it does not tell you what to trade.
     </div>`;
 }
 
 function renderAll() {
   safeRender('stats', renderStats);
-  safeRender('sizing', _sizingCompute);
+  safeRender('sizing', _sizingReady);
 
   if (IS_MOBILE) {
     // Mobile: do NOT auto-render charts. The IntersectionObserver approach
