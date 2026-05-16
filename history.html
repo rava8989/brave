@@ -380,6 +380,37 @@
 
   </div><!-- end dashboardWrap -->
 
+  <!-- Position-Sizing Calculator — standalone, lightweight (no canvas / no
+       Chart.js / no Intl-in-loop), always visible incl. mobile. It computes
+       arithmetic from YOUR inputs; it does not recommend anything. -->
+  <div class="chart-card" id="sizingCard" style="margin-top:16px">
+    <div style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Position-Sizing Calculator</div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:14px;line-height:1.5;">
+      You set every input. This shows the arithmetic only — it does not tell you what to trade. Numbers are 1-contract backtest drawdowns (mid-fills, no slippage/fees) so live is worse. Not financial advice.
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;margin-bottom:14px;">
+      <label style="font-size:11px;color:var(--text2);">Account&nbsp;$<br>
+        <input id="szAcct" type="number" value="55000" step="1000" min="0"
+          style="margin-top:3px;width:110px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px 8px;font-family:'JetBrains Mono',monospace;font-size:13px;"
+          oninput="_sizingCompute()"></label>
+      <label style="font-size:11px;color:var(--text2);">Risk budget&nbsp;% of account<br>
+        <input id="szRisk" type="number" value="25" step="1" min="0" max="100"
+          style="margin-top:3px;width:80px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px 8px;font-family:'JetBrains Mono',monospace;font-size:13px;"
+          oninput="_sizingCompute()"></label>
+      <label style="font-size:11px;color:var(--text2);">Stress&nbsp;× backtest DD<br>
+        <input id="szStress" type="number" value="2" step="0.5" min="1" max="5"
+          style="margin-top:3px;width:70px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px 8px;font-family:'JetBrains Mono',monospace;font-size:13px;"
+          oninput="_sizingCompute()"></label>
+      <div style="font-size:11px;color:var(--text2);">Slice method<br>
+        <span style="display:inline-flex;margin-top:3px;gap:0;">
+          <button id="szModeOpt"  class="schwab-btn primary" onclick="_sizingMode('opt')"  style="border-radius:6px 0 0 6px;font-size:11px;padding:6px 10px;">Optimizer weights</button>
+          <button id="szModeRP"   class="schwab-btn"         onclick="_sizingMode('rp')"   style="border-radius:0 6px 6px 0;font-size:11px;padding:6px 10px;">Risk-parity (1÷DD)</button>
+        </span>
+      </div>
+    </div>
+    <div id="sizingCalcResults" style="font-size:12px;color:var(--text3);">Loading history…</div>
+  </div>
+
   <div id="content">
     <div class="spinner-wrap">
       <div class="spinner"></div>
@@ -1304,8 +1335,129 @@ const CHART_SECTIONS = [
   { id: 'riskCard',       fn: () => renderRisk(),        name: 'risk' },
 ];
 
+// ===== Position-Sizing Calculator (informational tool — no recommendations) =====
+// All pure float arithmetic over allRows (~436 rows). NO toLocaleDateString,
+// NO Date parsing, NO canvas — cannot reintroduce the iOS main-thread stall.
+const _SZ_KEYS = [['m8bf','M8BF','m8bfPL'],['strad','Straddle','stradPL'],
+  ['gxbf','GXBF','gxbfPL'],['bobf','BOBF','bobfPL'],['diagonal','Diagonal','diagPL']];
+let _szMode = 'opt';
+
+function _szPerStratMaxDD() {
+  const out = {};
+  for (const [k,, f] of _SZ_KEYS) {
+    let cum=0, peak=0, mdd=0;
+    for (const r of allRows) {
+      const v = r[f];
+      if (v == null || v === 0) continue;
+      cum += v; if (cum > peak) peak = cum;
+      const dd = cum - peak; if (dd < mdd) mdd = dd;
+    }
+    out[k] = Math.abs(mdd) || 0;
+  }
+  return out;
+}
+function _szCombined(contracts, stress) {
+  // stress applied to the combined series too, so the headline combined
+  // number is consistent with the per-strategy stressed column and never
+  // understates live risk (drawdown of a sum scaled by the same factor —
+  // a deliberate, conservative simplification, same as dd*stress per strat).
+  const s = Math.max(1, stress || 1);
+  let cum=0, peak=0, mdd=0, worst=0;
+  for (const r of allRows) {
+    let day=0, traded=false;
+    for (const [k,, f] of _SZ_KEYS) {
+      const v = r[f];
+      if (v != null && v !== 0) { day += v * (contracts[k]||0); traded = true; }
+    }
+    if (!traded) continue;
+    if (day < worst) worst = day;
+    cum += day; if (cum > peak) peak = cum;
+    const dd = cum - peak; if (dd < mdd) mdd = dd;
+  }
+  return { maxDD: Math.abs(mdd) * s, worstDay: Math.abs(worst) * s };
+}
+function _sizingMode(m) {
+  _szMode = m;
+  document.getElementById('szModeOpt').className = 'schwab-btn' + (m==='opt'?' primary':'');
+  document.getElementById('szModeRP').className  = 'schwab-btn' + (m==='rp' ?' primary':'');
+  _sizingCompute();
+}
+function _sizingCompute() {
+  const el = document.getElementById('sizingCalcResults');
+  if (!el) return;
+  if (!allRows || !allRows.length) { el.textContent = 'Loading history…'; return; }
+  const acct   = Math.max(0, parseFloat(document.getElementById('szAcct').value)   || 0);
+  const riskPct= Math.max(0, parseFloat(document.getElementById('szRisk').value)   || 0);
+  const stress = Math.max(1, parseFloat(document.getElementById('szStress').value) || 1);
+  const dd = _szPerStratMaxDD();
+  const pool = acct * riskPct / 100;
+
+  // Weights: optimizer (reads the live allocation sliders) vs risk-parity 1/stressedDD
+  const w = {};
+  if (_szMode === 'opt') {
+    const tot = (allocWeights.m8bf+allocWeights.strad+allocWeights.gxbf+allocWeights.bobf+allocWeights.diagonal) || 1;
+    for (const [k] of _SZ_KEYS) w[k] = allocWeights[k] / tot;
+  } else {
+    let inv = {}, s = 0;
+    for (const [k] of _SZ_KEYS) { const sdd = (dd[k]*stress) || 1; inv[k] = 1/sdd; s += inv[k]; }
+    for (const [k] of _SZ_KEYS) w[k] = inv[k] / (s || 1);
+  }
+
+  const contracts = {};
+  let body = '';
+  for (const [k,label] of _SZ_KEYS) {
+    const sdd    = dd[k] * stress;
+    const sleeve = pool * w[k];
+    const ratio  = sdd > 0 ? sleeve / sdd : 0;
+    const traded = dd[k] > 0;          // strategy has history
+    // Every active strategy runs at least 1 contract (base). The math tells
+    // you when you can justify MORE. ratio < 1 = pool can't even cover the
+    // base 1 at this stress => undercapitalized (flag it red, still counts
+    // as 1 in the combined-risk number so risk is NEVER understated).
+    const ct = traded ? Math.max(1, Math.floor(ratio)) : 0;
+    contracts[k] = ct;
+    let ctTxt;
+    if (!traded)            ctTxt = '<span style="color:var(--text3)">—</span>';
+    else if (ratio < 1)     ctTxt = `<span style="color:#ef4444;font-weight:700">1 ⚠ under-capitalized</span>`;
+    else                    ctTxt = `<span style="color:#22c55e;font-weight:700">${ct}</span>`;
+    body += `<tr><td>${label}</td><td>${(w[k]*100).toFixed(0)}%</td>`
+         +  `<td>$${Math.round(sleeve).toLocaleString()}</td>`
+         +  `<td>$${Math.round(dd[k]).toLocaleString()}</td>`
+         +  `<td>$${Math.round(sdd).toLocaleString()}</td>`
+         +  `<td>${ratio.toFixed(2)}</td><td>${ctTxt}</td></tr>`;
+  }
+  const comb = _szCombined(contracts, stress);
+  const pctAcct = acct ? (comb.maxDD/acct*100) : 0;
+  const headroom = pool - comb.maxDD;
+  const hColor = headroom >= 0 ? '#22c55e' : '#ef4444';
+
+  el.innerHTML =
+    `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:560px">
+      <thead><tr style="color:var(--text3);text-align:left">
+        <th style="padding:6px">Strategy</th><th style="padding:6px">Weight</th>
+        <th style="padding:6px">Sleeve $</th><th style="padding:6px">Backtest DD (1ct)</th>
+        <th style="padding:6px">Stressed DD</th><th style="padding:6px">Ratio</th>
+        <th style="padding:6px">Contracts</th></tr></thead>
+      <tbody>${body.replace(/<td>/g,'<td style="padding:6px">')}</tbody></table></div>
+    <div style="margin-top:12px;padding:10px 12px;background:var(--bg3);border-radius:8px;font-size:12px;line-height:1.6;">
+      <b>Risk pool</b> ($${Math.round(pool).toLocaleString()} = ${riskPct}% of $${Math.round(acct).toLocaleString()})
+      &nbsp;·&nbsp; <b>Combined stressed max DD</b> at this mix:
+      <span style="color:#ef4444;font-weight:700">$${Math.round(comb.maxDD).toLocaleString()}</span>
+      (${pctAcct.toFixed(1)}% of account)
+      &nbsp;·&nbsp; worst combined day <span style="color:#ef4444">$${Math.round(comb.worstDay).toLocaleString()}</span>
+      &nbsp;·&nbsp; headroom vs pool: <span style="color:${hColor};font-weight:700">$${Math.round(headroom).toLocaleString()}</span>
+      <div style="margin-top:6px;color:var(--text3)">
+        Every active strategy counts as <b>at least 1 contract</b> (your base); the math only tells you when a sleeve can justify <b>more</b>.
+        <span style="color:#ef4444">⚠ under-capitalized</span> = your pool can't even cover that strategy's base contract at this stress (risk is still counted as 1, never understated).
+        Negative headroom = this mix's stressed drawdown exceeds your own risk pool.
+        Toggle Optimizer vs Risk-parity to see how the slice changes who scales — same data, different philosophy. You decide which (if any) to use.
+      </div>
+    </div>`;
+}
+
 function renderAll() {
   safeRender('stats', renderStats);
+  safeRender('sizing', _sizingCompute);
 
   if (IS_MOBILE) {
     // Mobile: do NOT auto-render charts. The IntersectionObserver approach
