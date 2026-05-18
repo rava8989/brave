@@ -174,38 +174,8 @@
     .heatmap-day:hover .heatmap-tip{display:block;}
     .heatmap-tip{display:none;position:absolute;bottom:calc(100% + 4px);left:50%;transform:translateX(-50%);background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-family:'JetBrains Mono',monospace;font-size:10px;white-space:nowrap;z-index:20;box-shadow:var(--shadow);color:var(--text);}
 
-    /* Monte Carlo */
-    .mc-controls{display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap;}
-    .mc-input{width:80px;font-size:11px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-family:'JetBrains Mono',monospace;}
-
-    /* Correlation matrix */
-    .corr-grid{display:grid;gap:2px;margin-top:10px;}
-    .corr-cell{padding:8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;border-radius:4px;}
-    .corr-header{font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text2);padding:6px;text-align:center;}
-
-    /* Allocation sliders */
-    .alloc-controls{display:flex;flex-direction:column;gap:10px;margin-bottom:12px;}
-    .alloc-row{display:flex;align-items:center;gap:10px;}
-    .alloc-label{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;min-width:80px;}
-    .alloc-slider{flex:1;max-width:300px;accent-color:var(--accent);}
-    .alloc-value{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;min-width:40px;color:var(--accent);}
-    .alloc-stats{display:flex;gap:16px;flex-wrap:wrap;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text2);}
-    .alloc-stats span{font-weight:700;color:var(--text);}
-
-    /* Risk analysis */
-    .risk-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:12px;}
-    .risk-section{padding:14px 16px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg3);}
-    .risk-section-title{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);margin-bottom:10px;}
-    .risk-row{display:flex;justify-content:space-between;padding:4px 0;font-size:12px;font-family:'JetBrains Mono',monospace;border-bottom:1px solid var(--border);}
-    .risk-row:last-child{border-bottom:none;}
-    .risk-label{color:var(--text2);}
-    .risk-value{font-weight:700;color:var(--text);}
-    .risk-value.green{color:#22c55e;}
-    .risk-value.red{color:#ef4444;}
-    .risk-value.amber{color:#f59e0b;}
-    .risk-bar{height:6px;border-radius:3px;background:var(--border);margin-top:4px;overflow:hidden;}
-    .risk-bar-fill{height:100%;border-radius:3px;}
-    @media(max-width:768px){.risk-grid{grid-template-columns:1fr;}}
+    /* Monte Carlo / Correlation Matrix / Allocation Optimizer / Risk Analysis
+       styles moved to multi-strategy-tester.html along with their panels. */
 
     @media(max-width:768px){
       .nav{flex-wrap:wrap;}
@@ -233,7 +203,7 @@
     /* Print */
     @media print{
       body{background:#fff;color:#000;}
-      .header,.filter-bar,.strat-toggles,.rolling-pills,.theme-toggle,.mc-controls,.alloc-controls,.schwab-btn,.filter-pill{display:none !important;}
+      .header,.filter-bar,.strat-toggles,.rolling-pills,.theme-toggle,.schwab-btn,.filter-pill{display:none !important;}
       .chart-card,.heatmap-section,.stats-grid,.stat-card{box-shadow:none;border:1px solid #ddd;break-inside:avoid;background:#fff;}
       .stat-card .stat-label{color:#666;}
       .stat-card .stat-value{color:#000;}
@@ -340,44 +310,9 @@
     </div>
   </div>
 
-  <div class="chart-card" id="monteCarloCard" style="display:none">
-    <div class="chart-card-header">
-      <span class="chart-card-title">Monte Carlo Simulation</span>
-    </div>
-    <div class="mc-controls">
-      <span class="filter-label">Iterations</span>
-      <input type="number" class="mc-input" id="mcIter" value="1000" min="100" max="10000">
-      <button class="schwab-btn primary" onclick="runMonteCarlo()">Run Simulation</button>
-    </div>
-    <div style="position:relative;height:320px;">
-      <canvas id="mcChart"></canvas>
-    </div>
-  </div>
-
-  <div class="chart-card" id="corrCard" style="display:none">
-    <div class="chart-card-header">
-      <span class="chart-card-title">Correlation Matrix</span>
-    </div>
-    <div id="corrContainer"></div>
-  </div>
-
-  <div class="chart-card" id="allocCard" style="display:none">
-    <div class="chart-card-header">
-      <span class="chart-card-title">Allocation Optimizer</span>
-    </div>
-    <div class="alloc-controls" id="allocControls"></div>
-    <div class="alloc-stats" id="allocStats"></div>
-    <div style="position:relative;height:280px;margin-top:12px;">
-      <canvas id="allocChart"></canvas>
-    </div>
-  </div>
-
-  <div class="chart-card" id="riskCard" style="display:none">
-    <div class="chart-card-header">
-      <span class="chart-card-title">Risk Analysis</span>
-    </div>
-    <div id="riskContainer"></div>
-  </div>
+  <!-- Monte Carlo, Correlation Matrix, Allocation Optimizer and Risk Analysis
+       panels moved to multi-strategy-tester.html (Optimizer / Correlation /
+       Monte Carlo / Risk tabs). -->
 
   </div><!-- end dashboardWrap -->
 
@@ -667,9 +602,10 @@ let logScale = false;
 let barChartMode = 'monthly';
 let cumChart = null;
 let barChart = null;
-let mcChart = null;
-let allocChart = null;
 let sortedRows = []; // module-level for tooltip reference
+// allocWeights is retained because the position-sizing helper
+// _sizingUseOptimizer() still reads it; the Allocation Optimizer panel that
+// also used it has moved to multi-strategy-tester.html.
 const allocWeights = { m8bf:20, strad:20, gxbf:20, bobf:20, diagonal:20 };
 
 // ══════════════════════════════════════════════════════════════
@@ -1302,9 +1238,6 @@ const CHART_SECTIONS = [
   { id: 'chartCard',      fn: () => renderChart(),       name: 'chart' },
   { id: 'barChartCard',   fn: () => renderBarChart(),    name: 'barChart' },
   { id: 'heatmapSection', fn: () => renderHeatmap(),     name: 'heatmap' },
-  { id: 'corrCard',       fn: () => renderCorrelation(), name: 'correlation' },
-  { id: 'allocCard',      fn: () => renderAllocation(),  name: 'allocation' },
-  { id: 'riskCard',       fn: () => renderRisk(),        name: 'risk' },
 ];
 
 // ===== Position-Sizing Calculator (informational tool — no recommendations) =====
@@ -1522,15 +1455,11 @@ function renderAll() {
     }
   } else {
     // Desktop: still need Chart.js (was previously sync-loaded in <head>).
-    // Heatmap/correlation/risk don't need Chart.js — render them immediately.
+    // Heatmap doesn't need Chart.js — render it immediately.
     safeRender('heatmap',     renderHeatmap);
-    safeRender('correlation', renderCorrelation);
     loadChartJS().then(() => {
       safeRender('chart',       renderChart);
       safeRender('barChart',    renderBarChart);
-      safeRender('allocation',  renderAllocation);
-      safeRender('risk',        renderRisk);
-      document.getElementById('monteCarloCard').style.display = rows.length ? '' : 'none';
     }).catch(e => console.error('[history] Chart.js load failed', e));
   }
 }
@@ -1541,13 +1470,12 @@ function ensureMobileChartsCTA() {
     const el = document.getElementById(s.id);
     if (el) el.style.display = 'none';
   }
-  document.getElementById('monteCarloCard').style.display = 'none';
 
   // Release every chart <canvas> backing store. Even a display:none canvas
   // holds a width*height*4*9 (iPhone DPR-3) buffer in WebKit. Shrinking to
   // 0x0 frees it immediately; Chart.js re-sizes the canvas to its container
   // when the user taps "Show charts", so this is fully reversible and safe.
-  for (const cv of document.querySelectorAll('.chart-card canvas, #monteCarloCard canvas')) {
+  for (const cv of document.querySelectorAll('.chart-card canvas')) {
     cv.width = 0; cv.height = 0;
   }
 
@@ -1561,7 +1489,7 @@ function ensureMobileChartsCTA() {
     <div style="margin-bottom:10px;font-weight:600;color:var(--text)">Charts &amp; analytics</div>
     <div style="margin-bottom:12px;font-size:12px;line-height:1.4;">
       Hidden by default on mobile to keep the page light.
-      Tap to render the equity curve, P/L distribution, heatmap, correlation matrix, allocation optimizer, risk analysis, and Monte Carlo.
+      Tap to render the equity curve, P/L distribution, and heatmap.
     </div>
     <button id="mobileChartsCTABtn"
       style="background:var(--accent);color:#000;border:none;padding:10px 18px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px">
@@ -1594,7 +1522,6 @@ async function enableMobileCharts() {
   const cta = document.getElementById('mobileChartsCTA');
   if (cta) cta.remove();
 
-  document.getElementById('monteCarloCard').style.display = rows.length ? '' : 'none';
   await renderMobileChartsSerially();
 }
 
@@ -1922,511 +1849,12 @@ function renderHeatmap() {
 }
 
 // ══════════════════════════════════════════════════════════════
-// MONTE CARLO
+// MONTE CARLO / CORRELATION MATRIX / ALLOCATION OPTIMIZER / RISK
+// ANALYSIS — moved to multi-strategy-tester.html (Optimizer /
+// Correlation / Monte Carlo / Risk tabs). runMonteCarlo,
+// renderCorrelation, renderAllocation, updateAlloc, updateAllocChart,
+// optimizeAlloc and renderRisk now live there, byte-identical.
 // ══════════════════════════════════════════════════════════════
-
-function runMonteCarlo() {
-  const card = document.getElementById('monteCarloCard');
-  card.style.display = '';
-
-  const sorted = rows.slice().sort((a,b) => a.date.localeCompare(b.date));
-  const pls = [];
-  for (const row of sorted) {
-    const pl = getRowPL(row);
-    if (pl !== null) pls.push(pl);
-  }
-  if (pls.length < 2) return;
-
-  const iterations = Math.min(Math.max(parseInt(document.getElementById('mcIter').value) || 1000, 100), 10000);
-  const n = pls.length;
-
-  // Run simulations
-  const allCurves = [];
-  for (let iter = 0; iter < iterations; iter++) {
-    // Fisher-Yates shuffle
-    const shuffled = pls.slice();
-    for (let i = n - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-    }
-    const curve = [0];
-    let cum = 0;
-    for (const pl of shuffled) {
-      cum += pl;
-      curve.push(cum);
-    }
-    allCurves.push(curve);
-  }
-
-  // Compute percentiles at each step
-  const steps = n + 1;
-  const percentiles = [5, 25, 50, 75, 95];
-  const bands = percentiles.map(() => []);
-
-  for (let step = 0; step < steps; step++) {
-    const vals = allCurves.map(c => c[step]).sort((a,b) => a-b);
-    for (let p = 0; p < percentiles.length; p++) {
-      const idx = Math.floor(percentiles[p] / 100 * vals.length);
-      bands[p].push(vals[Math.min(idx, vals.length - 1)]);
-    }
-  }
-
-  // Actual equity curve
-  const actual = [0];
-  let cum = 0;
-  for (const pl of pls) { cum += pl; actual.push(cum); }
-
-  const labels = Array.from({length:steps}, (_,i) => i);
-  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-  const tickColor = isDark ? '#94a3b8' : '#475569';
-  const gridColor = isDark ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.08)';
-
-  const cfg = {
-    type:'line',
-    data:{
-      labels,
-      datasets:[
-        { label:'95th', data:bands[4], borderColor:'rgba(34,197,94,.3)', backgroundColor:'rgba(34,197,94,.08)', fill:'+1', borderWidth:0, pointRadius:0 },
-        { label:'75th', data:bands[3], borderColor:'rgba(34,197,94,.4)', backgroundColor:'rgba(34,197,94,.12)', fill:'+1', borderWidth:0, pointRadius:0 },
-        { label:'Median', data:bands[2], borderColor:'rgba(148,163,184,.6)', backgroundColor:'transparent', borderWidth:1.5, borderDash:[4,4], pointRadius:0 },
-        { label:'25th', data:bands[1], borderColor:'rgba(239,68,68,.4)', backgroundColor:'rgba(239,68,68,.12)', fill:'+1', borderWidth:0, pointRadius:0 },
-        { label:'5th', data:bands[0], borderColor:'rgba(239,68,68,.3)', backgroundColor:'rgba(239,68,68,.08)', fill:'origin', borderWidth:0, pointRadius:0 },
-        { label:'Actual', data:actual, borderColor:isDark?'#e2e8f0':'#1e293b', backgroundColor:'transparent', borderWidth:2.5, pointRadius:0 },
-      ]
-    },
-    options:{
-      responsive:true, maintainAspectRatio:false,
-      animation:{ duration:800 },
-      plugins:{
-        legend:{ position:'top', labels:{ color:tickColor, font:{size:11} } },
-        tooltip:{ callbacks:{ label: ctx => `${ctx.dataset.label}: $${Math.round(ctx.parsed.y).toLocaleString()}` } },
-      },
-      scales:{
-        x:{ title:{display:true, text:'Trade #', color:tickColor}, ticks:{ color:tickColor, maxTicksLimit:10, font:{size:10} }, grid:{ color:gridColor } },
-        y:{ ticks:{ color:tickColor, font:{size:10}, callback: v => '$'+v.toLocaleString() }, grid:{ color:gridColor } },
-      },
-    },
-  };
-
-  if (mcChart) { mcChart.destroy(); mcChart = null; }
-  mcChart = new Chart(document.getElementById('mcChart'), cfg);
-}
-
-// ══════════════════════════════════════════════════════════════
-// CORRELATION MATRIX
-// ══════════════════════════════════════════════════════════════
-
-function renderCorrelation() {
-  const card = document.getElementById('corrCard');
-  const container = document.getElementById('corrContainer');
-  const sorted = rows.slice().sort((a,b) => a.date.localeCompare(b.date));
-  if (!sorted.length) { card.style.display='none'; return; }
-  card.style.display = '';
-
-  const strats = ['m8bf','strad','gxbf','bobf','diagonal'];
-  const stratLabels = {m8bf:'M8BF', strad:'Straddle', gxbf:'GXBF', bobf:'BOBF', diagonal:'Diagonal'};
-
-  // Build daily P/L by strategy
-  const dailyPL = {};
-  for (const k of strats) dailyPL[k] = {};
-  for (const row of sorted) {
-    const s = row.signal || {};
-    if (s.m8bfRan && row.m8bfPL != null) dailyPL.m8bf[row.date] = row.m8bfPL;
-    if (s.stradRan && row.stradPL != null) dailyPL.strad[row.date] = row.stradPL;
-    if (row.gxbfPL != null) dailyPL.gxbf[row.date] = row.gxbfPL;
-    if (s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) dailyPL.bobf[row.date] = row.bobfPL;
-    // Diagonal: diagPL is null on filtered days (OPEX-1, EOM, EOM-1, NM, or
-    // VIX 40-90% dead-zone per the canonical 5-filter stack) or no-data days.
-    // A non-null value means the strategy actually traded — matches convention
-    // used by allocation optimizer and equity chart. Computed by
-    // compute_diagonal_pnl.py with DEFAULT_PARAMS (entry anywhere in 12:30–15:00
-    // ET window, exit at same clock time next day, 1/25 DTE, +30 ITM, -40 below
-    // (long 10 OTM); 2026-04-29 default update).
-    if (row.diagPL != null) dailyPL.diagonal[row.date] = row.diagPL;
-  }
-
-  function pearson(a, b) {
-    const keys = Object.keys(dailyPL[a]).filter(d => d in dailyPL[b]);
-    if (keys.length < 3) return null;
-    const va = keys.map(k => dailyPL[a][k]);
-    const vb = keys.map(k => dailyPL[b][k]);
-    const n = va.length;
-    const ma = va.reduce((s,v) => s+v, 0) / n;
-    const mb = vb.reduce((s,v) => s+v, 0) / n;
-    let num = 0, da = 0, db = 0;
-    for (let i = 0; i < n; i++) {
-      const x = va[i] - ma, y = vb[i] - mb;
-      num += x * y;
-      da += x * x;
-      db += y * y;
-    }
-    const denom = Math.sqrt(da * db);
-    return denom > 0 ? num / denom : 0;
-  }
-
-  const size = strats.length + 1;
-  let html = `<div class="corr-grid" style="grid-template-columns:repeat(${size},1fr);">`;
-  // Header row
-  html += `<div class="corr-header"></div>`;
-  for (const s of strats) html += `<div class="corr-header">${stratLabels[s]}</div>`;
-  // Data rows
-  for (const a of strats) {
-    html += `<div class="corr-header">${stratLabels[a]}</div>`;
-    for (const b of strats) {
-      if (a === b) {
-        html += `<div class="corr-cell" style="background:rgba(99,102,241,.3);color:var(--text)">1.00</div>`;
-      } else {
-        const r = pearson(a, b);
-        if (r === null) {
-          html += `<div class="corr-cell" style="background:var(--bg3);color:var(--text3)">—</div>`;
-        } else {
-          // Color: red(-1) → neutral(0) → green(+1)
-          const h = r > 0 ? 142 : 0;
-          const intensity = Math.abs(r);
-          const bg = `hsla(${h},70%,50%,${intensity * 0.4})`;
-          html += `<div class="corr-cell" style="background:${bg};color:var(--text)">${r.toFixed(2)}</div>`;
-        }
-      }
-    }
-  }
-  html += `</div>`;
-  container.innerHTML = html;
-}
-
-// ══════════════════════════════════════════════════════════════
-// ALLOCATION OPTIMIZER
-// ══════════════════════════════════════════════════════════════
-
-function renderAllocation() {
-  const card = document.getElementById('allocCard');
-  const sorted = rows.slice().sort((a,b) => a.date.localeCompare(b.date));
-  if (!sorted.length) { card.style.display='none'; return; }
-  card.style.display = '';
-
-  const controls = document.getElementById('allocControls');
-  const strats = [
-    {key:'m8bf', label:'M8BF', color:'#a78bfa'},
-    {key:'strad', label:'Straddle', color:'#22d3ee'},
-    {key:'gxbf', label:'GXBF', color:'#2dd4bf'},
-    {key:'bobf', label:'BOBF', color:'#fb923c'},
-    {key:'diagonal', label:'Diagonal', color:'#4ade80'},
-  ];
-
-  controls.innerHTML = strats.map(s =>
-    `<div class="alloc-row">
-      <span class="alloc-label" style="color:${s.color}">${s.label}</span>
-      <input type="range" class="alloc-slider" min="0" max="100" step="5" value="${allocWeights[s.key]}" oninput="updateAlloc('${s.key}',this.value)">
-      <span class="alloc-value" id="alloc-val-${s.key}">${allocWeights[s.key]}%</span>
-    </div>`
-  ).join('') + `<button class="schwab-btn primary" onclick="optimizeAlloc()" style="align-self:flex-start;margin-top:4px">Optimize (Best Sharpe)</button>`;
-
-  updateAllocChart();
-}
-
-function updateAlloc(key, val) {
-  allocWeights[key] = parseInt(val);
-  document.getElementById(`alloc-val-${key}`).textContent = val + '%';
-  updateAllocChart();
-}
-
-function updateAllocChart() {
-  const sorted = rows.slice().sort((a,b) => a.date.localeCompare(b.date));
-
-  // Build daily P/L per strategy
-  const stratPLs = {m8bf:[], strad:[], gxbf:[], bobf:[], diagonal:[]};
-  const dates = [];
-  for (const row of sorted) {
-    const s = row.signal || {};
-    const m = (s.m8bfRan && row.m8bfPL != null) ? row.m8bfPL : 0;
-    const st = (s.stradRan && row.stradPL != null) ? row.stradPL : 0;
-    const g = row.gxbfPL != null ? row.gxbfPL : 0;
-    const b = (s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) ? row.bobfPL : 0;
-    const dg = row.diagPL != null ? row.diagPL : 0;
-    if (m || st || g || b || dg) {
-      stratPLs.m8bf.push(m); stratPLs.strad.push(st); stratPLs.gxbf.push(g); stratPLs.bobf.push(b); stratPLs.diagonal.push(dg);
-      dates.push(row.date);
-    }
-  }
-
-  const totalWeight = (allocWeights.m8bf + allocWeights.strad + allocWeights.gxbf + allocWeights.bobf + allocWeights.diagonal) || 1;
-  const w = {
-    m8bf: allocWeights.m8bf / totalWeight,
-    strad: allocWeights.strad / totalWeight,
-    gxbf: allocWeights.gxbf / totalWeight,
-    bobf: allocWeights.bobf / totalWeight,
-    diagonal: allocWeights.diagonal / totalWeight,
-  };
-
-  const weightedPLs = [];
-  const cumData = [];
-  let cum = 0;
-  for (let i = 0; i < dates.length; i++) {
-    const wpl = w.m8bf * stratPLs.m8bf[i] + w.strad * stratPLs.strad[i] + w.gxbf * stratPLs.gxbf[i] + w.bobf * stratPLs.bobf[i] + w.diagonal * stratPLs.diagonal[i];
-    weightedPLs.push(wpl);
-    cum += wpl;
-    cumData.push(cum);
-  }
-
-  // Compute weighted stats
-  const n = weightedPLs.length;
-  const totalPL = weightedPLs.reduce((a,b) => a+b, 0);
-  const mean = n > 0 ? totalPL / n : 0;
-  const variance = n > 0 ? weightedPLs.reduce((s,v) => s + (v - mean) ** 2, 0) / n : 0;
-  const sharpe = variance > 0 ? mean / Math.sqrt(variance) : 0;
-
-  let peak = 0, maxDD = 0, peakAtMaxDD = 0;
-  cum = 0;
-  for (const pl of weightedPLs) {
-    cum += pl;
-    if (cum > peak) peak = cum;
-    const dd = peak - cum;
-    if (dd > maxDD) { maxDD = dd; peakAtMaxDD = peak; }
-  }
-  const maxDDPct = peakAtMaxDD > 0 ? (maxDD / peakAtMaxDD) * 100 : 0;
-
-  const statsEl = document.getElementById('allocStats');
-  statsEl.innerHTML = `P/L: <span>$${Math.round(totalPL).toLocaleString()}</span> | Sharpe: <span>${sharpe.toFixed(2)}</span> | MaxDD: <span>$${Math.round(maxDD).toLocaleString()} (${maxDDPct.toFixed(1)}%)</span> | Weights: <span>${allocWeights.m8bf}/${allocWeights.strad}/${allocWeights.gxbf}/${allocWeights.bobf}/${allocWeights.diagonal}</span>`;
-
-  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-  const tickColor = isDark ? '#94a3b8' : '#475569';
-  const gridColor = isDark ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.08)';
-
-  const cfg = {
-    type:'line',
-    data:{
-      labels: dates,
-      datasets:[{
-        label:'Weighted Equity',
-        data: cumData,
-        borderColor: isDark ? '#e2e8f0' : '#1e293b',
-        backgroundColor: isDark ? 'rgba(226,232,240,.08)' : 'rgba(30,41,59,.08)',
-        fill:true, tension:.3, borderWidth:2, pointRadius:0
-      }]
-    },
-    options:{
-      responsive:true, maintainAspectRatio:false,
-      animation:{ duration:600 },
-      plugins:{ legend:{ display:false } },
-      scales:{
-        x:{ ticks:{ color:tickColor, maxTicksLimit:10, font:{size:10} }, grid:{ color:gridColor } },
-        y:{ ticks:{ color:tickColor, font:{size:10}, callback: v => '$'+v.toLocaleString() }, grid:{ color:gridColor } },
-      },
-    },
-  };
-
-  if (allocChart) { allocChart.destroy(); allocChart = null; }
-  allocChart = new Chart(document.getElementById('allocChart'), cfg);
-}
-
-function optimizeAlloc() {
-  const sorted = rows.slice().sort((a,b) => a.date.localeCompare(b.date));
-
-  // Build daily P/L per strategy
-  const stratPLs = {m8bf:[], strad:[], gxbf:[], bobf:[], diagonal:[]};
-  for (const row of sorted) {
-    const s = row.signal || {};
-    const m = (s.m8bfRan && row.m8bfPL != null) ? row.m8bfPL : 0;
-    const st = (s.stradRan && row.stradPL != null) ? row.stradPL : 0;
-    const g = row.gxbfPL != null ? row.gxbfPL : 0;
-    const b = (s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) ? row.bobfPL : 0;
-    const dg = row.diagPL != null ? row.diagPL : 0;
-    if (m || st || g || b || dg) {
-      stratPLs.m8bf.push(m); stratPLs.strad.push(st); stratPLs.gxbf.push(g); stratPLs.bobf.push(b); stratPLs.diagonal.push(dg);
-    }
-  }
-
-  const n = stratPLs.m8bf.length;
-  if (n < 2) return;
-
-  let bestSharpe = -Infinity;
-  let bestW = {m8bf:20, strad:20, gxbf:20, bobf:20, diagonal:20};
-
-  // Brute force at 10% increments over 5 strategies, sum = 100
-  // Quadruple loop over (m8bf, strad, gxbf, bobf); diagonal = remainder.
-  // Step 10 ⇒ C(14,4) = 1001 combinations, plenty fast.
-  const STEP = 10;
-  for (let a = 0; a <= 100; a += STEP) {
-    for (let b = 0; b <= 100 - a; b += STEP) {
-      for (let c = 0; c <= 100 - a - b; c += STEP) {
-        for (let d = 0; d <= 100 - a - b - c; d += STEP) {
-          const e = 100 - a - b - c - d;
-          const wa = a/100, wb = b/100, wc = c/100, wd = d/100, we = e/100;
-          let sum = 0, sumSq = 0;
-          for (let i = 0; i < n; i++) {
-            const pl = wa * stratPLs.m8bf[i] + wb * stratPLs.strad[i] + wc * stratPLs.gxbf[i] + wd * stratPLs.bobf[i] + we * stratPLs.diagonal[i];
-            sum += pl;
-            sumSq += pl * pl;
-          }
-          const mean = sum / n;
-          const variance = sumSq / n - mean * mean;
-          const sharpe = variance > 0 ? mean / Math.sqrt(variance) : 0;
-          if (sharpe > bestSharpe) {
-            bestSharpe = sharpe;
-            bestW = {m8bf:a, strad:b, gxbf:c, bobf:d, diagonal:e};
-          }
-        }
-      }
-    }
-  }
-
-  // Apply best weights
-  for (const k of ['m8bf','strad','gxbf','bobf','diagonal']) {
-    allocWeights[k] = bestW[k];
-    const slider = document.querySelector(`.alloc-slider[oninput*="${k}"]`);
-    if (slider) slider.value = bestW[k];
-    const valEl = document.getElementById(`alloc-val-${k}`);
-    if (valEl) valEl.textContent = bestW[k] + '%';
-  }
-  updateAllocChart();
-}
-
-// ══════════════════════════════════════════════════════════════
-// RISK ANALYSIS
-// ══════════════════════════════════════════════════════════════
-
-function renderRisk() {
-  const card = document.getElementById('riskCard');
-  const container = document.getElementById('riskContainer');
-  const sorted = rows.slice().sort((a,b) => a.date.localeCompare(b.date));
-  if (!sorted.length) { card.style.display='none'; return; }
-  card.style.display = '';
-
-  // Collect all P/Ls
-  const pls = [];
-  for (const row of sorted) {
-    const pl = getRowPL(row);
-    if (pl !== null) pls.push(pl);
-  }
-  if (!pls.length) { container.innerHTML = ''; return; }
-
-  const wins = pls.filter(v => v > 0);
-  const losses = pls.filter(v => v < 0);
-  const winRate = wins.length / pls.length;
-  const avgWin = wins.length ? wins.reduce((a,b) => a+b, 0) / wins.length : 0;
-  const avgLoss = losses.length ? Math.abs(losses.reduce((a,b) => a+b, 0) / losses.length) : 0;
-
-  // === KELLY CRITERION ===
-  // Kelly % = W - (1-W)/R where W=win rate, R=avg win/avg loss ratio
-  const R = avgLoss > 0 ? avgWin / avgLoss : 0;
-  const kelly = R > 0 ? (winRate - (1 - winRate) / R) * 100 : 0;
-  const halfKelly = kelly / 2;
-  const kellyColor = kelly > 20 ? 'green' : kelly > 0 ? 'amber' : 'red';
-
-  // === CONSECUTIVE LOSS PROBABILITY ===
-  // P(N consecutive losses) = (1-winRate)^N
-  const lossRate = 1 - winRate;
-  const streaks = [3, 5, 7, 10, 15];
-  const streakProbs = streaks.map(n => ({
-    n,
-    prob: Math.pow(lossRate, n) * 100,
-    dollarRisk: Math.round(avgLoss * n),
-  }));
-
-  // === DRAWDOWN ANALYSIS ===
-  let cum = 0, peak = 0, maxDD = 0, peakAtMaxDD = 0;
-  let ddStart = null, ddStartDate = '', maxDDStart = '', maxDDEnd = '';
-  let currentDDDays = 0, maxDDDays = 0;
-  const drawdowns = []; // collect all drawdowns
-  let inDD = false, thisDDStart = '';
-
-  for (let i = 0; i < sorted.length; i++) {
-    const row = sorted[i];
-    const pl = getRowPL(row);
-    if (pl === null) continue;
-    cum += pl;
-    if (cum > peak) {
-      if (inDD) {
-        drawdowns.push({ days: currentDDDays, depth: peak - cum + pl, start: thisDDStart, end: row.date });
-        inDD = false;
-      }
-      peak = cum;
-      currentDDDays = 0;
-    } else {
-      if (!inDD) { inDD = true; thisDDStart = row.date; }
-      currentDDDays++;
-      const dd = peak - cum;
-      if (dd > maxDD) {
-        maxDD = dd;
-        peakAtMaxDD = peak;
-        maxDDStart = thisDDStart;
-        maxDDEnd = row.date;
-        maxDDDays = currentDDDays;
-      }
-    }
-  }
-  if (inDD) drawdowns.push({ days: currentDDDays, depth: peak - cum, start: thisDDStart, end: sorted[sorted.length-1].date });
-  const maxDDPct = peakAtMaxDD > 0 ? (maxDD / peakAtMaxDD) * 100 : 0;
-
-  const avgDDDays = drawdowns.length ? Math.round(drawdowns.reduce((s,d) => s + d.days, 0) / drawdowns.length) : 0;
-  const top3DD = drawdowns.sort((a,b) => b.depth - a.depth).slice(0, 3);
-
-  // === RISK OF RUIN (simplified) ===
-  // Approximate: if you can withstand X consecutive losses before account is gone
-  // With 50% risk per trade at Kelly, ruin is unlikely. Show max loss streak impact.
-  const maxConsecLosses = Math.max(...(function(){ let ml=0,cl=0; for(const p of pls){if(p<0){cl++;if(cl>ml)ml=cl;}else cl=0;} return [ml]; })());
-
-  // === RENDER ===
-  let html = '<div class="risk-grid">';
-
-  // Kelly section
-  html += `<div class="risk-section">
-    <div class="risk-section-title">Kelly Criterion</div>
-    <div class="risk-row"><span class="risk-label">Full Kelly</span><span class="risk-value ${kellyColor}">${kelly.toFixed(1)}%</span></div>
-    <div class="risk-row"><span class="risk-label">Half Kelly (recommended)</span><span class="risk-value ${kellyColor}">${halfKelly.toFixed(1)}%</span></div>
-    <div class="risk-row"><span class="risk-label">Win Rate</span><span class="risk-value">${(winRate*100).toFixed(1)}%</span></div>
-    <div class="risk-row"><span class="risk-label">Win/Loss Ratio</span><span class="risk-value">${R.toFixed(2)}</span></div>
-    <div style="margin-top:8px;font-size:10px;color:var(--text3);line-height:1.4;">
-      Half Kelly = risk ${halfKelly.toFixed(1)}% of account per trade for optimal growth with reduced variance.
-    </div>
-  </div>`;
-
-  // Consecutive loss probability
-  html += `<div class="risk-section">
-    <div class="risk-section-title">Consecutive Loss Probability</div>
-    <div class="risk-row" style="font-size:10px;font-weight:700;color:var(--text3);border-bottom:2px solid var(--border);">
-      <span>Streak</span><span style="min-width:60px;text-align:right">Probability</span><span style="min-width:80px;text-align:right">$ at Risk</span>
-    </div>`;
-  for (const s of streakProbs) {
-    const barPct = Math.min(s.prob, 100);
-    const color = s.prob > 10 ? '#ef4444' : s.prob > 1 ? '#f59e0b' : '#22c55e';
-    html += `<div>
-      <div class="risk-row"><span class="risk-label">${s.n} losses</span><span class="risk-value" style="min-width:60px;text-align:right">${s.prob < 0.01 ? '<0.01' : s.prob.toFixed(2)}%</span><span class="risk-value red" style="min-width:80px;text-align:right">$${s.dollarRisk.toLocaleString()}</span></div>
-      <div class="risk-bar"><div class="risk-bar-fill" style="width:${barPct}%;background:${color}"></div></div>
-    </div>`;
-  }
-  html += `<div class="risk-row" style="margin-top:6px;"><span class="risk-label">Actual worst streak</span><span class="risk-value red">${maxConsecLosses} losses</span></div>`;
-  html += `</div>`;
-
-  // Drawdown analysis
-  html += `<div class="risk-section">
-    <div class="risk-section-title">Drawdown Analysis</div>
-    <div class="risk-row"><span class="risk-label">Max Drawdown</span><span class="risk-value red">$${Math.round(maxDD).toLocaleString()} <span style="opacity:.75;font-weight:500">(${maxDDPct.toFixed(1)}% of peak)</span></span></div>
-    <div class="risk-row"><span class="risk-label">Max DD Period</span><span class="risk-value">${maxDDStart} → ${maxDDEnd}</span></div>
-    <div class="risk-row"><span class="risk-label">Max DD Duration</span><span class="risk-value">${maxDDDays} trading days</span></div>
-    <div class="risk-row"><span class="risk-label">Avg DD Duration</span><span class="risk-value">${avgDDDays} trading days</span></div>
-    <div class="risk-row"><span class="risk-label">Total Drawdown Events</span><span class="risk-value">${drawdowns.length}</span></div>
-  </div>`;
-
-  // Top 3 worst drawdowns
-  html += `<div class="risk-section">
-    <div class="risk-section-title">Worst Drawdowns</div>`;
-  if (top3DD.length) {
-    for (let i = 0; i < top3DD.length; i++) {
-      const d = top3DD[i];
-      html += `<div style="margin-bottom:8px;">
-        <div class="risk-row"><span class="risk-label">#${i+1}</span><span class="risk-value red">$${Math.round(d.depth).toLocaleString()}</span></div>
-        <div class="risk-row"><span class="risk-label">Period</span><span class="risk-value">${d.start} → ${d.end}</span></div>
-        <div class="risk-row"><span class="risk-label">Duration</span><span class="risk-value">${d.days} days</span></div>
-      </div>`;
-    }
-  } else {
-    html += '<div style="color:var(--text3);font-size:12px;">No drawdowns</div>';
-  }
-  html += `</div>`;
-
-  html += '</div>';
-  container.innerHTML = html;
-}
 
 // ══════════════════════════════════════════════════════════════
 // EXPORT PNG
