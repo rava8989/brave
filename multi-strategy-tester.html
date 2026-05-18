@@ -402,8 +402,8 @@ body {
   <div class="strategy-desc">
     Starting Capital → each strategy gets an <strong>Allocation %</strong> of the <em>current</em> portfolio equity
     (Option Omega style — compounding) → contracts → press <code>▶ RUN</code> for the portfolio header KPIs, an equity
-    curve, a per-strategy breakdown, and full trade / daily logs. Capital-per-contract per strategy = its historical
-    1-lot max drawdown × your stress multiplier.
+    curve, a per-strategy breakdown, and full trade / daily logs. Max risk per contract is a fixed value you set
+    per strategy (M8BF $3,000 · GXBF $2,000 · BOBF $1,200 · Straddle $3,500 · Diagonal $11,000).
     <br><br>
     <span style="color:var(--text3);font-size:11px">
       Backtest mid-fills, no slippage / no fees → live execution is worse. The per-strategy P/L and verified KPI
@@ -433,8 +433,8 @@ body {
     <div class="sz-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">
       <div class="sz-field"><label class="sz-label" for="szCap">Starting Capital</label>
         <div class="sz-wrap sz-d"><input id="szCap" class="sz-input" type="number" value="100000" min="1" step="1000"></div></div>
-      <div class="sz-field"><label class="sz-label" for="szStress">Stress × DD <span class="sz-dot" data-tip="Capital-per-contract = each strategy's historical 1-lot max drawdown × this (the $ needed to safely run 1 contract). 1.5–2× assumes live is worse than backtest.">ⓘ</span></label>
-        <input id="szStress" class="sz-input" type="number" value="2" min="1" max="5" step="0.5"></div>
+      <div class="sz-field"><label class="sz-label">Max risk / contract <span class="sz-dot" data-tip="Fixed per strategy (you decide): M8BF $3,000 · GXBF $2,000 · BOBF $1,200 · Straddle $3,500 · Diagonal $11,000. Not auto-calculated.">ⓘ</span></label>
+        <input class="sz-input" type="text" value="M8BF 3000 · GXBF 2000 · BOBF 1200 · Strad 3500 · Diag 11000" readonly style="color:var(--text3);font-size:11px"></div>
       <div class="sz-field"><label class="sz-label" for="szFrom">From <span class="sz-dot" data-tip="Backtest start date. Blank = earliest available. Set after data loads to the full range; narrow it to test a window.">ⓘ</span></label>
         <input id="szFrom" class="sz-input" type="date"></div>
       <div class="sz-field"><label class="sz-label" for="szTo">To</label>
@@ -812,7 +812,6 @@ function _sizingRun() {
   el.dataset.ran = '1';
 
   const startCap = Math.max(1, parseFloat(document.getElementById('szCap').value)    || 1);
-  const stress   = Math.max(1, parseFloat(document.getElementById('szStress').value) || 1);
 
   // Allocation % per strategy (Option Omega "Allocate X% of portfolio").
   const allocPct = {};
@@ -830,10 +829,9 @@ function _sizingRun() {
     return s + Math.round(a).toLocaleString();
   };
 
-  // $ to run 1 contract of each strategy = its historical 1-lot max DD × stress.
-  const dd1 = _szDD1lot();
-  const capPerCt = {};
-  for (const [k] of _SZ_KEYS) capPerCt[k] = (dd1[k] || 0) * stress;
+  // Max risk per contract — FIXED hard values, user-decided. NOT auto-calculated
+  // (no historical drawdown, no stress multiplier). Change only on request.
+  const capPerCt = { m8bf: 3000, strad: 3500, gxbf: 2000, bobf: 1200, diagonal: 11000 };
 
   // ── Path-dependent compounding portfolio simulation (Option Omega style):
   //    each day, each strategy's contracts = floor( alloc% × CURRENT equity ÷
@@ -944,7 +942,9 @@ function _sizingRun() {
      </div>
      <div class="sz-sub">Per strategy</div><div class="sz-strip">${rows.map(miniLine).join('')}</div>
      <div style="margin-top:14px;padding:10px 12px;background:var(--bg3);border-radius:8px;font-size:11px;line-height:1.6;color:var(--text3)">
-       Each strategy is sized daily to <b>Allocation % × current portfolio equity</b> ÷ [ its 1-lot historical max DD × ${stress}× stress ], floored to whole contracts (min 1 if allocated). Equity compounds on the realized combined daily P/L — this is a path-dependent portfolio sim (Option Omega style).
+       <div style="color:var(--text);font-weight:700;margin-bottom:6px">Max risk / contract (fixed — you set these):
+         ${_SZ_KEYS.map(([k,label]) => `${label} <b>${fmt$(capPerCt[k])}</b>`).join(' &nbsp;·&nbsp; ')}</div>
+       Each strategy is sized daily to <b>Allocation % × current portfolio equity</b> ÷ [ its fixed max risk per contract above ], floored to whole contracts (min 1 if allocated). Equity compounds on the realized combined daily P/L — this is a path-dependent portfolio sim (Option Omega style).
        <span style="color:#ef4444">⚠</span> = under-capitalized (forced to 1 contract on some days); 0% allocation = excluded.
        Portfolio KPIs come from the path-dependent equity curve; per-strategy KPIs use the ${fmt$(startCap)} start base for comparability.
        Backtest mid-fills, no slippage/fees → live worse. Total Premium / Capture Rate aren't in history_data.json (shown n/a, not faked).
