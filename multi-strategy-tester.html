@@ -839,7 +839,8 @@ function _sizingRun() {
   let equity = startCap;
   const perStrat = {};
   for (const [k] of _SZ_KEYS)
-    perStrat[k] = { series: [], pnl: 0, ctMin: Infinity, ctMax: 0, wins: 0, n: 0, forced: false };
+    perStrat[k] = { series: [], pnl: 0, ctMin: Infinity, ctMax: 0, wins: 0, n: 0, forced: false,
+                    cum: 0, pk: 0, pkEq: startCap, ddFrac: 0 };
   const combo = [];      // [{date, pnl}] portfolio daily
   const eqCurve = [];    // [{date, eq}] running equity
 
@@ -863,6 +864,14 @@ function _sizingRun() {
       perStrat[k].n++; if (p > 0) perStrat[k].wins++;
       perStrat[k].ctMin = Math.min(perStrat[k].ctMin, contracts);
       perStrat[k].ctMax = Math.max(perStrat[k].ctMax, contracts);
+      // Per-strategy drawdown measured against the COMPOUNDING portfolio
+      // balance (`equity` = account size entering this day), NOT a fixed
+      // $50k base — this is what stops the nonsensical >100% readings.
+      const _ps = perStrat[k];
+      _ps.cum += p;
+      if (_ps.cum > _ps.pk) { _ps.pk = _ps.cum; if (equity > 0) _ps.pkEq = equity; }
+      const _ddf = _ps.pkEq > 0 ? (_ps.cum - _ps.pk) / _ps.pkEq : 0;
+      if (_ddf < _ps.ddFrac) _ps.ddFrac = _ddf;
       dayPnL += p; traded = true;
     }
     if (traded) {
@@ -909,6 +918,10 @@ function _sizingRun() {
   for (const [k,label] of _SZ_KEYS) {
     const ps = perStrat[k];
     const kpi = _szKPIs(ps.series, startCap);
+    // Override drawdown with the compounding-balance figure (fixes >100%);
+    // recompute MAR from it so MAR matches the shown drawdown.
+    kpi.maxDDpct = ps.ddFrac * 100;
+    kpi.mar = kpi.maxDDpct < 0 ? kpi.cagr / Math.abs(kpi.maxDDpct) : 0;
     rows.push([label, k, kpi]);
   }
 
