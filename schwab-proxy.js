@@ -2390,6 +2390,47 @@ async function refreshGxbfLiveQuotes(env, token, etNow, preChain = null) {
   return trade;
 }
 
+// Mark-to-market the open M8BF butterfly every market tick from the shared
+// master chain (zero extra Schwab calls) and stash it in m8bf_live_<date>.
+// Without this, GET /trade has no live mid and live.html falls back to the
+// AT-EXPIRATION intrinsic, which overstates intraday profit while the short
+// body still carries extrinsic (observed: card showed +$1,320 vs ~+$400 real
+// at 11:05). Mirrors refreshBobf/GxbfLiveQuotes. M8BF is stateless (no
+// m8bf_open_trade KV), so the trade is re-derived via the SHARED
+// selectM8bfQualifying — guaranteeing the quoted legs == the /trade legs.
+async function refreshM8bfLiveQuotes(env, token, etNow, preChain = null) {
+  try {
+    if (m8bfBannedReason(etNow)) return;
+    const sel = await selectM8bfQualifying(env, etNow);
+    if (sel.status !== 'open' || !sel.qualifying) return;
+    const q = sel.qualifying;
+    const expDate = sel.todayT;  // M8BF is 0DTE
+    const chain = preChain || await fetchSpxFullChain(token, expDate, env);
+    const spot = chain.spot;
+    // cp 0 = CALL fly, 1 = PUT fly. Long-fly net debit is the same convex
+    // combination of the option mids either way: low − 2·center + high.
+    const map = (q.cp === 1) ? chain.putExpDateMap : chain.callExpDateMap;
+    if (!map) return;
+    const lower  = pickContractFromChain(map, expDate, q.lower);
+    const center = pickContractFromChain(map, expDate, q.center);
+    const upper  = pickContractFromChain(map, expDate, q.upper);
+    if (!lower || !center || !upper ||
+        lower.mid == null || center.mid == null || upper.mid == null) return;
+    const curVal = lower.mid - 2 * center.mid + upper.mid;
+    const rec = {
+      currentValue:     parseFloat(curVal.toFixed(2)),
+      currentLowerMid:  parseFloat(lower.mid.toFixed(2)),
+      currentCenterMid: parseFloat(center.mid.toFixed(2)),
+      currentUpperMid:  parseFloat(upper.mid.toFixed(2)),
+      currentSpot:      spot ? parseFloat(spot.toFixed(2)) : null,
+      currentPnl:       Math.round((curVal - q.premium) * 100),  // 1 contract (M8BF convention everywhere)
+      signal_time:      q.time,
+      lastQuoteAt:      new Date().toISOString(),
+    };
+    await env.SIGNAL_KV.put(`m8bf_live_${sel.todayT}`, JSON.stringify(rec), { expirationTtl: 86400 });
+  } catch (e) { console.warn('[m8bf] live refresh failed:', e.message); }
+}
+
 // Settle GXBF at SPX close. Long-call-fly intrinsic at SPX close S:
 //   clamp( max(0,S−(K−W)) − 2·max(0,S−K) + max(0,S−(K+W)), 0, W )
 //   pnl = (intrinsic − netDebit) × 100 × contracts
@@ -2544,6 +2585,7 @@ async function handleScheduled(env) {
       await refreshStraddleLiveQuotes(env, schwabToken, etNow, masterChain);
       await refreshBobfLiveQuotes(env, schwabToken, etNow, masterChain);
       await refreshGxbfLiveQuotes(env, schwabToken, etNow, masterChain);
+      await refreshM8bfLiveQuotes(env, schwabToken, etNow, masterChain);
     } catch (e) {
       console.warn('[live] refresh failed:', e.message);
     }
@@ -4298,6 +4340,68 @@ function isSecondTradingThursday(dateISO) {
 function getM8BFWindow(dow, dateISO) {
   if (dow === 4 && isSecondTradingThursday(dateISO)) return M8BF_WINDOWS_2ND_THU;
   return M8BF_WINDOWS[dow];
+}
+
+// M8BF banned-day reason — pure date math, no side effects. Mirrors the
+// inline check that GET /trade used (signal-engine.js m8bfBanned + NM-non-Mon
+// + CPI). Returns the human reason string, or null when M8BF is tradeable.
+function m8bfBannedReason(etNow) {
+  const eomDay = isLastTradeMo(etNow);
+  const eom1   = isEomN(1, etNow);
+  const opex1  = opexSch.some(ds => isTodayBefore(ds, etNow));
+  const vixExpAfterOpex = isVixAfterOpexDay(etNow);
+  const nonAmznTslaEarn = isNonAmznTslaEarningsDay(etNow);
+  const cpiDay = cpiSch.includes(todayLong(etNow));
+  const nmDay = isFirstTradeMo(etNow);
+  const nmMon = isFirstTradeMon(etNow);
+  const nmNonMon = nmDay && !nmMon;
+  const m8bfBanned = eomDay || eom1 || opex1 || vixExpAfterOpex || nonAmznTslaEarn || nmNonMon;
+  if (!(m8bfBanned || cpiDay)) return null;
+  return cpiDay ? 'CPI day'
+       : eomDay ? 'EOM'
+       : eom1   ? 'EOM-1'
+       : opex1  ? 'day before OPEX'
+       : vixExpAfterOpex ? 'VIX exp day'
+       : nonAmznTslaEarn ? 'earnings'
+       : nmNonMon ? 'NM (Straddle day)'
+       : 'banned';
+}
+
+// Pure M8BF qualifying-signal selection (no side effects, no Discord poll).
+// SINGLE SOURCE OF TRUTH shared by GET /trade and refreshM8bfLiveQuotes so
+// the live-quoted legs are ALWAYS the exact trade /trade reports (real money:
+// a divergence would mark-to-market the wrong strikes). Caller handles the
+// banned-day gate first via m8bfBannedReason(). Byte-faithful to the previous
+// inline /trade selection.
+async function selectM8bfQualifying(env, etNow) {
+  const todayT = isoDateET(etNow);
+  const dow = etNow.getDay();
+  const win = getM8BFWindow(dow, todayT);
+  const sigRaw = await env.SIGNAL_KV.get('signals_today');
+  const sigData = sigRaw ? JSON.parse(sigRaw) : { date: '', signals: [] };
+  if (!win || sigData.date !== todayT) {
+    return { status: 'waiting', reason: 'No window today or no signals', todayT };
+  }
+  const [winLo, winHi] = win;
+  let qualifying = null;
+  for (const sig of (sigData.signals || [])) {
+    if (!sig.time) continue;
+    const [h, m] = sig.time.split(':').map(Number);
+    const mins = h * 60 + m;
+    if (mins >= winLo && mins < winHi && !sig.banned) { qualifying = sig; break; }
+  }
+  if (!qualifying) {
+    const nowMins = etNow.getHours() * 60 + etNow.getMinutes();
+    if (nowMins >= winHi) {
+      return { status: 'no_signal', reason: 'Window passed, no qualifying signal', todayT };
+    }
+    return {
+      status: 'waiting',
+      window: `${Math.floor(winLo/60)}:${String(winLo%60).padStart(2,'0')}-${Math.floor(winHi/60)}:${String(winHi%60).padStart(2,'0')}`,
+      todayT,
+    };
+  }
+  return { status: 'open', qualifying, todayT };
 }
 
 async function backfillMissingPL(env, targetDates = null) {
@@ -6592,35 +6696,14 @@ export default {
       // ── GET /trade ── Today's M8BF trade status (replaces dead today_trade.json)
       if (url.pathname === '/trade' && request.method === 'GET') {
         const etNowT = toET(new Date());
-        const todayT = `${etNowT.getFullYear()}-${String(etNowT.getMonth()+1).padStart(2,'0')}-${String(etNowT.getDate()).padStart(2,'0')}`;
-        const dow = etNowT.getDay();
-        const win = getM8BFWindow(dow, todayT);
+        const todayT = isoDateET(etNowT);  // byte-identical to the old manual y-m-d
 
-        // ── M8BF banned-day check (mirrors signal-engine.js m8bfBanned + NM-non-Mon) ──
-        // Without this, banned days still show a "triggered" trade on
-        // the M8BF Today page (live.html). NM-non-Mon added 2026-05-01:
-        // NM Straddle override replaces M8BF on first trading day of month
-        // unless that day is a Monday.
-        const eomDay = isLastTradeMo(etNowT);
-        const eom1   = isEomN(1, etNowT);
-        const opex1  = opexSch.some(ds => isTodayBefore(ds, etNowT));
-        const vixExpAfterOpex = isVixAfterOpexDay(etNowT);
-        const nonAmznTslaEarn = isNonAmznTslaEarningsDay(etNowT);
-        const cpiDay = cpiSch.includes(todayLong(etNowT));
-        const nmDay = isFirstTradeMo(etNowT);
-        const nmMon = isFirstTradeMon(etNowT);
-        const nmNonMon = nmDay && !nmMon;
-        const m8bfBanned = eomDay || eom1 || opex1 || vixExpAfterOpex || nonAmznTslaEarn || nmNonMon;
-        if (m8bfBanned || cpiDay) {
-          const reason = cpiDay ? 'CPI day'
-                       : eomDay ? 'EOM'
-                       : eom1   ? 'EOM-1'
-                       : opex1  ? 'day before OPEX'
-                       : vixExpAfterOpex ? 'VIX exp day'
-                       : nonAmznTslaEarn ? 'earnings'
-                       : nmNonMon ? 'NM (Straddle day)'
-                       : 'banned';
-          return jsonResp({ date: todayT, triggered: false, status: 'banned', reason: `No M8BF (${reason})` }, 200, corsHeaders);
+        // ── M8BF banned-day gate (early return — no Discord poll on banned
+        //    days, exactly as before). Logic moved verbatim into
+        //    m8bfBannedReason() so refreshM8bfLiveQuotes shares it. ──
+        const bannedReason = m8bfBannedReason(etNowT);
+        if (bannedReason) {
+          return jsonResp({ date: todayT, triggered: false, status: 'banned', reason: `No M8BF (${bannedReason})` }, 200, corsHeaders);
         }
 
         // ── Cron-stall self-heal: if the last cron tick is stale AND we're
@@ -6644,35 +6727,21 @@ export default {
           }
         }
 
-        const sigRaw = await env.SIGNAL_KV.get('signals_today');
-        const sigData = sigRaw ? JSON.parse(sigRaw) : { date: '', signals: [] };
-
-        if (!win || sigData.date !== todayT) {
-          return jsonResp({ date: todayT, triggered: false, status: 'waiting', reason: 'No window today or no signals' }, 200, corsHeaders);
+        // Shared selection (identical logic to the previous inline block).
+        const sel = await selectM8bfQualifying(env, etNowT);
+        if (sel.status === 'waiting' && sel.reason) {
+          return jsonResp({ date: todayT, triggered: false, status: 'waiting', reason: sel.reason }, 200, corsHeaders);
+        }
+        if (sel.status === 'no_signal') {
+          return jsonResp({ date: todayT, triggered: false, status: 'no_signal', reason: sel.reason }, 200, corsHeaders);
+        }
+        if (sel.status === 'waiting') {
+          return jsonResp({ date: todayT, triggered: false, status: 'waiting', window: sel.window }, 200, corsHeaders);
         }
 
-        const [winLo, winHi] = win;
-        let qualifying = null;
-        for (const sig of (sigData.signals || [])) {
-          if (!sig.time) continue;
-          const [h, m] = sig.time.split(':').map(Number);
-          const mins = h * 60 + m;
-          if (mins >= winLo && mins < winHi && !sig.banned) {
-            qualifying = sig;
-            break;
-          }
-        }
-
-        if (!qualifying) {
-          // Check if we're past the window
-          const nowMins = etNowT.getHours() * 60 + etNowT.getMinutes();
-          if (nowMins >= winHi) {
-            return jsonResp({ date: todayT, triggered: false, status: 'no_signal', reason: 'Window passed, no qualifying signal' }, 200, corsHeaders);
-          }
-          return jsonResp({ date: todayT, triggered: false, status: 'waiting', window: `${Math.floor(winLo/60)}:${String(winLo%60).padStart(2,'0')}-${Math.floor(winHi/60)}:${String(winHi%60).padStart(2,'0')}` }, 200, corsHeaders);
-        }
-
-        return jsonResp({
+        // status === 'open'
+        const qualifying = sel.qualifying;
+        const resp = {
           date: todayT,
           triggered: true,
           status: 'open',
@@ -6683,7 +6752,28 @@ export default {
           t1: qualifying.t1,
           premium: qualifying.premium,
           cp: qualifying.cp,
-        }, 200, corsHeaders);
+        };
+        // Merge the REAL mark-to-market spread mid written every tick by
+        // refreshM8bfLiveQuotes. live.html prefers this over the
+        // at-expiration intrinsic (which overstates intraday profit). Absent
+        // (pre-quote / chain miss / cron stall) → client falls back to the
+        // intrinsic formula, i.e. no worse than the old behavior.
+        try {
+          const liveRaw = await env.SIGNAL_KV.get(`m8bf_live_${todayT}`);
+          if (liveRaw) {
+            const lv = JSON.parse(liveRaw);
+            if (lv && lv.currentValue != null) {
+              resp.currentValue     = lv.currentValue;
+              resp.currentPnl       = lv.currentPnl;
+              resp.currentSpot      = lv.currentSpot;
+              resp.currentLowerMid  = lv.currentLowerMid;
+              resp.currentCenterMid = lv.currentCenterMid;
+              resp.currentUpperMid  = lv.currentUpperMid;
+              resp.lastQuoteAt      = lv.lastQuoteAt;
+            }
+          }
+        } catch { /* fall back to intrinsic on the client */ }
+        return jsonResp(resp, 200, corsHeaders);
       }
 
       return jsonResp({ error: 'Not found' }, 404, corsHeaders);

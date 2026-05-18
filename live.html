@@ -362,6 +362,19 @@ function computePL(trade, spxNow) {
   return Math.round((clipped - premium) * 100);
 }
 
+// Live M8BF P&L. Prefer the REAL spread mid (trade.currentValue, marked to
+// market every tick by the worker's refreshM8bfLiveQuotes) over computePL's
+// at-expiration intrinsic — the intrinsic overstates intraday profit while
+// the short body still carries extrinsic (it's only exact at the 4pm settle).
+// Falls back to the intrinsic formula when no live quote is available
+// (pre-quote / chain miss / cron stall) so behavior is never worse than before.
+function m8bfLivePL(trade, spxNow) {
+  if (trade && trade.currentValue != null && trade.premium != null) {
+    return Math.round((trade.currentValue - trade.premium) * 100);
+  }
+  return (spxNow !== null && spxNow !== undefined) ? computePL(trade, spxNow) : null;
+}
+
 // ─── SPX History + Signals fetch ─────────────────────────────────────────────
 function todayET() {
   return getNowET().toISOString().slice(0, 10);
@@ -1558,7 +1571,7 @@ function renderLiveTotal() {
   let m8bfPL = null;
   if (trade && trade.triggered && trade.date === today) {
     if (trade.status === 'closed' && trade.final_pl != null) m8bfPL = trade.final_pl;
-    else if (spxPrice !== null) m8bfPL = computePL(trade, spxPrice);
+    else { const _p = m8bfLivePL(trade, spxPrice); if (_p !== null) m8bfPL = _p; }
   }
 
   // BOBF — live open on today, or closed earlier today
@@ -1889,7 +1902,7 @@ function render() {
 
   const currentPL = (trade.status === 'closed' && trade.final_pl != null)
     ? trade.final_pl
-    : (spxPrice !== null ? computePL(trade, spxPrice) : null);
+    : m8bfLivePL(trade, spxPrice);
 
   const currentIntrinsic = spxPrice !== null
     ? Math.min(Math.max(0, Math.min(spxPrice - trade.bf_lower, trade.bf_upper - spxPrice)), (trade.bf_upper - trade.bf_lower) / 2)
@@ -2013,7 +2026,7 @@ async function tick() {
 
   // Update stat cards and charts in-place with latest SPX price
   if (spxPrice !== null && trade && trade.triggered) {
-    const pl = computePL(trade, spxPrice);
+    const pl = m8bfLivePL(trade, spxPrice);
     const statPL = document.getElementById('statPL');
     if (statPL) { statPL.textContent = fmt$(pl); statPL.className = 'stat-value ' + plClass(pl); }
     const statPLSub = document.getElementById('statPLSub');
