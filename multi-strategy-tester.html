@@ -396,6 +396,10 @@ body {
         <div class="sz-wrap sz-d"><input id="szCap" class="sz-input" type="number" value="100000" min="1" step="1000"></div></div>
       <div class="sz-field"><label class="sz-label" for="szStress">Stress × DD <span class="sz-dot" data-tip="Capital-per-contract = each strategy's historical 1-lot max drawdown × this (the $ needed to safely run 1 contract). 1.5–2× assumes live is worse than backtest.">ⓘ</span></label>
         <input id="szStress" class="sz-input" type="number" value="2" min="1" max="5" step="0.5"></div>
+      <div class="sz-field"><label class="sz-label" for="szFrom">From <span class="sz-dot" data-tip="Backtest start date. Blank = earliest available. Set after data loads to the full range; narrow it to test a window.">ⓘ</span></label>
+        <input id="szFrom" class="sz-input" type="date"></div>
+      <div class="sz-field"><label class="sz-label" for="szTo">To</label>
+        <input id="szTo" class="sz-input" type="date"></div>
     </div>
 
     <div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px;font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.05em;margin:2px 0 8px;">
@@ -592,9 +596,16 @@ async function loadHistory() {
   const dn = document.getElementById('dataNotice');
   const hm = document.getElementById('hdrMeta');
   if (allRows.length) {
-    const first = allRows[0].date, last = allRows[allRows.length - 1].date;
+    // allRows is sorted DESCENDING (data load does .reverse()), so [0] is the
+    // NEWEST row — compute true min/max instead of assuming order.
+    let first = allRows[0].date, last = allRows[0].date;
+    for (const r of allRows) { if (r.date < first) first = r.date; if (r.date > last) last = r.date; }
     if (dn) dn.style.display = 'none';
     if (hm) hm.textContent = `${allRows.length} strategy-days (${first} → ${last})`;
+    // Seed the date-range picker to the full available window (user can narrow).
+    const sf = document.getElementById('szFrom'), st = document.getElementById('szTo');
+    if (sf) { sf.min = first; sf.max = last; if (!sf.value) sf.value = first; }
+    if (st) { st.min = first; st.max = last; if (!st.value) st.value = last; }
   } else {
     if (dn) dn.textContent = 'history_data.json loaded but contained no strategy P/L rows.';
   }
@@ -684,6 +695,17 @@ function _sizingReady() {
     'Set Starting Capital and the per-strategy Allocation %, then press <b>RUN</b>.';
   _szUpdateSum();
 }
+// allRows narrowed to the From/To picker window (blank = unbounded),
+// sorted ascending. 'YYYY-MM-DD' string compare is correct lexically;
+// <input type="date"> .value is already 'YYYY-MM-DD'.
+function _szRangeRows() {
+  const sf = document.getElementById('szFrom'), st = document.getElementById('szTo');
+  const from = sf && sf.value ? sf.value : '', to = st && st.value ? st.value : '';
+  return allRows.slice()
+    .filter(r => (!from || r.date >= from) && (!to || r.date <= to))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
 function _sizingRun() {
   const el = document.getElementById('sizingCalcResults');
   if (!el) return;
@@ -724,7 +746,11 @@ function _sizingRun() {
   const combo = [];      // [{date, pnl}] portfolio daily
   const eqCurve = [];    // [{date, eq}] running equity
 
-  const sorted = allRows.slice().sort((a,b) => a.date.localeCompare(b.date));
+  const sorted = _szRangeRows();
+  if (!sorted.length) {
+    el.innerHTML = '<div style="padding:12px;color:var(--text3)">No trading days in the selected date range.</div>';
+    return;
+  }
   for (const row of sorted) {
     let dayPnL = 0, traded = false;
     for (const [k,, fld] of _SZ_KEYS) {
@@ -844,7 +870,7 @@ _sizingUseOptimizer = function() {
 
 function _optimizeAllocBestSharpe() {
   if (!allRows || !allRows.length) return;
-  const sorted = allRows.slice().sort((a,b) => a.date.localeCompare(b.date));
+  const sorted = _szRangeRows();
 
   // Build aligned daily P/L per strategy (only days where ≥1 strategy traded),
   // mirroring optimizeAlloc's stratPLs construction.
