@@ -6685,6 +6685,81 @@ export default {
         return jsonResp(data ? JSON.parse(data) : { date: '', signals: [] }, 200, corsHeaders);
       }
 
+      // ── GET /scrape-gamma?from=YYYY-MM-DD&to=YYYY-MM-DD ──
+      // Bulk-scrape the GXBF gamma Discord channel history for a date range
+      // and return the "Major Positive by Volume" center per trading day.
+      // Read-only (no KV writes). Mirrors scrapeGxbfCenter's snowflake +
+      // parseGxbfGamma logic. Takes the FIRST gamma table at/after 09:30 ET
+      // (the one GXBF would scrape in its 09:33–09:45 entry window). Call in
+      // ~monthly chunks to stay well under the subrequest limit.
+      if (url.pathname === '/scrape-gamma' && request.method === 'GET') {
+        const token = env.DISCORD_USER_TOKEN;
+        if (!token) return jsonResp({ error: 'no discord token' }, 500, corsHeaders);
+        const from = url.searchParams.get('from');
+        const to   = url.searchParams.get('to');
+        if (!from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+          return jsonResp({ error: 'need from & to as YYYY-MM-DD' }, 400, corsHeaders);
+        }
+        const discordEpoch = 1420070400000n;
+        const out = [];
+        const missing = [];
+        let rateLimited = false;
+        const startD = new Date(from + 'T12:00:00Z');
+        const endD   = new Date(to   + 'T12:00:00Z');
+        for (let d = new Date(startD); d <= endD; d.setUTCDate(d.getUTCDate() + 1)) {
+          const dow = d.getUTCDay();
+          if (dow === 0 || dow === 6) continue;            // skip weekends
+          const dateISO = d.toISOString().slice(0, 10);
+          const [y, mo, dd] = dateISO.split('-').map(Number);
+          // 09:25–10:15 ET window (13:25–14:15 UTC) brackets the ~09:34 post
+          // incl. half-days; widened slightly for safety.
+          const startMs = Date.UTC(y, mo - 1, dd, 13, 25, 0);
+          const endMs   = Date.UTC(y, mo - 1, dd, 14, 15, 0);
+          let afterSnowflake = ((BigInt(startMs) - discordEpoch) << 22n).toString();
+          const beforeSnowflake = ((BigInt(endMs) - discordEpoch) << 22n).toString();
+          let dayHit = null;
+          for (let page = 0; page < 4; page++) {
+            const resp = await fetch(
+              `https://discord.com/api/v9/channels/${GXBF_DISCORD_CHANNEL}/messages?limit=100&after=${afterSnowflake}&before=${beforeSnowflake}`,
+              { headers: { 'Authorization': token, 'User-Agent': 'Mozilla/5.0' } }
+            );
+            if (resp.status === 429) { rateLimited = true; break; }
+            if (!resp.ok) break;
+            const batch = await resp.json();
+            if (!Array.isArray(batch) || batch.length === 0) break;
+            batch.sort((a, b) => a.id.localeCompare(b.id));   // chronological
+            for (const msg of batch) {
+              const msgET = toET(new Date(msg.timestamp));
+              const md = `${msgET.getFullYear()}-${String(msgET.getMonth()+1).padStart(2,'0')}-${String(msgET.getDate()).padStart(2,'0')}`;
+              if (md !== dateISO) continue;
+              const g = parseGxbfGamma(msg.content || '');
+              if (!g) continue;
+              dayHit = {
+                date: dateISO,
+                center: g.center,
+                spot: g.spot,
+                msgTimeET: `${String(msgET.getHours()).padStart(2,'0')}:${String(msgET.getMinutes()).padStart(2,'0')}:${String(msgET.getSeconds()).padStart(2,'0')}`,
+                msgId: msg.id,
+              };
+              break;                                          // FIRST gamma table that day
+            }
+            if (dayHit || batch.length < 100) break;
+            afterSnowflake = batch[batch.length - 1].id;
+          }
+          if (rateLimited) break;
+          if (dayHit) out.push(dayHit);
+          else missing.push(dateISO);
+        }
+        return jsonResp({
+          from, to,
+          found: out.length,
+          missingCount: missing.length,
+          rateLimited,
+          centers: out,
+          missing,
+        }, 200, corsHeaders);
+      }
+
       // ── GET /spx-history ── Today's SPX price ticks (replaces dead spx_history.json)
       if (url.pathname === '/spx-history' && request.method === 'GET') {
         const etNowH = toET(new Date());
