@@ -6716,16 +6716,21 @@ export default {
           if (dow === 0 || dow === 6) continue;            // skip weekends
           const dateISO = d.toISOString().slice(0, 10);
           const [y, mo, dd] = dateISO.split('-').map(Number);
-          // normal: 09:25–10:15 ET (13:25–14:15 UTC). debug: 09:00–12:00 ET.
-          const startMs = debug ? Date.UTC(y, mo - 1, dd, 13,  0, 0)
-                                 : Date.UTC(y, mo - 1, dd, 13, 25, 0);
-          const endMs   = debug ? Date.UTC(y, mo - 1, dd, 16,  0, 0)
-                                 : Date.UTC(y, mo - 1, dd, 14, 15, 0);
+          // DST-PROOF wide window: 13:00–15:30 UTC brackets 09:35 ET in BOTH
+          // EST (=14:35 UTC) and EDT (=13:35 UTC). Posts come every ~5 min;
+          // we pick the one whose ET time is CLOSEST to 09:35 within the
+          // 09:30–09:45 ET entry band (gamma table may be in msg.content OR
+          // in a Discord embed — old posts used embeds).
+          const startMs = Date.UTC(y, mo - 1, dd, 13,  0, 0);
+          const endMs   = Date.UTC(y, mo - 1, dd, 15, 30, 0);
           let afterSnowflake = ((BigInt(startMs) - discordEpoch) << 22n).toString();
           const beforeSnowflake = ((BigInt(endMs) - discordEpoch) << 22n).toString();
-          let dayHit = null;
+          const TARGET = 9 * 3600 + 35 * 60;                  // 09:35:00 ET, seconds
+          const BAND_LO = 9 * 3600 + 30 * 60;                 // 09:30:00
+          const BAND_HI = 9 * 3600 + 45 * 60;                 // 09:45:00
+          let dayHit = null, bestDelta = Infinity;
           let dbgLongest = null;
-          for (let page = 0; page < 4; page++) {
+          for (let page = 0; page < 6; page++) {
             const resp = await fetch(
               `https://discord.com/api/v9/channels/${GXBF_DISCORD_CHANNEL}/messages?limit=100&after=${afterSnowflake}&before=${beforeSnowflake}`,
               { headers: { 'Authorization': token, 'User-Agent': 'Mozilla/5.0' } }
@@ -6739,36 +6744,39 @@ export default {
               const msgET = toET(new Date(msg.timestamp));
               const md = `${msgET.getFullYear()}-${String(msgET.getMonth()+1).padStart(2,'0')}-${String(msgET.getDate()).padStart(2,'0')}`;
               if (md !== dateISO) continue;
-              if (debug) {
-                // capture the longest message of the day (incl. embeds) for
-                // format inspection when nothing parses.
-                let body = msg.content || '';
-                if (msg.embeds && msg.embeds.length) {
-                  for (const e of msg.embeds) {
-                    if (e.description) body += '\n[embed.desc] ' + e.description;
-                    if (e.fields) for (const f of e.fields) body += `\n[fld] ${f.name}: ${f.value}`;
-                  }
-                }
-                if (!dbgLongest || body.length > dbgLongest.len) {
-                  dbgLongest = {
-                    date: dateISO, len: body.length,
-                    msgTimeET: `${String(msgET.getHours()).padStart(2,'0')}:${String(msgET.getMinutes()).padStart(2,'0')}`,
-                    sample: body.slice(0, 500),
-                  };
+              // gamma table can be in plain content OR a Discord embed
+              let body = msg.content || '';
+              if (msg.embeds && msg.embeds.length) {
+                for (const e of msg.embeds) {
+                  if (e.title) body += '\n' + e.title;
+                  if (e.description) body += '\n' + e.description;
+                  if (e.fields) for (const f of e.fields) body += `\n${f.name} ${f.value}`;
                 }
               }
-              const g = parseGxbfGamma(msg.content || '');
+              const secET = msgET.getHours()*3600 + msgET.getMinutes()*60 + msgET.getSeconds();
+              if (debug && (!dbgLongest || body.length > dbgLongest.len)) {
+                dbgLongest = {
+                  date: dateISO, len: body.length,
+                  msgTimeET: `${String(msgET.getHours()).padStart(2,'0')}:${String(msgET.getMinutes()).padStart(2,'0')}`,
+                  sample: body.slice(0, 500),
+                };
+              }
+              if (secET < BAND_LO || secET > BAND_HI) continue;  // only the 9:30–9:45 band
+              const g = parseGxbfGamma(body);
               if (!g) continue;
-              dayHit = {
-                date: dateISO,
-                center: g.center,
-                spot: g.spot,
-                msgTimeET: `${String(msgET.getHours()).padStart(2,'0')}:${String(msgET.getMinutes()).padStart(2,'0')}:${String(msgET.getSeconds()).padStart(2,'0')}`,
-                msgId: msg.id,
-              };
-              break;                                          // FIRST gamma table that day
+              const delta = Math.abs(secET - TARGET);
+              if (delta < bestDelta) {                          // closest to 09:35
+                bestDelta = delta;
+                dayHit = {
+                  date: dateISO,
+                  center: g.center,
+                  spot: g.spot,
+                  msgTimeET: `${String(msgET.getHours()).padStart(2,'0')}:${String(msgET.getMinutes()).padStart(2,'0')}:${String(msgET.getSeconds()).padStart(2,'0')}`,
+                  msgId: msg.id,
+                };
+              }
             }
-            if (dayHit || batch.length < 100) break;
+            if (batch.length < 100) break;
             afterSnowflake = batch[batch.length - 1].id;
           }
           if (rateLimited) break;
