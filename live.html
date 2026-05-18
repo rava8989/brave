@@ -1581,6 +1581,13 @@ function renderLiveTotal() {
   if (bobfOpen?.openDate === today && bobfOpen.currentPnl != null) bobfPL = bobfOpen.currentPnl;
   else if (bobfLast?.openDate === today && bobfLast.pnl != null) bobfPL = bobfLast.pnl;
 
+  // GXBF — same pattern as BOBF (own trade object; strategy-independent)
+  let gxbfPL = null;
+  const gxbfOpen = gxbf?.open;
+  const gxbfLast = gxbf?.lastClosed;
+  if (gxbfOpen?.openDate === today && gxbfOpen.currentPnl != null) gxbfPL = gxbfOpen.currentPnl;
+  else if (gxbfLast?.openDate === today && gxbfLast.pnl != null) gxbfPL = gxbfLast.pnl;
+
   // Straddle — same pattern
   let stradPL = null;
   const stradOpen = straddle?.open;
@@ -1602,6 +1609,7 @@ function renderLiveTotal() {
   const parts = [
     { name: 'M8BF',     pl: m8bfPL },
     { name: 'BOBF',     pl: bobfPL },
+    { name: 'GXBF',     pl: gxbfPL },
     { name: 'Straddle', pl: stradPL },
     { name: 'Diagonal', pl: diagPL  },
   ];
