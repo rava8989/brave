@@ -252,6 +252,7 @@
       <a href="live.html">Today's Trades</a>
       <a href="gex.html">GEX</a>
       <a href="diagonal.html">Diagonal</a>
+      <a href="multi-strategy-tester.html">Multi Tester</a>
     </nav>
     <div class="header-spacer"></div>
     <div class="range-btns">
@@ -380,70 +381,7 @@
 
   </div><!-- end dashboardWrap -->
 
-  <!-- Position-Sizing Calculator — standalone, lightweight (no canvas / no
-       Chart.js / no Intl-in-loop), always visible incl. mobile. It computes
-       arithmetic from YOUR inputs; it does not recommend anything. -->
-  <style>
-    .sz-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px 18px;padding:16px 18px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;margin-bottom:14px;}
-    .sz-field{display:flex;flex-direction:column;gap:5px;}
-    .sz-label{font-size:11px;font-weight:600;color:var(--text2);display:flex;align-items:center;gap:5px;}
-    .sz-dot{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;border:1px solid var(--text3);color:var(--text3);font-size:9px;font-weight:700;cursor:help;position:relative;}
-    .sz-dot[data-tip]:hover::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 8px);left:0;background:var(--bg2);border:1px solid var(--border);padding:8px 10px;border-radius:6px;font-size:11px;font-weight:400;color:var(--text2);width:240px;white-space:normal;text-align:left;box-shadow:var(--shadow);z-index:30;}
-    .sz-input{font-family:'JetBrains Mono',monospace;font-size:13px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);width:100%;box-sizing:border-box;}
-    .sz-input:focus{outline:none;border-color:var(--accent);}
-    .sz-wrap{position:relative;}
-    .sz-wrap.sz-d::after{content:'$';position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text3);font:12px 'JetBrains Mono',monospace;pointer-events:none;}
-    .sz-wrap.sz-d .sz-input{padding-left:20px;}
-    .sz-wrap.sz-p::after{content:'%';position:absolute;right:10px;top:50%;transform:translateY(-50%);color:var(--text3);font:12px 'JetBrains Mono',monospace;pointer-events:none;}
-    /* diagonal-style PERFORMANCE stat cards */
-    .sz-stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin:6px 0 18px;}
-    .sz-card{padding:14px 16px;border-radius:8px;border:1px solid var(--border);background:var(--bg2);box-shadow:var(--shadow);display:flex;flex-direction:column;gap:5px;}
-    .sz-card.g{background:rgba(34,197,94,.07);border-color:rgba(34,197,94,.22);}
-    .sz-card.r{background:rgba(239,68,68,.07);border-color:rgba(239,68,68,.22);}
-    .sz-card .l{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);}
-    .sz-card .v{font-family:'JetBrains Mono',monospace;font-size:17px;font-weight:700;color:var(--text);letter-spacing:-.02em;}
-    .sz-card.c{flex-direction:row;align-items:stretch;gap:0;padding:0;overflow:hidden;}
-    .sz-card.c .h{flex:1;padding:14px;display:flex;flex-direction:column;gap:5px;}
-    .sz-card.c .h + .h{border-left:1px solid var(--border);}
-    .sz-sub{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);margin:14px 0 6px;}
-    .sz-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px;}
-    .sz-mini{border:1px solid var(--border);border-radius:6px;padding:8px 10px;background:var(--bg2);font-size:11px;}
-    .sz-mini b{color:var(--text);} .sz-mini span{color:var(--text3);}
-  </style>
-  <div class="chart-card" id="sizingCard" style="margin-top:16px">
-    <div style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Multi-Strategy Backtest</div>
-    <div style="font-size:11px;color:var(--text3);margin-bottom:14px;line-height:1.5;">
-      Starting Capital → Overall Risk % (the risk pool) → sliced by your per-strategy % → contracts → press RUN for the diagonal-style KPI grid per strategy + combined. Backtest (mid-fills, no slippage/fees) → live is worse. Informational only — not financial advice.
-    </div>
-
-    <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.05em;margin:2px 0 8px;">Funds &amp; Risk</div>
-    <div class="sz-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">
-      <div class="sz-field"><label class="sz-label" for="szCap">Starting Capital</label>
-        <div class="sz-wrap sz-d"><input id="szCap" class="sz-input" type="number" value="100000" min="1" step="1000"></div></div>
-      <div class="sz-field"><label class="sz-label" for="szRisk">Overall Risk <span class="sz-dot" data-tip="The most of capital you'll commit as the total risk pool, as a %. Pool = capital × this. Sliced by the per-strategy % below.">ⓘ</span></label>
-        <div class="sz-wrap sz-p"><input id="szRisk" class="sz-input" type="number" value="25" min="1" max="100" step="1"></div></div>
-      <div class="sz-field"><label class="sz-label" for="szStress">Stress × DD <span class="sz-dot" data-tip="Capital-per-contract = each strategy's historical 1-lot max drawdown × this (the $ needed to safely run 1 contract). 1.5–2× assumes live is worse than backtest. Override per strategy below if you want.">ⓘ</span></label>
-        <input id="szStress" class="sz-input" type="number" value="2" min="1" max="5" step="0.5"></div>
-    </div>
-
-    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px;font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.05em;margin:2px 0 8px;">
-      Risk % per strategy
-      <button onclick="_sizingUseOptimizer()" class="schwab-btn" style="font-size:11px;padding:5px 12px;text-transform:none;letter-spacing:0;">Use Optimizer %</button>
-      <span id="szWeightSum" style="font-weight:500;color:var(--text3);text-transform:none;letter-spacing:0;"></span>
-    </div>
-    <div class="sz-grid">
-      <div class="sz-field"><label class="sz-label" for="szW_m8bf">M8BF</label><div class="sz-wrap sz-p"><input id="szW_m8bf" class="sz-input" type="number" value="20" min="0" max="100" step="1"></div></div>
-      <div class="sz-field"><label class="sz-label" for="szW_strad">Straddle</label><div class="sz-wrap sz-p"><input id="szW_strad" class="sz-input" type="number" value="20" min="0" max="100" step="1"></div></div>
-      <div class="sz-field"><label class="sz-label" for="szW_gxbf">GXBF</label><div class="sz-wrap sz-p"><input id="szW_gxbf" class="sz-input" type="number" value="20" min="0" max="100" step="1"></div></div>
-      <div class="sz-field"><label class="sz-label" for="szW_bobf">BOBF</label><div class="sz-wrap sz-p"><input id="szW_bobf" class="sz-input" type="number" value="20" min="0" max="100" step="1"></div></div>
-      <div class="sz-field"><label class="sz-label" for="szW_diagonal">Diagonal</label><div class="sz-wrap sz-p"><input id="szW_diagonal" class="sz-input" type="number" value="20" min="0" max="100" step="1"></div></div>
-    </div>
-    <div style="margin:4px 0 14px;">
-      <button onclick="_sizingRun()" class="schwab-btn primary" style="font-size:13px;font-weight:700;padding:9px 28px;">▶ RUN</button>
-    </div>
-
-    <div id="sizingCalcResults" style="font-size:12px;color:var(--text3);">Set Starting Capital, Overall Risk %, the per-strategy % slices, then press <b>RUN</b>.</div>
-  </div>
+  <!-- Multi-Strategy Backtest moved to its own page: multi-strategy-tester.html -->
 
   <div id="content">
     <div class="spinner-wrap">
@@ -1568,7 +1506,6 @@ function _sizingRun() {
 
 function renderAll() {
   safeRender('stats', renderStats);
-  safeRender('sizing', _sizingReady);
 
   if (IS_MOBILE) {
     // Mobile: do NOT auto-render charts. The IntersectionObserver approach

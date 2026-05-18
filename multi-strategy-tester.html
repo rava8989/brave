@@ -1,0 +1,1181 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<title>SPX-BF // Multi Strategy Tester</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
+<!-- Chart.js lazy-loaded on demand (same pattern history.html uses) — loading
+     it synchronously blocks ~200KB on every page load and can OOM mobile when
+     several chart instances spin up simultaneously. -->
+<script>
+  let _chartJSPromise = null;
+  function loadChartJS() {
+    if (window.Chart) return Promise.resolve();
+    if (_chartJSPromise) return _chartJSPromise;
+    _chartJSPromise = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/chart.js';
+      s.onload = () => resolve();
+      s.onerror = () => { _chartJSPromise = null; reject(new Error('Chart.js failed to load')); };
+      document.head.appendChild(s);
+    });
+    return _chartJSPromise;
+  }
+</script>
+<style>
+:root {
+  --bg:   #f1f5f9;
+  --bg2:  #ffffff;
+  --bg3:  #f8fafc;
+  --border: #e2e8f0;
+  --text:   #1e293b;
+  --text2:  #475569;
+  --text3:  #94a3b8;
+  --accent: #6366f1;
+  --accent2:#818cf8;
+  --green:  #22c55e;
+  --red:    #ef4444;
+  --amber:  #f59e0b;
+  --shadow: 0 1px 3px rgba(0,0,0,.07), 0 4px 16px rgba(0,0,0,.05);
+  --radius: 12px;
+  --radius-sm: 8px;
+}
+[data-theme="dark"] {
+  --bg:   #0f172a;
+  --bg2:  #1e293b;
+  --bg3:  #162032;
+  --border: #2d3f55;
+  --text:   #e2e8f0;
+  --text2:  #94a3b8;
+  --text3:  #475569;
+  --accent: #818cf8;
+  --accent2:#6366f1;
+  --shadow: 0 1px 3px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.2);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Inter', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  min-height: 100vh;
+  transition: background .2s, color .2s;
+}
+
+/* ── Header ── */
+.header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 13px 24px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  box-shadow: var(--shadow);
+}
+.logo {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: -.01em;
+  white-space: nowrap;
+}
+.logo span { color: var(--text3); font-weight: 400; }
+.header-sep { width: 1px; height: 20px; background: var(--border); }
+.header-meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text3);
+}
+.header-spacer { flex: 1; }
+.theme-btn {
+  width: 34px; height: 18px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--bg3);
+  cursor: pointer;
+  position: relative;
+  transition: background .2s;
+  flex-shrink: 0;
+}
+.theme-btn::after {
+  content: '';
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  transition: transform .2s;
+}
+[data-theme="dark"] .theme-btn::after { transform: translateX(16px); }
+.nav{display:flex;gap:4px;flex-wrap:wrap;}
+.nav a{font-size:12px;font-weight:500;padding:5px 12px;border-radius:6px;color:var(--text2);text-decoration:none;transition:background .15s,color .15s;border:1px solid transparent;}
+.nav a:hover{background:var(--bg3);color:var(--text);}
+.nav a.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+
+/* ── Strategy description ── */
+.strategy-banner {
+  padding: 18px 24px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+}
+.strategy-title {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--accent);
+  margin-bottom: 8px;
+  letter-spacing: -.01em;
+}
+.strategy-desc {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text2);
+  max-width: 920px;
+}
+.strategy-desc code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  background: var(--bg3);
+  padding: 1px 6px;
+  border-radius: 3px;
+  color: var(--accent);
+}
+
+/* ── Run button ── */
+.run-btn {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  padding: 8px 22px;
+  border-radius: 7px;
+  border: none;
+  background: var(--accent2);
+  color: #fff;
+  cursor: pointer;
+  transition: opacity .12s, transform .1s;
+  white-space: nowrap;
+  align-self: flex-end;
+}
+.run-btn:hover { opacity: .88; }
+.run-btn:active { transform: scale(.97); }
+.run-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+/* ── Main content ── */
+.content { padding: 20px 24px 40px; }
+
+/* Section heading */
+.section-heading {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--text);
+  margin: 22px 0 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Chart scale toggle */
+.scale-toggle {
+  display: flex;
+  gap: 16px;
+  padding: 0 4px 10px;
+  font-size: 12px;
+  color: var(--text2);
+}
+.scale-toggle label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.scale-toggle input[type="radio"] {
+  accent-color: var(--accent);
+}
+
+/* Tabs */
+.tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 20px; flex-wrap: wrap; }
+.tab-btn {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  padding: 10px 18px;
+  border: none;
+  background: transparent;
+  color: var(--text3);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: all .12s;
+  white-space: nowrap;
+}
+.tab-btn:hover { color: var(--text2); }
+.tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+/* Chart containers */
+.chart-box {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 18px;
+  margin-bottom: 16px;
+  box-shadow: var(--shadow);
+  min-height: 300px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text3);
+  font-size: 12px;
+}
+
+/* Trade table */
+.trade-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  background: var(--bg2);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+.trade-table th {
+  text-align: left;
+  padding: 10px 12px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--text3);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg3);
+}
+.trade-table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+}
+.trade-table td.pos { color: var(--green); font-weight: 600; }
+.trade-table td.neg { color: var(--red);   font-weight: 600; }
+.trade-table tr:last-child td { border-bottom: none; }
+.trade-table tbody tr:hover { background: var(--bg3); }
+
+/* Data notice */
+.data-notice {
+  padding: 12px 16px;
+  background: rgba(245,158,11,.08);
+  border: 1px solid rgba(245,158,11,.25);
+  border-radius: var(--radius-sm);
+  color: var(--amber);
+  font-size: 11px;
+  margin-bottom: 18px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.data-notice::before {
+  content: '⚠';
+  font-size: 14px;
+}
+
+/* schwab-btn (carried over from history.html for the verified card buttons) */
+.schwab-btn{font-size:11px;font-weight:600;padding:5px 12px;border-radius:6px;cursor:pointer;border:1px solid var(--border);background:var(--bg3);color:var(--text2);font-family:'Inter',sans-serif;transition:background .15s;text-decoration:none;}
+.schwab-btn:hover{background:var(--bg);}
+.schwab-btn.primary{background:var(--accent);color:#fff;border-color:var(--accent);}
+.schwab-btn.primary:hover{opacity:.85;}
+
+/* chart-card (host for the verified sizing card) */
+.chart-card{padding:16px 20px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);}
+
+.footer{text-align:center;padding:20px;font-size:11px;color:var(--text3);}
+
+/* ── Verified position-sizing engine styles (copied VERBATIM from history.html) ── */
+.sz-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px 18px;padding:16px 18px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;margin-bottom:14px;}
+.sz-field{display:flex;flex-direction:column;gap:5px;}
+.sz-label{font-size:11px;font-weight:600;color:var(--text2);display:flex;align-items:center;gap:5px;}
+.sz-dot{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;border:1px solid var(--text3);color:var(--text3);font-size:9px;font-weight:700;cursor:help;position:relative;}
+.sz-dot[data-tip]:hover::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 8px);left:0;background:var(--bg2);border:1px solid var(--border);padding:8px 10px;border-radius:6px;font-size:11px;font-weight:400;color:var(--text2);width:240px;white-space:normal;text-align:left;box-shadow:var(--shadow);z-index:30;}
+.sz-input{font-family:'JetBrains Mono',monospace;font-size:13px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);width:100%;box-sizing:border-box;}
+.sz-input:focus{outline:none;border-color:var(--accent);}
+.sz-wrap{position:relative;}
+.sz-wrap.sz-d::after{content:'$';position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text3);font:12px 'JetBrains Mono',monospace;pointer-events:none;}
+.sz-wrap.sz-d .sz-input{padding-left:20px;}
+.sz-wrap.sz-p::after{content:'%';position:absolute;right:10px;top:50%;transform:translateY(-50%);color:var(--text3);font:12px 'JetBrains Mono',monospace;pointer-events:none;}
+/* diagonal-style PERFORMANCE stat cards */
+.sz-stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin:6px 0 18px;}
+.sz-card{padding:14px 16px;border-radius:8px;border:1px solid var(--border);background:var(--bg2);box-shadow:var(--shadow);display:flex;flex-direction:column;gap:5px;}
+.sz-card.g{background:rgba(34,197,94,.07);border-color:rgba(34,197,94,.22);}
+.sz-card.r{background:rgba(239,68,68,.07);border-color:rgba(239,68,68,.22);}
+.sz-card .l{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);}
+.sz-card .v{font-family:'JetBrains Mono',monospace;font-size:17px;font-weight:700;color:var(--text);letter-spacing:-.02em;}
+.sz-card.c{flex-direction:row;align-items:stretch;gap:0;padding:0;overflow:hidden;}
+.sz-card.c .h{flex:1;padding:14px;display:flex;flex-direction:column;gap:5px;}
+.sz-card.c .h + .h{border-left:1px solid var(--border);}
+.sz-sub{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);margin:14px 0 6px;}
+.sz-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px;}
+.sz-mini{border:1px solid var(--border);border-radius:6px;padding:8px 10px;background:var(--bg2);font-size:11px;}
+.sz-mini b{color:var(--text);} .sz-mini span{color:var(--text3);}
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<header class="header">
+  <div class="logo">SPX-BF <span>//</span> Multi Strategy Tester</div>
+  <nav class="nav">
+    <a href="index.html">Dashboard</a>
+    <a href="history.html">Historical</a>
+    <a href="backtester.html">M8BF Tester</a>
+    <a href="live.html">Today's Trades</a>
+    <a href="gex.html">GEX</a>
+    <a href="diagonal.html">Diagonal</a>
+    <a href="multi-strategy-tester.html" class="active">Multi Strategy Tester</a>
+  </nav>
+  <div class="header-spacer"></div>
+  <div class="header-sep"></div>
+  <div class="header-meta" id="hdrMeta">Loading history…</div>
+  <button class="theme-btn" id="themeBtn" title="Toggle theme"></button>
+</header>
+
+<!-- Strategy description -->
+<section class="strategy-banner">
+  <div class="strategy-title">Combo Portfolio — M8BF · Straddle · GXBF · BOBF · Diagonal</div>
+  <div class="strategy-desc">
+    Starting Capital → each strategy gets an <strong>Allocation %</strong> of the <em>current</em> portfolio equity
+    (Option Omega style — compounding) → contracts → press <code>▶ RUN</code> for the portfolio header KPIs, an equity
+    curve, a per-strategy breakdown, and full trade / daily logs. Capital-per-contract per strategy = its historical
+    1-lot max drawdown × your stress multiplier.
+    <br><br>
+    <span style="color:var(--text3);font-size:11px">
+      Backtest mid-fills, no slippage / no fees → live execution is worse. The per-strategy P/L and verified KPI
+      helpers are byte-identical to the multi-strategy engine in <code>history.html</code> — the sizing is a
+      path-dependent compounding portfolio simulation.
+    </span>
+  </div>
+</section>
+
+<!-- Main content -->
+<main class="content">
+
+  <div class="data-notice" id="dataNotice">
+    Loading <code>history_data.json</code> + <code>signal-engine.js</code>… the RUN button computes once history is loaded.
+  </div>
+
+  <!-- Funds & Allocation + verified sizing card -->
+  <div class="section-heading">Funds &amp; Allocation</div>
+
+  <div class="chart-card" id="sizingCard">
+    <div style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Combo Portfolio Backtest</div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:14px;line-height:1.5;">
+      Starting Capital → each strategy is sized to its Allocation % of the <em>current</em> portfolio equity (Option Omega style — compounding) → contracts → press RUN for the portfolio header KPIs + per-strategy breakdown. Backtest (mid-fills, no slippage/fees) → live is worse. Informational only — not financial advice.
+    </div>
+
+    <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.05em;margin:2px 0 8px;">Funds</div>
+    <div class="sz-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">
+      <div class="sz-field"><label class="sz-label" for="szCap">Starting Capital</label>
+        <div class="sz-wrap sz-d"><input id="szCap" class="sz-input" type="number" value="100000" min="1" step="1000"></div></div>
+      <div class="sz-field"><label class="sz-label" for="szStress">Stress × DD <span class="sz-dot" data-tip="Capital-per-contract = each strategy's historical 1-lot max drawdown × this (the $ needed to safely run 1 contract). 1.5–2× assumes live is worse than backtest.">ⓘ</span></label>
+        <input id="szStress" class="sz-input" type="number" value="2" min="1" max="5" step="0.5"></div>
+    </div>
+
+    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px;font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.05em;margin:2px 0 8px;">
+      Allocation % per strategy
+      <button onclick="_sizingUseOptimizer()" class="schwab-btn" style="font-size:11px;padding:5px 12px;text-transform:none;letter-spacing:0;">Use Optimizer %</button>
+      <span id="szWeightSum" style="font-weight:500;color:var(--text3);text-transform:none;letter-spacing:0;"></span>
+    </div>
+    <div class="sz-grid">
+      <div class="sz-field"><label class="sz-label" for="szA_m8bf">M8BF</label><div class="sz-wrap sz-p"><input id="szA_m8bf" class="sz-input" type="number" value="5" min="0" max="100" step="1"></div></div>
+      <div class="sz-field"><label class="sz-label" for="szA_strad">Straddle</label><div class="sz-wrap sz-p"><input id="szA_strad" class="sz-input" type="number" value="5" min="0" max="100" step="1"></div></div>
+      <div class="sz-field"><label class="sz-label" for="szA_gxbf">GXBF</label><div class="sz-wrap sz-p"><input id="szA_gxbf" class="sz-input" type="number" value="5" min="0" max="100" step="1"></div></div>
+      <div class="sz-field"><label class="sz-label" for="szA_bobf">BOBF</label><div class="sz-wrap sz-p"><input id="szA_bobf" class="sz-input" type="number" value="5" min="0" max="100" step="1"></div></div>
+      <div class="sz-field"><label class="sz-label" for="szA_diagonal">Diagonal</label><div class="sz-wrap sz-p"><input id="szA_diagonal" class="sz-input" type="number" value="5" min="0" max="100" step="1"></div></div>
+    </div>
+    <div style="margin:4px 0 14px;">
+      <button onclick="_sizingRun()" class="schwab-btn primary" style="font-size:13px;font-weight:700;padding:9px 28px;">▶ RUN</button>
+    </div>
+
+    <div id="sizingCalcResults" style="font-size:12px;color:var(--text3);">Set Starting Capital and the per-strategy Allocation %, then press <b>RUN</b>.</div>
+  </div>
+
+  <!-- Tabs (hidden until first RUN) -->
+  <div id="resultsArea" style="display:none">
+    <div class="section-heading">Combo Portfolio Report</div>
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="summary">📊 Summary</button>
+      <button class="tab-btn" data-tab="strategies">📁 Strategies</button>
+      <button class="tab-btn" data-tab="trades">🧾 Trade Log</button>
+      <button class="tab-btn" data-tab="daily">📅 Daily Log</button>
+    </div>
+
+    <div class="tab-panel active" data-tab="summary">
+      <div id="portHeader" class="sz-stats" style="margin-top:0"></div>
+      <div class="scale-toggle">
+        <label><input type="radio" name="equityScale" value="linear" checked> Linear</label>
+        <label><input type="radio" name="equityScale" value="log"> Logarithmic</label>
+      </div>
+      <div class="chart-box" id="chartEquity" style="justify-content:flex-start;align-items:flex-start;padding:8px 12px;min-height:420px">
+        <div style="text-align:center;width:100%;color:var(--text3);padding:100px 0">Portfolio equity curve will render here after RUN</div>
+      </div>
+    </div>
+    <div class="tab-panel" data-tab="strategies">
+      <div id="stratCards" class="sz-stats" style="grid-template-columns:repeat(auto-fill,minmax(280px,1fr));margin-top:0"></div>
+    </div>
+    <div class="tab-panel" data-tab="trades">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:10px;flex-wrap:wrap">
+        <div style="font-size:11px;color:var(--text3)" id="tradeLogCount">—</div>
+        <button class="run-btn" id="exportCsvBtn" style="padding:6px 14px;font-size:10px">EXPORT CSV</button>
+      </div>
+      <div style="overflow-x:auto">
+      <table class="trade-table" id="tradeTable">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>DOW</th>
+            <th>Strategy</th>
+            <th>Contracts</th>
+            <th>Daily P/L</th>
+            <th>Running Equity</th>
+          </tr>
+        </thead>
+        <tbody id="tradeTableBody"></tbody>
+      </table>
+      </div>
+    </div>
+    <div class="tab-panel" data-tab="daily">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:10px;flex-wrap:wrap">
+        <div style="font-size:11px;color:var(--text3)" id="dailyLogCount">—</div>
+        <button class="run-btn" id="exportDailyBtn" style="padding:6px 14px;font-size:10px">EXPORT CSV</button>
+      </div>
+      <div style="overflow-x:auto">
+      <table class="trade-table" id="dailyTable">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>DOW</th>
+            <th>Combined P/L</th>
+            <th>Running Equity</th>
+          </tr>
+        </thead>
+        <tbody id="dailyTableBody"></tbody>
+      </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">Informational only — not financial advice; it does not tell you what to trade. Backtest mid-fills, no slippage/fees → live execution is worse.</div>
+
+</main>
+
+<!-- Load signal-engine.js as a deferred module so its side-effect assignment
+     (globalThis.SignalEngine = { ..., isTrade, ... }) is available to the
+     classic <script> block below. We use SignalEngine.isTrade to filter
+     history_data.json exactly as history.html's inline isTrade does. -->
+<script type="module" src="./signal-engine.js?v=20260427-q2earnings"></script>
+
+<script>
+// ══════════════════════════════════════════════════════════════════════
+// Theme toggle (mirrors diagonal.html)
+// ══════════════════════════════════════════════════════════════════════
+(function(){
+  const saved = localStorage.getItem('diag_theme');
+  if (saved) document.documentElement.setAttribute('data-theme', saved);
+  document.getElementById('themeBtn').addEventListener('click', () => {
+    const cur = document.documentElement.getAttribute('data-theme');
+    const next = cur === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    localStorage.setItem('diag_theme', next);
+  });
+})();
+
+// ══════════════════════════════════════════════════════════════════════
+// Tabs (mirrors diagonal.html)
+// ══════════════════════════════════════════════════════════════════════
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const t = btn.dataset.tab;
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b === btn));
+    document.querySelectorAll('.tab-panel').forEach(p =>
+      p.classList.toggle('active', p.dataset.tab === t));
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// Per-strategy P/L overrides — copied VERBATIM from history.html
+// ══════════════════════════════════════════════════════════════════════
+const GXBF_PL = {"2026-03-17":-1200,"2026-03-10":60,"2026-03-04":600,"2026-02-25":1170,"2026-02-23":-1300,"2026-02-11":-1300,"2026-02-06":-30,"2026-01-22":-1260,"2026-01-21":3730,"2026-01-20":-1300,"2026-01-15":-1120,"2025-12-22":1680,"2025-12-19":1150,"2025-11-26":1600,"2025-11-24":2190,"2025-11-21":1850,"2025-11-19":-1080,"2025-10-27":2210,"2025-10-20":1740,"2025-10-17":1910,"2025-10-15":-1350,"2025-09-22":-1270,"2025-08-28":1600,"2025-08-18":530,"2025-08-04":180,"2025-07-21":-60,"2025-07-16":1090,"2025-07-09":1020,"2025-07-08":1360,"2025-06-24":1520,"2025-06-23":-260,"2025-06-20":-1110,"2025-06-18":670,"2025-06-16":900,"2025-06-06":2130,"2025-05-27":1100,"2025-05-19":1820,"2025-05-08":-470,"2025-05-02":1500,"2025-03-24":2360,"2025-03-14":3650,"2025-02-27":-1200,"2025-02-24":-1200,"2025-02-04":2460,"2025-01-30":2050,"2025-01-21":2100,"2024-12-23":2310,"2024-11-21":2600,"2024-11-18":1050,"2024-11-06":1440,"2024-11-01":1120,"2024-10-28":-1200,"2024-10-21":-50,"2024-10-08":2180,"2024-10-04":1300,"2024-09-23":1040,"2024-09-09":600,"2024-09-05":-1200};
+
+const STRAD_PL ={"2026-02-27":-1120,"2026-02-12":9600,"2026-01-30":-2900,"2026-01-02":-260,"2025-12-31":2900,"2025-12-04":-1830,"2025-11-10":1550,"2025-11-03":20,"2025-10-31":550,"2025-10-30":560,"2025-10-28":-1160,"2025-10-16":2900,"2025-10-07":1060,"2025-10-02":-460,"2025-10-01":1910,"2025-09-30":860,"2025-09-26":-160,"2025-09-23":1400,"2025-09-05":2350,"2025-09-04":2600,"2025-08-26":900,"2025-08-08":890,"2025-08-01":1550,"2025-07-31":5560,"2025-07-30":-1140,"2025-07-29":1740,"2025-07-25":30,"2025-07-24":-1280,"2025-07-10":-560,"2025-07-03":1400,"2025-06-30":-1520,"2025-06-27":120,"2025-06-26":1000,"2025-06-10":200,"2025-06-05":1400,"2025-06-03":260,"2025-05-29":-420,"2025-05-20":-2510,"2025-05-09":-1190,"2025-05-01":-1100,"2025-04-30":3410,"2025-04-01":100,"2025-03-31":4700,"2025-03-03":8860,"2025-02-28":6450,"2025-02-14":-2530,"2025-02-13":2590,"2025-02-10":-830,"2025-02-07":3020,"2025-01-31":2540,"2025-01-28":1100,"2025-01-24":-150,"2025-01-23":2250,"2025-01-07":5700,"2025-01-03":2040,"2025-01-02":480,"2024-12-31":350,"2024-12-26":-970,"2024-12-19":1600,"2024-12-18":14600,"2024-12-13":230,"2024-12-10":880,"2024-12-06":-1020,"2024-11-26":-150,"2024-11-22":-700,"2024-11-14":1940,"2024-11-05":3140,"2024-11-01":-2740,"2024-10-31":3750,"2024-10-25":-1080,"2024-10-24":-1560,"2024-10-11":1330,"2024-10-01":2160,"2024-09-30":970,"2024-09-27":-440,"2024-09-26":-670,"2024-09-03":6850};
+
+// allocWeights — ported as a plain object (no Allocation Optimizer card on this
+// page; the self-contained best-Sharpe search below writes into it, then
+// _sizingUseOptimizer() reads it to fill the szA_* allocation fields).
+const allocWeights = { m8bf:5, strad:5, gxbf:5, bobf:5, diagonal:5 };
+
+// ══════════════════════════════════════════════════════════════════════
+// Data loader — builds global allRows exactly as history.html's init() does:
+//  fetch ./history_data.json → filter via SignalEngine.isTrade(noon ET) →
+//  map per row {date, m8bfPL, stradPL(=STRAD_PL[date]??row.stradPL),
+//  gxbfPL(=GXBF_PL[date]??row.gxbfPL), bobfPL, diagPL}. Only rows that have
+//  data are kept (the ~10 future placeholders have no PL and are skipped).
+// ══════════════════════════════════════════════════════════════════════
+let allRows = [];
+
+function _waitForSignalEngine() {
+  return new Promise((resolve, reject) => {
+    let tries = 0;
+    (function poll() {
+      if (window.SignalEngine && typeof window.SignalEngine.isTrade === 'function') return resolve();
+      if (++tries > 200) return reject(new Error('signal-engine.js (SignalEngine.isTrade) failed to load'));
+      setTimeout(poll, 25);
+    })();
+  });
+}
+
+async function loadHistory() {
+  await _waitForSignalEngine();
+  const isTrade = window.SignalEngine.isTrade;
+
+  const resp = await fetch('history_data.json?v=' + Date.now(), { cache: 'no-store' });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const raw = await resp.json();
+
+  // Remove weekends and holidays (keep future trading-day placeholders out of
+  // allRows by only keeping rows that actually carry a P/L value).
+  const filtered = raw.filter(r => {
+    const p = r.date.split('-');
+    return isTrade(new Date(+p[0], +p[1] - 1, +p[2], 12));
+  });
+
+  const out = [];
+  for (let i = 1; i < filtered.length; i++) {
+    const cur = filtered[i];
+    out.push({
+      date: cur.date,
+      m8bfPL: cur.m8bfPL != null ? cur.m8bfPL : null,
+      stradPL: cur.date in STRAD_PL ? STRAD_PL[cur.date] : (cur.stradPL != null ? cur.stradPL : null),
+      gxbfPL: cur.date in GXBF_PL ? GXBF_PL[cur.date] : (cur.gxbfPL != null ? cur.gxbfPL : null),
+      bobfPL: cur.bobfPL != null ? cur.bobfPL : null,
+      diagPL: cur.diagPL != null ? cur.diagPL : null,
+    });
+  }
+  out.reverse();
+
+  // Keep only rows that have at least one strategy P/L (drops the ~10 future
+  // empty placeholders, which carry no P/L and would just be no-op rows).
+  allRows = out.filter(r =>
+    (r.m8bfPL != null && r.m8bfPL !== 0) ||
+    (r.stradPL != null && r.stradPL !== 0) ||
+    (r.gxbfPL != null && r.gxbfPL !== 0) ||
+    (r.bobfPL != null && r.bobfPL !== 0) ||
+    (r.diagPL != null && r.diagPL !== 0));
+
+  const dn = document.getElementById('dataNotice');
+  const hm = document.getElementById('hdrMeta');
+  if (allRows.length) {
+    const first = allRows[0].date, last = allRows[allRows.length - 1].date;
+    if (dn) dn.style.display = 'none';
+    if (hm) hm.textContent = `${allRows.length} strategy-days (${first} → ${last})`;
+  } else {
+    if (dn) dn.textContent = 'history_data.json loaded but contained no strategy P/L rows.';
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Position-Sizing Calculator — copied VERBATIM from history.html.
+// (The only addition is the `window._szLast = {...}` stash + tab build at the
+//  very end of _sizingRun; the math, IDs and formulas are byte-identical.)
+// ══════════════════════════════════════════════════════════════════════
+const _SZ_KEYS = [['m8bf','M8BF','m8bfPL'],['strad','Straddle','stradPL'],
+  ['gxbf','GXBF','gxbfPL'],['bobf','BOBF','bobfPL'],['diagonal','Diagonal','diagPL']];
+
+function _szDays(aISO, bISO) {
+  const A = aISO.split('-').map(Number), B = bISO.split('-').map(Number);
+  return (Date.UTC(B[0],B[1]-1,B[2]) - Date.UTC(A[0],A[1]-1,A[2])) / 86400000;
+}
+function _szKPIs(series, startCap) {
+  if (!series.length) return null;
+  series = series.slice().sort((a,b) => a.date.localeCompare(b.date));
+  let total=0, wins=0, losses=0, sumWin=0, sumLoss=0;
+  let maxWin=-Infinity, maxLoss=Infinity;
+  let eq=startCap, peak=startCap, mddPct=0;
+  for (const t of series) {
+    total += t.pnl;
+    if (t.pnl > 0) { wins++; sumWin += t.pnl; }
+    else if (t.pnl < 0) { losses++; sumLoss += t.pnl; }
+    if (t.pnl > maxWin) maxWin = t.pnl;
+    if (t.pnl < maxLoss) maxLoss = t.pnl;
+    eq += t.pnl;
+    if (eq > peak) peak = eq;
+    const ddPct = peak > 0 ? (eq - peak) / peak : 0;
+    if (ddPct < mddPct) mddPct = ddPct;
+  }
+  const days  = series.length > 1 ? _szDays(series[0].date, series[series.length-1].date) : 1;
+  const years = Math.max(days / 365.25, 1/365.25);
+  const endCap = startCap + total;
+  const cagr = (startCap > 0 && endCap > 0)
+    ? Math.pow(endCap / startCap, 1 / years) - 1
+    : (endCap <= 0 ? -1 : 0);
+  const mar = mddPct < 0 ? cagr / Math.abs(mddPct) : 0;
+  return {
+    pl: total, cagr: cagr*100, maxDDpct: mddPct*100, mar,
+    winPct: (wins/series.length)*100, avgTrade: total/series.length,
+    avgWin: wins ? sumWin/wins : 0, avgLoss: losses ? sumLoss/losses : 0,
+    maxWin: maxWin===-Infinity?0:maxWin, maxLoss: maxLoss===Infinity?0:maxLoss,
+    trades: series.length, winners: wins, endCap,
+  };
+}
+function _szUpdateSum() {
+  let s = 0;
+  for (const [k] of _SZ_KEYS) s += Math.max(0, parseFloat(document.getElementById('szA_'+k).value) || 0);
+  const el = document.getElementById('szWeightSum');
+  if (el) el.innerHTML = `total allocation ${s}% of equity` +
+    (s > 100 ? ' <span style="color:#f59e0b">(over 100% — leveraged)</span>' : '');
+}
+function _sizingUseOptimizer() {
+  // Fill the per-strategy ALLOCATION % fields from the best-Sharpe search's
+  // current weights (the self-contained optimizer below runs first).
+  if (typeof allocWeights === 'undefined') return;
+  for (const [k] of _SZ_KEYS) {
+    const el = document.getElementById('szA_' + k);
+    if (el && allocWeights[k] != null) el.value = allocWeights[k];
+  }
+  _szUpdateSum();
+}
+// Historical 1-lot max drawdown ($) per strategy — the natural
+// "capital to safely run 1 contract" measure (no margin data exists).
+function _szDD1lot() {
+  const out = {};
+  for (const [k,, f] of _SZ_KEYS) {
+    let cum=0, peak=0, mdd=0;
+    for (const r of allRows) {
+      const v = r[f];
+      if (v == null || v === 0) continue;
+      cum += v; if (cum > peak) peak = cum;
+      const dd = cum - peak; if (dd < mdd) mdd = dd;
+    }
+    out[k] = Math.abs(mdd) || 0;
+  }
+  return out;
+}
+function _sizingReady() {
+  // Data-load hook. RUN-driven — do NOT auto-compute; just keep the prompt.
+  const el = document.getElementById('sizingCalcResults');
+  if (el && !el.dataset.ran) el.innerHTML =
+    'Set Starting Capital and the per-strategy Allocation %, then press <b>RUN</b>.';
+  _szUpdateSum();
+}
+function _sizingRun() {
+  const el = document.getElementById('sizingCalcResults');
+  if (!el) return;
+  if (!allRows || !allRows.length) { el.textContent = 'History still loading — press RUN again in a moment.'; return; }
+  el.dataset.ran = '1';
+
+  const startCap = Math.max(1, parseFloat(document.getElementById('szCap').value)    || 1);
+  const stress   = Math.max(1, parseFloat(document.getElementById('szStress').value) || 1);
+
+  // Allocation % per strategy (Option Omega "Allocate X% of portfolio").
+  const allocPct = {};
+  for (const [k] of _SZ_KEYS)
+    allocPct[k] = Math.max(0, parseFloat(document.getElementById('szA_'+k).value) || 0);
+  _szUpdateSum();
+
+  const fmt$ = n => (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString();
+
+  // $ to run 1 contract of each strategy = its historical 1-lot max DD × stress.
+  const dd1 = _szDD1lot();
+  const capPerCt = {};
+  for (const [k] of _SZ_KEYS) capPerCt[k] = (dd1[k] || 0) * stress;
+
+  // ── Path-dependent compounding portfolio simulation (Option Omega style):
+  //    each day, each strategy's contracts = floor( alloc% × CURRENT equity ÷
+  //    capPerCt ); equity compounds on the realized combined daily P/L. ──
+  let equity = startCap;
+  const perStrat = {};
+  for (const [k] of _SZ_KEYS)
+    perStrat[k] = { series: [], pnl: 0, ctMin: Infinity, ctMax: 0, wins: 0, n: 0, forced: false };
+  const combo = [];      // [{date, pnl}] portfolio daily
+  const eqCurve = [];    // [{date, eq}] running equity
+
+  const sorted = allRows.slice().sort((a,b) => a.date.localeCompare(b.date));
+  for (const row of sorted) {
+    let dayPnL = 0, traded = false;
+    for (const [k,, fld] of _SZ_KEYS) {
+      const v = row[fld];
+      if (v == null || v === 0) continue;
+      const cpc = capPerCt[k];
+      let contracts = cpc > 0 ? Math.floor((allocPct[k] / 100 * equity) / cpc) : 0;
+      if (contracts < 1 && allocPct[k] > 0) { contracts = 1; perStrat[k].forced = true; }
+      if (contracts < 1) continue;             // 0% allocation = excluded
+      const p = v * contracts;
+      perStrat[k].series.push({ date: row.date, pnl: p });
+      perStrat[k].pnl += p;
+      perStrat[k].n++; if (p > 0) perStrat[k].wins++;
+      perStrat[k].ctMin = Math.min(perStrat[k].ctMin, contracts);
+      perStrat[k].ctMax = Math.max(perStrat[k].ctMax, contracts);
+      dayPnL += p; traded = true;
+    }
+    if (traded) {
+      equity += dayPnL;
+      combo.push({ date: row.date, pnl: dayPnL });
+      eqCurve.push({ date: row.date, eq: equity });
+    }
+  }
+
+  if (!combo.length) {
+    el.innerHTML = '<div style="padding:12px;color:var(--text3)">No strategy allocated — set a per-strategy Allocation % above 0 and press RUN.</div>';
+    const area = document.getElementById('resultsArea'); if (area) area.style.display = 'none';
+    return;
+  }
+
+  // ── Portfolio KPIs from the PATH-DEPENDENT equity curve ──
+  const firstDate = combo[0].date, lastDate = combo[combo.length-1].date;
+  const totalPL = equity - startCap;
+  let peak = startCap, maxDDfrac = 0;
+  for (const e of eqCurve) {
+    if (e.eq > peak) peak = e.eq;
+    const ddf = peak > 0 ? (e.eq - peak) / peak : 0;
+    if (ddf < maxDDfrac) maxDDfrac = ddf;
+  }
+  const maxDDpct = maxDDfrac * 100;
+  const years = Math.max(_szDays(firstDate, lastDate) / 365.25, 1/365.25);
+  const cagr = (startCap > 0 && equity > 0)
+    ? (Math.pow(equity / startCap, 1 / years) - 1) * 100
+    : (equity <= 0 ? -100 : 0);
+  const mar = maxDDpct < 0 ? cagr / Math.abs(maxDDpct) : 0;
+  let winners = 0;
+  for (const c of combo) if (c.pnl > 0) winners++;
+  const winPct = (winners / combo.length) * 100;
+
+  const port = {
+    pl: totalPL, cagr, maxDDpct, mar, winPct,
+    startCap, endCap: equity, trades: combo.length, winners,
+    firstDate, lastDate,
+  };
+
+  // Per-strategy KPIs — series is already contract-scaled; uses startCap base
+  // for comparability (matches the prompt spec).
+  const rows = [];
+  for (const [k,label] of _SZ_KEYS) {
+    const ps = perStrat[k];
+    const kpi = _szKPIs(ps.series, startCap);
+    rows.push([label, k, kpi]);
+  }
+
+  // Inline summary echo under the RUN button.
+  const totAbs = rows.reduce((s,[,k]) => s + Math.abs(perStrat[k].pnl), 0) || 1;
+  const cl2 = n => n >= 0 ? 'color:#22c55e' : 'color:#ef4444';
+  const miniLine = ([label,k,kpi]) => {
+    const ps = perStrat[k];
+    if (allocPct[k] <= 0 || !kpi || !ps.n)
+      return `<div class="sz-mini"><b>${label}</b> &nbsp; <span style="color:var(--text3)">0% alloc — excluded</span></div>`;
+    const ctTxt = ps.ctMin === ps.ctMax ? `${ps.ctMax}ct` : `${ps.ctMin}–${ps.ctMax}ct`;
+    const warn = ps.forced ? ' <span style="color:#ef4444;font-weight:700" title="under-capitalized: floored to 1 on some days">⚠</span>' : '';
+    const share = (perStrat[k].pnl / totAbs) * 100;
+    return `<div class="sz-mini"><b>${label}</b> &nbsp;
+      <span>Alloc</span> <b>${allocPct[k]}%</b> &nbsp;
+      <span>Ct</span> <b style="${cl2(1)}">${ctTxt}</b>${warn} &nbsp;
+      <span>P/L</span> <b style="${cl2(kpi.pl)}">${fmt$(kpi.pl)}</b> &nbsp;
+      <span>% of port</span> <b style="${cl2(share)}">${(share>=0?'+':'')+share.toFixed(1)}%</b> &nbsp;
+      <span>Win</span> <b>${kpi.winPct.toFixed(1)}%</b></div>`;
+  };
+
+  el.innerHTML =
+    `<div class="sz-sub">Combo portfolio — compounded</div>
+     <div class="sz-mini" style="display:inline-block;margin-bottom:10px">
+       <b>P/L</b> <b style="${cl2(port.pl)}">${fmt$(port.pl)}</b> &nbsp;
+       <span>CAGR</span> <b style="${cl2(port.cagr)}">${port.cagr.toFixed(1)}%</b> &nbsp;
+       <span>Max DD</span> <b style="color:#ef4444">${port.maxDDpct.toFixed(1)}%</b> &nbsp;
+       <span>MAR</span> <b>${port.mar.toFixed(2)}</b> &nbsp;
+       <span>Start</span> <b>${fmt$(port.startCap)}</b> &nbsp;
+       <span>End</span> <b>${fmt$(port.endCap)}</b>
+     </div>
+     <div class="sz-sub">Per strategy</div><div class="sz-strip">${rows.map(miniLine).join('')}</div>
+     <div style="margin-top:14px;padding:10px 12px;background:var(--bg3);border-radius:8px;font-size:11px;line-height:1.6;color:var(--text3)">
+       Each strategy is sized daily to <b>Allocation % × current portfolio equity</b> ÷ [ its 1-lot historical max DD × ${stress}× stress ], floored to whole contracts (min 1 if allocated). Equity compounds on the realized combined daily P/L — this is a path-dependent portfolio sim (Option Omega style).
+       <span style="color:#ef4444">⚠</span> = under-capitalized (forced to 1 contract on some days); 0% allocation = excluded.
+       Portfolio KPIs come from the path-dependent equity curve; per-strategy KPIs use the ${fmt$(startCap)} start base for comparability.
+       Backtest mid-fills, no slippage/fees → live worse. Total Premium / Capture Rate aren't in history_data.json (shown n/a, not faked).
+       Informational only — not financial advice; it does not tell you what to trade.
+     </div>`;
+
+  // Stash for the tab renderers, then build the 4 report tabs.
+  window._szLast = { combo, eqCurve, perStrat, port, allocPct, capPerCt, rows, startCap };
+  try { _buildResultTabs(); } catch (e) { console.error('[mst] tab build failed', e); }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Self-contained best-Sharpe optimizer (mirrors history.html optimizeAlloc).
+// Pure float loops over the per-strategy daily P/L in allRows; sets the
+// global allocWeights, then defers to the verified _sizingUseOptimizer().
+// ══════════════════════════════════════════════════════════════════════
+const _origUseOptimizer = _sizingUseOptimizer;
+_sizingUseOptimizer = function() {
+  try { _optimizeAllocBestSharpe(); } catch (e) { console.error('[mst] optimize failed', e); }
+  return _origUseOptimizer();
+};
+
+function _optimizeAllocBestSharpe() {
+  if (!allRows || !allRows.length) return;
+  const sorted = allRows.slice().sort((a,b) => a.date.localeCompare(b.date));
+
+  // Build aligned daily P/L per strategy (only days where ≥1 strategy traded),
+  // mirroring optimizeAlloc's stratPLs construction.
+  const stratPLs = { m8bf:[], strad:[], gxbf:[], bobf:[], diagonal:[] };
+  for (const row of sorted) {
+    const m  = row.m8bfPL  != null ? row.m8bfPL  : 0;
+    const st = row.stradPL != null ? row.stradPL : 0;
+    const g  = row.gxbfPL  != null ? row.gxbfPL  : 0;
+    const b  = row.bobfPL  != null ? row.bobfPL  : 0;
+    const dg = row.diagPL  != null ? row.diagPL  : 0;
+    if (m || st || g || b || dg) {
+      stratPLs.m8bf.push(m); stratPLs.strad.push(st); stratPLs.gxbf.push(g);
+      stratPLs.bobf.push(b); stratPLs.diagonal.push(dg);
+    }
+  }
+
+  const n = stratPLs.m8bf.length;
+  if (n < 2) return;
+
+  let bestSharpe = -Infinity;
+  let bestW = { m8bf:20, strad:20, gxbf:20, bobf:20, diagonal:20 };
+
+  // Brute force at 10% increments over 5 strategies, sum = 100.
+  const STEP = 10;
+  for (let a = 0; a <= 100; a += STEP) {
+    for (let b = 0; b <= 100 - a; b += STEP) {
+      for (let c = 0; c <= 100 - a - b; c += STEP) {
+        for (let d = 0; d <= 100 - a - b - c; d += STEP) {
+          const e = 100 - a - b - c - d;
+          const wa = a/100, wb = b/100, wc = c/100, wd = d/100, we = e/100;
+          let sum = 0, sumSq = 0;
+          for (let i = 0; i < n; i++) {
+            const pl = wa * stratPLs.m8bf[i] + wb * stratPLs.strad[i] + wc * stratPLs.gxbf[i] + wd * stratPLs.bobf[i] + we * stratPLs.diagonal[i];
+            sum += pl;
+            sumSq += pl * pl;
+          }
+          const mean = sum / n;
+          const variance = sumSq / n - mean * mean;
+          const sharpe = variance > 0 ? mean / Math.sqrt(variance) : 0;
+          if (sharpe > bestSharpe) {
+            bestSharpe = sharpe;
+            bestW = { m8bf:a, strad:b, gxbf:c, bobf:d, diagonal:e };
+          }
+        }
+      }
+    }
+  }
+
+  for (const k of ['m8bf','strad','gxbf','bobf','diagonal']) allocWeights[k] = bestW[k];
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Result tabs — all 4 read window._szLast (built at the end of _sizingRun).
+// NO toLocaleDateString / toLocaleString on dates anywhere: dates are
+// 'YYYY-MM-DD' strings, parsed via .split('-').map(Number) + numeric Date.
+// Each render is wrapped in try/catch so one failure can't blank the page.
+// ══════════════════════════════════════════════════════════════════════
+const _DOW_SHORT = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const _MON_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function _dowNum(iso) { const [Y,M,D] = iso.split('-').map(Number); return new Date(Y, M-1, D).getDay(); }
+// 'YYYY-MM-DD' → 'Mon DD, YYYY' via a small manual month map (NO toLocaleDateString).
+function _fmtDate(iso) {
+  const [Y,M,D] = iso.split('-').map(Number);
+  return `${_MON_SHORT[M-1]} ${D}, ${Y}`;
+}
+const _fmtMoney = n => (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString();
+let _equityChart = null;
+
+function _buildResultTabs() {
+  const area = document.getElementById('resultsArea');
+  if (area) area.style.display = '';
+  safeRenderTab('header',     _renderPortfolioHeader);
+  safeRenderTab('summary',    _renderEquityTab);
+  safeRenderTab('strategies', _renderStrategies);
+  safeRenderTab('trades',     _renderTradeLog);
+  safeRenderTab('daily',      _renderDailyLog);
+}
+function safeRenderTab(name, fn) {
+  try { fn(); }
+  catch (e) { console.error('[mst] render failed:', name, e); }
+}
+
+function _cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || '#888';
+}
+
+// ── Portfolio header KPI grid (Option Omega "Combo Portfolio" header) ──
+function _renderPortfolioHeader() {
+  const L = window._szLast;
+  const box = document.getElementById('portHeader');
+  if (!L || !box || !L.port) return;
+  const p = L.port;
+  const card = (label, val, kls) => `<div class="sz-card ${kls||''}"><div class="l">${label}</div><div class="v">${val}</div></div>`;
+  const cmpd = (l1,v1,l2,v2) => `<div class="sz-card c"><div class="h"><div class="l">${l1}</div><div class="v">${v1}</div></div><div class="h"><div class="l">${l2}</div><div class="v">${v2}</div></div></div>`;
+  const na = '<span style="color:var(--text3);font-weight:400">n/a</span>';
+  box.innerHTML =
+    cmpd('Dates (from)', _fmtDate(p.firstDate), 'Dates (to)', _fmtDate(p.lastDate)) +
+    card('P/L', _fmtMoney(p.pl), p.pl>=0?'g':'r') +
+    card('CAGR', p.cagr.toFixed(1)+'%', p.cagr>=0?'g':'r') +
+    card('Max Drawdown', p.maxDDpct.toFixed(1)+'%', 'r') +
+    card('MAR Ratio', p.mar.toFixed(2), 'g') +
+    card('Total Premium', na) +
+    card('Capture Rate', na) +
+    card('Win Percentage', p.winPct.toFixed(1)+'%') +
+    cmpd('Starting Capital', _fmtMoney(p.startCap), 'Ending Capital', _fmtMoney(p.endCap)) +
+    cmpd('Trades', String(p.trades), 'Winners', String(p.winners));
+}
+
+// ── 📊 Summary: path-dependent portfolio equity curve (running equity) ──
+function _renderEquityTab() {
+  const L = window._szLast;
+  const box = document.getElementById('chartEquity');
+  if (!L || !box) return;
+  const eqCurve = (L.eqCurve || []).slice().sort((a,b) => a.date.localeCompare(b.date));
+  if (!eqCurve.length) { box.innerHTML = '<div style="padding:80px 0;color:var(--text3)">No portfolio trades to chart.</div>'; return; }
+
+  const labels = eqCurve.map(e => e.date);
+  const equity = eqCurve.map(e => e.eq);
+
+  box.innerHTML = '<canvas id="equityCanvas" style="width:100%;height:400px"></canvas>';
+  loadChartJS().then(() => {
+    try {
+      const scaleSel = document.querySelector('input[name="equityScale"]:checked');
+      const useLog = scaleSel && scaleSel.value === 'log';
+      const ctx = document.getElementById('equityCanvas').getContext('2d');
+      if (_equityChart) { _equityChart.destroy(); _equityChart = null; }
+      _equityChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            label: 'Portfolio Equity',
+            data: equity,
+            borderColor: _cssVar('--accent'),
+            backgroundColor: 'rgba(99,102,241,.10)',
+            borderWidth: 2, pointRadius: 0, fill: true, tension: .12,
+          }],
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: { display: false },
+            tooltip: { callbacks: { label: c => 'Equity: $' + Math.round(c.parsed.y).toLocaleString() } },
+          },
+          scales: {
+            x: { ticks: { color: _cssVar('--text3'), maxTicksLimit: 12, autoSkip: true }, grid: { color: _cssVar('--border') } },
+            y: {
+              type: useLog ? 'logarithmic' : 'linear',
+              ticks: { color: _cssVar('--text3'), callback: v => '$' + Number(v).toLocaleString() },
+              grid: { color: _cssVar('--border') },
+            },
+          },
+        },
+      });
+    } catch (e) { console.error('[mst] equity chart failed', e); box.innerHTML = '<div style="padding:80px 0;color:var(--red)">Equity chart failed to render.</div>'; }
+  }).catch(() => { box.innerHTML = '<div style="padding:80px 0;color:var(--red)">Chart.js failed to load.</div>'; });
+}
+
+// Linear/Log toggle re-renders the equity chart.
+document.querySelectorAll('input[name="equityScale"]').forEach(r =>
+  r.addEventListener('change', () => safeRenderTab('summary', _renderEquityTab)));
+
+// ── 📁 Strategies: one card per strategy (Option Omega per-strategy vibe) ──
+function _renderStrategies() {
+  const L = window._szLast;
+  const box = document.getElementById('stratCards');
+  if (!L || !box) return;
+  const ps = L.perStrat, allocPct = L.allocPct;
+  const totAbs = (L.rows || []).reduce((s,[,k]) => s + Math.abs(ps[k].pnl), 0) || 1;
+  const cl = n => n >= 0 ? 'color:#22c55e' : 'color:#ef4444';
+  const stat = (lab, val, st) => `<div style="display:flex;justify-content:space-between;gap:10px;font-size:11px;padding:3px 0">
+      <span style="color:var(--text3)">${lab}</span><b style="font-family:'JetBrains Mono',monospace;${st||''}">${val}</b></div>`;
+
+  box.innerHTML = (L.rows || []).map(([label,k,kpi]) => {
+    const s = ps[k];
+    if (allocPct[k] <= 0 || !kpi || !s.n) {
+      return `<div class="sz-card"><div style="font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:var(--text2);margin-bottom:8px">${label}</div>
+        <div style="font-size:11px;color:var(--text3)">0% allocation — excluded from this portfolio.</div></div>`;
+    }
+    const share = (s.pnl / totAbs) * 100;
+    const ctTxt = s.ctMin === s.ctMax ? `${s.ctMax}` : `${s.ctMin}–${s.ctMax}`;
+    const under = s.forced ? ` <span style="color:#ef4444;font-weight:700">⚠ under-capitalized</span>` : '';
+    return `<div class="sz-card" style="gap:0">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;gap:8px">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:15px;font-weight:700;color:var(--accent)">${label}</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:17px;font-weight:700;${cl(kpi.pl)}">${_fmtMoney(kpi.pl)}</div>
+      </div>
+      ${stat('% of portfolio P/L', (share>=0?'+':'')+share.toFixed(1)+'%', cl(share))}
+      ${stat('Allocation', allocPct[k]+'%')}
+      ${stat('Contracts', ctTxt + under)}
+      ${stat('Win %', kpi.winPct.toFixed(1)+'%')}
+      ${stat('Max Drawdown', kpi.maxDDpct.toFixed(1)+'%', 'color:#ef4444')}
+      ${stat('MAR Ratio', kpi.mar.toFixed(2))}
+      ${stat('CAGR', kpi.cagr.toFixed(1)+'%', cl(kpi.cagr))}
+      ${stat('Trades / Winners', kpi.trades + ' / ' + kpi.winners)}
+      ${stat('Dates', _fmtDate(s.series[0].date) + ' → ' + _fmtDate(s.series[s.series.length-1].date))}
+    </div>`;
+  }).join('') || '<div style="color:var(--text3);font-size:12px;padding:20px">No strategies allocated.</div>';
+}
+
+// ── 🧾 Trade Log: one row per (date, strategy) that traded ──
+function _tradeLogRows() {
+  const L = window._szLast;
+  if (!L || !L.perStrat) return [];
+  const ps = L.perStrat;
+  const labelOf = {}, ordOf = {};
+  _SZ_KEYS.forEach(([k,label], i) => { labelOf[k] = label; ordOf[k] = i; });
+  const evs = [];
+  for (const [k] of _SZ_KEYS) {
+    const s = ps[k];
+    if (!s || !s.n) continue;
+    // Reconstruct contracts per day from the contract-scaled series ÷ raw P/L.
+    for (const pt of s.series) evs.push({ date: pt.date, key: k, strat: labelOf[k], pnl: pt.pnl });
+  }
+  evs.sort((a,b) => a.date.localeCompare(b.date) || (ordOf[a.key]-ordOf[b.key]));
+  // Running portfolio equity = startCap + cumulative event P/L (same order as
+  // the day-by-day sim, since events are date-sorted).
+  let eq = L.startCap;
+  for (const e of evs) {
+    // Contracts = scaled P/L ÷ that day's raw 1-lot P/L for the strategy.
+    const fld = _SZ_KEYS.find(x => x[0] === e.key)[2];
+    const raw = (allRows.find(r => r.date === e.date) || {})[fld];
+    e.contracts = (raw && raw !== 0) ? Math.round(e.pnl / raw) : 0;
+    eq += e.pnl; e.equity = eq;
+  }
+  return evs;
+}
+function _renderTradeLog() {
+  const L = window._szLast;
+  const body = document.getElementById('tradeTableBody');
+  const cnt = document.getElementById('tradeLogCount');
+  if (!L || !body) return;
+  const evs = _tradeLogRows();
+  if (cnt) cnt.textContent = `${evs.length} strategy-day entries`;
+  body.innerHTML = evs.map(e => {
+    const cls = e.pnl > 0 ? 'pos' : e.pnl < 0 ? 'neg' : '';
+    return `<tr>
+      <td>${e.date}</td>
+      <td>${_DOW_SHORT[_dowNum(e.date)]}</td>
+      <td>${e.strat}</td>
+      <td>${e.contracts}</td>
+      <td class="${cls}">${_fmtMoney(e.pnl)}</td>
+      <td>${_fmtMoney(e.equity)}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:20px">No trades for the current allocation.</td></tr>';
+}
+
+document.getElementById('exportCsvBtn').addEventListener('click', () => {
+  const evs = _tradeLogRows();
+  if (!evs.length) return;
+  const lines = ['Date,DOW,Strategy,Contracts,Daily P/L,Running Equity'];
+  for (const e of evs) {
+    lines.push([
+      e.date,
+      _DOW_SHORT[_dowNum(e.date)],
+      e.strat,
+      e.contracts,
+      Math.round(e.pnl),
+      Math.round(e.equity),
+    ].join(','));
+  }
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'combo-portfolio-trade-log.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+});
+
+// ── 📅 Daily Log: one row per trading date from combo ──
+function _dailyLogRows() {
+  const L = window._szLast;
+  if (!L || !L.combo) return [];
+  const combo = L.combo.slice().sort((a,b) => a.date.localeCompare(b.date));
+  let eq = L.startCap;
+  return combo.map(c => { eq += c.pnl; return { date: c.date, pnl: c.pnl, equity: eq }; });
+}
+function _renderDailyLog() {
+  const L = window._szLast;
+  const body = document.getElementById('dailyTableBody');
+  const cnt = document.getElementById('dailyLogCount');
+  if (!L || !body) return;
+  const rows = _dailyLogRows();
+  if (cnt) cnt.textContent = `${rows.length} trading days`;
+  body.innerHTML = rows.map(d => {
+    const cls = d.pnl > 0 ? 'pos' : d.pnl < 0 ? 'neg' : '';
+    return `<tr>
+      <td>${d.date}</td>
+      <td>${_DOW_SHORT[_dowNum(d.date)]}</td>
+      <td class="${cls}">${_fmtMoney(d.pnl)}</td>
+      <td>${_fmtMoney(d.equity)}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="4" style="text-align:center;color:var(--text3);padding:20px">No trading days for the current allocation.</td></tr>';
+}
+
+document.getElementById('exportDailyBtn').addEventListener('click', () => {
+  const rows = _dailyLogRows();
+  if (!rows.length) return;
+  const lines = ['Date,DOW,Combined P/L,Running Equity'];
+  for (const d of rows) {
+    lines.push([
+      d.date,
+      _DOW_SHORT[_dowNum(d.date)],
+      Math.round(d.pnl),
+      Math.round(d.equity),
+    ].join(','));
+  }
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'combo-portfolio-daily-log.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// safeRender wrapper + kick-off
+// ══════════════════════════════════════════════════════════════════════
+function safeRender(name, fn) {
+  try { fn(); }
+  catch (e) { console.error('[mst] render failed:', name, e); }
+}
+
+['change','input'].forEach(ev => {
+  for (const [k] of _SZ_KEYS) {
+    const elx = document.getElementById('szA_' + k);
+    if (elx) elx.addEventListener(ev, _szUpdateSum);
+  }
+});
+_szUpdateSum();
+
+loadHistory()
+  .then(() => safeRender('sizing', _sizingReady))
+  .catch(e => {
+    const dn = document.getElementById('dataNotice');
+    if (dn) dn.textContent = 'Failed to load history: ' + e.message;
+    console.error('[mst] history load failed', e);
+  });
+</script>
+
+</body>
+</html>
