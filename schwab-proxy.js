@@ -6700,9 +6700,14 @@ export default {
         if (!from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
           return jsonResp({ error: 'need from & to as YYYY-MM-DD' }, 400, corsHeaders);
         }
+        // debug=1: widen the window to 09:00–12:00 ET and, for days with no
+        // parse hit, return a raw sample of the longest message that day so
+        // an OLD/different gamma format can be inspected (not just "missing").
+        const debug = url.searchParams.get('debug') === '1';
         const discordEpoch = 1420070400000n;
         const out = [];
         const missing = [];
+        const samples = [];
         let rateLimited = false;
         const startD = new Date(from + 'T12:00:00Z');
         const endD   = new Date(to   + 'T12:00:00Z');
@@ -6711,13 +6716,15 @@ export default {
           if (dow === 0 || dow === 6) continue;            // skip weekends
           const dateISO = d.toISOString().slice(0, 10);
           const [y, mo, dd] = dateISO.split('-').map(Number);
-          // 09:25–10:15 ET window (13:25–14:15 UTC) brackets the ~09:34 post
-          // incl. half-days; widened slightly for safety.
-          const startMs = Date.UTC(y, mo - 1, dd, 13, 25, 0);
-          const endMs   = Date.UTC(y, mo - 1, dd, 14, 15, 0);
+          // normal: 09:25–10:15 ET (13:25–14:15 UTC). debug: 09:00–12:00 ET.
+          const startMs = debug ? Date.UTC(y, mo - 1, dd, 13,  0, 0)
+                                 : Date.UTC(y, mo - 1, dd, 13, 25, 0);
+          const endMs   = debug ? Date.UTC(y, mo - 1, dd, 16,  0, 0)
+                                 : Date.UTC(y, mo - 1, dd, 14, 15, 0);
           let afterSnowflake = ((BigInt(startMs) - discordEpoch) << 22n).toString();
           const beforeSnowflake = ((BigInt(endMs) - discordEpoch) << 22n).toString();
           let dayHit = null;
+          let dbgLongest = null;
           for (let page = 0; page < 4; page++) {
             const resp = await fetch(
               `https://discord.com/api/v9/channels/${GXBF_DISCORD_CHANNEL}/messages?limit=100&after=${afterSnowflake}&before=${beforeSnowflake}`,
@@ -6732,6 +6739,24 @@ export default {
               const msgET = toET(new Date(msg.timestamp));
               const md = `${msgET.getFullYear()}-${String(msgET.getMonth()+1).padStart(2,'0')}-${String(msgET.getDate()).padStart(2,'0')}`;
               if (md !== dateISO) continue;
+              if (debug) {
+                // capture the longest message of the day (incl. embeds) for
+                // format inspection when nothing parses.
+                let body = msg.content || '';
+                if (msg.embeds && msg.embeds.length) {
+                  for (const e of msg.embeds) {
+                    if (e.description) body += '\n[embed.desc] ' + e.description;
+                    if (e.fields) for (const f of e.fields) body += `\n[fld] ${f.name}: ${f.value}`;
+                  }
+                }
+                if (!dbgLongest || body.length > dbgLongest.len) {
+                  dbgLongest = {
+                    date: dateISO, len: body.length,
+                    msgTimeET: `${String(msgET.getHours()).padStart(2,'0')}:${String(msgET.getMinutes()).padStart(2,'0')}`,
+                    sample: body.slice(0, 500),
+                  };
+                }
+              }
               const g = parseGxbfGamma(msg.content || '');
               if (!g) continue;
               dayHit = {
@@ -6748,7 +6773,10 @@ export default {
           }
           if (rateLimited) break;
           if (dayHit) out.push(dayHit);
-          else missing.push(dateISO);
+          else {
+            missing.push(dateISO);
+            if (debug && dbgLongest) samples.push(dbgLongest);
+          }
         }
         return jsonResp({
           from, to,
@@ -6757,6 +6785,7 @@ export default {
           rateLimited,
           centers: out,
           missing,
+          ...(debug ? { samples } : {}),
         }, 200, corsHeaders);
       }
 
