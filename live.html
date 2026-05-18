@@ -214,6 +214,10 @@
   <!-- Dynamically rendered by renderBobf() -->
 </div>
 
+<div class="main" id="gxbfSection" style="display:none;">
+  <!-- Dynamically rendered by renderGxbf() -->
+</div>
+
 <div class="main" id="straddleSection" style="display:none;">
   <!-- Dynamically rendered by renderStraddle() -->
 </div>
@@ -737,6 +741,161 @@ function renderBobf() {
   html.push(`<div class="diag-meta">`);
   html.push(`  <span>${statusText}</span>`);
   if (t.status === 'filled' || t.status === 'working') html.push(`  <span>Quote age: ${ageStr}</span>`);
+  html.push(`</div>`);
+  html.push(`</div>`);
+  sec.innerHTML = html.join('');
+}
+
+// ─── GXBF trade state ─────────────────────────────────────────────────────────
+let gxbf = null;
+async function loadGxbf() {
+  try {
+    const r = await fetchWithRetry(PROXY + '/gxbf-today', { cache: 'no-store' });
+    if (r.ok) gxbf = await r.json();
+  } catch { /* keep last known */ }
+}
+
+function renderGxbf() {
+  const sec = document.getElementById('gxbfSection');
+  if (!gxbf) { sec.style.display = 'none'; return; }
+  const { open, lastClosed, doneState, skip, scrape, date, isWeekend, isHoliday, serverTimeET, windowET } = gxbf;
+
+  if (isWeekend || isHoliday) {
+    if (!lastClosed || lastClosed.closeDate !== date) { sec.style.display = 'none'; return; }
+  }
+
+  // Pre-window or no trade yet — show waiting/skip placeholder.
+  if (!open && !(lastClosed && lastClosed.closeDate === date)) {
+    sec.style.display = '';
+    let placeholderText, placeholderBadge = 'WAITING SIGNAL', placeholderClass = 'pending';
+    // skip.theme !== 'gxbf'/'gxbf-missed' means the morning signal did not
+    // pick GXBF — show GXBF's OWN reason text (strategy independence).
+    if (skip && skip.theme && skip.theme !== 'gxbf' && skip.theme !== 'gxbf-missed') {
+      placeholderText = `No GXBF today — ${skip.rec}`;
+      placeholderBadge = 'SKIP'; placeholderClass = 'skip';
+    } else if (doneState && doneState.startsWith('no-wing')) {
+      placeholderText = `No GXBF today — no wing (5–150) had risk ≤ reward`;
+      placeholderBadge = 'NO TRADE'; placeholderClass = 'skip';
+    } else if (doneState === 'window-passed') {
+      placeholderText = `Window closed — no GXBF gamma table scraped today`;
+      placeholderBadge = 'NO TRADE'; placeholderClass = 'skip';
+    } else if (skip && skip.theme === 'gxbf-missed') {
+      placeholderText = `Signal said GXBF but the trade did not open — check worker logs`;
+      placeholderBadge = 'MISSED'; placeholderClass = 'skip';
+    } else if (doneState && doneState !== 'filled') {
+      placeholderText = `No GXBF today — ${doneState}`;
+      placeholderBadge = 'SKIP'; placeholderClass = 'skip';
+    } else {
+      placeholderText = `GXBF entry window: ${windowET} ET — scraping gamma center.`;
+    }
+    let scrapeReadout = '';
+    if (scrape && scrape.center != null) {
+      scrapeReadout = `<span style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;">Center ${scrape.center}${scrape.spot != null ? ` · spot ${scrape.spot}` : ''}</span>`;
+    }
+    sec.innerHTML = `
+      <div class="diag-card">
+        <div class="diag-header">
+          <div class="diag-title"><span>GXBF</span> · ${windowET} ET</div>
+          <span class="diag-badge ${placeholderClass}">${placeholderBadge}</span>
+          <div style="flex:1"></div>
+          ${scrapeReadout}
+          <span style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-left:8px;">${serverTimeET} ET</span>
+        </div>
+        <div style="font-size:13px;color:var(--text2);padding:6px 0;">${placeholderText}</div>
+      </div>`;
+    return;
+  }
+
+  sec.style.display = '';
+  const t = open || lastClosed;
+  if (!t) { sec.style.display = 'none'; return; }
+
+  let badge, badgeClass, statusText;
+  switch (t.status) {
+    case 'filled':
+      badge = 'FILLED · LIVE'; badgeClass = 'open';
+      statusText = `${t.label || 'GXBF'} · filled at $${t.netDebit?.toFixed(2)} · ${t.openTimeET} ET · wing ${t.wing}`;
+      break;
+    case 'closed':
+      badge = 'CLOSED'; badgeClass = t.pnl >= 0 ? 'open' : 'error';
+      statusText = `${t.label || 'GXBF'} · settled SPX ${t.spxClose?.toFixed(2)} · final P&L ${fmt$(t.pnl)}`;
+      break;
+    default:
+      badge = (t.status || 'OPEN').toUpperCase(); badgeClass = 'pending';
+      statusText = `${t.label || 'GXBF'} · status ${t.status}`;
+  }
+
+  const debitDelta = (t.currentValue != null && t.netDebit != null) ? (t.currentValue - t.netDebit) : null;
+  const deltaClass = (debitDelta == null) ? '' : debitDelta > 0 ? 'diag-pl-pos' : debitDelta < 0 ? 'diag-pl-neg' : '';
+  const livePnl = t.status === 'filled' ? t.currentPnl : t.status === 'closed' ? t.pnl : null;
+  const plClass = livePnl == null ? '' : livePnl > 0 ? 'diag-pl-pos' : livePnl < 0 ? 'diag-pl-neg' : '';
+
+  const fmtExp = iso => {
+    if (!iso) return '—';
+    const d = new Date(iso + 'T12:00:00');
+    return d.toLocaleString('en-US',{month:'short',day:'numeric'});
+  };
+
+  const html = [];
+  html.push(`<div class="diag-card">`);
+  html.push(`<div class="diag-header">`);
+  html.push(`<div class="diag-title"><span>${t.label || 'GXBF'}</span> · ${t.openTimeET || windowET} ET</div>`);
+  html.push(`<span class="diag-badge ${badgeClass}">${badge}</span>`);
+  html.push(`<div style="flex:1"></div>`);
+  if (t.scrapedCenter != null) {
+    html.push(`<span style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;">Gamma ${t.scrapedCenter}${t.scrapedSpot != null ? ` · spot ${t.scrapedSpot}` : ''} · wing ${t.wing}</span>`);
+  }
+  html.push(`</div>`);
+
+  if (t.netDebit != null) {
+    html.push(`<div class="diag-grid">`);
+    if (livePnl != null) {
+      html.push(`<div class="diag-stat"><div class="diag-stat-label">${t.status === 'closed' ? 'Final' : 'Live'} P&L</div><div class="diag-stat-value ${plClass}">${fmt$(livePnl)}</div><div class="diag-stat-sub">${t.contracts} contract</div></div>`);
+    } else {
+      html.push(`<div class="diag-stat"><div class="diag-stat-label">P&L</div><div class="diag-stat-value">—</div><div class="diag-stat-sub"></div></div>`);
+    }
+    html.push(`<div class="diag-stat"><div class="diag-stat-label">SPX</div><div class="diag-stat-value">${t.currentSpot?.toFixed(2) ?? t.spxClose?.toFixed(2) ?? '—'}</div><div class="diag-stat-sub">Center ${t.centerStrike}</div></div>`);
+    html.push(`<div class="diag-stat"><div class="diag-stat-label">Net debit</div><div class="diag-stat-value">$${(t.netDebit*100).toFixed(0)}</div><div class="diag-stat-sub">$${t.netDebit?.toFixed(2)} mid</div></div>`);
+    html.push(`<div class="diag-stat"><div class="diag-stat-label">Risk / Reward</div><div class="diag-stat-value">$${(t.maxReward*100).toFixed(0)}</div><div class="diag-stat-sub">risk $${(t.maxRisk*100).toFixed(0)}</div></div>`);
+    html.push(`</div>`);
+  }
+
+  // Position card: 3-leg long call butterfly (1 long lower, 2 short center, 1 long upper)
+  html.push(`<div class="diag-position">`);
+  html.push(`  <div class="diag-pos-title">Long call butterfly · ${t.contracts || 1}× (qty 1 / 2 / 1)</div>`);
+  html.push(`  <div class="diag-pos-headline">SPX ${t.lowerStrike} <span class="diag-slash">/</span> ${t.centerStrike} <span class="diag-slash">/</span> ${t.upperStrike} <span style="font-size:13px;color:var(--text3);">CALL</span></div>`);
+  html.push(`  <div class="diag-pos-subline">${fmtExp(t.expDate)} · 0DTE · spot ${t.spotEntry?.toFixed(2)}${t.currentSpot != null && t.currentSpot !== t.spotEntry ? ' → '+t.currentSpot.toFixed(2) : ''}</div>`);
+  html.push(`  <div class="diag-pos-legs" style="grid-template-columns:1fr 1fr 1fr;">`);
+  html.push(`    <div class="diag-pos-leg long">`);
+  html.push(`      <div class="diag-pos-leg-side">+1 Long lower</div>`);
+  html.push(`      <div class="diag-pos-leg-strike">${t.lowerStrike}C</div>`);
+  html.push(`      <div class="diag-pos-leg-meta">$${t.entryLowerMid?.toFixed(2)}${t.currentLowerMid != null && t.currentLowerMid !== t.entryLowerMid ? ' → $'+t.currentLowerMid.toFixed(2) : ''}</div>`);
+  html.push(`    </div>`);
+  html.push(`    <div class="diag-pos-leg short">`);
+  html.push(`      <div class="diag-pos-leg-side">−2 Short center</div>`);
+  html.push(`      <div class="diag-pos-leg-strike">${t.centerStrike}C</div>`);
+  html.push(`      <div class="diag-pos-leg-meta">$${t.entryCenterMid?.toFixed(2)}${t.currentCenterMid != null && t.currentCenterMid !== t.entryCenterMid ? ' → $'+t.currentCenterMid.toFixed(2) : ''}</div>`);
+  html.push(`    </div>`);
+  html.push(`    <div class="diag-pos-leg long">`);
+  html.push(`      <div class="diag-pos-leg-side">+1 Long upper</div>`);
+  html.push(`      <div class="diag-pos-leg-strike">${t.upperStrike}C</div>`);
+  html.push(`      <div class="diag-pos-leg-meta">$${t.entryUpperMid?.toFixed(2)}${t.currentUpperMid != null && t.currentUpperMid !== t.entryUpperMid ? ' → $'+t.currentUpperMid.toFixed(2) : ''}</div>`);
+  html.push(`    </div>`);
+  html.push(`  </div>`);
+  if (t.netDebit != null && t.currentValue != null) {
+    html.push(`  <div class="diag-pos-pricing">`);
+    html.push(`    <div class="diag-pos-price"><div class="diag-pos-price-label">Net debit</div><div class="diag-pos-price-value">$${t.netDebit.toFixed(2)}</div></div>`);
+    html.push(`    <div class="diag-pos-price"><div class="diag-pos-price-label">${t.status === 'closed' ? 'Settled' : 'Current'}</div><div class="diag-pos-price-value">$${t.currentValue.toFixed(2)}</div></div>`);
+    html.push(`    <div class="diag-pos-price"><div class="diag-pos-price-label">Δ vs entry</div><div class="diag-pos-price-value ${deltaClass}">${debitDelta > 0 ? '+' : ''}${debitDelta.toFixed(2)}</div></div>`);
+    html.push(`  </div>`);
+  }
+  html.push(`</div>`);
+
+  const ageS = t.lastQuoteAt ? Math.round((Date.now() - new Date(t.lastQuoteAt).getTime()) / 1000) : null;
+  const ageStr = ageS == null ? '—' : ageS < 60 ? `${ageS}s ago` : `${Math.round(ageS/60)}m ago`;
+  html.push(`<div class="diag-meta">`);
+  html.push(`  <span>${statusText}</span>`);
+  if (t.status === 'filled') html.push(`  <span>Quote age: ${ageStr}</span>`);
   html.push(`</div>`);
   html.push(`</div>`);
   sec.innerHTML = html.join('');
@@ -1840,12 +1999,13 @@ async function tick() {
   // Re-check trade state every tick — catches trigger/close without page refresh
   const prevTriggered = trade?.triggered;
   const prevStatus = trade?.status;
-  await Promise.all([loadTrade(), loadDiagonal(), loadStraddle(), loadBobf()]);
+  await Promise.all([loadTrade(), loadDiagonal(), loadStraddle(), loadBobf(), loadGxbf()]);
   // Wrap each render so the user's "show per-leg fills" <details> toggle
   // doesn't reset every 30s tick.
   preserveDetailsState('diagonalSection', renderDiagonal);
   preserveDetailsState('straddleSection', renderStraddle);
   preserveDetailsState('bobfSection',     renderBobf);
+  preserveDetailsState('gxbfSection',     renderGxbf);
   const stateChanged = (trade?.triggered !== prevTriggered) || (trade?.status !== prevStatus);
   if (stateChanged) { render(); }
 
@@ -1888,7 +2048,7 @@ async function tick() {
 async function init() {
   try {
     checkOAuthCallback();
-    await Promise.all([loadTrade(), loadSPXHistory(), loadSignals(), loadDiagonal(), loadStraddle(), loadBobf()]);
+    await Promise.all([loadTrade(), loadSPXHistory(), loadSignals(), loadDiagonal(), loadStraddle(), loadBobf(), loadGxbf()]);
     updateLiveBadge();
     createSPXChart();
     rebuildSPXChart();
@@ -1896,6 +2056,7 @@ async function init() {
     renderDiagonal();
     renderStraddle();
     renderBobf();
+    renderGxbf();
     try { renderLiveTotal(); } catch (e) { console.warn('renderLiveTotal init failed:', e); }
     await tick();
     pollTimer = setInterval(tick, 30_000);

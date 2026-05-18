@@ -780,6 +780,10 @@ async function handleEOD(env, etNow) {
       const bobfResult = await settleBobfEOD(env, etNow, spxClose);
       console.log('[bobf] EOD settle:', JSON.stringify(bobfResult));
     } catch (e) { console.warn('[bobf] EOD settle failed:', e.message); }
+    try {
+      const gxbfResult = await settleGxbfEOD(env, etNow, spxClose);
+      console.log('[gxbf] EOD settle:', JSON.stringify(gxbfResult));
+    } catch (e) { console.warn('[gxbf] EOD settle failed:', e.message); }
   }
 
   // Append today's signals to TRADES database in backtester.html (reuse cached fullSigs)
@@ -2080,6 +2084,351 @@ async function settleBobfEOD(env, etNow, spxClose) {
   return { status: 'settled', pnl, type: trade.type, strikes: [trade.lowerStrike, trade.bodyStrike, trade.upperStrike], debit: trade.entryDebit, intrinsic };
 }
 
+// ════════════════════════════════════════════════════════════════════
+// GXBF TRADE HANDLER (live)
+// ────────────────────────────────────────────────────────────────────
+// GXBF = scrape the "SPX Gamma" table → use Major Positive by Volume as
+// the butterfly center → widen the wing until risk ≈ reward (closest to
+// exactly 50/50) → 0DTE SPXW long CALL fly → hold to 4 PM cash close.
+//
+// Pipeline mirrors BOBF/Straddle verbatim:
+//   - Gate: only act when the morning signal theme is 'gxbf' (analogous to
+//     the Straddle `signal.theme === 'strad'` branch). STRATEGY
+//     INDEPENDENCE: GXBF never blocks / is blocked by M8BF/Straddle/BOBF;
+//     its card reflects only GXBF's own state.
+//   - Idempotent via gxbf_done_<date>.
+//   - Scrape Discord channel 1062542349189791744 (NEW — separate from
+//     M8BF's 1048242197029458040) using env.DISCORD_USER_TOKEN, polled
+//     ~9:33–9:45 ET. Signal posts ~09:34:59 ET.
+//   - Long-call butterfly: BUY 1 @ K−W, SELL 2 @ K, BUY 1 @ K+W.
+//   - Wing W ∈ [5,150] step 5. netDebit = mid(K−W) − 2·mid(K) + mid(K+W).
+//     risk = netDebit, reward = W − netDebit. Keep candidates where
+//     netDebit > 0 && risk ≤ reward (netDebit ≤ W/2). Pick W minimizing
+//     |netDebit − W/2|.
+//   - Held to expiration. PnL from intrinsic at SPX close S:
+//     clamp(max(0,S−(K−W)) − 2·max(0,S−K) + max(0,S−(K+W)), 0, W).
+//     pnl = (intrinsic − netDebit) × 100 × contracts  (same convention as
+//     settleBobfEOD / settleStraddleEOD).
+// ════════════════════════════════════════════════════════════════════
+
+const GXBF_DISCORD_CHANNEL = '1062542349189791744';
+const GXBF_WING_MIN  = 5;
+const GXBF_WING_MAX  = 150;
+const GXBF_WING_STEP = 5;
+
+// GXBF entry window: ~9:33–9:45 ET (signal posts ~09:34:59 ET). Outside the
+// window we don't scrape; past it we mark done with no trade.
+function gxbfInWindow(etNow) {
+  const h = etNow.getHours(), m = etNow.getMinutes();
+  return h === 9 && m >= 33 && m <= 45;
+}
+function gxbfPastWindow(etNow) {
+  const h = etNow.getHours(), m = etNow.getMinutes();
+  return (h === 9 && m > 45) || h > 9;
+}
+
+// Parse the "SPX Gamma" monospace ASCII table out of a Discord message.
+// Whitespace/pipe tolerant. Returns { center, spot } or null.
+// Sample row: `| Major Positive by Volume | 7450.00  |`
+function parseGxbfGamma(content) {
+  if (!content || !/SPX\s*Gamma/i.test(content)) return null;
+  const mpv = content.match(/Major Positive by Volume\s*\|?\s*([0-9]+(?:\.[0-9]+)?)/i);
+  if (!mpv) return null;
+  const center = parseFloat(mpv[1]);
+  if (!isFinite(center) || center <= 0) return null;
+  const spotM = content.match(/Spot\s*\|?\s*([0-9]+(?:\.[0-9]+)?)/i);
+  const spot = spotM ? parseFloat(spotM[1]) : null;
+  return { center, spot: (spot != null && isFinite(spot)) ? spot : null };
+}
+
+// Scrape the GXBF Discord channel for the most-recent message today that
+// contains an "SPX Gamma" table. Mirrors fetchAllDiscordSignalsForDate's
+// paginated-messages pattern (Authorization: DISCORD_USER_TOKEN). Caches
+// the scraped center + raw msg ts in KV so EOD/endpoint can read it.
+async function scrapeGxbfCenter(env, etNow) {
+  const token = env.DISCORD_USER_TOKEN;
+  if (!token) return { ok: false, reason: 'no token' };
+  const todayISO = isoDateET(etNow);
+
+  const cachedRaw = await env.SIGNAL_KV.get(`gxbf_scrape_${todayISO}`);
+  if (cachedRaw) {
+    try { return { ok: true, cached: true, ...JSON.parse(cachedRaw) }; } catch (_) { /* re-scrape */ }
+  }
+
+  const [y, m, d] = todayISO.split('-').map(Number);
+  const startMs = Date.UTC(y, m - 1, d, 12, 0, 0);
+  const endMs   = Date.UTC(y, m - 1, d, 22, 0, 0);
+  const discordEpoch = 1420070400000n;
+  let afterSnowflake = ((BigInt(startMs) - discordEpoch) << 22n).toString();
+  const beforeSnowflake = ((BigInt(endMs) - discordEpoch) << 22n).toString();
+
+  let best = null;  // most-recent matching message
+  for (let page = 0; page < 5; page++) {
+    const resp = await fetch(
+      `https://discord.com/api/v9/channels/${GXBF_DISCORD_CHANNEL}/messages?limit=100&after=${afterSnowflake}&before=${beforeSnowflake}`,
+      { headers: { 'Authorization': token, 'User-Agent': 'Mozilla/5.0' } }
+    );
+    if (!resp.ok) return { ok: false, status: resp.status };
+    const batch = await resp.json();
+    if (!Array.isArray(batch) || batch.length === 0) break;
+    batch.sort((a, b) => a.id.localeCompare(b.id));
+    for (const msg of batch) {
+      const msgET = toET(new Date(msg.timestamp));
+      const msgDate = `${msgET.getFullYear()}-${String(msgET.getMonth()+1).padStart(2,'0')}-${String(msgET.getDate()).padStart(2,'0')}`;
+      if (msgDate !== todayISO) continue;
+      const g = parseGxbfGamma(msg.content || '');
+      if (!g) continue;
+      // Keep the LAST (most recent) matching message of the day.
+      best = {
+        center: g.center,
+        spot: g.spot,
+        msgId: msg.id,
+        msgTs: msg.timestamp,
+        msgTimeET: `${String(msgET.getHours()).padStart(2,'0')}:${String(msgET.getMinutes()).padStart(2,'0')}:${String(msgET.getSeconds()).padStart(2,'0')}`,
+      };
+    }
+    if (batch.length < 100) break;
+    afterSnowflake = batch[batch.length - 1].id;
+  }
+
+  if (!best) return { ok: false, reason: 'no SPX Gamma table found today' };
+  await env.SIGNAL_KV.put(`gxbf_scrape_${todayISO}`, JSON.stringify(best), { expirationTtl: 86400 });
+  return { ok: true, cached: false, ...best };
+}
+
+// Wing 50/50 selection. Iterate W from GXBF_WING_MIN to GXBF_WING_MAX step
+// GXBF_WING_STEP. `midFn(strike)` returns the option mid or null. For each W
+// require all 3 strikes (K−W, K, K+W) to exist with a valid mid. netDebit =
+// mid(K−W) − 2·mid(K) + mid(K+W). risk = netDebit, reward = W − netDebit.
+// Keep candidates where netDebit > 0 && risk ≤ reward (netDebit ≤ W/2).
+// Among candidates pick the W minimizing |netDebit − W/2|. Returns the
+// chosen candidate or null if none qualify.
+function selectGxbfWing(K, midFn) {
+  let bestC = null;
+  for (let W = GXBF_WING_MIN; W <= GXBF_WING_MAX; W += GXBF_WING_STEP) {
+    const lowerMid = midFn(K - W);
+    const centerMid = midFn(K);
+    const upperMid = midFn(K + W);
+    if (lowerMid == null || centerMid == null || upperMid == null) continue;
+    const netDebit = lowerMid - 2 * centerMid + upperMid;
+    const risk = netDebit;
+    const reward = W - netDebit;
+    if (!(netDebit > 0 && risk <= reward)) continue;  // netDebit ≤ W/2
+    const dist = Math.abs(netDebit - W / 2);
+    if (bestC == null || dist < bestC.dist) {
+      bestC = { W, netDebit, risk, reward, dist,
+                lowerMid, centerMid, upperMid };
+    }
+  }
+  return bestC;
+}
+
+// Main GXBF entry flow — called from the morning post-Discord deferred block
+// (gated on signal.theme === 'gxbf'). Idempotent via gxbf_done_<date>.
+async function handleGxbfEntry(env, etNow, signal, preChain = null) {
+  const todayISO = isoDateET(etNow);
+  const out = { date: todayISO, status: null };
+  const doneKey = `gxbf_done_${todayISO}`;
+
+  const done = await env.SIGNAL_KV.get(doneKey);
+  if (done) return { ...out, status: 'already-done', why: done };
+
+  if (gxbfPastWindow(etNow)) {
+    await env.SIGNAL_KV.put(doneKey, 'window-passed', { expirationTtl: 86400 });
+    return { ...out, status: 'window-passed' };
+  }
+
+  // 1. Scrape the gamma center from the GXBF Discord channel.
+  const scraped = await scrapeGxbfCenter(env, etNow);
+  if (!scraped.ok) {
+    // Don't mark done — the signal posts ~09:34:59 ET and the morning block
+    // may run a tick early. Subsequent ticks (handleScheduled GXBF refresh)
+    // re-attempt. If still missing past the window, gxbfPastWindow marks done.
+    return { ...out, status: 'no-scrape', reason: scraped.reason || `discord ${scraped.status || '?'}` };
+  }
+
+  // 2. Center = snap5(round(value)).
+  const K = snap5(Math.round(scraped.center));
+
+  // 3. Build the chain (reuse master chain — zero extra Schwab calls).
+  let token, spot, callExpDateMap;
+  try {
+    token = await getAccessToken(env);
+    const chain = preChain || await fetchSpxFullChain(token, todayISO, env);
+    spot = chain.spot; callExpDateMap = chain.callExpDateMap;
+  } catch (e) { return { ...out, status: 'error', error: 'chain fetch: ' + e.message }; }
+  if (!spot) return { ...out, status: 'error', error: 'no SPX spot' };
+
+  // 4. Wing 50/50 selection. midFn pulls the call mid for an exact strike
+  //    (no fuzz — symmetric debit math requires exact strikes).
+  const legCache = new Map();
+  const legFor = (strike) => {
+    if (legCache.has(strike)) return legCache.get(strike);
+    const leg = pickContractFromChain(callExpDateMap, todayISO, strike);
+    const exact = (leg && leg.strike === strike && leg.mid != null) ? leg : null;
+    legCache.set(strike, exact);
+    return exact;
+  };
+  const midFn = (strike) => { const l = legFor(strike); return l ? l.mid : null; };
+
+  const pick = selectGxbfWing(K, midFn);
+  if (!pick) {
+    await env.SIGNAL_KV.put(doneKey, 'no-wing: no W with netDebit>0 & risk≤reward', { expirationTtl: 86400 });
+    await logEvent(env, 'warn', 'gxbf-skip', 'no qualifying wing (risk≤reward) found', { center: K, scrapedCenter: scraped.center });
+    try {
+      const dcRaw = await env.SIGNAL_KV.get('discord_config');
+      if (dcRaw) {
+        const dc = JSON.parse(dcRaw);
+        if (dc.channelId) await sendDiscordDM(env, dc.channelId,
+          `⚠️ **GXBF** — no trade. Center ${K} (scraped ${scraped.center}); no wing 5–150 had netDebit>0 with risk ≤ reward.`,
+          dc.proxyUrl);
+      }
+    } catch (_) { /* non-critical */ }
+    return { ...out, status: 'no-wing', center: K };
+  }
+
+  const W = pick.W;
+  const kLower = K - W, kUpper = K + W;
+  const lowerLeg = legFor(kLower);
+  const centerLeg = legFor(K);
+  const upperLeg = legFor(kUpper);
+  if (!lowerLeg || !centerLeg || !upperLeg) {
+    return { ...out, status: 'error', error: `selected wing ${W} leg vanished on re-fetch (K=${K})` };
+  }
+
+  const netDebit = pick.netDebit;
+  const maxRisk = netDebit;
+  const maxReward = W - netDebit;
+
+  const trade = {
+    openDate: todayISO,
+    openTimeET: `${String(etNow.getHours()).padStart(2,'0')}:${String(etNow.getMinutes()).padStart(2,'0')}`,
+    label: 'GXBF',
+    center: K,
+    wing: W,
+    scrapedCenter: scraped.center,
+    scrapedSpot: scraped.spot,
+    scrapeMsgTs: scraped.msgTs,
+    scrapeTimeET: scraped.msgTimeET,
+    spotEntry: parseFloat(spot.toFixed(2)),
+    lowerStrike: kLower, centerStrike: K, upperStrike: kUpper,
+    expDate: todayISO,
+    lowerSymbol: lowerLeg.symbol, centerSymbol: centerLeg.symbol, upperSymbol: upperLeg.symbol,
+    entryLowerMid:  parseFloat(lowerLeg.mid.toFixed(2)),
+    entryCenterMid: parseFloat(centerLeg.mid.toFixed(2)),
+    entryUpperMid:  parseFloat(upperLeg.mid.toFixed(2)),
+    netDebit:  parseFloat(netDebit.toFixed(2)),
+    maxRisk:   parseFloat(maxRisk.toFixed(2)),
+    maxReward: parseFloat(maxReward.toFixed(2)),
+    contracts: 1,
+    // Live fields
+    currentSpot:      parseFloat(spot.toFixed(2)),
+    currentLowerMid:  parseFloat(lowerLeg.mid.toFixed(2)),
+    currentCenterMid: parseFloat(centerLeg.mid.toFixed(2)),
+    currentUpperMid:  parseFloat(upperLeg.mid.toFixed(2)),
+    currentValue:     parseFloat(netDebit.toFixed(2)),
+    currentPnl: 0,
+    lastQuoteAt: new Date().toISOString(),
+    status: 'filled',
+  };
+
+  // Write trade record FIRST (source of truth), then the done-key marker.
+  await env.SIGNAL_KV.put('gxbf_open_trade', JSON.stringify(trade));
+  await env.SIGNAL_KV.put(doneKey, 'filled', { expirationTtl: 86400 });
+
+  console.log(`[gxbf] opened filled center=${K} wing=${W} netDebit=${netDebit.toFixed(2)} (risk ${maxRisk.toFixed(2)} ≤ reward ${maxReward.toFixed(2)})`);
+  await logEvent(env, 'info', 'gxbf-open', 'opened filled', {
+    center: K, wing: W, netDebit: parseFloat(netDebit.toFixed(2)),
+    maxRisk: parseFloat(maxRisk.toFixed(2)), maxReward: parseFloat(maxReward.toFixed(2)),
+    scrapedCenter: scraped.center, scrapedSpot: scraped.spot,
+  });
+
+  // Independent Discord notification (separate from the morning signal post).
+  try {
+    const dcRaw = await env.SIGNAL_KV.get('discord_config');
+    if (dcRaw) {
+      const dc = JSON.parse(dcRaw);
+      if (dc.channelId) await sendDiscordDM(env, dc.channelId,
+        `🦋 **GXBF opened** — SPX ${kLower}/${K}/${kUpper} CALL fly (wing ${W})\n` +
+        `Net debit $${netDebit.toFixed(2)} · max risk $${(maxRisk*100).toFixed(0)} · max reward $${(maxReward*100).toFixed(0)} · 0DTE\n` +
+        `Center from gamma scrape ${scraped.center}${scraped.spot != null ? ` (spot ${scraped.spot})` : ''} @ ${scraped.msgTimeET} ET`,
+        dc.proxyUrl);
+    }
+  } catch (_) { /* non-critical */ }
+
+  return { ...out, status: 'opened', center: K, wing: W, netDebit };
+}
+
+// Refresh live mids on the open GXBF trade. Reuses the master chain (zero
+// extra Schwab calls). Mirrors refreshBobfLiveQuotes.
+async function refreshGxbfLiveQuotes(env, token, etNow, preChain = null) {
+  const raw = await env.SIGNAL_KV.get('gxbf_open_trade');
+  if (!raw) return null;
+  const trade = JSON.parse(raw);
+  if (trade.status === 'closed' || trade.status === 'expired') return trade;
+
+  try {
+    const chain = preChain || await fetchSpxFullChain(token, trade.expDate, env);
+    const { spot, callExpDateMap } = chain;
+    const lower  = pickContractFromChain(callExpDateMap, trade.expDate, trade.lowerStrike);
+    const center = pickContractFromChain(callExpDateMap, trade.expDate, trade.centerStrike);
+    const upper  = pickContractFromChain(callExpDateMap, trade.expDate, trade.upperStrike);
+    if (!lower || !center || !upper || lower.mid == null || center.mid == null || upper.mid == null) return trade;
+
+    const newDebit = lower.mid - 2 * center.mid + upper.mid;
+    trade.currentSpot      = spot ? parseFloat(spot.toFixed(2)) : trade.currentSpot;
+    trade.currentLowerMid  = parseFloat(lower.mid.toFixed(2));
+    trade.currentCenterMid = parseFloat(center.mid.toFixed(2));
+    trade.currentUpperMid  = parseFloat(upper.mid.toFixed(2));
+    trade.currentValue     = parseFloat(newDebit.toFixed(2));
+    if (trade.status === 'filled') {
+      trade.currentPnl = Math.round((trade.currentValue - trade.netDebit) * 100 * trade.contracts);
+    }
+    trade.lastQuoteAt = new Date().toISOString();
+    await env.SIGNAL_KV.put('gxbf_open_trade', JSON.stringify(trade));
+  } catch (e) { console.warn('[gxbf] refresh failed:', e.message); }
+  return trade;
+}
+
+// Settle GXBF at SPX close. Long-call-fly intrinsic at SPX close S:
+//   clamp( max(0,S−(K−W)) − 2·max(0,S−K) + max(0,S−(K+W)), 0, W )
+//   pnl = (intrinsic − netDebit) × 100 × contracts
+// (same per-point-per-contract convention as settleBobfEOD/settleStraddleEOD)
+async function settleGxbfEOD(env, etNow, spxClose) {
+  const raw = await env.SIGNAL_KV.get('gxbf_open_trade');
+  if (!raw) return { status: 'no-trade' };
+  const trade = JSON.parse(raw);
+  if (trade.openDate !== isoDateET(etNow)) return { status: 'wrong-date', openDate: trade.openDate };
+  if (trade.status === 'closed') return { status: 'already-closed' };
+  if (trade.status === 'expired') return { status: 'expired-no-trade' };
+  if (trade.status !== 'filled') return { status: trade.status };
+
+  const W = trade.wing;
+  const lowerI  = Math.max(spxClose - trade.lowerStrike,  0);
+  const centerI = Math.max(spxClose - trade.centerStrike, 0);
+  const upperI  = Math.max(spxClose - trade.upperStrike,  0);
+  const rawIntrinsic = lowerI - 2 * centerI + upperI;
+  const intrinsic = Math.min(Math.max(rawIntrinsic, 0), W);
+  const pnl = Math.round((intrinsic - trade.netDebit) * 100 * trade.contracts);
+
+  trade.status = 'closed';
+  trade.closeDate = isoDateET(etNow);
+  trade.spxClose = parseFloat(spxClose.toFixed(2));
+  trade.closeIntrinsic = parseFloat(intrinsic.toFixed(2));
+  trade.pnl = pnl;
+  await env.SIGNAL_KV.put('gxbf_open_trade', JSON.stringify(trade));
+
+  const logRaw = await env.SIGNAL_KV.get('gxbf_closed_log');
+  const log = logRaw ? JSON.parse(logRaw) : [];
+  log.unshift(trade);
+  await env.SIGNAL_KV.put('gxbf_closed_log', JSON.stringify(log.slice(0, 30)));
+
+  await upsertHistoryGitHub(env, trade.openDate, { gxbfPL: pnl });
+  return { status: 'settled', pnl, center: trade.centerStrike, wing: W,
+           strikes: [trade.lowerStrike, trade.centerStrike, trade.upperStrike],
+           debit: trade.netDebit, intrinsic };
+}
+
 async function handleScheduled(env) {
   const etNow = toET();
   const dow = etNow.getDay();
@@ -2194,6 +2543,7 @@ async function handleScheduled(env) {
       await refreshDiagonalLiveQuotes(env, schwabToken, masterChain);
       await refreshStraddleLiveQuotes(env, schwabToken, etNow, masterChain);
       await refreshBobfLiveQuotes(env, schwabToken, etNow, masterChain);
+      await refreshGxbfLiveQuotes(env, schwabToken, etNow, masterChain);
     } catch (e) {
       console.warn('[live] refresh failed:', e.message);
     }
@@ -2205,6 +2555,29 @@ async function handleScheduled(env) {
   if (isMarket) {
     try { bobfResult = await handleBobfEntry(env, etNow, masterChain); }
     catch (e) { bobfResult = { bobf: 'error', error: e.message }; console.warn('[bobf] entry failed:', e.message); }
+  }
+
+  // ── GXBF entry: retry every market tick during the 9:33-9:45 ET window ──
+  // The GXBF Discord signal posts ~09:34:59 ET — usually AFTER the morning
+  // signal block runs (~9:30-9:32 ET), so that block's first attempt finds
+  // no scrape. Retry here every tick (mirrors how BOBF retries every tick)
+  // until the table is scraped or the window passes. STRATEGY INDEPENDENCE:
+  // gated solely on GXBF's OWN theme, read from the persisted morning signal
+  // (morning_signal_data_<date>). Never consults M8BF/Straddle/BOBF state.
+  let gxbfResult = {};
+  if (isMarket && gxbfInWindow(etNow)) {
+    const gxbfDone = await env.SIGNAL_KV.get(`gxbf_done_${todayISO}`);
+    if (!gxbfDone) {
+      try {
+        const msdRaw = await env.SIGNAL_KV.get(`morning_signal_data_${todayISO}`);
+        const msd = msdRaw ? JSON.parse(msdRaw) : null;
+        if (msd && msd.theme === 'gxbf') {
+          gxbfResult = await handleGxbfEntry(env, etNow, msd, masterChain);
+        } else {
+          gxbfResult = { status: 'not-gxbf-theme', theme: msd ? msd.theme : 'pending' };
+        }
+      } catch (e) { gxbfResult = { gxbf: 'error', error: e.message }; console.warn('[gxbf] entry failed:', e.message); }
+    }
   }
 
   // ── 9:35 ET morning-signal self-check + Discord alert ──
@@ -2813,6 +3186,29 @@ async function handleScheduled(env) {
       await env.SIGNAL_KV.put(`straddle_skip_${isoDateET(etNow)}`, JSON.stringify({
         theme: signal.theme,
         rec: signal.rec,
+        recordedAt: new Date().toISOString(),
+      }), { expirationTtl: 86400 });
+    } catch (_) { /* non-critical */ }
+  }
+
+  // b2) Open GXBF if signal says so, OR record skip reason.
+  // STRATEGY INDEPENDENCE: this branch reads ONLY signal.theme === 'gxbf'
+  // (GXBF's own gate — exactly analogous to the Straddle theme === 'strad'
+  // branch above). It never blocks / is blocked by M8BF/Straddle/BOBF.
+  if (signal.theme === 'gxbf') {
+    try {
+      const existingRaw = await env.SIGNAL_KV.get('gxbf_open_trade');
+      const existing = existingRaw ? JSON.parse(existingRaw) : null;
+      if (!existing || existing.openDate !== isoDateET(etNow)) {
+        const gxbfResult = await handleGxbfEntry(env, etNow, signal, masterChain);
+        console.log(`[gxbf] entry: ${JSON.stringify(gxbfResult)}`);
+      }
+    } catch (e) { console.warn('[gxbf] open failed:', e.message); }
+  } else {
+    try {
+      await env.SIGNAL_KV.put(`gxbf_skip_${isoDateET(etNow)}`, JSON.stringify({
+        theme: signal.theme,
+        rec: signal.gxbfText || signal.rec,
         recordedAt: new Date().toISOString(),
       }), { expirationTtl: 86400 });
     } catch (_) { /* non-critical */ }
@@ -5163,6 +5559,102 @@ export default {
           serverTimeET: `${String(etNowB.getHours()).padStart(2,'0')}:${String(etNowB.getMinutes()).padStart(2,'0')}`,
           windowET: '10:29 - 12:15',
           maxPremiumFriday: BOBF_FRIDAY_MAX_PREMIUM,
+        }, 200, publicCors);
+      } catch (e) {
+        return jsonResp({ error: e.message }, 500, publicCors);
+      }
+    }
+
+    // ── GET /gxbf-today ── Public live GXBF state (no auth)
+    // Mirrors /bobf-today: returns the open/closed GXBF trade, doneState,
+    // skip reason, scrape info. Phantom prior-day/closed-slot cleanup +
+    // staleness self-refresh during market hours. STRATEGY INDEPENDENCE:
+    // surfaces only GXBF's own state.
+    if (url.pathname === '/gxbf-today' && request.method === 'GET') {
+      const publicCors = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Max-Age': '86400',
+      };
+      try {
+        const etNowG = toET(new Date());
+        const todayG = isoDateET(etNowG);
+        const isWeekendG = etNowG.getDay() === 0 || etNowG.getDay() === 6;
+        const isHolidayG = isHol(etNowG);
+
+        let openRaw = await env.SIGNAL_KV.get('gxbf_open_trade');
+        let open = openRaw ? JSON.parse(openRaw) : null;
+
+        // Stale-trade filter: settleGxbfEOD overwrites gxbf_open_trade with
+        // the settled (status='closed') trade instead of deleting it, so on
+        // the next trading day the slot still holds yesterday's closed trade.
+        // Drop it here — the settled trade is preserved in gxbf_closed_log
+        // and surfaces as `lastClosed`, so no data is lost. (Mirrors the
+        // /bobf-today stale-trade filter.)
+        if (open && (open.openDate !== todayG || open.status === 'closed' || open.status === 'expired')) {
+          open = null;
+        }
+
+        // Staleness-triggered self-refresh (defends against cron stalls)
+        if (open && open.status === 'filled' && !isWeekendG && !isHolidayG) {
+          const isMktHr = (etNowG.getHours() > 9 || (etNowG.getHours() === 9 && etNowG.getMinutes() >= 30)) && etNowG.getHours() < 16;
+          const ageMs = open.lastQuoteAt ? (Date.now() - new Date(open.lastQuoteAt).getTime()) : Infinity;
+          if (isMktHr && ageMs > 90_000) {
+            try {
+              const tk = await getAccessToken(env);
+              await refreshGxbfLiveQuotes(env, tk, etNowG);
+              openRaw = await env.SIGNAL_KV.get('gxbf_open_trade');
+              open = openRaw ? JSON.parse(openRaw) : null;
+              if (open && (open.openDate !== todayG || open.status === 'closed' || open.status === 'expired')) open = null;
+            } catch (e) { console.warn('[gxbf-today] on-demand refresh failed:', e.message); }
+          }
+        }
+
+        const logRaw = await env.SIGNAL_KV.get('gxbf_closed_log');
+        const closedLog = logRaw ? JSON.parse(logRaw) : [];
+        const lastClosed = closedLog[0] || null;
+
+        const doneKey = `gxbf_done_${todayG}`;
+        const doneState = await env.SIGNAL_KV.get(doneKey);
+
+        // Skip reason recorded at 9:30 if signal.theme !== 'gxbf' that day.
+        let skip = null;
+        const skipRaw = await env.SIGNAL_KV.get(`gxbf_skip_${todayG}`);
+        if (skipRaw) skip = JSON.parse(skipRaw);
+
+        // On-demand recovery from the persisted morning signal (mirrors the
+        // /straddle-today morning-data fallback). Only GXBF's own theme.
+        const haveOpenTodayG = open && open.openDate === todayG;
+        if (!haveOpenTodayG && !skip) {
+          const morningDataRaw = await env.SIGNAL_KV.get(`morning_signal_data_${todayG}`);
+          if (morningDataRaw) {
+            const morningData = JSON.parse(morningDataRaw);
+            if (morningData.theme === 'gxbf') {
+              skip = { theme: 'gxbf-missed', rec: `${morningData.gxbfText || morningData.rec} — open failed`,
+                       recordedAt: new Date().toISOString(), source: 'morning-data' };
+            } else {
+              skip = { theme: morningData.theme, rec: morningData.gxbfText || morningData.rec,
+                       recordedAt: new Date().toISOString(), source: 'morning-data' };
+            }
+            await env.SIGNAL_KV.put(`gxbf_skip_${todayG}`, JSON.stringify(skip), { expirationTtl: 86400 });
+          }
+        }
+
+        const scrapeRaw = await env.SIGNAL_KV.get(`gxbf_scrape_${todayG}`);
+        const scrape = scrapeRaw ? JSON.parse(scrapeRaw) : null;
+
+        return jsonResp({
+          date: todayG,
+          isWeekend: isWeekendG,
+          isHoliday: isHolidayG,
+          open,
+          lastClosed,
+          doneState,
+          skip,                 // {theme, rec} when signal said no-GXBF today
+          scrape,               // {center, spot, msgTimeET, ...} or null
+          serverTimeET: `${String(etNowG.getHours()).padStart(2,'0')}:${String(etNowG.getMinutes()).padStart(2,'0')}`,
+          windowET: '09:33 - 09:45',
         }, 200, publicCors);
       } catch (e) {
         return jsonResp({ error: e.message }, 500, publicCors);
