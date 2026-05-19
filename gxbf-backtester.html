@@ -803,16 +803,6 @@ body {
       <div class="stat-label">Capture Rate</div>
       <div class="stat-value stat-placeholder" id="kpiCaptureRate">—</div>
     </div>
-    <div class="stat-card compound">
-      <div class="compound-half">
-        <div class="stat-label">Starting Capital</div>
-        <div class="stat-value stat-placeholder" id="kpiStartCap">—</div>
-      </div>
-      <div class="compound-half">
-        <div class="stat-label">Ending Capital</div>
-        <div class="stat-value stat-placeholder" id="kpiEndCap">—</div>
-      </div>
-    </div>
 
     <div class="stat-card green">
       <div class="stat-label">Avg Per Trade</div>
@@ -1313,8 +1303,6 @@ function renderKPIs(k) {
   set('kpiWR',            fmtPct(k.winPct));
   set('kpiTotalPremium',  fmt$(k.totalPremium));
   set('kpiCaptureRate',   fmtPct(k.captureRate));
-  set('kpiStartCap',      fmt$c(k.startCap));
-  set('kpiEndCap',        fmt$c(k.endCap));
   set('kpiAvgPerTrade',   fmt$fmt(k.avgPerTrade));
   set('kpiAvgWin',        fmt$fmt(k.avgWin));
   set('kpiAvgLoss',       fmt$fmt(k.avgLoss));
@@ -1329,7 +1317,6 @@ function renderKPIs(k) {
   colorByValue('kpiCAGR',        k.cagr);          // +=green, -=red
   colorByValue('kpiMAR',         k.mar);           // +=green, -=red
   colorByValue('kpiAvgPerTrade', k.avgPerTrade);   // +=green, -=red
-  colorByValue('kpiEndCap',      k.endCap - k.startCap); // green if grew
 }
 
 // ══════════════════════════════════════════════════════════════════════
