@@ -767,14 +767,15 @@ function getRowPL(row) {
 }
 
 function computeStats(visibleRows) {
+  // Portfolio-day basis: one entry per trading day = that day's combined
+  // Total P/L across the selected strategies (same value the Total P/L
+  // column / equity curve / streaks use via getRowPL). This makes Win %,
+  // Avg, Sharpe, etc. reflect the portfolio you actually trade — not each
+  // strategy leg counted as a separate "trade".
   const pls = [];
   for (const row of visibleRows) {
-    const s = row.signal || {};
-    if (activeStrats.m8bf && s.m8bfRan && row.m8bfPL != null) pls.push(row.m8bfPL);
-    if (activeStrats.strad && s.stradRan && row.stradPL != null) pls.push(row.stradPL);
-    if (activeStrats.gxbf && row.gxbfPL != null) pls.push(row.gxbfPL);
-    if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) pls.push(row.bobfPL);
-    if (activeStrats.diagonal && row.diagPL != null) pls.push(row.diagPL);
+    const dp = getRowPL(row);
+    if (dp !== null) pls.push(dp);
   }
   if (!pls.length) return null;
 
