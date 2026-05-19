@@ -1626,7 +1626,7 @@ function renderLiveTotal() {
     <div class="diag-card">
       <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px;">
         <span class="ltc-label" style="margin-bottom:0;">Today's Live P&amp;L</span>
-        <span style="font-size:12px;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--text2);">${spxPrice != null ? 'SPX ' + fmtSpx(spxPrice) : ''}</span>
+        <span style="font-size:20px;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--text);">${spxPrice != null ? 'SPX ' + fmtSpx(spxPrice) : ''}</span>
       </div>
       <div class="ltc-total ${totalCls}">${anyData ? fmt$(total) : '—'}</div>
       <div class="ltc-rows">${rowsHtml}</div>
