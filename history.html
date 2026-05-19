@@ -762,7 +762,7 @@ function getRowPL(row) {
   if (activeStrats.strad && s.stradRan && row.stradPL != null) { pl += row.stradPL; hasTrade = true; }
   if (activeStrats.gxbf && row.gxbfPL != null) { pl += row.gxbfPL; hasTrade = true; }
   if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) { pl += row.bobfPL; hasTrade = true; }
-  if (activeStrats.diagonal && row.diagPL != null) { pl += row.diagPL; hasTrade = true; }
+  if (activeStrats.diagonal && row.diagPL != null && row.diagPL !== 0) { pl += row.diagPL; hasTrade = true; }  // diagPL===0 = no-trade day, not a flat trade
   return hasTrade ? pl : null;
 }
 
@@ -1181,7 +1181,7 @@ function renderTable() {
       if (activeStrats.strad && s.stradRan && row.stradPL != null) { dayTotal += row.stradPL; hasDayTrade = true; }
       if (activeStrats.gxbf && row.gxbfPL != null) { dayTotal += row.gxbfPL; hasDayTrade = true; }
       if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) { dayTotal += row.bobfPL; hasDayTrade = true; }
-      if (activeStrats.diagonal && row.diagPL != null) { dayTotal += row.diagPL; hasDayTrade = true; }
+      if (activeStrats.diagonal && row.diagPL != null && row.diagPL !== 0) { dayTotal += row.diagPL; hasDayTrade = true; }  // 0 = no-trade day
       if (hasDayTrade) {
         const cls = dayTotal > 0 ? 'val-pos' : dayTotal < 0 ? 'val-neg' : 'val-zero';
         h += `<td class="${cls}" style="font-weight:700">$${dayTotal.toLocaleString()}</td>`;
