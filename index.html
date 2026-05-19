@@ -689,7 +689,6 @@
 
     <hr class="divider">
     <h3>GXBF (GEX Butterfly)</h3>
-    <p><em>A once-a-day, same-day-expiry SPX butterfly that bets the index will drift toward the strike where options dealers are most heavily positioned. On real option prices it would have made about $70,000 over its qualifying days — versus roughly $47,000 trading it by hand.</em></p>
     <ul>
       <li><strong>The idea.</strong> Every morning a gamma model publishes the SPX strike with the most positive gamma — loosely, the price level that dealer hedging tends to pull the market toward and "pin" into the close. GXBF places an inexpensive long call butterfly centered on that strike, so it profits if the S&amp;P finishes the day near it.</li>
       <li><strong>When it trades.</strong> GXBF is a calm-market play. It only fires when volatility is coming in overnight — yesterday's VIX close sits clearly above this morning's VIX (a drop of more than ~0.65 points). A smaller VIX dip sends the day to the Straddle instead; a flat or rising VIX sends it to M8BF. Separately, the trading day right after monthly options expiration is <em>always</em> a GXBF day automatically — that day has historically pinned well.</li>
