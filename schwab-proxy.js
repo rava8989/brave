@@ -2113,7 +2113,7 @@ async function settleBobfEOD(env, etNow, spxClose) {
 
 const GXBF_DISCORD_CHANNEL = '1062542349189791744';
 const GXBF_WING_MIN  = 5;
-const GXBF_WING_MAX  = 150;
+const GXBF_WING_MAX  = 100;   // cap → max risk = W/2 = 50pt = $5,000/contract
 const GXBF_WING_STEP = 5;
 
 // GXBF entry window: ~9:33–9:45 ET (signal posts ~09:34:59 ET). Outside the
@@ -2196,13 +2196,15 @@ async function scrapeGxbfCenter(env, etNow) {
   return { ok: true, cached: false, ...best };
 }
 
-// Wing 50/50 selection. Iterate W from GXBF_WING_MIN to GXBF_WING_MAX step
-// GXBF_WING_STEP. `midFn(strike)` returns the option mid or null. For each W
-// require all 3 strikes (K−W, K, K+W) to exist with a valid mid. netDebit =
-// mid(K−W) − 2·mid(K) + mid(K+W). risk = netDebit, reward = W − netDebit.
-// Keep candidates where netDebit > 0 && risk ≤ reward (netDebit ≤ W/2).
-// Among candidates pick the W minimizing |netDebit − W/2|. Returns the
-// chosen candidate or null if none qualify.
+// Wing selection: KEEP WIDENING, take the WIDEST wing where risk ≤ reward.
+// Iterate W from GXBF_WING_MIN to GXBF_WING_MAX step GXBF_WING_STEP.
+// `midFn(strike)` returns the option mid or null. For each W require all 3
+// strikes (K−W, K, K+W) to exist with a valid mid. netDebit = mid(K−W) −
+// 2·mid(K) + mid(K+W). risk = netDebit, reward = W − netDebit. A wing is
+// valid iff netDebit > 0 && risk ≤ reward (i.e. netDebit ≤ W/2). It does
+// NOT need to be exactly 50/50 — only that risk never exceeds reward. Since
+// W ascends, overwriting on every valid W leaves the WIDEST valid wing.
+// Returns that candidate, or null if none qualify (→ no trade).
 function selectGxbfWing(K, midFn) {
   let bestC = null;
   for (let W = GXBF_WING_MIN; W <= GXBF_WING_MAX; W += GXBF_WING_STEP) {
@@ -2213,12 +2215,9 @@ function selectGxbfWing(K, midFn) {
     const netDebit = lowerMid - 2 * centerMid + upperMid;
     const risk = netDebit;
     const reward = W - netDebit;
-    if (!(netDebit > 0 && risk <= reward)) continue;  // netDebit ≤ W/2
-    const dist = Math.abs(netDebit - W / 2);
-    if (bestC == null || dist < bestC.dist) {
-      bestC = { W, netDebit, risk, reward, dist,
-                lowerMid, centerMid, upperMid };
-    }
+    if (!(netDebit > 0 && risk <= reward)) continue;  // risk ≤ reward (netDebit ≤ W/2)
+    bestC = { W, netDebit, risk, reward,
+              lowerMid, centerMid, upperMid };          // widest valid so far
   }
   return bestC;
 }
@@ -2280,7 +2279,7 @@ async function handleGxbfEntry(env, etNow, signal, preChain = null) {
       if (dcRaw) {
         const dc = JSON.parse(dcRaw);
         if (dc.channelId) await sendDiscordDM(env, dc.channelId,
-          `⚠️ **GXBF** — no trade. Center ${K} (scraped ${scraped.center}); no wing 5–150 had netDebit>0 with risk ≤ reward.`,
+          `⚠️ **GXBF** — no trade. Center ${K} (scraped ${scraped.center}); no wing 5–100 had netDebit>0 with risk ≤ reward.`,
           dc.proxyUrl);
       }
     } catch (_) { /* non-critical */ }

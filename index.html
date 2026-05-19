@@ -688,14 +688,15 @@
 
     <hr class="divider">
     <h3>GXBF (GEX Butterfly)</h3>
+    <p><em>Current version — mechanical, ThetaData-validated (53-day rebuild beat the prior manual record $69.9k vs $47.2k).</em></p>
     <ul>
-      <li>Used when overnight VIX drop is <strong>&gt; 0.65</strong>. Takes priority over open-to-open logic.</li>
-      <li>Entry: <strong>9:36 AM</strong>, centered on major positive gamma.</li>
-      <li>Allowed on Fed days.</li>
-      <li>Automatic GXBF on OPEX+1 — overrides M8BF and Straddle signals that day.</li>
-      <li>Maximum VIX allowed: <strong>25</strong>. Blocked if VIX ≥ 25.</li>
-      <li><strong>OPEX+1 blocked</strong> if VIX gaps up <strong>≥ 2%</strong> overnight (today's open vs yesterday's close).</li>
-      <li>Max risk: <strong>$1,400</strong>.</li>
+      <li><strong>When it fires (gating, unchanged):</strong> on an overnight VIX drop <strong>&gt; 0.65</strong>; takes priority over open-to-open. Allowed on Fed days. Automatic on OPEX+1 (overrides M8BF/Straddle that day). Blocked if VIX ≥ <strong>25</strong>, or on OPEX+1 if VIX gaps up <strong>≥ 2%</strong> overnight. Independent of M8BF/Straddle/BOBF.</li>
+      <li><strong>Entry: ~9:35 AM ET</strong> — on that morning's gamma reading (the bot posts ~9:34–9:36).</li>
+      <li><strong>Center:</strong> the <strong>“Major Positive by Volume”</strong> level from the SPX Gamma reading, snapped to the nearest 5.</li>
+      <li><strong>Structure:</strong> 0DTE SPXW long-call butterfly — BUY(K−W) / SELL 2×(K) / BUY(K+W).</li>
+      <li><strong>Wing rule:</strong> keep widening W (5 → 100, step 5); take the <strong>widest wing where risk ≤ reward</strong>. It does <em>not</em> have to be exactly 50/50 — risk just must never exceed reward. If no wing qualifies → no trade.</li>
+      <li><strong>Max risk: ≈ $5,000 / contract</strong> — wing capped at 100, so max risk = net debit ≤ W/2 = 50 pt.</li>
+      <li><strong>Exit:</strong> held to the 4:00 PM SPX close (0DTE settle); P/L = (clamped fly intrinsic − net debit) × 100. Result recorded to history as <code>gxbfPL</code>.</li>
     </ul>
     <div class="strategy-image"><img src="./gex.jpg" alt="GXBF" loading="lazy" /></div>
 
