@@ -626,13 +626,30 @@ body {
     <input type="number" class="num-input" id="wingMax" value="100" min="5" step="5" title="Largest wing width to test. Wing step is fixed at 5 pts.">
   </div>
 
+  <div class="fg" style="flex-basis:100%">
+    <div class="fg-label">GXBF Real Gating</div>
+    <div class="fg-row" style="flex-wrap:wrap;gap:14px">
+      <label style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--text);cursor:pointer;font-weight:600">
+        <input type="checkbox" id="gxbfGating" checked style="cursor:pointer">
+        <span style="white-space:nowrap">Use real GXBF gating (signal-engine rule)</span>
+      </label>
+      <label style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--text2)">VIX max
+        <input type="number" class="num-input" id="gVixMax" value="25" min="0" step="1" style="width:54px" title="Block GXBF if today's VIX ≥ this.">
+      </label>
+      <label style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--text2)">OPEX+1 VIX gap-up %
+        <input type="number" class="num-input" id="gGapPct" value="2" min="0" step="0.5" style="width:54px" title="On OPEX+1, block GXBF if VIX gapped up ≥ this % overnight.">
+      </label>
+      <span style="font-size:10px;color:var(--text3);white-space:nowrap">ON → trade iff (overnight drop &gt; thr below OR OPEX+1) AND not (VIX≥max · OPEX+1 gap-up≥% · CPI · EOM · NM-non-Mon). Special-days chips ignored when ON.</span>
+    </div>
+  </div>
+
   <div class="fg">
     <div class="fg-label">Overnight VIX Drop</div>
     <div class="fg-row">
       <label style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--text2);cursor:pointer">
         <input type="checkbox" id="ovDropOn" checked style="cursor:pointer">
-        <input type="number" class="num-input" id="ovDropThr" value="0.65" min="0" step="0.05" style="width:62px" title="Only trade days where (prev VIX close − today VIX open) ≥ this many points.">
-        <span style="white-space:nowrap">≥ pts (prev VIX close − today VIX open)</span>
+        <input type="number" class="num-input" id="ovDropThr" value="0.65" min="0" step="0.05" style="width:62px" title="GXBF trigger threshold: overnight VIX drop must exceed this (prev VIX close − today VIX open).">
+        <span style="white-space:nowrap">&gt; pts drop = GXBF trigger (also the manual filter when gating OFF)</span>
       </label>
     </div>
   </div>
@@ -1183,6 +1200,9 @@ function getParams() {
     contracts:     parseInt(document.getElementById('contracts').value, 10) || 1,
     ovDropOn:      document.getElementById('ovDropOn').checked,
     ovDropThr:     (() => { const v = parseFloat(document.getElementById('ovDropThr').value); return Number.isFinite(v) ? v : 0.65; })(),
+    gxbfGating:    document.getElementById('gxbfGating').checked,
+    gVixMax:       (() => { const v = parseFloat(document.getElementById('gVixMax').value); return Number.isFinite(v) ? v : 25; })(),
+    gGapPct:       (() => { const v = parseFloat(document.getElementById('gGapPct').value); return Number.isFinite(v) ? v : 2; })(),
     specialMode:   specialState.mode,
     specialActive: new Set(specialState.active),
     // Funds & Allocation
@@ -1627,7 +1647,7 @@ function pickByPolicy(candidates, targetDTE, policy) {
 // Held to SPX close; settled to exact intrinsic.
 function runBacktestBS(data, params) {
   const trades = [];
-  let skipped = { ovDrop: 0, noWing: 0, contracts0: 0, badData: 0 };
+  let skipped = { ovDrop: 0, gating: 0, noWing: 0, contracts0: 0, badData: 0 };
 
   // `data` is the raw chronological array. Build a parallel ISO-date list +
   // a by-date map so the existing special-day infra (which expects
@@ -1643,11 +1663,18 @@ function runBacktestBS(data, params) {
     recByDate[rec.date] = rec;
   });
 
-  // Special-day filter on the candidate date list (same call shape as diagonal).
+  // Special-day sets (always built — used for tags, and for real gating).
   const special = buildSpecialDateSets(allDates, byDate);
   let candidates = allDates.filter(d => d >= params.from && d <= params.to);
-  candidates = applySpecialFilter(candidates, special, params.specialMode, params.specialActive);
+  // Real GXBF gating supersedes the manual exclude/only chips; only apply the
+  // chip filter when real gating is OFF (manual-exploration mode).
+  if (!params.gxbfGating) {
+    candidates = applySpecialFilter(candidates, special, params.specialMode, params.specialActive);
+  }
   const candSet = new Set(candidates);
+  const SD = k => special[k] || new Set();
+  const sOpex1 = SD('OPEX+1'), sCPI = SD('CPI'), sEOM = SD('EOM'), sNM = SD('NM');
+  const isMon = iso => new Date(iso + 'T12:00:00Z').getUTCDay() === 1;
 
   let equity = params.startingFunds;
 
@@ -1658,11 +1685,25 @@ function runBacktestBS(data, params) {
     if (!candSet.has(rec.date)) continue;
     const prev = i > 0 ? arr[i - 1] : null;
 
-    // ── Overnight VIX-drop gate ──
-    if (params.ovDropOn) {
-      const drop = (prev && prev.vixClose != null && rec.vixOpen != null)
-        ? (prev.vixClose - rec.vixOpen)
-        : null;
+    const drop = (prev && prev.vixClose != null && rec.vixOpen != null)
+      ? (prev.vixClose - rec.vixOpen) : null;
+
+    if (params.gxbfGating) {
+      // ── REAL GXBF gating (signal-engine.js rule) ──
+      const d = rec.date;
+      const opex1 = sOpex1.has(d), cpi = sCPI.has(d), eom = sEOM.has(d), nm = sNM.has(d);
+      const vixToday = rec.vixOpen;
+      const gapPct = (prev && prev.vixClose) ? (rec.vixOpen - prev.vixClose) / prev.vixClose * 100 : 0;
+      // Trigger: large overnight VIX drop OR automatic on OPEX+1.
+      const trigger = (drop != null && drop > params.ovDropThr) || opex1;
+      // Blocks/overrides → no GXBF.
+      const blocked =
+        (vixToday != null && vixToday >= params.gVixMax) ||
+        (opex1 && gapPct >= params.gGapPct) ||
+        cpi || eom || (nm && !isMon(d));
+      if (!(trigger && !blocked)) { skipped.gating++; continue; }
+    } else if (params.ovDropOn) {
+      // ── Manual overnight VIX-drop filter (gating OFF) ──
       if (drop == null || drop < params.ovDropThr) { skipped.ovDrop++; continue; }
     }
 
@@ -2025,11 +2066,12 @@ async function doRun() {
     try { renderTradeLog(trades); } catch (e) { console.error('[diagonal] log render failed:', e); }
 
     const sk = skipped
-      ? (skipped.ovDrop||0)+(skipped.noWing||0)+(skipped.contracts0||0)+(skipped.badData||0)
+      ? (skipped.ovDrop||0)+(skipped.gating||0)+(skipped.noWing||0)+(skipped.contracts0||0)+(skipped.badData||0)
       : 0;
+    const gated = skipped && skipped.gating ? ` (${skipped.gating} gated out)`
+                 : (skipped && skipped.ovDrop ? ` (${skipped.ovDrop} VIX-drop)` : '');
     document.getElementById('hdrMeta').textContent =
-      `${trades.length} trades · 0DTE SPXW · ${sk} skipped` +
-      (skipped && skipped.ovDrop ? ` (${skipped.ovDrop} VIX-drop)` : '');
+      `${trades.length} trades · 0DTE SPXW · ${sk} skipped` + gated;
   } catch (e) {
     console.error('[diagonal] backtest failed:', e);
     alert('Backtest failed: ' + e.message);

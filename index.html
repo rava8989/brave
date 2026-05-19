@@ -691,7 +691,14 @@
     <h3>GXBF (GEX Butterfly)</h3>
     <p><em>Current version — mechanical, ThetaData-validated (53-day rebuild beat the prior manual record $69.9k vs $47.2k).</em></p>
     <ul>
-      <li><strong>When it fires (gating, unchanged):</strong> on an overnight VIX drop <strong>&gt; 0.65</strong>; takes priority over open-to-open. Allowed on Fed days. Automatic on OPEX+1 (overrides M8BF/Straddle that day). Blocked if VIX ≥ <strong>25</strong>, or on OPEX+1 if VIX gaps up <strong>≥ 2%</strong> overnight. Independent of M8BF/Straddle/BOBF.</li>
+      <li><strong>When it fires (full gating, from signal-engine.js):</strong>
+        <ul>
+          <li><strong>Trigger:</strong> overnight VIX <strong>drop &gt; 0.65</strong> pts (prev VIX close − today VIX open) → GXBF. A drop of <strong>0 to 0.65</strong> → Straddle instead; VIX flat/up → M8BF. So GXBF only on a <em>large</em> overnight VIX drop.</li>
+          <li><strong>Automatic on OPEX+1:</strong> the trading day after monthly OPEX is auto-converted to GXBF regardless of what it would've been (overrides M8BF / Straddle / NM Straddle).</li>
+          <li><strong>Blocked / overridden (no GXBF):</strong> VIX ≥ <strong>25</strong>; OPEX+1 with VIX gapped <strong>up ≥ 2%</strong> overnight; <strong>CPI</strong> day (all Sigma-3 blocked); <strong>EOM</strong> → forced Straddle; <strong>NM</strong> (1st trading day) &amp; not Monday → NM Straddle.</li>
+          <li>Allowed on Fed days. Independent of M8BF / Straddle / BOBF.</li>
+        </ul>
+      </li>
       <li><strong>Entry: ~9:35 AM ET</strong> — on that morning's gamma reading (the bot posts ~9:34–9:36).</li>
       <li><strong>Center:</strong> the <strong>“Major Positive by Volume”</strong> level from the SPX Gamma reading, snapped to the nearest 5.</li>
       <li><strong>Structure:</strong> 0DTE SPXW long-call butterfly — BUY(K−W) / SELL 2×(K) / BUY(K+W).</li>
