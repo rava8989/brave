@@ -7,7 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <!-- v2026-04-29: 1/25 DTE, 12:30-15:00 ET window (24h hold, entry=exit time), +30 ITM, -40 below (long 10 OTM), OPEX-1 + EOM + EOM-1 + NM + VIX 40-90% (no earnings filters) -->
-<title>SPX-BF // Diagonal Backtester</title>
+<title>SPX-BF // GXBF Backtester</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
@@ -552,15 +552,15 @@ body {
 
 <!-- Header -->
 <header class="header">
-  <div class="logo">SPX-BF <span>//</span> Diagonal Backtester</div>
+  <div class="logo">SPX-BF <span>//</span> GXBF Backtester</div>
   <nav class="nav">
     <a href="index.html">Dashboard</a>
     <a href="history.html">History</a>
     <a href="backtester.html">Backtester</a>
     <a href="live.html">Today's Trades</a>
     <a href="gex.html">GEX</a>
-    <a href="diagonal.html" class="active">Diagonal</a>
-    <a href="gxbf-backtester.html">GXBF BT</a>
+    <a href="diagonal.html">Diagonal</a>
+    <a href="gxbf-backtester.html" class="active">GXBF BT</a>
     <a href="multi-strategy-tester.html">Multi Tester</a>
   </nav>
   <div class="header-spacer"></div>
@@ -571,53 +571,30 @@ body {
 
 <!-- Strategy description -->
 <section class="strategy-banner">
-  <div class="strategy-title">1/25 DTE Put Diagonal — Bullish Skewed</div>
+  <div class="strategy-title">GXBF — 0DTE SPXW Gamma Long-Call Butterfly</div>
   <div class="strategy-desc">
-    <strong>Setup</strong> — enter any time in the <code>12:30–15:00 ET</code> window, exit at the <strong>same clock time</strong> the next trading day (<code>Entry Time === Exit Time</code>). Short a near-term put slightly in the money
-    and buy a longer-dated put below it. Default sizing: short 10 pts ITM, long 20 pts below that (roughly 10 pts OTM).
-    Example: SPX 6300 → sell 1 DTE 6310 put, buy ~25 DTE 6290 put.
+    0DTE SPXW long-call butterfly centered on 9:35 Major-Positive-by-Volume gamma; widen the wing to the widest where risk ≤ reward; held to the SPX close.
+    <br><br>
+    <strong>Setup</strong> — at <code>09:35 ET</code> read the Major-Positive-by-Volume gamma strike (the data file's <code>center</code>, snapped to the nearest 5).
+    Buy 1 lower call (center − wing), sell 2 center calls, buy 1 upper call (center + wing) — a symmetric long-call butterfly for a net debit.
     <br>
-    <strong>Holding</strong> — carry the position overnight. Next session at the same clock time, exit the whole structure and simultaneously open the next day's diagonal.
-    The <code>24h</code> hold means one diagonal in the book at any given moment — no overlap, no stacked gamma.
+    <strong>Wing selection</strong> — sweep the wing width from <code>WING MIN</code> to <code>WING MAX</code> in 5-pt steps. For each width compute the net debit
+    <code>nd = lower − 2·center + upper</code>; a width is valid only when <code>nd &gt; 0</code> and <code>nd ≤ wing − nd</code> (max risk ≤ max reward).
+    Take the <strong>widest</strong> valid wing. If no width qualifies that day, no trade is taken.
     <br>
-    <strong>Closing</strong> — held exactly 24 hours so the expiring short bleeds a full day of theta with no overnight-gap overlap between positions.
-    Profit comes from the diagonal value widening because the short decays faster than the long; the daily roll is housekeeping.
+    <strong>Holding / closing</strong> — 0DTE, held to the <strong>SPX close</strong> and settled to exact intrinsic
+    (<code>max(0,S−(K−W)) − 2·max(0,S−K) + max(0,S+W… )</code>, clamped to <code>[0, W]</code>). Max risk per contract is the debit paid; max reward is <code>wing − debit</code>.
     <br><br>
     <span style="color:var(--accent);font-size:11px;font-weight:600">
-      ⏰ <strong>Recommended entry/exit window</strong> — any intraday time between <code>12:30 ET</code> and <code>15:00 ET</code>,
-      as long as <strong>Entry Time === Exit Time</strong>. This guarantees that yesterday's diagonal closes at the exact moment today's opens, so only one diagonal is live in the book at any given moment.
-      Earlier (before 12:30 ET) picks up too much of the morning open's noise; later (after 15:00 ET) leaves too little room on the expiring-short side.
-    </span>
-    <br><br>
-    <span style="color:var(--accent);font-size:11px;font-weight:600">
-      ★ Canonical default config (loaded below, updated 2026-04-29):
-      <code>entry/exit anywhere in 12:30–15:00 ET (same clock time), sDTE=1, +30 ITM, lDTE=25, −40 below (long 10 OTM)</code>,
-      filtered with <code>OPEX-1 + EOM + EOM-1 + NM + VIX 40–90%</code> in EXCLUDE mode.
-      Sizing (30 ITM / 40 wide) caps overnight-gap tail risk at ≈ debit + width ≈ ~$9K/contract.
-      Earnings filters (AAPL/MSFT/TSLA/META) dropped at this strike depth — they were costing more edge than they preserved. EOM/EOM-1 added — month-end rebalancing chop hurts deeper-ITM short structures.
-    </span>
-    <br><br>
-    <span style="color:#fcd34d;font-size:11px">
-      🧪 <strong>Filter stack</strong> — <code>OPEX-1</code> (day before monthly OPEX — weakest-edge day of the cycle),
-      <code>EOM / EOM-1</code> (last and second-to-last trading days of the month — rebalancing flow noise),
-      <code>NM</code> (first trading day of month — gap risk, NM Straddle day), and
-      <code>VIX 40–90%</code> (uncomfortable-middle regime).
-      All seven active by default in <strong>EXCLUDE</strong> mode. <code>EOM</code> and <code>ALL EARNINGS</code> are intentionally OFF — the per-ticker subset is tighter.
+      ★ Default config: <code>entry 09:35 ET, exit SPX close (0DTE), wing 5 → 100 (step 5), widest risk≤reward wing, 1 contract</code>.
+      Optional <strong>overnight VIX-drop</strong> gate: only trade days where <code>prev VIX close − today VIX open ≥ threshold</code> (default 0.65 pts).
     </span>
     <br><br>
     <span style="color:var(--text3);font-size:11px">
-      ⚠ <strong>Backtester scope</strong> — what this tool does / does NOT model:
-      <br>
-      <strong>Does</strong>: open a fresh diagonal at the selected entry time (default <code>12:30 ET</code>, any time in the 12:30–15:00 ET window is valid), close it at the same clock time the next trading day (Entry Time === Exit Time), price both legs from real Polygon NBBO bid/ask snapshots.
-      Data coverage: <strong>2023‑01‑03 → 2026‑04‑22</strong>, 820 trading days, 20 selectable intraday buckets (<code>09:45</code> → <code>15:45</code>), SPX puts ±300 pts around spot, <strong>DTE 0–35 continuous</strong> (100% real quote coverage on the default config, 0% Black‑Scholes fallback).
-      Expired short legs settle to exact intrinsic (SPX is PM‑settled at SPX close), not Black‑Scholes.
-      <br>
-      <strong>Does NOT</strong>: no rolling, no strike adjustments, no mid‑trade management, no theta/delta hedging, no slippage past mid, no commissions — every day opens a brand‑new position and closes it flat.
-      Sizing is fixed at 1 contract by default; equity compounding is only engaged if you flip off <em>Ignore margin</em> in the sidebar.
-      Live execution with rolls can and will differ from these numbers.
+      ⚠ <strong>Backtester scope</strong> — opens one butterfly at 9:35 ET, settles to exact SPX-close intrinsic; no rolling, no mid-trade management,
+      no slippage past mid, no commissions. Sizing is 1 contract by default; equity compounding engages via the allocation sidebar.
+      Special-day filters apply on the entry date. Live execution can differ.
     </span>
-    <br>
-    <em style="color:var(--text3);font-size:11px">Strategy author: Mads</em>
   </div>
 </section>
 
@@ -633,128 +610,31 @@ body {
   </div>
 
   <div class="fg">
-    <div class="fg-label">Entry Time (ET)</div>
+    <div class="fg-label">Entry / Exit</div>
     <div class="fg-row">
-      <select class="time-input" id="entryTime" title="SPX snapshot time used to price the entry leg. Recommended to match Exit Time (so only one diagonal is active at a time). Recommended window: 12:30 → 15:00 ET.">
-        <option value="09:45">09:45</option>
-        <option value="10:00">10:00</option>
-        <option value="11:30">11:30</option>
-        <option value="11:45">11:45</option>
-        <option value="12:00">12:00</option>
-        <option value="12:15">12:15</option>
-        <option value="12:30" selected>12:30</option>
-        <option value="12:45">12:45</option>
-        <option value="13:00">13:00</option>
-        <option value="13:15">13:15</option>
-        <option value="13:30">13:30</option>
-        <option value="13:45">13:45</option>
-        <option value="14:00">14:00</option>
-        <option value="14:15">14:15</option>
-        <option value="14:30">14:30</option>
-        <option value="14:45">14:45</option>
-        <option value="15:00">15:00</option>
-        <option value="15:15">15:15</option>
-        <option value="15:30">15:30</option>
-        <option value="15:45">15:45</option>
-      </select>
+      <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text2);padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);white-space:nowrap">ENTRY 9:35 ET · EXIT SPX CLOSE (0DTE)</span>
     </div>
   </div>
 
   <div class="fg">
-    <div class="fg-label">Exit Time (ET, next day)</div>
+    <div class="fg-label">Wing Min (pts)</div>
+    <input type="number" class="num-input" id="wingMin" value="5" min="5" step="5" title="Smallest wing width to test. Snapped up to a multiple of 5, minimum 5.">
+  </div>
+
+  <div class="fg">
+    <div class="fg-label">Wing Max (pts)</div>
+    <input type="number" class="num-input" id="wingMax" value="100" min="5" step="5" title="Largest wing width to test. Wing step is fixed at 5 pts.">
+  </div>
+
+  <div class="fg">
+    <div class="fg-label">Overnight VIX Drop</div>
     <div class="fg-row">
-      <select class="time-input" id="exitTime" title="SPX snapshot time used to price the exit leg on the next trading day. Recommended to match Entry Time so yesterday's diagonal closes exactly when today's opens (no overlap). Recommended window: 12:30 → 15:00 ET.">
-        <option value="09:45">09:45</option>
-        <option value="10:00">10:00</option>
-        <option value="11:30">11:30</option>
-        <option value="11:45">11:45</option>
-        <option value="12:00">12:00</option>
-        <option value="12:15">12:15</option>
-        <option value="12:30" selected>12:30</option>
-        <option value="12:45">12:45</option>
-        <option value="13:00">13:00</option>
-        <option value="13:15">13:15</option>
-        <option value="13:30">13:30</option>
-        <option value="13:45">13:45</option>
-        <option value="14:00">14:00</option>
-        <option value="14:15">14:15</option>
-        <option value="14:30">14:30</option>
-        <option value="14:45">14:45</option>
-        <option value="15:00">15:00</option>
-        <option value="15:15">15:15</option>
-        <option value="15:30">15:30</option>
-        <option value="15:45">15:45</option>
-      </select>
+      <label style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--text2);cursor:pointer">
+        <input type="checkbox" id="ovDropOn" style="cursor:pointer">
+        <input type="number" class="num-input" id="ovDropThr" value="0.65" min="0" step="0.05" style="width:62px" title="Only trade days where (prev VIX close − today VIX open) ≥ this many points.">
+        <span style="white-space:nowrap">≥ pts (prev VIX close − today VIX open)</span>
+      </label>
     </div>
-  </div>
-
-  <div class="fg">
-    <div class="fg-label">Short DTE</div>
-    <select class="num-input" id="shortDte" title="Days to expiry for the short leg. Range limited to what the Polygon scrape covers (0–7).">
-      <option value="0">0</option>
-      <option value="1" selected>1</option>
-      <option value="2">2</option>
-      <option value="3">3</option>
-      <option value="4">4</option>
-      <option value="5">5</option>
-      <option value="6">6</option>
-      <option value="7">7</option>
-    </select>
-  </div>
-
-  <div class="fg">
-    <div class="fg-label">Short ITM Offset (pts)</div>
-    <input type="number" class="num-input" id="shortOffset" value="30" min="0" step="5">
-  </div>
-
-  <div class="fg">
-    <div class="fg-label">Long DTE</div>
-    <select class="num-input" id="longDte" title="Days to expiry for the long leg. Range limited to what the Polygon scrape covers (12–35).">
-      <option value="12">12</option>
-      <option value="13">13</option>
-      <option value="14">14</option>
-      <option value="15">15</option>
-      <option value="16">16</option>
-      <option value="17">17</option>
-      <option value="18">18</option>
-      <option value="19">19</option>
-      <option value="20">20</option>
-      <option value="21">21</option>
-      <option value="22">22</option>
-      <option value="23">23</option>
-      <option value="24">24</option>
-      <option value="25" selected>25</option>
-      <option value="26">26</option>
-      <option value="27">27</option>
-      <option value="28">28</option>
-      <option value="29">29</option>
-      <option value="30">30</option>
-      <option value="31">31</option>
-      <option value="32">32</option>
-      <option value="33">33</option>
-      <option value="34">34</option>
-      <option value="35">35</option>
-    </select>
-  </div>
-
-  <div class="fg">
-    <div class="fg-label">Long Below Short (pts)</div>
-    <input type="number" class="num-input" id="longOffset" value="40" min="0" step="5">
-  </div>
-
-  <div class="fg">
-    <div class="fg-label">Long DTE Tolerance (±days)</div>
-    <input type="number" class="num-input" id="longDteTol" value="5" min="0" max="10">
-  </div>
-
-  <div class="fg">
-    <div class="fg-label">DTE Fallback</div>
-    <select class="num-input" id="dteFallback" style="width:auto;min-width:115px;cursor:pointer">
-      <option value="prefer_longer" selected>Prefer longer</option>
-      <option value="prefer_shorter">Prefer shorter</option>
-      <option value="nearest">Nearest</option>
-      <option value="strict">Strict (skip if missing)</option>
-    </select>
   </div>
 
   <div class="fg">
@@ -780,14 +660,6 @@ body {
       <button class="tpill" data-sd="FED">FED</button>
       <button class="tpill" data-sd="CPI">CPI</button>
       <button class="tpill" data-sd="VIX">VIX EXP</button>
-      <button class="tpill" data-sd="VIX_MID"  title="Rank today's VIX against the last 20 trading days' VIX values. Skip the trade if the percentile sits inside the band defined by the lo/hi inputs to the right. Default 40–90. Adjust lo/hi to sweep different bands.">VIX MID-band</button>
-      <span style="display:inline-flex;align-items:center;gap:3px;font-size:11px;color:var(--text2);margin-left:2px;">
-        <input type="number" id="vixBandLo" value="40" min="0" max="99" step="5" style="width:38px;padding:1px 3px;font-family:'JetBrains Mono',monospace;font-size:11px;text-align:center;" title="Band lower bound (exclusive). Trades whose VIX percentile is &gt; this value AND ≤ hi are filtered out.">
-        <span>–</span>
-        <input type="number" id="vixBandHi" value="90" min="1" max="100" step="5" style="width:38px;padding:1px 3px;font-family:'JetBrains Mono',monospace;font-size:11px;text-align:center;" title="Band upper bound (inclusive). Trades whose VIX percentile is &gt; lo AND ≤ this value are filtered out.">
-        <span style="opacity:0.7">%</span>
-      </span>
-      <button class="tpill" data-sd="VIX_DEAD" title="Tighter version of VIX 40–90%: only flag the day if VIX is in the 40–90% band AND yesterday's SPX moved less than 0.5%. This catches the purest 'no-edge' regime — elevated-but-not-spiky VIX plus a sleepy prior session with no directional follow-through. Skipping these days cuts MaxDD by ~26% in the backtest.">VIX DEAD</button>
       <button class="tpill" data-sd="AAPL">AAPL</button>
       <button class="tpill" data-sd="GOOGL">GOOGL</button>
       <button class="tpill" data-sd="MSFT">MSFT</button>
@@ -817,36 +689,10 @@ body {
         </ul>
 
         <br>
-        <strong style="color:#fcd34d">VIX regime filters</strong> <em style="color:var(--text3)">(data-derived, not calendar-based)</em>
-        <ul style="margin:4px 0 0 16px;padding:0">
-          <li>
-            <strong>VIX MID-band</strong> (default 40–90%) — the <em>"VIX 20-day percentile"</em> filter.
-            Each day, we take today's first VIX print at-or-after 9:30 ET and rank it against the last 20 trading days' first-post-9:30 prints (0% = lowest in 20 days, 100% = highest).
-            This pill flags days where that rank lands inside the band defined by the <code>lo</code> / <code>hi</code> inputs to its right.
-            Default 40–90 — the <strong>"uncomfortable middle"</strong>. Not cheap enough to be complacent, not elevated enough to be panic.
-            The diagonal has no edge here: at 30/40 strikes the 40–90 band averages <span style="color:#ef4444">−$31/trade</span>
-            while the rest of the distribution averages <span style="color:#22c55e">+$337/trade</span>.
-            <strong>Same recipe as the live signal banner</strong> — backtest and live banner can never disagree on borderline days.
-          </li>
-          <li style="margin-top:5px">
-            <strong>VIX DEAD</strong> — a tighter subset of VIX MID-band.
-            Flags a day only if <em>both</em> conditions hold:
-            <ol style="margin:2px 0 0 18px;padding:0">
-              <li>VIX rank lands in the MID-band (default 40–90% vs the prior 20 trading days), <strong>AND</strong></li>
-              <li>Yesterday's SPX moved less than 0.5% in either direction (a "flat / sleepy" prior session).</li>
-            </ol>
-            This isolates the <strong>pure no-edge regime</strong>: elevated-but-not-spiky VIX plus no directional
-            follow-through from the prior day. Useful as a sharper subset when you want to be more selective inside the MID-band.
-          </li>
-        </ul>
-
-        <br>
         <span style="color:var(--text3)">
-          <strong>Why a "percentile" instead of a fixed VIX level?</strong>
-          VIX=18 means something very different in a calm month vs. a panic month. A relative rank adapts to
-          whatever regime the market is currently in — VIX=18 can be 95th-percentile in one environment and
-          5th-percentile in another. The edges (complacent or panicked, relative to recent norm) are profitable;
-          the ambiguous middle is where the strategy has no advantage.
+          <strong>Overnight VIX drop</strong> is a separate gate (not a pill): enable the checkbox in the params row to
+          trade only days where <code>prev VIX close − today VIX open ≥ threshold</code> (default 0.65 pts). VIX
+          percentile-band categories are intentionally not offered for GXBF.
         </span>
       </div>
     </details>
@@ -860,16 +706,16 @@ body {
 
   <!-- No-data notice -->
   <div class="data-notice" id="dataNotice">
-    No SPX options historical data loaded. Backtester is wired up but waiting for data (ThetaData Options PRO snapshots or equivalent). Run button stays disabled until data file is present.
+    No GXBF historical data loaded. Backtester is wired up but waiting for data (ThetaData SPXW 0DTE call snapshots). Run button stays disabled until the data file is present.
   </div>
 
   <!-- Empty state -->
   <div class="empty-state" id="emptyState">
     <div class="empty-title">Framework ready — no data yet</div>
     <div class="empty-desc">
-      Once SPX puts historical chain data is loaded (intraday snapshots across the 12:30–15:00 ET entry window + matching next-day exit snapshots at the same clock time for each trading day, across 0&nbsp;DTE to 35&nbsp;DTE, strikes ±300 pts around ATM), this page will compute results using the parameters above.
+      Once the GXBF dataset is loaded (one 9:35-ET SPXW 0DTE call-mid snapshot per trading day, centered on that day's Major-Positive-by-Volume gamma strike, with SPX/VIX open &amp; close), this page will compute results using the parameters above.
       <br><br>
-      Drop your data file at <code>./data/diagonal/SPX_YYYYMMDD.csv</code> or adapt the loader in <code>diagonal.html</code> to your format.
+      Drop the data file at <code>./gxbf_bt_data.json</code> — a flat chronological array of daily records <code>{date, center, spxClose, spxOpen, vixOpen, vixClose, mids}</code>.
     </div>
   </div>
 
@@ -1016,17 +862,18 @@ body {
           <tr>
             <th>Open</th>
             <th>DOW</th>
-            <th>SPX Entry</th>
-            <th>SPX Exit</th>
-            <th>VIX Entry</th>
-            <th>VIX Exit</th>
-            <th>Short K / Exp</th>
-            <th>Long K / Exp</th>
-            <th>Diag Open</th>
-            <th>Diag Close</th>
+            <th>SPX Open</th>
+            <th>SPX Close</th>
+            <th>VIX Open</th>
+            <th>VIX Close</th>
+            <th>Center</th>
+            <th>Wing</th>
+            <th>Lower/Upper</th>
+            <th>Net Debit</th>
+            <th>Max Risk</th>
+            <th>Max Reward</th>
             <th>Qty</th>
             <th>PnL</th>
-            <th title="REAL=Polygon bid/ask, BS=Black-Scholes fallback">Src</th>
             <th>Tags</th>
           </tr>
         </thead>
@@ -1049,13 +896,13 @@ body {
 // Theme toggle
 // ══════════════════════════════════════════════════════════════════════
 (function(){
-  const saved = localStorage.getItem('diag_theme');
+  const saved = localStorage.getItem('gxbf_theme');
   if (saved) document.documentElement.setAttribute('data-theme', saved);
   document.getElementById('themeBtn').addEventListener('click', () => {
     const cur = document.documentElement.getAttribute('data-theme');
     const next = cur === 'dark' ? 'light' : 'dark';
     document.documentElement.setAttribute('data-theme', next);
-    localStorage.setItem('diag_theme', next);
+    localStorage.setItem('gxbf_theme', next);
   });
 })();
 
@@ -1104,37 +951,9 @@ document.querySelectorAll('#sdPills .tpill').forEach(p => {
   });
 });
 
-// VIX band lo/hi inputs — push values into globals read by buildSpecialSets,
-// then trigger a re-run if VIX_MID is currently active.
-function syncVixBand() {
-  const lo = parseFloat(document.getElementById('vixBandLo').value);
-  const hi = parseFloat(document.getElementById('vixBandHi').value);
-  if (!isNaN(lo)) window.VIX_BAND_LO = lo;
-  if (!isNaN(hi)) window.VIX_BAND_HI = hi;
-}
-['change','input'].forEach(ev => {
-  document.getElementById('vixBandLo').addEventListener(ev, syncVixBand);
-  document.getElementById('vixBandHi').addEventListener(ev, syncVixBand);
-});
-// Seed globals on load
-syncVixBand();
-
-// Preselect the canonical 5-filter stack in EXCLUDE mode (2026-04-29 update):
-//   OPEX-1   — weakest-edge day of the OPEX cycle
-//   EOM      — last trading day of month (rebalance chop)
-//   EOM-1    — second-to-last trading day of month
-//   NM       — first trading day of month (gap risk, reprice)
-//   VIX_MID  — VIX 40-90% uncomfortable-middle regime (no-edge band)
-// Earnings filters (AAPL/MSFT/TSLA/META) DROPPED — at the new 30/40 strikes
-// the per-ticker earnings gates were costing more edge than they preserved.
-// EOM/EOM-1 added — month-end rebalancing chop hurts deeper-ITM short
-// structures more than it does shallow ones.
-specialState.mode = 'exclude';
-specialState.active.add('OPEX-1');
-specialState.active.add('EOM');
-specialState.active.add('EOM-1');
-specialState.active.add('NM');
-specialState.active.add('VIX_MID');
+// GXBF: no special-day filters preselected by default. The user opts in via
+// the pills above (the VIX_MID / VIX_DEAD percentile categories were removed
+// for this strategy — overnight VIX-drop is handled by its own gate).
 syncSpecialUI();
 
 // ══════════════════════════════════════════════════════════════════════
@@ -1152,20 +971,17 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 // ══════════════════════════════════════════════════════════════════════
 // Data loader — tries REAL options data first, falls back to B-S approximation
 // ══════════════════════════════════════════════════════════════════════
-let DIAGONAL_DATA = null;
-let REAL_DATA = null;           // flattened view for currently-selected (entry, exit) time pair
-let REAL_DATA_MULTI = null;     // raw multi-time dataset: {dates, by_date[d].by_time[HHMM]}
-let REAL_INDEX = null;          // loaded diagonal_real_index.json — has halves[], times[], file_template
-let LOADED_TIMES = new Set();   // which HH:MM buckets have been fetched+merged into REAL_DATA_MULTI
-let HALFDAY_CLOSE = {};         // {date: spx_close} for half-day sessions missing from REAL_DATA
-                                // (e.g. day-before-July-4, day-after-Thanksgiving, Christmas Eve).
-                                // Used for exact intrinsic settlement when a short leg expires on
-                                // one of these days and the closeDate is the next trading day.
-// Initial state comes from the DOM dropdowns so the JS can't drift from the
-// selected option (e.g. HTML default changes to 09:45 but JS still reads 14:00,
-// causing spot/vix to be pulled from the wrong time bucket on first run).
-let SELECTED_ENTRY_TIME = document.getElementById('entryTime')?.value || '12:30';
-let SELECTED_EXIT_TIME  = document.getElementById('exitTime')?.value  || '12:30';
+let GXBF_DATA = null;           // flat chronological array of per-day records
+// The following globals are retained only so the (now-unused) diagonal
+// helper functions below remain lexically valid. They are never populated
+// by the GXBF data path.
+let REAL_DATA = null;
+let REAL_DATA_MULTI = null;
+let REAL_INDEX = null;
+let LOADED_TIMES = new Set();
+let HALFDAY_CLOSE = {};
+let SELECTED_ENTRY_TIME = '09:35';
+let SELECTED_EXIT_TIME  = 'CLOSE';
 
 async function fetchGzJson(url) {
   // Fetch a gzipped JSON file and decompress via native DecompressionStream.
@@ -1275,88 +1091,19 @@ async function fetchTimeAcrossHalves(time) {
 }
 
 async function loadData() {
-  // Real data layout (per_time_v2): one gzipped JSON per (half-year, time).
-  // 7 halves × 20 times = 140 small files (~2.4 MB gz each). Initial load
-  // fetches only the 2 times the user has selected (entry + exit) across all
-  // halves = 14 files ≈ 32 MB gz. Time-selector changes lazy-load additional
-  // times on demand.
-  //
-  // The old layout (all 20 times in one per-half file, 7 × ~47 MB gz) forced
-  // 329 MB of downloads on every page load even though 90% of the payload
-  // (18/20 timestamps) was never read.
+  // GXBF data: a single flat chronological JSON array. Each element is a
+  // per-day record:
+  //   { date:"YYYY-MM-DD", center:<int×5>, spxClose, spxOpen, vixOpen,
+  //     vixClose, mids:{ "<off>":<callMid> } }
+  // off ∈ [-100,100] step 5, relative to `center` ("0" = center-strike call).
   try {
-    // No cache-buster: `cache: 'no-cache'` triggers a conditional GET, so the
-    // browser sees 304s on unchanged files and reuses local copies.
-    const idxResp = await fetch('./data/diagonal_real_index.json', { cache: 'no-cache' });
-    if (idxResp.ok) {
-      REAL_INDEX = await idxResp.json();
-      // New per_time_v2 format — fetch only the two needed timestamps
-      if (REAL_INDEX.format === 'per_time_v2' && REAL_INDEX.halves?.length) {
-        // Dedupe in case entry === exit
-        const needed = Array.from(new Set([SELECTED_ENTRY_TIME, SELECTED_EXIT_TIME]));
-        await Promise.all(needed.map(t => fetchTimeAcrossHalves(t)));
-        if (REAL_DATA_MULTI && REAL_DATA_MULTI.dates.length) {
-          REAL_DATA = flattenRealData(REAL_DATA_MULTI, SELECTED_ENTRY_TIME, SELECTED_EXIT_TIME);
-          console.log(`[diagonal] REAL data loaded: ${REAL_DATA_MULTI.dates.length} dates × ${REAL_DATA_MULTI.times.length} loaded timestamps, flattened to ${REAL_DATA.dates.length} dates at entry=${SELECTED_ENTRY_TIME} / exit=${SELECTED_EXIT_TIME}`);
-        }
-      } else {
-        // Legacy fallback: old index with all-times-per-half files
-        const files = REAL_INDEX.files?.length
-          ? REAL_INDEX.files
-          : (REAL_INDEX.years || []).map(y => `diagonal_real_${y}.json.gz`);
-        if (files.length) {
-          const chunks = await Promise.all(
-            files.map(fname =>
-              fetchGzJson(`./data/${fname}`).catch(err => {
-                console.warn(`[diagonal] failed to load ${fname}:`, err.message);
-                return null;
-              })
-            )
-          );
-          const merged = { dates: [], by_date: {}, times: REAL_INDEX.times || ['14:00'] };
-          let loadedCount = 0;
-          for (const c of chunks) {
-            if (c?.dates && c?.by_date) {
-              merged.dates.push(...c.dates);
-              Object.assign(merged.by_date, c.by_date);
-              loadedCount++;
-            }
-          }
-          merged.dates.sort();
-          if (merged.dates.length) {
-            REAL_DATA_MULTI = merged;
-            REAL_DATA = flattenRealData(merged, SELECTED_ENTRY_TIME, SELECTED_EXIT_TIME);
-            console.log(`[diagonal] REAL data loaded (legacy): ${loadedCount}/${files.length} chunks, ${merged.dates.length} dates × ${merged.times.length} timestamps`);
-          }
-        }
-      }
-    }
-  } catch (e) {
-    console.warn('[diagonal] real data not available:', e.message);
-  }
-
-  // Half-day closes (early-close trading days missing from the per-time snapshot
-  // dataset). Used to price expired shorts exactly when their expiration falls
-  // on a half-day and closeDate is the next full trading day.
-  try {
-    const hdResp = await fetch('./data/spx_halfday_close.json', { cache: 'no-cache' });
-    if (hdResp.ok) {
-      HALFDAY_CLOSE = await hdResp.json() || {};
-      console.log(`[diagonal] half-day closes loaded: ${Object.keys(HALFDAY_CLOSE).length} dates`);
-    }
-  } catch (e) {
-    console.warn('[diagonal] half-day closes not available:', e.message);
-  }
-
-  // Always load B-S data for spot/VIX reference + fallback pricing
-  try {
-    const resp = await fetch('./data/diagonal_bs_data.json', { cache: 'no-cache' });
+    const resp = await fetch('./gxbf_bt_data.json', { cache: 'no-cache' });
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const d = await resp.json();
-    if (!d.dates || !d.by_date) throw new Error('Invalid data format');
+    if (!Array.isArray(d)) throw new Error('Invalid data format (expected array)');
     return d;
   } catch (e) {
-    console.error('[diagonal] B-S data load failed:', e);
+    console.error('[gxbf] data load failed:', e);
     return null;
   }
 }
@@ -1419,19 +1166,23 @@ function wireToggle(toggleId, labelId) {
 // ══════════════════════════════════════════════════════════════════════
 function getParams() {
   const numOrNull = v => (v === '' || v === null) ? null : parseFloat(v);
+  // Wing min: integer ≥ 5 snapped to a multiple of 5 (clamp).
+  let wingMin = parseInt(document.getElementById('wingMin').value, 10);
+  if (!Number.isFinite(wingMin)) wingMin = 5;
+  wingMin = Math.max(5, Math.round(wingMin / 5) * 5);
+  // Wing max: integer ≥ wingMin snapped to a multiple of 5 (no hard upper cap).
+  let wingMax = parseInt(document.getElementById('wingMax').value, 10);
+  if (!Number.isFinite(wingMax)) wingMax = 100;
+  wingMax = Math.max(wingMin, Math.round(wingMax / 5) * 5);
   return {
     // Date + strategy params
     from:          document.getElementById('dateFrom').value,
     to:            document.getElementById('dateTo').value,
-    entryTime:     document.getElementById('entryTime').value,
-    exitTime:      document.getElementById('exitTime').value,
-    shortDte:      parseInt(document.getElementById('shortDte').value, 10),
-    shortOffset:   parseInt(document.getElementById('shortOffset').value, 10),
-    longDte:       parseInt(document.getElementById('longDte').value, 10),
-    longOffset:    parseInt(document.getElementById('longOffset').value, 10),
-    longDteTol:    parseInt(document.getElementById('longDteTol').value, 10),
-    dteFallback:   document.getElementById('dteFallback').value,
-    contracts:     parseInt(document.getElementById('contracts').value, 10),
+    wingMin,
+    wingMax,
+    contracts:     parseInt(document.getElementById('contracts').value, 10) || 1,
+    ovDropOn:      document.getElementById('ovDropOn').checked,
+    ovDropThr:     (() => { const v = parseFloat(document.getElementById('ovDropThr').value); return Number.isFinite(v) ? v : 0.65; })(),
     specialMode:   specialState.mode,
     specialActive: new Set(specialState.active),
     // Funds & Allocation
@@ -1856,209 +1607,121 @@ function pickByPolicy(candidates, targetDTE, policy) {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// Backtester core — Black-Scholes approximation, real data
+// Backtester core — GXBF 0DTE SPXW long-call butterfly
 // ══════════════════════════════════════════════════════════════════════
+// GXBF_DATA is a flat chronological array of daily records:
+//   { date:"YYYY-MM-DD", center:<int×5>, spxClose, spxOpen, vixOpen, vixClose,
+//     mids:{ "<off>":<callMid> } }   off ∈ [-100,100] step 5, relative to center.
+// Strategy: at 9:35 ET buy 1 (center−W) call, sell 2 center calls, buy 1
+// (center+W) call. Sweep W = wingMin..wingMax step 5; a width is valid iff
+// nd = lo − 2·ce + up  is  > 0  AND  ≤ W − nd. Take the WIDEST valid W.
+// Held to SPX close; settled to exact intrinsic.
 function runBacktestBS(data, params) {
-  const r = 0.045;              // risk-free rate (approx, can be made param later)
-  const SPREAD_ABS = 0.25;      // $0.25/leg half-spread (~$0.50 bid-ask, realistic for SPX near-money)
-  const SHORT_DTE_TOL = 3;      // short leg tolerance: 1 DTE Fri fallback to 3-4 DTE over weekend
   const trades = [];
-  let skipped = { noNextDay: 0, noExitData: 0, contracts0: 0, noDTE: 0 };
-  let priceSourceCount = { REAL: 0, BS: 0 };
+  let skipped = { ovDrop: 0, noWing: 0, contracts0: 0, badData: 0 };
 
-  // Special-day filter on the candidate date list
-  const special = buildSpecialDateSets(data.dates, data.by_date);
-  let candidates = data.dates.filter(d => d >= params.from && d <= params.to);
+  // `data` is the raw chronological array. Build a parallel ISO-date list +
+  // a by-date map so the existing special-day infra (which expects
+  // tradingDays[] + byDate{}) works unchanged. Only vix_open is needed by the
+  // categories we still offer; spot_14 is left null (the VIX-percentile
+  // categories that used it were removed for GXBF).
+  const arr = Array.isArray(data) ? data : (data && data.records) || [];
+  const allDates = arr.map(rec => rec.date);
+  const byDate = {};
+  const recByDate = {};
+  arr.forEach(rec => {
+    byDate[rec.date]   = { vix_open: rec.vixOpen, spot_14: null };
+    recByDate[rec.date] = rec;
+  });
+
+  // Special-day filter on the candidate date list (same call shape as diagonal).
+  const special = buildSpecialDateSets(allDates, byDate);
+  let candidates = allDates.filter(d => d >= params.from && d <= params.to);
   candidates = applySpecialFilter(candidates, special, params.specialMode, params.specialActive);
+  const candSet = new Set(candidates);
 
   let equity = params.startingFunds;
 
-  for (const openDate of candidates) {
-    const closeDate = nextTradingDay(data.dates, openDate);
-    if (!closeDate) { skipped.noNextDay++; continue; }
+  // Walk the FULL array in chronological order so `prev` is always the
+  // immediately preceding record regardless of date-range / special filters.
+  for (let i = 0; i < arr.length; i++) {
+    const rec = arr[i];
+    if (!candSet.has(rec.date)) continue;
+    const prev = i > 0 ? arr[i - 1] : null;
 
-    const entry = data.by_date[openDate] || {};
-    const exit  = data.by_date[closeDate] || {};
-    // REAL_DATA carries per-time spot+VIX at the user-selected entry/exit times.
-    // Prefer those over the BS file's hardcoded 14:00 snapshot so that picking
-    // entry=09:45 / exit=15:45 actually prices and displays at those times.
-    const realEntry = REAL_DATA?.by_date?.[openDate];
-    const realExit  = REAL_DATA?.by_date?.[closeDate];
-
-    const spotEntry = realEntry?.spot      ?? entry.spot_14;
-    const vixEntryN = realEntry?.vix       ?? entry.vix_14;
-    const spotExit  = realExit?.spot_exit  ?? exit.spot_14;
-    const vixExitN  = realExit?.vix_exit   ?? exit.vix_14;
-    if (!spotEntry || !vixEntryN || !spotExit || !vixExitN) {
-      skipped.noExitData++; continue;
-    }
-    const ivEntry = vixEntryN / 100;   // VIX is annualized % → decimal
-    const ivExit  = vixExitN  / 100;
-
-    // Strikes: short = spot + shortOffset ITM (30 ITM), long = short - longOffset (10 OTM)
-    // e.g. spot=6830, shortOffset=10 → short=6840; longOffset=20 → long=6820 (10 pts OTM)
-    const shortStrike = Math.round((spotEntry + params.shortOffset) / 5) * 5;
-    const longStrike  = shortStrike - params.longOffset;
-
-    // Resolve actual expirations.
-    // When REAL data is loaded, prefer the listed contracts in the quotes (handles
-    // dates past our spot-data range — long leg expirations may be after our last
-    // SPX bar). Else fall back to the trading-day calendar.
-    const shortExp = realEntry
-      ? (resolveExpFromQuotes(realEntry.quotes, openDate, params.shortDte, SHORT_DTE_TOL, params.dteFallback)
-         || resolveExpFromCalendar(data.dates, openDate, params.shortDte, SHORT_DTE_TOL, params.dteFallback))
-      : resolveExpFromCalendar(data.dates, openDate, params.shortDte, SHORT_DTE_TOL, params.dteFallback);
-    const longExp = realEntry
-      ? (resolveExpFromQuotes(realEntry.quotes, openDate, params.longDte, params.longDteTol, params.dteFallback)
-         || resolveExpFromCalendar(data.dates, openDate, params.longDte, params.longDteTol, params.dteFallback))
-      : resolveExpFromCalendar(data.dates, openDate, params.longDte, params.longDteTol, params.dteFallback);
-    if (!shortExp || !longExp) { skipped.noDTE++; continue; }
-
-    const shortDteActual = shortExp.dte;
-    const longDteActual  = longExp.dte;
-
-    // Elapsed time from entry (14:00) to exit (14:00 next trading day) in calendar days
-    const elapsedDays = daysBetween(openDate, closeDate);
-
-    const T_short_entry = shortDteActual / 365.25;
-    const T_long_entry  = longDteActual  / 365.25;
-    const elapsedYrs    = elapsedDays    / 365.25;
-    const T_short_exit  = Math.max(0, T_short_entry - elapsedYrs);
-    const T_long_exit   = Math.max(0, T_long_entry  - elapsedYrs);
-
-    // Entry and exit pricing are INDEPENDENT.
-    // Entry uses real quotes on openDate if the specific (strike, exp) is listed.
-    // Exit uses real quotes on closeDate if the SAME ticker is still listed there
-    // (can fail when a big overnight spot move pushes strikes outside our fetch grid).
-    // If either side is missing, fall back to Black-Scholes for that side only.
-    let diagOpen, diagClose;
-    let entrySource = 'BS', exitSource = 'BS';
-    // Snap tolerance: short leg is usually near-money with $5 strikes, but long leg
-    // (20+ DTE) is often only listed at $10 increments. Allow up to $5 snap so we
-    // can use REAL quotes instead of falling back to Black-Scholes.
-    // Always snap to the nearest listed strike — per user request, use the next
-    // available strike instead of falling back to Black-Scholes. $25 cap prevents
-    // truly broken cases (e.g. only one strike listed 300pts away).
-    const shortTicker = realEntry?.quotes ? findTicker(realEntry.quotes, shortStrike, shortExp.date, 25) : null;
-    const longTicker  = realEntry?.quotes ? findTicker(realEntry.quotes, longStrike,  longExp.date,  25) : null;
-    const sEntry = shortTicker && realEntry?.quotes ? realEntry.quotes[shortTicker] : null;
-    const lEntry = longTicker  && realEntry?.quotes ? realEntry.quotes[longTicker]  : null;
-    // Exit uses the closeDate quotes at the selected EXIT time (may differ from entry time).
-    // flattenRealData stores them under `quotes_exit`; fall back to `quotes` for any legacy
-    // data shape.
-    const exitQuotes = realExit?.quotes_exit || realExit?.quotes;
-    const sExit  = shortTicker && exitQuotes ? exitQuotes[shortTicker] : null;
-    const lExit  = longTicker  && exitQuotes ? exitQuotes[longTicker]  : null;
-
-    // If a strike was snapped, use the snapped (actually listed) strike for B-S,
-    // margin, and display so everything stays internally consistent.
-    const shortStrikeUsed = sEntry?.strike ?? shortStrike;
-    const longStrikeUsed  = lEntry?.strike ?? longStrike;
-
-    // Reject garbage quotes: bid must be > 0 AND ask >= bid AND spread not insane.
-    // Deep OTM puts with bid=0 / ask=0.05 are quoted but not realistically tradeable —
-    // using their "mid" (= ask/2) as a fill price biases PnL.
-    const quoteOk = q => q && q.bid > 0 && q.ask >= q.bid && q.ask / q.bid < 5;
-
-    // ENTRY: use real mid if both legs have sane quotes on openDate, else B-S
-    if (quoteOk(sEntry) && quoteOk(lEntry)) {
-      const shortMid = (sEntry.bid + sEntry.ask) / 2;
-      const longMid  = (lEntry.bid + lEntry.ask) / 2;
-      diagOpen = longMid - shortMid;
-      entrySource = 'REAL';
-    } else {
-      const shortMidIn = bsPut(spotEntry, shortStrikeUsed, T_short_entry, ivEntry, r);
-      const longMidIn  = bsPut(spotEntry, longStrikeUsed,  T_long_entry,  ivEntry, r);
-      diagOpen = longMidIn - shortMidIn;
+    // ── Overnight VIX-drop gate ──
+    if (params.ovDropOn) {
+      const drop = (prev && prev.vixClose != null && rec.vixOpen != null)
+        ? (prev.vixClose - rec.vixOpen)
+        : null;
+      if (drop == null || drop < params.ovDropThr) { skipped.ovDrop++; continue; }
     }
 
-    // EXIT: price each leg independently. Preference order:
-    //   1. REAL quote at exit time (bid/ask passes quoteOk)
-    //   2. INTRINSIC settlement — when a leg expired strictly before closeDate
-    //      (e.g. Fri→Tue roll across Mon holiday: Mon-exp short already settled).
-    //      This is mathematically EXACT (SPX is PM-settled at SPX close), not an
-    //      approximation — strictly more accurate than B-S for expired legs.
-    //   3. B-S — last resort (leg still alive but quote is garbage)
-    const spxCloseOn = (date) => {
-      // 1. Half-day sessions (July 3rd eve, day after Thanksgiving, Christmas Eve)
-      //    are not in REAL_DATA_MULTI — use the pre-extracted half-day close file.
-      if (HALFDAY_CLOSE[date] != null) return HALFDAY_CLOSE[date];
-      // 2. Full trading days: use last available bucket as close proxy (15:45 is
-      //    15 min before 16:00 SPX PM settlement; close enough for intrinsic).
-      const bt = REAL_DATA_MULTI?.by_date?.[date]?.by_time;
-      if (!bt) return null;
-      for (const t of ['15:45','15:30','15:15','15:00','14:45','14:30','14:15','14:00']) {
-        if (bt[t]?.spot != null) return bt[t].spot;
-      }
-      return null;
-    };
-    const legExitPrice = (quote, strike, expDate, T, bsSpot, bsIV) => {
-      if (quoteOk(quote)) return { mid: (quote.bid + quote.ask) / 2, real: true };
-      // (a) Leg expired strictly before exit → exact settlement intrinsic.
-      if (expDate < closeDate) {
-        const spxAtExp = spxCloseOn(expDate);
-        if (spxAtExp != null) {
-          return { mid: Math.max(strike - spxAtExp, 0), real: true };
-        }
-      }
-      // (b) Leg expires TODAY, quote is near-worthless (bid=0 ask≤$0.50).
-      //     This is the market literally saying "this expires at zero." The
-      //     original quoteOk rejected bid=0 as "garbage," but for a contract
-      //     expiring in minutes it's correctly showing near-zero value.
-      //     Use the ask/2 midpoint — the realistic exit fill is <$0.25.
-      if (expDate === closeDate && quote && quote.ask != null && quote.ask <= 0.50 && (quote.bid ?? 0) === 0) {
-        return { mid: quote.ask / 2, real: true };
-      }
-      return { mid: bsPut(bsSpot, strike, T, bsIV, r), real: false };
-    };
-    const sExitRes = legExitPrice(sExit, shortStrikeUsed, shortExp.date, T_short_exit, spotExit, ivExit);
-    const lExitRes = legExitPrice(lExit, longStrikeUsed,  longExp.date,  T_long_exit,  spotExit, ivExit);
-    diagClose = lExitRes.mid - sExitRes.mid;
-    if (sExitRes.real && lExitRes.real) exitSource = 'REAL';
+    const mids = rec.mids || {};
+    const ce = mids["0"];
+    if (ce == null) { skipped.badData++; continue; }
 
-    // Combined source label: REAL (both), BS (neither), REAL/BS (entry real, exit BS), BS/REAL (entry BS, exit real)
-    const priceSource = entrySource === exitSource ? entrySource : `${entrySource}/${exitSource}`;
-    // Count REAL if EITHER side used real data (not just both)
-    priceSourceCount[(entrySource === 'REAL' || exitSource === 'REAL') ? 'REAL' : 'BS']++;
+    // ── Wing pick: widest W where net debit > 0 AND nd ≤ W − nd ──
+    let bestW = null, bestND = null;
+    for (let W = params.wingMin; W <= params.wingMax; W += 5) {
+      const lo = mids[String(-W)];
+      const up = mids[String(W)];
+      if (lo == null || up == null) continue;
+      const nd = lo - 2 * ce + up;
+      if (nd > 0 && nd <= W - nd) { bestW = W; bestND = nd; }   // ascending → keep widest
+    }
+    if (bestW == null) { skipped.noWing++; continue; }
 
-    // Margin estimate: width × 100 (conservative upper bound for debit diagonal)
-    const marginPerContract = (shortStrikeUsed - longStrikeUsed) * 100;
-    const contracts = sizePosition(equity, marginPerContract, params);
-    if (contracts < 1) { skipped.contracts0++; continue; }
+    const W  = bestW;
+    const nd = bestND;
+    const K  = rec.center;
 
-    const pnl = (diagClose - diagOpen) * 100 * contracts;
-    const premium = Math.abs(diagOpen) * 100 * contracts;
-    equity += pnl;
+    // ── Settlement to exact SPX-close intrinsic ──
+    const Sc  = rec.spxClose;
+    const raw = Math.max(0, Sc - (K - W)) - 2 * Math.max(0, Sc - K) + Math.max(0, Sc - (K + W));
+    const intr = Math.min(Math.max(raw, 0), W);
 
-    // Tag with special-day categories that apply
+    // ── Sizing: max risk / contract = the debit paid ──
+    const marginPerContract = nd * 100;
+    const qty = sizePosition(equity, marginPerContract, params);
+    if (qty < 1) { skipped.contracts0++; continue; }
+
+    const pnl     = Math.round((intr - nd) * 100 * qty);
+    const premium = Math.round(nd * 100 * qty);   // debit paid (Total Premium / Capture)
+    equity += pnl;                                 // compounding (same as diagonal engine)
+
+    // Tag with special-day categories that apply on the entry date.
     const tags = [];
     for (const [cat, daySet] of Object.entries(special)) {
       if (cat === 'ALL_EARNINGS') continue;
-      if (daySet.has(openDate)) tags.push(cat);
+      if (daySet.has(rec.date)) tags.push(cat);
     }
 
-    // Minutes in trade: 14:00→16:00 (120) + 09:30→14:00 (270) = 390 (market-hours only)
     trades.push({
-      openDate, closeDate,
-      dow: weekdayFromISO(openDate),                 // 0=Mon..4=Fri
-      spotEntry: Math.round(spotEntry * 100) / 100,
-      spotExit:  Math.round(spotExit  * 100) / 100,
-      vixEntry:  vixEntryN,
-      vixExit:   vixExitN,
-      shortStrike: shortStrikeUsed, longStrike: longStrikeUsed,
-      longDteActual,
-      shortDte: shortDteActual,
-      shortExpDate: shortExp.date,
-      longExpDate:  longExp.date,
-      diagOpen, diagClose,
-      contracts, pnl, premium,
-      priceSource,                                    // 'REAL' = Polygon bid/ask, 'BS' = Black-Scholes fallback
-      minutesInTrade: 390,
+      openDate: rec.date,
+      closeDate: rec.date,
+      dow: weekdayFromISO(rec.date),                 // 0=Mon..4=Fri
+      spotEntry: rec.spxOpen,
+      spotExit:  rec.spxClose,
+      vixEntry:  rec.vixOpen,
+      vixExit:   rec.vixClose,
+      center: K,
+      wing: W,
+      lowerStrike: K - W,
+      upperStrike: K + W,
+      netDebit: +nd.toFixed(2),
+      maxRisk: Math.round(nd * 100),
+      maxReward: Math.round((W - nd) * 100),
+      contracts: qty,
+      pnl,
+      premium,
+      priceSource: 'thetadata',
+      minutesInTrade: 385,                            // 9:35 ET → SPX close (0DTE)
       tags,                                           // array of special-day category names
     });
   }
 
-  return { trades, kpis: computeKPIs(trades, params), skipped, priceSourceCount };
+  return { trades, kpis: computeKPIs(trades, params), skipped, priceSourceCount: 0 };
 }
 
 // Alias so the calling code can remain generic
@@ -2244,11 +1907,12 @@ function renderTradeLog(trades) {
   const body = document.getElementById('tradeTableBody');
   const countEl = document.getElementById('tradeLogCount');
   if (!trades.length) {
-    body.innerHTML = '<tr><td colspan="14" style="text-align:center;padding:24px;color:var(--text3)">No trades</td></tr>';
+    body.innerHTML = '<tr><td colspan="15" style="text-align:center;padding:24px;color:var(--text3)">No trades</td></tr>';
     countEl.textContent = '0 trades';
     return;
   }
   const $fmt = n => (n >= 0 ? '$' : '-$') + Math.abs(Math.round(n)).toLocaleString();
+  const num2 = v => (v == null || Number.isNaN(v)) ? '—' : Number(v).toFixed(2);
   const shown = trades.slice(-2000).reverse();
   countEl.textContent = `${trades.length} trades${trades.length > 2000 ? ' (showing last 2000)' : ''} — newest first`;
 
@@ -2256,23 +1920,18 @@ function renderTradeLog(trades) {
     <tr>
       <td style="font-weight:600;color:var(--text)">${t.openDate}</td>
       <td style="color:var(--accent);font-weight:600">${DOW_NAMES[t.dow] || '—'}</td>
-      <td>${t.spotEntry?.toFixed(2) ?? '—'}</td>
-      <td>${t.spotExit?.toFixed(2)  ?? '—'}</td>
-      <td>${t.vixEntry?.toFixed(2)  ?? '—'}</td>
-      <td>${t.vixExit?.toFixed(2)   ?? '—'}</td>
-      <td style="color:var(--red);line-height:1.3">
-        ${t.shortStrike}
-        ${t.shortExpDate ? `<br><span style="font-size:9px;color:var(--text3);font-weight:400">${shortIsoDate(t.shortExpDate)} · ${t.shortDte ?? '—'}D</span>` : ''}
-      </td>
-      <td style="color:var(--green);line-height:1.3">
-        ${t.longStrike}
-        ${t.longExpDate ? `<br><span style="font-size:9px;color:var(--text3);font-weight:400">${shortIsoDate(t.longExpDate)} · ${t.longDteActual}D</span>` : ''}
-      </td>
-      <td>${t.diagOpen.toFixed(2)}</td>
-      <td>${t.diagClose.toFixed(2)}</td>
+      <td>${num2(t.spotEntry)}</td>
+      <td>${num2(t.spotExit)}</td>
+      <td>${num2(t.vixEntry)}</td>
+      <td>${num2(t.vixExit)}</td>
+      <td style="font-weight:600">${t.center}</td>
+      <td>${t.wing}</td>
+      <td style="color:var(--text2);line-height:1.3"><span style="color:var(--green)">${t.lowerStrike}</span> / <span style="color:var(--green)">${t.upperStrike}</span></td>
+      <td>${num2(t.netDebit)}</td>
+      <td style="color:var(--red)">${$fmt(t.maxRisk)}</td>
+      <td style="color:var(--green)">${$fmt(t.maxReward)}</td>
       <td>${t.contracts}</td>
       <td class="${t.pnl >= 0 ? 'pos' : 'neg'}">${$fmt(t.pnl)}</td>
-      <td style="font-size:9px;font-weight:600;color:${t.priceSource === 'REAL' ? 'var(--green)' : 'var(--text3)'}">${t.priceSource || 'BS'}</td>
       <td style="font-size:9px;color:var(--text3)">${(t.tags || []).join(' ') || '—'}</td>
     </tr>
   `).join('');
@@ -2284,19 +1943,18 @@ function renderTradeLog(trades) {
 function exportTradesCSV(trades) {
   if (!trades.length) { alert('No trades to export.'); return; }
   const header = [
-    'open_date','day_of_week','close_date',
-    'spx_entry','spx_exit','vix_entry','vix_exit',
-    'short_strike','long_strike','short_dte','long_dte',
-    'diagonal_open','diagonal_close','contracts','premium','pnl',
+    'open_date','day_of_week','spx_open','spx_close','vix_open','vix_close',
+    'center','wing','lower_strike','upper_strike','net_debit',
+    'max_risk','max_reward','contracts','pnl','premium',
     'price_source','minutes_in_trade','tags'
   ];
   const rows = trades.map(t => [
-    t.openDate, DOW_NAMES[t.dow] || '', t.closeDate,
+    t.openDate, DOW_NAMES[t.dow] || '',
     t.spotEntry ?? '', t.spotExit ?? '', t.vixEntry ?? '', t.vixExit ?? '',
-    t.shortStrike, t.longStrike, t.shortDte ?? '', t.longDteActual,
-    t.diagOpen.toFixed(4), t.diagClose.toFixed(4), t.contracts,
-    t.premium.toFixed(2), t.pnl.toFixed(2),
-    t.priceSource || 'BS',
+    t.center, t.wing, t.lowerStrike, t.upperStrike, t.netDebit,
+    t.maxRisk, t.maxReward, t.contracts,
+    t.pnl, t.premium,
+    t.priceSource || 'thetadata',
     t.minutesInTrade, (t.tags || []).join(';')
   ]);
   const csv = [header, ...rows].map(r => r.map(v => {
@@ -2307,7 +1965,7 @@ function exportTradesCSV(trades) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `diagonal_backtest_${new Date().toISOString().slice(0,10)}.csv`;
+  a.download = `gxbf_backtest_${new Date().toISOString().slice(0,10)}.csv`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -2325,15 +1983,15 @@ document.getElementById('exportCsvBtn').addEventListener('click', () => {
 let lastTrades = null;
 
 async function doRun() {
-  if (!DIAGONAL_DATA) { alert('Data not loaded.'); return; }
+  if (!GXBF_DATA) { alert('Data not loaded.'); return; }
   const btn = document.getElementById('runBtn');
   btn.disabled = true; btn.textContent = 'Running...';
   await new Promise(r => setTimeout(r, 10));
 
   try {
     const params = getParams();
-    console.log('[diagonal] backtest params:', params);
-    const result = runBacktest(DIAGONAL_DATA, params);
+    console.log('[gxbf] backtest params:', params);
+    const result = runBacktest(GXBF_DATA, params);
     const { trades, kpis, skipped, priceSourceCount } = result;
     lastTrades = trades;
     console.log('[diagonal] backtest done:', {
@@ -2357,11 +2015,12 @@ async function doRun() {
     try { renderByDay(trades); } catch (e) { console.error('[diagonal] byDay render failed:', e); }
     try { renderTradeLog(trades); } catch (e) { console.error('[diagonal] log render failed:', e); }
 
-    const src = priceSourceCount || { REAL: 0, BS: 0 };
-    const realPct = trades.length ? Math.round(100 * src.REAL / trades.length) : 0;
+    const sk = skipped
+      ? (skipped.ovDrop||0)+(skipped.noWing||0)+(skipped.contracts0||0)+(skipped.badData||0)
+      : 0;
     document.getElementById('hdrMeta').textContent =
-      `${trades.length} trades · ${src.REAL} REAL / ${src.BS} BS (${realPct}%)` +
-      (skipped ? ` · ${skipped.noExitData + skipped.noNextDay + skipped.noDTE} skipped` : '');
+      `${trades.length} trades · 0DTE SPXW · ${sk} skipped` +
+      (skipped && skipped.ovDrop ? ` (${skipped.ovDrop} VIX-drop)` : '');
   } catch (e) {
     console.error('[diagonal] backtest failed:', e);
     alert('Backtest failed: ' + e.message);
@@ -2374,45 +2033,7 @@ async function doRun() {
 
 document.getElementById('runBtn').addEventListener('click', doRun);
 
-// Entry and exit time dropdowns are INDEPENDENT — user can open at 13:00 and close
-// at 14:15 the next day, or any combination of the 20 available snapshots. Each
-// change lazy-loads the new timestamp's per-half bundles (if not already cached),
-// then re-flattens REAL_DATA against both times and re-runs the backtest.
-async function reflattenAndRerun(reason) {
-  // If the newly selected time hasn't been fetched yet, pull it in before
-  // reflattening. This covers BOTH entryTime and exitTime changes — whichever
-  // times are currently selected but not yet in LOADED_TIMES get fetched.
-  if (REAL_INDEX?.format === 'per_time_v2') {
-    const missing = [SELECTED_ENTRY_TIME, SELECTED_EXIT_TIME]
-      .filter(t => t && !LOADED_TIMES.has(t));
-    if (missing.length) {
-      const btn = document.getElementById('runBtn');
-      const prevLabel = btn?.textContent;
-      if (btn) { btn.disabled = true; btn.textContent = 'LOADING TIME…'; }
-      try {
-        await Promise.all(Array.from(new Set(missing)).map(t => fetchTimeAcrossHalves(t)));
-      } finally {
-        if (btn) { btn.disabled = false; btn.textContent = prevLabel || 'RUN BACKTEST'; }
-      }
-    }
-  }
-  if (REAL_DATA_MULTI) {
-    REAL_DATA = flattenRealData(REAL_DATA_MULTI, SELECTED_ENTRY_TIME, SELECTED_EXIT_TIME);
-    const n = REAL_DATA?.dates?.length || 0;
-    console.log(`[diagonal] ${reason} → entry=${SELECTED_ENTRY_TIME} / exit=${SELECTED_EXIT_TIME} (${n} dates)`);
-  }
-  if (DIAGONAL_DATA) doRun();
-}
-
-document.getElementById('entryTime').addEventListener('change', (ev) => {
-  SELECTED_ENTRY_TIME = ev.target.value;
-  reflattenAndRerun('entry time');
-});
-
-document.getElementById('exitTime').addEventListener('change', (ev) => {
-  SELECTED_EXIT_TIME = ev.target.value;
-  reflattenAndRerun('exit time');
-});
+// GXBF entry/exit are fixed (9:35 ET → SPX close, 0DTE) — no time selectors.
 
 // Equity scale radio — re-render on change
 document.querySelectorAll('input[name="equityScale"]').forEach(r => {
@@ -2427,14 +2048,13 @@ document.querySelectorAll('input[name="equityScale"]').forEach(r => {
 // Kick off
 (async () => {
   const data = await loadData();
-  if (data && data.dates && data.dates.length) {
-    DIAGONAL_DATA = data;
-    const first = data.dates[0];
-    const last  = data.dates[data.dates.length - 1];
+  if (Array.isArray(data) && data.length) {
+    GXBF_DATA = data;
+    const first = data[0].date;
+    const last  = data[data.length - 1].date;
 
     // Set dates FIRST and clamp inputs to the available range so browsers
     // can't autofill something outside it.
-    // Wide-grid backfill covers 2023-01-01 through today; allow the full range.
     const HARD_MIN = '2023-01-01';
     const minDate = first < HARD_MIN ? HARD_MIN : first;
     const dfEl = document.getElementById('dateFrom');
@@ -2445,19 +2065,14 @@ document.querySelectorAll('input[name="equityScale"]').forEach(r => {
     // Then show UI state
     document.getElementById('dataNotice').style.display = 'none';
     document.getElementById('emptyState').style.display = 'none';
-    const realDays = REAL_DATA?.dates?.length || 0;
-    const realPct = data.dates.length ? Math.round(100 * realDays / data.dates.length) : 0;
-    const sourceLabel = realDays > 0
-      ? `${realDays}/${data.dates.length} days REAL (${realPct}%)`
-      : `B-S only`;
     document.getElementById('hdrMeta').textContent =
-      `${data.dates.length} days (${first} → ${last}) · ${sourceLabel}`;
+      `${data.length} days (${first} → ${last}) · thetadata`;
 
     // Finally enable run
     document.getElementById('runBtn').disabled = false;
   } else {
     document.getElementById('dataNotice').textContent =
-      '⚠ Failed to load ./data/diagonal_bs_data.json — run build_diagonal_data.py to generate it.';
+      '⚠ Failed to load ./gxbf_bt_data.json — generate it (flat array of daily GXBF records).';
   }
 })();
 </script>
