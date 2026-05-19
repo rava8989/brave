@@ -639,7 +639,7 @@ body {
       <label style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--text2)">OPEX+1 VIX gap-up %
         <input type="number" class="num-input" id="gGapPct" value="2" min="0" step="0.5" style="width:54px" title="On OPEX+1, block GXBF if VIX gapped up ≥ this % overnight.">
       </label>
-      <span style="font-size:10px;color:var(--text3);white-space:nowrap">ON → trade iff (overnight drop &gt; thr below OR OPEX+1) AND not (VIX≥max · OPEX+1 gap-up≥% · CPI · EOM · NM-non-Mon). Special-days chips still apply on top.</span>
+      <span style="font-size:10px;color:var(--text3);white-space:nowrap">ON → trade iff (overnight drop &gt; thr below OR OPEX+1) AND not (OPEX-1 · VIX≥max · OPEX+1 gap-up≥% · CPI · EOM · NM-non-Mon). Special-days chips still apply on top.</span>
     </div>
   </div>
 
@@ -1659,7 +1659,7 @@ function runBacktestBS(data, params) {
   candidates = applySpecialFilter(candidates, special, params.specialMode, params.specialActive);
   const candSet = new Set(candidates);
   const SD = k => special[k] || new Set();
-  const sOpex1 = SD('OPEX+1'), sCPI = SD('CPI'), sEOM = SD('EOM'), sNM = SD('NM');
+  const sOpex1 = SD('OPEX+1'), sOpexM1 = SD('OPEX-1'), sCPI = SD('CPI'), sEOM = SD('EOM'), sNM = SD('NM');
   const isMon = iso => new Date(iso + 'T12:00:00Z').getUTCDay() === 1;
 
   let equity = params.startingFunds;
@@ -1677,13 +1677,14 @@ function runBacktestBS(data, params) {
     if (params.gxbfGating) {
       // ── REAL GXBF gating (signal-engine.js rule) ──
       const d = rec.date;
-      const opex1 = sOpex1.has(d), cpi = sCPI.has(d), eom = sEOM.has(d), nm = sNM.has(d);
+      const opex1 = sOpex1.has(d), opexM1 = sOpexM1.has(d), cpi = sCPI.has(d), eom = sEOM.has(d), nm = sNM.has(d);
       const vixToday = rec.vixOpen;
       const gapPct = (prev && prev.vixClose) ? (rec.vixOpen - prev.vixClose) / prev.vixClose * 100 : 0;
       // Trigger: large overnight VIX drop OR automatic on OPEX+1.
       const trigger = (drop != null && drop > params.ovDropThr) || opex1;
-      // Blocks/overrides → no GXBF.
+      // Blocks/overrides → no GXBF. (OPEX-1 = day before expiry: always banned.)
       const blocked =
+        opexM1 ||
         (vixToday != null && vixToday >= params.gVixMax) ||
         (opex1 && gapPct >= params.gGapPct) ||
         cpi || eom || (nm && !isMon(d));

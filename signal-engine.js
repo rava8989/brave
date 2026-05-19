@@ -334,6 +334,7 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
   } else {
     if (oNight > T.DROP_GXBF) {
       if (vixToday >= T.VIX_MAX_GXBF) { rec = `No GXBF (VIX ${vixToday} ≥ ${T.VIX_MAX_GXBF})`; theme = "block"; crossed = true; blockT = "vix"; blockD = `VIX ${vixToday} ≥ ${T.VIX_MAX_GXBF}`; badge = "BLOCKED"; }
+      else if (opex1) { rec = `No GXBF (OPEX-1)`; theme = "block"; crossed = true; blockT = "hard"; blockD = "GXBF not traded the day before OPEX"; badge = "BLOCKED"; }
       else { rec = `GXBF @ 9:36 AM`; theme = "gxbf"; entryT = "9:36 AM"; badge = "GXBF"; }
     } else if (oNight > 0) {
       rec = "Straddle @ 9:32 AM"; theme = "strad"; entryT = "9:32 AM"; badge = "STRADDLE";
