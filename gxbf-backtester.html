@@ -1254,6 +1254,15 @@ function computeKPIs(trades, params) {
 function renderKPIs(k) {
   if (!k) return;
   const fmt$     = n => (n >= 0 ? '$' : '-$') + Math.abs(Math.round(n)).toLocaleString();
+  // Compact $ for the narrow compound-half cells (Start/End Capital) so big
+  // compounded balances don't overflow: $135.5K, $1.23M, $12.3M, $1.05B
+  const fmt$c    = n => {
+    const s = n < 0 ? '-$' : '$', a = Math.abs(n);
+    if (a < 1000)   return s + Math.round(a);
+    if (a < 1e6)    return s + (a/1e3).toFixed(a < 1e5 ? 1 : 0) + 'K';
+    if (a < 1e9)    return s + (a/1e6).toFixed(2) + 'M';
+    return s + (a/1e9).toFixed(2) + 'B';
+  };
   const fmt$fmt  = n => fmt$(n) + ' / lot';
   const fmtPct   = n => n.toFixed(1) + '%';
   const fmtNum   = n => n.toLocaleString();
@@ -1284,8 +1293,8 @@ function renderKPIs(k) {
   set('kpiWR',            fmtPct(k.winPct));
   set('kpiTotalPremium',  fmt$(k.totalPremium));
   set('kpiCaptureRate',   fmtPct(k.captureRate));
-  set('kpiStartCap',      fmt$(k.startCap));
-  set('kpiEndCap',        fmt$(k.endCap));
+  set('kpiStartCap',      fmt$c(k.startCap));
+  set('kpiEndCap',        fmt$c(k.endCap));
   set('kpiAvgPerTrade',   fmt$fmt(k.avgPerTrade));
   set('kpiAvgWin',        fmt$fmt(k.avgWin));
   set('kpiAvgLoss',       fmt$fmt(k.avgLoss));
