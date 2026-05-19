@@ -526,6 +526,36 @@ async function tastyGetVix(env) {
   return { price: parseFloat(price), asOf, source: 'tastytrade', endpoint: '/market-data/Index/VIX', raw: d };
 }
 
+// Get SPX index quote via Tastytrade (same Index market-data endpoint as VIX).
+// Returns { price, open, last, asOf, source, raw }. `price` = today's open if
+// present (what the morning signal needs), else last/mark. Used as the
+// PRIMARY for the signal's SPX-open, with Schwab as fallback — Tasty's
+// refresh_token never expires, so a dead Schwab token can't kill the signal.
+async function tastyGetSpx(env) {
+  const token = await getTastyAccessToken(env);
+  const url = `${TASTY_BASE}/market-data/Index/SPX`;
+  const resp = await fetch(url, { headers: tastyHeaders({ 'Authorization': `Bearer ${token}` }) });
+  if (!resp.ok) {
+    const txt = await resp.text();
+    throw new Error(`Tastytrade SPX HTTP ${resp.status}: ${txt.slice(0, 200)}`);
+  }
+  const body = await resp.json();
+  const d = body?.data || body;
+  const open = d?.open ?? d?.['open-price'] ?? null;
+  const last = d?.last ?? d?.['last-price'] ?? d?.mid ?? d?.mark ?? d?.bid ?? null;
+  const price = open ?? last;
+  const asOf = d?.['updated-at'] || d?.['quote-time'] || d?.timestamp;
+  if (price == null) {
+    throw new Error(`Tastytrade SPX: no usable price field: ${JSON.stringify(d).slice(0, 250)}`);
+  }
+  return {
+    price: parseFloat(price),
+    open: open != null ? parseFloat(open) : null,
+    last: last != null ? parseFloat(last) : null,
+    asOf, source: 'tastytrade', endpoint: '/market-data/Index/SPX', raw: d,
+  };
+}
+
 // ════════════════════════════════════════════════════════════════════
 
 async function handleEOD(env, etNow) {
@@ -3025,11 +3055,24 @@ async function handleScheduled(env) {
       if (spxCloseCandle) spxYClose = spxCloseCandle.close;
     }
 
-    // Get SPX today open from quote
-    const spxQuoteUrl = `https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24SPX&fields=quote`;
-    const spxQuote = await fetchSchwabJSON(spxQuoteUrl, token, env);
-    const spxQ = spxQuote?.['$SPX']?.quote;
-    spxTodayOpen = spxQ ? parseFloat((spxQ.openPrice || spxQ.lastPrice).toFixed(2)) : null;
+    // Get SPX today open — Tasty PRIMARY (refresh_token never expires, so a
+    // dead Schwab token can't null this and break the signal), Schwab FALLBACK.
+    // Mirrors how VIX is already dual-sourced (Schwab/Tasty race) above.
+    try {
+      const ts = await tastyGetSpx(env);
+      const v = ts.open ?? ts.last ?? ts.price;
+      if (v != null && isFinite(v) && v > 0) {
+        spxTodayOpen = parseFloat(v.toFixed(2));
+        console.log(`[proxy] SPX open ${spxTodayOpen} via tastytrade (primary)`);
+      }
+    } catch (e) { console.warn('[proxy] Tasty SPX failed, trying Schwab:', e.message || e); }
+    if (spxTodayOpen == null) {
+      const spxQuoteUrl = `https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24SPX&fields=quote`;
+      const spxQuote = await fetchSchwabJSON(spxQuoteUrl, token, env);
+      const spxQ = spxQuote?.['$SPX']?.quote;
+      spxTodayOpen = spxQ ? parseFloat((spxQ.openPrice || spxQ.lastPrice).toFixed(2)) : null;
+      if (spxTodayOpen != null) console.log(`[proxy] SPX open ${spxTodayOpen} via schwab (fallback)`);
+    }
 
     if (spxYClose && spxTodayOpen) {
       spxGapPct = ((spxTodayOpen - spxYClose) / spxYClose) * 100;
@@ -6166,6 +6209,26 @@ export default {
           ok: true,
           sessionCached: !!cached,
           vix: result,
+        }, 200, publicCors);
+      } catch (e) {
+        return jsonResp({ ok: false, error: e.message }, 500, publicCors);
+      }
+    }
+
+    if (url.pathname === '/tasty-spx-test' && request.method === 'GET') {
+      const publicCors = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Max-Age': '86400',
+      };
+      try {
+        const cached = await env.SIGNAL_KV.get('tasty_session_token');
+        const result = await tastyGetSpx(env);
+        return jsonResp({
+          ok: true,
+          sessionCached: !!cached,
+          spx: result,
         }, 200, publicCors);
       } catch (e) {
         return jsonResp({ ok: false, error: e.message }, 500, publicCors);
