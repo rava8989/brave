@@ -404,7 +404,7 @@ body {
     Starting Capital → each strategy gets an <strong>Allocation %</strong> of the <em>current</em> portfolio equity
     (Option Omega style — compounding) → contracts → press <code>▶ RUN</code> for the portfolio header KPIs, an equity
     curve, a per-strategy breakdown, and full trade / daily logs. Max risk per contract is a fixed value you set
-    per strategy (M8BF $3,000 · GXBF $2,000 · BOBF $1,200 · Straddle $3,500 · Diagonal $11,000).
+    per strategy (M8BF $3,000 · GXBF $5,000 · BOBF $1,200 · Straddle $3,500 · Diagonal $11,000).
     <br><br>
     <span style="color:var(--text3);font-size:11px">
       Backtest mid-fills, no slippage / no fees → live execution is worse. The per-strategy P/L and verified KPI
@@ -434,8 +434,8 @@ body {
     <div class="sz-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">
       <div class="sz-field"><label class="sz-label" for="szCap">Starting Capital</label>
         <div class="sz-wrap sz-d"><input id="szCap" class="sz-input" type="number" value="100000" min="1" step="1000"></div></div>
-      <div class="sz-field"><label class="sz-label">Max risk / contract <span class="sz-dot" data-tip="Fixed per strategy (you decide): M8BF $3,000 · GXBF $2,000 · BOBF $1,200 · Straddle $3,500 · Diagonal $11,000. Not auto-calculated.">ⓘ</span></label>
-        <input class="sz-input" type="text" value="M8BF 3000 · GXBF 2000 · BOBF 1200 · Strad 3500 · Diag 11000" readonly style="color:var(--text3);font-size:11px"></div>
+      <div class="sz-field"><label class="sz-label">Max risk / contract <span class="sz-dot" data-tip="Fixed per strategy (you decide): M8BF $3,000 · GXBF $5,000 · BOBF $1,200 · Straddle $3,500 · Diagonal $11,000. Not auto-calculated.">ⓘ</span></label>
+        <input class="sz-input" type="text" value="M8BF 3000 · GXBF 5000 · BOBF 1200 · Strad 3500 · Diag 11000" readonly style="color:var(--text3);font-size:11px"></div>
       <div class="sz-field"><label class="sz-label" for="szFrom">From <span class="sz-dot" data-tip="Backtest start date. Blank = earliest available. Set after data loads to the full range; narrow it to test a window.">ⓘ</span></label>
         <input id="szFrom" class="sz-input" type="date"></div>
       <div class="sz-field"><label class="sz-label" for="szTo">To</label>
