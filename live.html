@@ -1406,7 +1406,7 @@ function fmt$(n) {
 }
 function fmtSpx(n) {
   if (!n) return '—';
-  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return n.toFixed(2);
 }
 function plClass(pl) {
   if (pl === null || pl === undefined) return '';
@@ -1625,7 +1625,7 @@ function renderLiveTotal() {
 
   sec.innerHTML = `
     <div class="diag-card">
-      <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px;">
+      <div style="display:flex;align-items:baseline;justify-content:center;gap:18px;margin-bottom:6px;">
         <span class="ltc-label" style="margin-bottom:0;">Today's Live P&amp;L</span>
         <span style="font-size:20px;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--text);">${spxPrice != null ? 'SPX ' + fmtSpx(spxPrice) : ''}</span>
       </div>
