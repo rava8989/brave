@@ -689,22 +689,13 @@
 
     <hr class="divider">
     <h3>GXBF (GEX Butterfly)</h3>
-    <p><em>Current version — mechanical, ThetaData-validated (53-day rebuild beat the prior manual record $69.9k vs $47.2k).</em></p>
+    <p><em>A once-a-day, same-day-expiry SPX butterfly that bets the index will drift toward the strike where options dealers are most heavily positioned. On real option prices it would have made about $70,000 over its qualifying days — versus roughly $47,000 trading it by hand.</em></p>
     <ul>
-      <li><strong>When it fires (full gating, from signal-engine.js):</strong>
-        <ul>
-          <li><strong>Trigger:</strong> overnight VIX <strong>drop &gt; 0.65</strong> pts (prev VIX close − today VIX open) → GXBF. A drop of <strong>0 to 0.65</strong> → Straddle instead; VIX flat/up → M8BF. So GXBF only on a <em>large</em> overnight VIX drop.</li>
-          <li><strong>Automatic on OPEX+1:</strong> the trading day after monthly OPEX is auto-converted to GXBF regardless of what it would've been (overrides M8BF / Straddle / NM Straddle).</li>
-          <li><strong>Blocked / overridden (no GXBF):</strong> VIX ≥ <strong>25</strong>; OPEX+1 with VIX gapped <strong>up ≥ 2%</strong> overnight; <strong>CPI</strong> day (all Sigma-3 blocked); <strong>EOM</strong> → forced Straddle; <strong>NM</strong> (1st trading day) &amp; not Monday → NM Straddle.</li>
-          <li>Allowed on Fed days. Independent of M8BF / Straddle / BOBF.</li>
-        </ul>
-      </li>
-      <li><strong>Entry: ~9:35 AM ET</strong> — on that morning's gamma reading (the bot posts ~9:34–9:36).</li>
-      <li><strong>Center:</strong> the <strong>“Major Positive by Volume”</strong> level from the SPX Gamma reading, snapped to the nearest 5.</li>
-      <li><strong>Structure:</strong> 0DTE SPXW long-call butterfly — BUY(K−W) / SELL 2×(K) / BUY(K+W).</li>
-      <li><strong>Wing rule:</strong> keep widening W (5 → 100, step 5); take the <strong>widest wing where risk ≤ reward</strong>. It does <em>not</em> have to be exactly 50/50 — risk just must never exceed reward. If no wing qualifies → no trade.</li>
-      <li><strong>Max risk: ≈ $5,000 / contract</strong> — wing capped at 100, so max risk = net debit ≤ W/2 = 50 pt.</li>
-      <li><strong>Exit:</strong> held to the 4:00 PM SPX close (0DTE settle); P/L = (clamped fly intrinsic − net debit) × 100. Result recorded to history as <code>gxbfPL</code>.</li>
+      <li><strong>The idea.</strong> Every morning a gamma model publishes the SPX strike with the most positive gamma — loosely, the price level that dealer hedging tends to pull the market toward and "pin" into the close. GXBF places an inexpensive long call butterfly centered on that strike, so it profits if the S&amp;P finishes the day near it.</li>
+      <li><strong>When it trades.</strong> GXBF is a calm-market play. It only fires when volatility is coming in overnight — yesterday's VIX close sits clearly above this morning's VIX (a drop of more than ~0.65 points). A smaller VIX dip sends the day to the Straddle instead; a flat or rising VIX sends it to M8BF. Separately, the trading day right after monthly options expiration is <em>always</em> a GXBF day automatically — that day has historically pinned well.</li>
+      <li><strong>When it stays out.</strong> It skips risky conditions: VIX at or above 25 (too wild to pin reliably), an after-expiration day where VIX instead jumped up 2%+ overnight, any CPI-release day (every strategy stands down), the last trading day of the month (handed to the Straddle), and the first trading day of a new month unless it's a Monday (handed to the new-month Straddle). Fed-decision days are fine. GXBF runs entirely on its own — it never blocks, and is never blocked by, the other strategies.</li>
+      <li><strong>How the trade is built.</strong> Center a same-day-expiry SPX call butterfly on that gamma strike (buy one lower call, sell two at the center, buy one higher call). Then widen the wings as far as possible while keeping one hard rule: the most you can lose can never exceed the most you can make. Wider wings mean a bigger possible payoff, so it takes the widest width that still satisfies that limit — worst-case loss is capped near $5,000 per contract. If no width can satisfy the rule that day, it doesn't trade.</li>
+      <li><strong>Timing &amp; exit.</strong> Enter just after the open (~9:35 AM ET, once the morning gamma level is out) and hold all the way to the 4:00 PM close — no stop, no early exit. The result is simply where the S&amp;P settles relative to the butterfly.</li>
     </ul>
     <div class="strategy-image"><img src="./gex.jpg" alt="GXBF" loading="lazy" /></div>
 
