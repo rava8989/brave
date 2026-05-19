@@ -639,7 +639,7 @@ body {
       <label style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--text2)">OPEX+1 VIX gap-up %
         <input type="number" class="num-input" id="gGapPct" value="2" min="0" step="0.5" style="width:54px" title="On OPEX+1, block GXBF if VIX gapped up ≥ this % overnight.">
       </label>
-      <span style="font-size:10px;color:var(--text3);white-space:nowrap">ON → trade iff (overnight drop &gt; thr below OR OPEX+1) AND not (VIX≥max · OPEX+1 gap-up≥% · CPI · EOM · NM-non-Mon). Special-days chips ignored when ON.</span>
+      <span style="font-size:10px;color:var(--text3);white-space:nowrap">ON → trade iff (overnight drop &gt; thr below OR OPEX+1) AND not (VIX≥max · OPEX+1 gap-up≥% · CPI · EOM · NM-non-Mon). Special-days chips still apply on top.</span>
     </div>
   </div>
 
@@ -1653,11 +1653,10 @@ function runBacktestBS(data, params) {
   // Special-day sets (always built — used for tags, and for real gating).
   const special = buildSpecialDateSets(allDates, byDate);
   let candidates = allDates.filter(d => d >= params.from && d <= params.to);
-  // Real GXBF gating supersedes the manual exclude/only chips; only apply the
-  // chip filter when real gating is OFF (manual-exploration mode).
-  if (!params.gxbfGating) {
-    candidates = applySpecialFilter(candidates, special, params.specialMode, params.specialActive);
-  }
+  // Special-days exclude/only chips ALWAYS apply as an extra layer — on top
+  // of real GXBF gating when it's ON, or as the standalone filter when OFF.
+  // (Default chip state = empty → no-op, so default behavior is unchanged.)
+  candidates = applySpecialFilter(candidates, special, params.specialMode, params.specialActive);
   const candSet = new Set(candidates);
   const SD = k => special[k] || new Set();
   const sOpex1 = SD('OPEX+1'), sCPI = SD('CPI'), sEOM = SD('EOM'), sNM = SD('NM');
