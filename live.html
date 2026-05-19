@@ -785,7 +785,7 @@ function renderGxbf() {
     // skip.theme !== 'gxbf'/'gxbf-missed' means the morning signal did not
     // pick GXBF — show GXBF's OWN reason text (strategy independence).
     if (skip && skip.theme && skip.theme !== 'gxbf' && skip.theme !== 'gxbf-missed') {
-      placeholderText = `No GXBF today — ${skip.rec}`;
+      placeholderText = (skip.rec && skip.rec.startsWith('No GXBF')) ? skip.rec : `No GXBF today — ${skip.rec}`;
       placeholderBadge = 'SKIP'; placeholderClass = 'skip';
     } else if (doneState && doneState.startsWith('no-wing')) {
       placeholderText = `No GXBF today — no wing (5–150) had risk ≤ reward`;
