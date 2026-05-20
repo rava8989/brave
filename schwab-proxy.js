@@ -3210,6 +3210,7 @@ async function handleScheduled(env) {
         // Accept: tradeTime has advanced AND is post-9:30 ET = genuinely new
         // Cboe publication.
         vixToday = parseFloat(vixQ.lastPrice.toFixed(2));
+        vixSource = 'schwab';  // fallback path uses Schwab quotes
         console.log(`[proxy] VIX open ${vixToday} (tradeTime ${tradeET.toTimeString().slice(0,8)} ET, advanced from baseline, attempt ${attempt})`);
         break;
       }
@@ -6561,6 +6562,144 @@ export default {
           },
           schwab: compare ? { spot: schwab?.spot, fetchMs: schwabMs, error: schwabErr, callExps: schwab?.callExps, putExps: schwab?.putExps, sample: schwabSample } : 'skip (pass ?compare=1)',
         }, 200, cors);
+      } catch (e) {
+        return jsonResp({ ok: false, error: e.message, stack: e.stack?.slice(0, 400) }, 500, cors);
+      }
+    }
+
+    // GET /debug-morning-dual
+    // Exercises the SAME dual-source signal logic the morning cron uses,
+    // but with single quick fetches (no polling for new ticks). Returns
+    // JSON with both signals + both rendered Discord messages + any per-
+    // source errors. Does NOT post to Discord. Use to verify the code path
+    // works without waiting for 9:30 ET.
+    //   ?force_no_schwab=1  — simulate Schwab failure (skip Schwab fetch)
+    //   ?force_no_tasty=1   — simulate Tasty failure (skip Tasty fetch)
+    //   ?force_no_token=1   — simulate Schwab token unavailable
+    if (url.pathname === '/debug-morning-dual' && request.method === 'GET') {
+      const cors = { 'Access-Control-Allow-Origin': '*' };
+      const forceNoSchwab = url.searchParams.get('force_no_schwab') === '1';
+      const forceNoTasty  = url.searchParams.get('force_no_tasty')  === '1';
+      const forceNoToken  = url.searchParams.get('force_no_token')  === '1';
+      const out = { ok: true, simulated: { forceNoSchwab, forceNoTasty, forceNoToken }, errors: {} };
+      try {
+        // 1. Pull VIX + SPX from BOTH sources independently (single-fetch).
+        let token = null;
+        if (!forceNoToken) {
+          try { token = await getAccessToken(env); }
+          catch (e) { out.errors.schwabToken = e.message; }
+        } else {
+          out.errors.schwabToken = '(forced)';
+        }
+
+        let vixSchwab = null, spxSchwab = null, vixTasty = null, spxTasty = null;
+
+        // Schwab VIX + SPX (parallel, single fetch each)
+        if (token && !forceNoSchwab) {
+          const [vR, sR] = await Promise.allSettled([
+            fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`, token, env),
+            fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24SPX&fields=quote`, token, env),
+          ]);
+          if (vR.status === 'fulfilled') {
+            const q = vR.value?.['$VIX']?.quote;
+            if (q?.lastPrice != null) vixSchwab = parseFloat(parseFloat(q.lastPrice).toFixed(2));
+          } else { out.errors.schwabVix = vR.reason?.message || String(vR.reason); }
+          if (sR.status === 'fulfilled') {
+            const q = sR.value?.['$SPX']?.quote;
+            const v = q?.openPrice || q?.lastPrice;
+            if (v != null) spxSchwab = parseFloat(parseFloat(v).toFixed(2));
+          } else { out.errors.schwabSpx = sR.reason?.message || String(sR.reason); }
+        } else if (forceNoSchwab) {
+          out.errors.schwabVix = '(forced)'; out.errors.schwabSpx = '(forced)';
+        }
+
+        // Tasty VIX + SPX (parallel)
+        if (!forceNoTasty) {
+          const [vR, sR] = await Promise.allSettled([tastyGetVix(env), tastyGetSpx(env)]);
+          if (vR.status === 'fulfilled') vixTasty = parseFloat(vR.value.price.toFixed(2));
+          else out.errors.tastyVix = vR.reason?.message || String(vR.reason);
+          if (sR.status === 'fulfilled') {
+            const v = sR.value.open ?? sR.value.last ?? sR.value.price;
+            if (v != null) spxTasty = parseFloat(v.toFixed(2));
+          } else { out.errors.tastySpx = sR.reason?.message || String(sR.reason); }
+        } else {
+          out.errors.tastyVix = '(forced)'; out.errors.tastySpx = '(forced)';
+        }
+
+        out.values = { vixSchwab, spxSchwab, vixTasty, spxTasty };
+
+        // 2. Read history for prevWR / vixPct20d / rsi14 (mirrors morning cron)
+        const etNow = toET(new Date());
+        const todayISO = isoDateET(etNow);
+        let prevWR = null, vixPct20d = null, rsi14 = null, vixYOpen = null, vixYClose = null, spxYClose = null;
+        try {
+          const histData = await getHistory(env);
+          if (Array.isArray(histData) && histData.length) {
+            const sorted = histData.filter(r => r.date < todayISO && r.m8bfWR != null)
+              .sort((a, b) => b.date.localeCompare(a.date));
+            if (sorted.length) prevWR = parseFloat(sorted[0].m8bfWR);
+
+            const vix20 = histData.filter(r => r.date < todayISO && r.vixClose != null && r.vixClose > 0)
+              .sort((a, b) => a.date.localeCompare(b.date)).slice(-20).map(r => parseFloat(r.vixClose));
+            const refVix = vixTasty ?? vixSchwab;
+            if (vix20.length >= 10 && refVix != null && isFinite(refVix)) {
+              const below = vix20.filter(c => c < refVix).length;
+              vixPct20d = Math.round(100 * below / vix20.length);
+            }
+
+            const closes30 = histData.filter(r => r.date < todayISO && r.spxClose != null && r.spxClose > 0)
+              .sort((a, b) => a.date.localeCompare(b.date)).slice(-30).map(r => parseFloat(r.spxClose));
+            if (closes30.length >= 15) rsi14 = computeRSI14(closes30);
+
+            // Prior trading day's vix open/close + spx close — used by calculateSignal
+            const prior = histData.filter(r => r.date < todayISO && r.vixClose != null)
+              .sort((a, b) => b.date.localeCompare(a.date))[0];
+            if (prior) {
+              vixYOpen = prior.vixOpen != null ? parseFloat(prior.vixOpen) : null;
+              vixYClose = parseFloat(prior.vixClose);
+              spxYClose = prior.spxClose != null ? parseFloat(prior.spxClose) : null;
+            }
+          }
+        } catch (e) { out.errors.history = e.message; }
+        out.context = { prevWR, vixPct20d, rsi14, vixYOpen, vixYClose, spxYClose };
+
+        // 3. Compute signal twice (once per source) — same calculateSignal call
+        function makeSignal(vixVal, spxOpen) {
+          if (vixVal == null) return null;
+          const gap = (spxYClose && spxOpen) ? ((spxOpen - spxYClose) / spxYClose) * 100 : null;
+          return calculateSignal({
+            vixToday: vixVal, vixYOpen, vixYClose,
+            spxGapPct: gap,
+            etDate: etNow, prevWR, vixPct20d, rsi14,
+          });
+        }
+        const sigSchwab = makeSignal(vixSchwab, spxSchwab);
+        const sigTasty  = makeSignal(vixTasty,  spxTasty);
+
+        function renderMsg(sig, vixVal, source) {
+          if (!sig) return null;
+          const banner = source === 'schwab' ? '📡 **SCHWAB DATA**\n\n' : '📡 **TASTYTRADE DATA**\n\n';
+          return (banner + buildDiscordMessage(sig, { yOpen: vixYOpen, yClose: vixYClose, todayOpen: vixVal })).slice(0, 2000);
+        }
+        out.schwab = sigSchwab ? {
+          rec: sigSchwab.rec, theme: sigSchwab.theme, badge: sigSchwab.badge,
+          message: renderMsg(sigSchwab, vixSchwab, 'schwab'),
+        } : null;
+        out.tasty = sigTasty ? {
+          rec: sigTasty.rec, theme: sigTasty.theme, badge: sigTasty.badge,
+          message: renderMsg(sigTasty, vixTasty, 'tastytrade'),
+        } : null;
+
+        // Summary signals
+        out.summary = {
+          schwabMessageBuilt: !!out.schwab,
+          tastyMessageBuilt: !!out.tasty,
+          recsAgree: sigSchwab && sigTasty ? sigSchwab.rec === sigTasty.rec : null,
+          vixDelta: (vixSchwab != null && vixTasty != null) ? +(vixSchwab - vixTasty).toFixed(2) : null,
+          spxDelta: (spxSchwab != null && spxTasty != null) ? +(spxSchwab - spxTasty).toFixed(2) : null,
+        };
+
+        return jsonResp(out, 200, cors);
       } catch (e) {
         return jsonResp({ ok: false, error: e.message, stack: e.stack?.slice(0, 400) }, 500, cors);
       }
