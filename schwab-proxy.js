@@ -3352,7 +3352,11 @@ async function handleScheduled(env) {
 
   // 6. Build Discord message
   const vixValues = { yOpen: vixYOpen, yClose: vixYClose, todayOpen: vixToday };
-  const message = buildDiscordMessage(signal, vixValues);
+  // Source banner — so the user can see at-a-glance which data feed this
+  // signal was built from. Dual-source second message (below) repeats the
+  // same signal calc with the OTHER feed's data for cross-check.
+  const canonBanner = vixSource === 'schwab' ? '📡 **SCHWAB DATA**\n\n' : '📡 **TASTYTRADE DATA**\n\n';
+  const message = canonBanner + buildDiscordMessage(signal, vixValues);
 
   // 7. Slot already claimed at the top of the morning block. Reuse the same key.
   const msDoneKey = morningDoneKey;
@@ -3387,6 +3391,60 @@ async function handleScheduled(env) {
     vix: { todayOpen: vixToday, yOpen: vixYOpen, yClose: vixYClose },
     spxOpen: spxTodayOpen, spxGapPct,
   });
+
+  // ── 8b. SECOND signal message from the OTHER data source — for cross-check.
+  // The canonical message above is built from whichever source won the VIX
+  // race (Schwab vs Tasty). Here we independently pull the *other* source
+  // and compute the same signal — so disagreement between feeds is visible.
+  // Wrapped in try/catch: any failure here MUST NOT undo the canonical post.
+  try {
+    const otherSource = vixSource === 'schwab' ? 'tastytrade' : 'schwab';
+    let vixOther = null, spxOther = null;
+    if (otherSource === 'tastytrade') {
+      try { const r = await tastyGetVix(env); vixOther = parseFloat(r.price.toFixed(2)); }
+      catch (e) { console.warn('[proxy] dual-msg Tasty VIX:', e.message); }
+      try { const s = await tastyGetSpx(env); const v = s.open ?? s.last ?? s.price; if (v != null) spxOther = parseFloat(v.toFixed(2)); }
+      catch (e) { console.warn('[proxy] dual-msg Tasty SPX:', e.message); }
+    } else if (token) {
+      try {
+        const q = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`, token, env);
+        const vQ = q?.['$VIX']?.quote;
+        if (vQ?.lastPrice != null) vixOther = parseFloat(vQ.lastPrice.toFixed(2));
+      } catch (e) { console.warn('[proxy] dual-msg Schwab VIX:', e.message); }
+      try {
+        const q = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24SPX&fields=quote`, token, env);
+        const sQ = q?.['$SPX']?.quote;
+        const v = sQ?.openPrice || sQ?.lastPrice;
+        if (v != null) spxOther = parseFloat(v.toFixed(2));
+      } catch (e) { console.warn('[proxy] dual-msg Schwab SPX:', e.message); }
+    } else {
+      console.warn('[proxy] dual-msg: Schwab token unavailable, skipping 2nd-source message');
+    }
+    if (vixOther != null) {
+      const spxGapOther = (spxYClose && spxOther) ? ((spxOther - spxYClose) / spxYClose) * 100 : spxGapPct;
+      const signalOther = calculateSignal({
+        vixToday: vixOther, vixYOpen, vixYClose,
+        spxGapPct: spxGapOther,
+        etDate: etNow, prevWR, vixPct20d, rsi14,
+      });
+      const otherBanner = otherSource === 'schwab' ? '📡 **SCHWAB DATA**\n\n' : '📡 **TASTYTRADE DATA**\n\n';
+      const msgOther = otherBanner + buildDiscordMessage(signalOther, { yOpen: vixYOpen, yClose: vixYClose, todayOpen: vixOther });
+      await new Promise(r => setTimeout(r, 1500));   // Discord rate-limit safety
+      const r2 = await sendDiscordDM(env, dc.channelId, msgOther.slice(0, 2000), dc.proxyUrl);
+      if (r2.ok) {
+        await logEvent(env, 'info', 'morning', `2nd-source signal posted (${otherSource})`, {
+          rec: signalOther.rec, badge: signalOther.badge, theme: signalOther.theme,
+          vix: vixOther, spxOpen: spxOther,
+        });
+      } else {
+        console.warn('[proxy] 2nd-source Discord post failed:', JSON.stringify(r2.data || r2.error || {}).slice(0, 200));
+      }
+    } else {
+      console.warn(`[proxy] 2nd source (${otherSource}) returned no VIX; skipping second message`);
+    }
+  } catch (e) {
+    console.warn('[proxy] dual-source 2nd post failed (non-critical, canonical already sent):', e.message);
+  }
 
   // ════════════════════════════════════════════════════════════════════
   // POST-DISCORD WORK (deferred until after the message went out)
