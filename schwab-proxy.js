@@ -1167,18 +1167,37 @@ function pickPutFromChain(putExpDateMap, expISO, strike) {
 
 // Fetch SPX put chains for a date-range covering both legs in one call.
 // fromDate / toDate are YYYY-MM-DD. Returns {spot, putExpDateMap}.
+// Tries Schwab first; falls back to Tasty if Schwab token is dead or call fails.
 async function fetchSpxPutChain(token, fromDate, toDate, env) {
-  const params = new URLSearchParams({
-    symbol: '$SPX',
-    contractType: 'PUT',
-    fromDate, toDate,
-    strikeCount: '60',
-    includeUnderlyingQuote: 'true',
-    strategy: 'SINGLE',
-  });
-  const data = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/chains?${params}`, token, env);
-  const spot = data.underlyingPrice || data.underlying?.last || data.underlying?.mark;
-  return { spot, putExpDateMap: data.putExpDateMap || {} };
+  if (token) {
+    try {
+      const params = new URLSearchParams({
+        symbol: '$SPX',
+        contractType: 'PUT',
+        fromDate, toDate,
+        strikeCount: '60',
+        includeUnderlyingQuote: 'true',
+        strategy: 'SINGLE',
+      });
+      const data = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/chains?${params}`, token, env);
+      const spot = data.underlyingPrice || data.underlying?.last || data.underlying?.mark;
+      return { spot, putExpDateMap: data.putExpDateMap || {}, _source: 'schwab' };
+    } catch (e) {
+      console.warn(`[fetchSpxPutChain] Schwab failed (${fromDate}..${toDate}) → Tasty fallback:`, e.message);
+    }
+  } else {
+    console.warn(`[fetchSpxPutChain] no Schwab token (${fromDate}..${toDate}) → direct Tasty`);
+  }
+  // Tasty fallback: pull PUT chain across the date range.
+  const exps = [];
+  try {
+    const start = new Date(fromDate + 'T12:00:00Z');
+    const end = new Date(toDate + 'T12:00:00Z');
+    for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+      exps.push(d.toISOString().slice(0, 10));
+    }
+  } catch (_) { exps.push(fromDate, toDate); }
+  return tastyFetchSpxChain(env, { root: 'SPXW', strikeCount: 60, contractType: 'PUT', expirations: exps });
 }
 
 // Open a diagonal at 12:30 ET. Returns the trade record (or throws).
@@ -1482,19 +1501,30 @@ function pickContractFromChain(expDateMap, expISO, strike) {
 
 // Fetch full SPX option chain (call+put) for a single expiry. Used for
 // straddle entry + monitoring. Mirrors GEX fetch pattern.
+// Tries Schwab first; falls back to Tasty if Schwab token is dead or call fails.
 async function fetchSpxFullChain(token, expDate, env) {
-  const baseParams = `symbol=%24SPX&strikeCount=20&fromDate=${expDate}&toDate=${expDate}&includeUnderlyingQuote=true&strategy=SINGLE`;
-  const [callData, putData] = await Promise.all([
-    fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/chains?${baseParams}&contractType=CALL`, token, env),
-    fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/chains?${baseParams}&contractType=PUT`, token, env),
-  ]);
-  const spot = callData.underlyingPrice || callData.underlying?.last
-            || putData.underlyingPrice  || putData.underlying?.last;
-  return {
-    spot,
-    callExpDateMap: callData.callExpDateMap || {},
-    putExpDateMap:  putData.putExpDateMap  || {},
-  };
+  if (token) {
+    try {
+      const baseParams = `symbol=%24SPX&strikeCount=20&fromDate=${expDate}&toDate=${expDate}&includeUnderlyingQuote=true&strategy=SINGLE`;
+      const [callData, putData] = await Promise.all([
+        fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/chains?${baseParams}&contractType=CALL`, token, env),
+        fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/chains?${baseParams}&contractType=PUT`, token, env),
+      ]);
+      const spot = callData.underlyingPrice || callData.underlying?.last
+                || putData.underlyingPrice  || putData.underlying?.last;
+      return {
+        spot,
+        callExpDateMap: callData.callExpDateMap || {},
+        putExpDateMap:  putData.putExpDateMap  || {},
+        _source: 'schwab',
+      };
+    } catch (e) {
+      console.warn(`[fetchSpxFullChain] Schwab failed (${expDate}) → Tasty fallback:`, e.message);
+    }
+  } else {
+    console.warn(`[fetchSpxFullChain] no Schwab token (${expDate}) → direct Tasty`);
+  }
+  return tastyFetchSpxChain(env, { root: 'SPXW', strikeCount: 20, expirations: [expDate] });
 }
 
 // Master SPX chain — fetched ONCE per cron tick and passed to every handler
@@ -1503,19 +1533,29 @@ async function fetchSpxFullChain(token, expDate, env) {
 // 30-ITM short = spot+30, well within range). No date range = Schwab returns
 // all available expiries, covering 0DTE through ~30+ DTE.
 async function fetchMasterSpxChain(token, env) {
-  const baseParams = 'symbol=%24SPX&strikeCount=80&includeUnderlyingQuote=true&strategy=SINGLE';
-  const [callData, putData] = await Promise.all([
-    fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/chains?${baseParams}&contractType=CALL`, token, env),
-    fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/chains?${baseParams}&contractType=PUT`, token, env),
-  ]);
-  const spot = callData.underlyingPrice || callData.underlying?.last
-            || putData.underlyingPrice  || putData.underlying?.last;
-  return {
-    spot,
-    callExpDateMap: callData.callExpDateMap || {},
-    putExpDateMap:  putData.putExpDateMap  || {},
-    fetchedAt: Date.now(),
-  };
+  if (token) {
+    try {
+      const baseParams = 'symbol=%24SPX&strikeCount=80&includeUnderlyingQuote=true&strategy=SINGLE';
+      const [callData, putData] = await Promise.all([
+        fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/chains?${baseParams}&contractType=CALL`, token, env),
+        fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/chains?${baseParams}&contractType=PUT`, token, env),
+      ]);
+      const spot = callData.underlyingPrice || callData.underlying?.last
+                || putData.underlyingPrice  || putData.underlying?.last;
+      return {
+        spot,
+        callExpDateMap: callData.callExpDateMap || {},
+        putExpDateMap:  putData.putExpDateMap  || {},
+        fetchedAt: Date.now(),
+        _source: 'schwab',
+      };
+    } catch (e) {
+      console.warn('[fetchMasterSpxChain] Schwab failed → Tasty fallback:', e.message);
+    }
+  } else {
+    console.warn('[fetchMasterSpxChain] no Schwab token → direct Tasty');
+  }
+  return tastyFetchSpxChain(env, { root: 'SPXW', strikeCount: 80 });
 }
 
 // Returns a chain compatible with what each handler needs. If `preChain` has
@@ -2705,11 +2745,15 @@ async function handleScheduled(env) {
   let masterChain = null;
   let schwabToken = null;
   if (isMarket) {
+    // Try Schwab token first — but a failure here MUST NOT block the master
+    // chain fetch, which has a Tasty fallback. Schwab-token-dependent ops
+    // (order placement, GEX update) still gate on `schwabToken` below.
+    try { schwabToken = await getAccessToken(env); }
+    catch (e) { console.warn('[chain] Schwab token unavailable, chain will use Tasty:', e.message); }
     try {
-      schwabToken = await getAccessToken(env);
       masterChain = await fetchMasterSpxChain(schwabToken, env);
     } catch (e) {
-      console.warn('[chain] master fetch failed:', e.message);
+      console.warn('[chain] master chain fetch failed (both Schwab and Tasty):', e.message);
       // Handlers will fall through to their own targeted fetches.
     }
   }
