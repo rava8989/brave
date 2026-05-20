@@ -556,6 +556,155 @@ async function tastyGetSpx(env) {
   };
 }
 
+// ─── Tastytrade SPX option-chain fetcher ─────────────────────────────────
+// Returns a Schwab-shape { spot, callExpDateMap, putExpDateMap } so it
+// can drop into any existing consumer as a fallback when Schwab is dead
+// (token expired) or fails. opts:
+//   root         — 'SPXW' (default; PM-settled 0DTE/weekly), 'SPX' (AM)
+//   expirations  — array of 'YYYY-MM-DD' to limit fetch volume (recommended)
+//   strikeCount  — N strikes nearest spot, per expiration (default 80)
+//   contractType — 'CALL'|'PUT'|'BOTH' (default 'BOTH')
+// Tasty doesn't expose open interest via REST — `openInterest:0` for now.
+// Live trading paths use bid/ask/mark only, so OI=0 is acceptable.
+async function tastyFetchSpxChain(env, opts = {}) {
+  const root = opts.root || 'SPXW';
+  const wantExp = opts.expirations ? new Set(opts.expirations) : null;
+  const strikeCount = Math.max(1, opts.strikeCount || 80);
+  const ct = (opts.contractType || 'BOTH').toUpperCase();
+  const wantCall = ct === 'BOTH' || ct === 'CALL';
+  const wantPut  = ct === 'BOTH' || ct === 'PUT';
+
+  const token = await getTastyAccessToken(env);
+  const hdr = tastyHeaders({ Authorization: `Bearer ${token}` });
+
+  // 1) Nested chain (structure) + index spot in parallel
+  const [nestedResp, idxResp] = await Promise.all([
+    fetch(`${TASTY_BASE}/option-chains/${encodeURIComponent(root)}/nested`, { headers: hdr }),
+    fetch(`${TASTY_BASE}/market-data/Index/SPX`, { headers: hdr }),
+  ]);
+  if (!nestedResp.ok) {
+    const txt = await nestedResp.text();
+    throw new Error(`Tasty nested chain HTTP ${nestedResp.status}: ${txt.slice(0, 200)}`);
+  }
+  const nestedJson = await nestedResp.json();
+  const item0 = nestedJson?.data?.items?.[0];
+  if (!item0) throw new Error('Tasty nested chain: empty items[]');
+
+  let spot = null;
+  if (idxResp.ok) {
+    try {
+      const idxJson = await idxResp.json();
+      const d = idxJson?.data || {};
+      const cand = d.last ?? d['last-price'] ?? d.mark ?? d.mid ?? d['close-price'];
+      if (cand != null) spot = parseFloat(cand);
+    } catch (_) {}
+  }
+
+  // 2) Filter expirations (optional) + nearest-N strikes (around spot if known)
+  const expirations = (item0.expirations || []).filter(e => !wantExp || wantExp.has(e['expiration-date']));
+  const slots = [];          // [{expKey, strikes: [{strike, callSym, putSym}]}]
+  const allSyms = [];
+  for (const e of expirations) {
+    const expDate = e['expiration-date'];
+    const dte = e['days-to-expiration'];
+    const expKey = `${expDate}:${dte}`;
+    let strikes = e.strikes || [];
+    if (Number.isFinite(spot) && strikes.length > strikeCount) {
+      strikes = strikes.slice().sort((a, b) =>
+        Math.abs(parseFloat(a['strike-price']) - spot) -
+        Math.abs(parseFloat(b['strike-price']) - spot)
+      ).slice(0, strikeCount);
+    }
+    const items = [];
+    for (const s of strikes) {
+      const strike = parseFloat(s['strike-price']);
+      const it = { strike, callSym: wantCall ? s.call : null, putSym: wantPut ? s.put : null };
+      items.push(it);
+      if (it.callSym) allSyms.push(it.callSym);
+      if (it.putSym)  allSyms.push(it.putSym);
+    }
+    slots.push({ expKey, items });
+  }
+
+  // 3) Batch-fetch quotes via /market-data?symbols=sym1,sym2,... (comma-batch).
+  // Chunks of 100 symbols, capped concurrency to avoid Tasty rate limits.
+  const quoteMap = {};
+  const CHUNK = 100;
+  const MAX_PAR = 5;
+  const batches = [];
+  for (let i = 0; i < allSyms.length; i += CHUNK) batches.push(allSyms.slice(i, i + CHUNK));
+  for (let i = 0; i < batches.length; i += MAX_PAR) {
+    const wave = batches.slice(i, i + MAX_PAR);
+    const results = await Promise.all(wave.map(async b => {
+      const url = `${TASTY_BASE}/market-data?symbols=${encodeURIComponent(b.join(','))}`;
+      const r = await fetch(url, { headers: hdr });
+      if (!r.ok) {
+        const t = await r.text();
+        throw new Error(`Tasty batch-quote HTTP ${r.status}: ${t.slice(0, 160)}`);
+      }
+      return r.json();
+    }));
+    for (const r of results) for (const it of (r?.data?.items || [])) if (it.symbol) quoteMap[it.symbol] = it;
+  }
+
+  // 4) Assemble Schwab-compatible callExpDateMap / putExpDateMap
+  const callExpDateMap = {};
+  const putExpDateMap  = {};
+  const num = v => (v == null || v === '') ? 0 : parseFloat(v);
+  const mkContract = (q, strike, putCall) => ({
+    putCall,
+    symbol: q.symbol,
+    bid: num(q.bid),
+    ask: num(q.ask),
+    last: num(q.last),
+    mark: num(q.mark ?? q.mid),
+    bidSize: num(q['bid-size']),
+    askSize: num(q['ask-size']),
+    strikePrice: strike,
+    volatility: num(q.volatility) * 100,   // Schwab uses percent; Tasty decimal
+    delta: num(q.delta),
+    gamma: num(q.gamma),
+    theta: num(q.theta),
+    vega: num(q.vega),
+    rho: num(q.rho),
+    openInterest: 0,   // not exposed via Tasty REST
+    totalVolume: 0,    // not exposed via Tasty REST
+    _tastySource: true,
+  });
+  let mapped = 0, missing = 0;
+  for (const slot of slots) {
+    for (const it of slot.items) {
+      const sk = it.strike.toFixed(1);   // Schwab key format "7400.0"
+      if (it.callSym) {
+        const q = quoteMap[it.callSym];
+        if (q) {
+          if (!callExpDateMap[slot.expKey]) callExpDateMap[slot.expKey] = {};
+          (callExpDateMap[slot.expKey][sk] = callExpDateMap[slot.expKey][sk] || []).push(mkContract(q, it.strike, 'CALL'));
+          mapped++;
+        } else missing++;
+      }
+      if (it.putSym) {
+        const q = quoteMap[it.putSym];
+        if (q) {
+          if (!putExpDateMap[slot.expKey]) putExpDateMap[slot.expKey] = {};
+          (putExpDateMap[slot.expKey][sk] = putExpDateMap[slot.expKey][sk] || []).push(mkContract(q, it.strike, 'PUT'));
+          mapped++;
+        } else missing++;
+      }
+    }
+  }
+
+  return {
+    spot,
+    underlyingPrice: spot,     // Schwab also exposes this top-level alias
+    callExpDateMap,
+    putExpDateMap,
+    fetchedAt: Date.now(),
+    _source: 'tastytrade',
+    _stats: { expirations: slots.length, symsRequested: allSyms.length, mapped, missing },
+  };
+}
+
 // ════════════════════════════════════════════════════════════════════
 
 async function handleEOD(env, etNow) {
@@ -6232,6 +6381,241 @@ export default {
         }, 200, publicCors);
       } catch (e) {
         return jsonResp({ ok: false, error: e.message }, 500, publicCors);
+      }
+    }
+
+    // GET /tasty-chain-test?exp=YYYY-MM-DD[&strikes=20&type=BOTH&compare=1]
+    // Test the tastyFetchSpxChain wrapper end-to-end. With ?compare=1 it also
+    // fetches the same chain via Schwab so you can verify shape parity and
+    // quote agreement. Read-only. Doesn't affect any live path.
+    if (url.pathname === '/tasty-chain-test' && request.method === 'GET') {
+      const cors = { 'Access-Control-Allow-Origin': '*' };
+      try {
+        const root = url.searchParams.get('root') || 'SPXW';
+        const exp = url.searchParams.get('exp');
+        const strikes = parseInt(url.searchParams.get('strikes') || '20', 10);
+        const ctype = (url.searchParams.get('type') || 'BOTH').toUpperCase();
+        const compare = url.searchParams.get('compare') === '1';
+        const opts = { root, strikeCount: strikes, contractType: ctype };
+        if (exp) opts.expirations = [exp];
+
+        const tStart = Date.now();
+        const tasty = await tastyFetchSpxChain(env, opts);
+        const tastyMs = Date.now() - tStart;
+
+        const sample = {};
+        const firstCallExp = Object.keys(tasty.callExpDateMap)[0];
+        if (firstCallExp) {
+          const strikeKeys = Object.keys(tasty.callExpDateMap[firstCallExp]).sort((a,b) =>
+            Math.abs(parseFloat(a) - (tasty.spot||0)) - Math.abs(parseFloat(b) - (tasty.spot||0)));
+          const atm = strikeKeys.slice(0, 3);
+          sample.tasty = atm.map(k => {
+            const c = tasty.callExpDateMap[firstCallExp]?.[k]?.[0];
+            const p = tasty.putExpDateMap[firstCallExp]?.[k]?.[0];
+            return { strike: k, call: c && { bid: c.bid, ask: c.ask, mark: c.mark, delta: c.delta, gamma: c.gamma, symbol: c.symbol }, put: p && { bid: p.bid, ask: p.ask, mark: p.mark, delta: p.delta, gamma: p.gamma, symbol: p.symbol } };
+          });
+        }
+
+        let schwab = null, schwabMs = null, schwabErr = null, schwabSample = null;
+        if (compare) {
+          const sStart = Date.now();
+          try {
+            const token = await getAccessToken(env);
+            const params = new URLSearchParams({
+              symbol: '$SPX', strikeCount: String(strikes), includeUnderlyingQuote: 'true', strategy: 'SINGLE',
+            });
+            if (exp) { params.set('fromDate', exp); params.set('toDate', exp); }
+            if (ctype !== 'BOTH') params.set('contractType', ctype);
+            const data = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/chains?${params}`, token, env);
+            schwabMs = Date.now() - sStart;
+            schwab = {
+              spot: data.underlyingPrice || data.underlying?.last,
+              callExps: Object.keys(data.callExpDateMap || {}),
+              putExps: Object.keys(data.putExpDateMap || {}),
+            };
+            // Sample ATM strikes via Schwab
+            const sExp = Object.keys(data.callExpDateMap || {})[0];
+            if (sExp) {
+              const sStrikes = Object.keys(data.callExpDateMap[sExp]).sort((a,b) =>
+                Math.abs(parseFloat(a) - (schwab.spot||0)) - Math.abs(parseFloat(b) - (schwab.spot||0)));
+              schwabSample = sStrikes.slice(0, 3).map(k => {
+                const c = data.callExpDateMap[sExp]?.[k]?.[0];
+                const p = (data.putExpDateMap || {})[sExp]?.[k]?.[0];
+                return { strike: k, call: c && { bid: c.bid, ask: c.ask, mark: c.mark, delta: c.delta, gamma: c.gamma, symbol: c.symbol }, put: p && { bid: p.bid, ask: p.ask, mark: p.mark, delta: p.delta, gamma: p.gamma, symbol: p.symbol } };
+              });
+            }
+          } catch (e) { schwabErr = e.message; }
+        }
+
+        return jsonResp({
+          ok: true,
+          opts,
+          tasty: {
+            spot: tasty.spot, fetchMs: tastyMs,
+            callExpKeys: Object.keys(tasty.callExpDateMap),
+            putExpKeys: Object.keys(tasty.putExpDateMap),
+            stats: tasty._stats,
+            sample: sample.tasty,
+          },
+          schwab: compare ? { spot: schwab?.spot, fetchMs: schwabMs, error: schwabErr, callExps: schwab?.callExps, putExps: schwab?.putExps, sample: schwabSample } : 'skip (pass ?compare=1)',
+        }, 200, cors);
+      } catch (e) {
+        return jsonResp({ ok: false, error: e.message, stack: e.stack?.slice(0, 400) }, 500, cors);
+      }
+    }
+
+    // GET /tasty-chain-probe?root=SPXW[&exp=YYYY-MM-DD]
+    // Diagnostic ONLY. Hits Tasty's option-chains endpoints and a sample
+    // market-data quote so we can see the response shape before building a
+    // wrapper. Read-only, additive — no impact on live signal/trading.
+    if (url.pathname === '/tasty-chain-probe' && request.method === 'GET') {
+      const cors = { 'Access-Control-Allow-Origin': '*' };
+      try {
+        const root = url.searchParams.get('root') || 'SPXW';
+        const expFilter = url.searchParams.get('exp');  // YYYY-MM-DD optional
+        const token = await getTastyAccessToken(env);
+        const hdr = tastyHeaders({ 'Authorization': `Bearer ${token}` });
+        const out = { root, expFilter, ts: new Date().toISOString() };
+
+        // 1. NESTED chain (structured by expiration → strike → call/put)
+        const r1 = await fetch(`${TASTY_BASE}/option-chains/${encodeURIComponent(root)}/nested`, { headers: hdr });
+        const t1 = await r1.text();
+        let j1 = null;
+        try { j1 = JSON.parse(t1); } catch (_) {}
+        out.nested = { status: r1.status, ok: r1.ok };
+        if (j1) {
+          const d = j1?.data || j1;
+          const items = d?.items || [];
+          out.nested.topKeys = Object.keys(d || {});
+          out.nested.itemCount = items.length;
+          // Show the structure of the first item + first expiration deep
+          if (items[0]) {
+            out.nested.firstItemKeys = Object.keys(items[0]);
+            const exps = items[0]?.expirations || items[0]?.['expirations'] || [];
+            out.nested.firstItemExpCount = exps.length;
+            if (exps[0]) {
+              out.nested.firstExpKeys = Object.keys(exps[0]);
+              const strikes = exps[0]?.strikes || [];
+              out.nested.firstExpStrikeCount = strikes.length;
+              if (strikes[0]) {
+                out.nested.firstStrikeKeys = Object.keys(strikes[0]);
+                out.nested.firstStrikeSample = strikes[0];
+              }
+            }
+          }
+        } else {
+          out.nested.bodyHead = t1.slice(0, 400);
+        }
+
+        // 2. COMPACT chain (flat list of option symbols)
+        const r2 = await fetch(`${TASTY_BASE}/option-chains/${encodeURIComponent(root)}/compact`, { headers: hdr });
+        const t2 = await r2.text();
+        let j2 = null;
+        try { j2 = JSON.parse(t2); } catch (_) {}
+        out.compact = { status: r2.status, ok: r2.ok };
+        if (j2) {
+          const d = j2?.data || j2;
+          const items = d?.items || [];
+          out.compact.topKeys = Object.keys(d || {});
+          out.compact.itemCount = items.length;
+          if (items[0]) {
+            out.compact.firstItemKeys = Object.keys(items[0]);
+            const syms = items[0]?.['option-chains'] || items[0]?.symbols || items[0]?.['streamer-symbols'] || [];
+            out.compact.symbolFieldFound = Object.keys(items[0]).filter(k => Array.isArray(items[0][k])).slice(0, 5);
+            out.compact.firstFewSymbols = (Array.isArray(syms) ? syms : []).slice(0, 6);
+            out.compact.firstItemSample = items[0];  // tiny; just the top wrapper
+          }
+        } else {
+          out.compact.bodyHead = t2.slice(0, 400);
+        }
+
+        // 3. Pick a sample option symbol and probe market-data endpoints
+        let sampleSym = null;
+        try {
+          const compactItems = j2?.data?.items || j2?.items || [];
+          for (const it of compactItems) {
+            for (const k of Object.keys(it)) {
+              if (Array.isArray(it[k]) && it[k].length) {
+                const candidate = it[k].find(s => typeof s === 'string') || it[k][0];
+                if (typeof candidate === 'string') { sampleSym = candidate; break; }
+              }
+            }
+            if (sampleSym) break;
+          }
+        } catch (_) {}
+        out.sampleSym = sampleSym;
+
+        if (sampleSym) {
+          // Try /market-data/{Index|Equity Option|Future Option}/{symbol} variants
+          for (const instr of ['Equity Option', 'EquityOption', 'Option']) {
+            const path = `${TASTY_BASE}/market-data/${encodeURIComponent(instr)}/${encodeURIComponent(sampleSym)}`;
+            const r = await fetch(path, { headers: hdr });
+            const t = await r.text();
+            let j = null; try { j = JSON.parse(t); } catch (_) {}
+            out[`mdSingle_${instr.replace(/\s/g,'_')}`] = {
+              path, status: r.status, ok: r.ok,
+              topKeys: j ? Object.keys(j) : null,
+              data: j?.data || null,
+              bodyHead: !j ? t.slice(0, 300) : undefined,
+            };
+            if (r.ok) break;  // first one that works is enough
+          }
+          // Try batch quote endpoints with several URL/symbol-format variants.
+          // We need ONE batch call that returns quotes for many option symbols.
+          // Collect 4 sample syms so we can validate batching, not just single.
+          const syms = [];
+          try {
+            const items = j2?.data?.items || [];
+            for (const it of items) {
+              for (const arr of [it['symbols'], it['streamer-symbols']]) {
+                if (Array.isArray(arr)) syms.push(...arr.slice(0, 2));
+              }
+              if (syms.length >= 4) break;
+            }
+          } catch (_) {}
+          const sym1 = syms[0] || sampleSym;
+          const sym2 = syms[1] || sampleSym;
+          const sym1NoDouble = sym1?.replace(/\s+/g, ' ');
+          const sym1Strip = sym1?.replace(/\s+/g, '');
+          // Streamer-symbol form (.SPXW260520C2800) from nested first strike
+          const streamerSym = j1?.data?.items?.[0]?.expirations?.[0]?.strikes?.[0]?.['call-streamer-symbol'];
+          const variants = [
+            { tag: 'by-type_single_double-space',  url: `${TASTY_BASE}/market-data/by-type?option=${encodeURIComponent(sym1)}` },
+            { tag: 'by-type_single_single-space',  url: `${TASTY_BASE}/market-data/by-type?option=${encodeURIComponent(sym1NoDouble)}` },
+            { tag: 'by-type_single_no-space',      url: `${TASTY_BASE}/market-data/by-type?option=${encodeURIComponent(sym1Strip)}` },
+            { tag: 'by-type_two_comma',            url: `${TASTY_BASE}/market-data/by-type?option=${encodeURIComponent(sym1 + ',' + sym2)}` },
+            { tag: 'by-type_two_repeated',         url: `${TASTY_BASE}/market-data/by-type?option=${encodeURIComponent(sym1)}&option=${encodeURIComponent(sym2)}` },
+            { tag: 'by-type_streamer',             url: streamerSym ? `${TASTY_BASE}/market-data/by-type?option=${encodeURIComponent(streamerSym)}` : null },
+            { tag: 'md_root_symbols',              url: `${TASTY_BASE}/market-data?symbols=${encodeURIComponent(sym1)}` },
+            { tag: 'md_root_symbols_comma2',       url: `${TASTY_BASE}/market-data?symbols=${encodeURIComponent(sym1 + ',' + sym2)}` },
+            { tag: 'md_root_symbols_comma4',       url: `${TASTY_BASE}/market-data?symbols=${encodeURIComponent(syms.slice(0,4).join(','))}` },
+            { tag: 'md_root_symbols_repeated',     url: `${TASTY_BASE}/market-data?symbols=${encodeURIComponent(sym1)}&symbols=${encodeURIComponent(sym2)}` },
+            { tag: 'md_root_options',              url: `${TASTY_BASE}/market-data?options[]=${encodeURIComponent(sym1)}&options[]=${encodeURIComponent(sym2)}` },
+            { tag: 'chain_quotes',                 url: `${TASTY_BASE}/option-chains/${encodeURIComponent(root)}/quotes` },
+            { tag: 'chain_quotes_with_filter',     url: expFilter ? `${TASTY_BASE}/option-chains/${encodeURIComponent(root)}/quotes?expiration-date=${expFilter}` : null },
+          ];
+          out.batchProbe = {};
+          for (const v of variants) {
+            if (!v.url) { out.batchProbe[v.tag] = { skipped: true }; continue; }
+            const r = await fetch(v.url, { headers: hdr });
+            const t = await r.text();
+            let j = null; try { j = JSON.parse(t); } catch (_) {}
+            const items = j?.data?.items;
+            out.batchProbe[v.tag] = {
+              url: v.url,
+              status: r.status, ok: r.ok,
+              hasItems: Array.isArray(items),
+              itemCount: Array.isArray(items) ? items.length : null,
+              firstItemKeys: Array.isArray(items) && items[0] ? Object.keys(items[0]).slice(0, 12) : null,
+              bodyHead: !j ? t.slice(0, 240) : (Array.isArray(items) && items.length === 0 ? t.slice(0, 240) : undefined),
+            };
+          }
+          out.batchProbe._sampleSyms = { sym1, sym2, sym1NoDouble, sym1Strip, streamerSym };
+        }
+
+        return jsonResp({ ok: true, probe: out }, 200, cors);
+      } catch (e) {
+        return jsonResp({ ok: false, error: e.message, stack: e.stack?.slice(0, 400) }, 500, cors);
       }
     }
 
