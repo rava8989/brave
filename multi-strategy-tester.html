@@ -454,6 +454,19 @@ body {
       <div class="sz-field"><label class="sz-label" for="szA_bobf">BOBF</label><div class="sz-wrap sz-p"><input id="szA_bobf" class="sz-input" type="number" value="5" min="0" max="100" step="1"></div></div>
       <div class="sz-field"><label class="sz-label" for="szA_diagonal">Diagonal</label><div class="sz-wrap sz-p"><input id="szA_diagonal" class="sz-input" type="number" value="5" min="0" max="100" step="1"></div></div>
     </div>
+
+    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px;font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.05em;margin:14px 0 8px;">
+      Max contracts per strategy
+      <span style="font-weight:500;color:var(--text3);text-transform:none;letter-spacing:0;">optional — leave blank for no cap</span>
+    </div>
+    <div class="sz-grid">
+      <div class="sz-field"><label class="sz-label" for="szM_m8bf">M8BF</label><div class="sz-wrap"><input id="szM_m8bf" class="sz-input" type="number" placeholder="no cap" min="1" step="1"></div></div>
+      <div class="sz-field"><label class="sz-label" for="szM_strad">Straddle</label><div class="sz-wrap"><input id="szM_strad" class="sz-input" type="number" placeholder="no cap" min="1" step="1"></div></div>
+      <div class="sz-field"><label class="sz-label" for="szM_gxbf">GXBF</label><div class="sz-wrap"><input id="szM_gxbf" class="sz-input" type="number" placeholder="no cap" min="1" step="1"></div></div>
+      <div class="sz-field"><label class="sz-label" for="szM_bobf">BOBF</label><div class="sz-wrap"><input id="szM_bobf" class="sz-input" type="number" placeholder="no cap" min="1" step="1"></div></div>
+      <div class="sz-field"><label class="sz-label" for="szM_diagonal">Diagonal</label><div class="sz-wrap"><input id="szM_diagonal" class="sz-input" type="number" placeholder="no cap" min="1" step="1"></div></div>
+    </div>
+
     <div style="margin:4px 0 14px;">
       <button onclick="_sizingRun()" class="schwab-btn primary" style="font-size:13px;font-weight:700;padding:9px 28px;">▶ RUN</button>
     </div>
@@ -820,6 +833,14 @@ function _sizingRun() {
     allocPct[k] = Math.max(0, parseFloat(document.getElementById('szA_'+k).value) || 0);
   _szUpdateSum();
 
+  // OPTIONAL per-strategy max-contracts cap. Empty / 0 / NaN = no cap.
+  const maxCt = {};
+  for (const [k] of _SZ_KEYS) {
+    const raw = (document.getElementById('szM_'+k)?.value || '').trim();
+    const n = parseInt(raw, 10);
+    maxCt[k] = (raw !== '' && Number.isFinite(n) && n > 0) ? n : null;
+  }
+
   // Compact currency so values always fit their cell (Option-Omega style):
   // < $1M shown in full with commas; $1M+ abbreviated M/B/T.
   const fmt$ = n => {
@@ -840,7 +861,7 @@ function _sizingRun() {
   let equity = startCap;
   const perStrat = {};
   for (const [k] of _SZ_KEYS)
-    perStrat[k] = { series: [], pnl: 0, ctMin: Infinity, ctMax: 0, wins: 0, n: 0, forced: false,
+    perStrat[k] = { series: [], pnl: 0, ctMin: Infinity, ctMax: 0, wins: 0, n: 0, forced: false, capped: false,
                     cum: 0, pk: 0, pkEq: startCap, ddFrac: 0 };
   const combo = [];      // [{date, pnl}] portfolio daily
   const eqCurve = [];    // [{date, eq}] running equity
@@ -859,6 +880,8 @@ function _sizingRun() {
       let contracts = cpc > 0 ? Math.floor((allocPct[k] / 100 * equity) / cpc) : 0;
       if (contracts < 1 && allocPct[k] > 0) { contracts = 1; perStrat[k].forced = true; }
       if (contracts < 1) continue;             // 0% allocation = excluded
+      // Apply optional per-strategy max-contracts cap (null = no cap).
+      if (maxCt[k] != null && contracts > maxCt[k]) { contracts = maxCt[k]; perStrat[k].capped = true; }
       const p = v * contracts;
       perStrat[k].series.push({ date: row.date, pnl: p });
       perStrat[k].pnl += p;
@@ -935,10 +958,13 @@ function _sizingRun() {
       return `<div class="sz-mini"><b>${label}</b> &nbsp; <span style="color:var(--text3)">0% alloc — excluded</span></div>`;
     const ctTxt = ps.ctMin === ps.ctMax ? `${ps.ctMax}ct` : `${ps.ctMin}–${ps.ctMax}ct`;
     const warn = ps.forced ? ' <span style="color:#ef4444;font-weight:700" title="under-capitalized: floored to 1 on some days">⚠</span>' : '';
+    const capMini = (maxCt[k] != null)
+      ? ` <span style="color:#f59e0b;font-weight:700" title="capped at ${maxCt[k]} contracts per trade">⊏${maxCt[k]}${ps.capped ? '*' : ''}</span>`
+      : '';
     const share = (perStrat[k].pnl / totAbs) * 100;
     return `<div class="sz-mini"><b>${label}</b> &nbsp;
       <span>Alloc</span> <b>${allocPct[k]}%</b> &nbsp;
-      <span>Ct</span> <b style="${cl2(1)}">${ctTxt}</b>${warn} &nbsp;
+      <span>Ct</span> <b style="${cl2(1)}">${ctTxt}</b>${warn}${capMini} &nbsp;
       <span>P/L</span> <b style="${cl2(kpi.pl)}">${fmt$(kpi.pl)}</b> &nbsp;
       <span>% of port</span> <b style="${cl2(share)}">${(share>=0?'+':'')+share.toFixed(1)}%</b> &nbsp;
       <span>Win</span> <b>${kpi.winPct.toFixed(1)}%</b></div>`;
@@ -966,7 +992,7 @@ function _sizingRun() {
      </div>`;
 
   // Stash for the tab renderers, then build the 4 report tabs.
-  window._szLast = { combo, eqCurve, perStrat, port, allocPct, capPerCt, rows, startCap };
+  window._szLast = { combo, eqCurve, perStrat, port, allocPct, capPerCt, maxCt, rows, startCap };
   try { _buildResultTabs(); } catch (e) { console.error('[mst] tab build failed', e); }
 }
 
@@ -1178,6 +1204,10 @@ function _renderStrategies() {
     const share = (s.pnl / totAbs) * 100;
     const ctTxt = s.ctMin === s.ctMax ? `${s.ctMax}` : `${s.ctMin}–${s.ctMax}`;
     const under = s.forced ? ` <span style="color:#ef4444;font-weight:700">⚠ under-capitalized</span>` : '';
+    const maxLim = (L.maxCt && L.maxCt[k] != null) ? L.maxCt[k] : null;
+    const capTag = maxLim != null
+      ? ` <span style="color:#f59e0b;font-weight:700" title="Capped at ${maxLim} contracts per trade">⊏ max ${maxLim}${s.capped ? ' (hit)' : ''}</span>`
+      : '';
     return `<div class="sz-card" style="gap:0">
       <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;gap:8px">
         <div style="font-family:'JetBrains Mono',monospace;font-size:15px;font-weight:700;color:var(--accent)">${label}</div>
@@ -1185,7 +1215,7 @@ function _renderStrategies() {
       </div>
       ${stat('% of portfolio P/L', (share>=0?'+':'')+share.toFixed(1)+'%', cl(share))}
       ${stat('Allocation', allocPct[k]+'%')}
-      ${stat('Contracts', ctTxt + under)}
+      ${stat('Contracts', ctTxt + under + capTag)}
       ${stat('Win %', kpi.winPct.toFixed(1)+'%')}
       ${stat('Max Drawdown', kpi.maxDDpct.toFixed(1)+'%', 'color:#ef4444')}
       ${stat('MAR Ratio', kpi.mar.toFixed(2))}
