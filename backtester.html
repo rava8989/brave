@@ -498,6 +498,10 @@ tfoot td {
       <input type="number" id="btCap"   class="date-input" placeholder="Start $"  min="0" step="1000" style="width:110px">
       <span style="color:var(--text3);font-size:11px;padding:0 2px">×</span>
       <input type="number" id="btAlloc" class="date-input" placeholder="Alloc %" min="0" max="100" step="0.5" style="width:80px">
+      <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text2);margin-left:8px;cursor:pointer;user-select:none;" title="Daily compounding — averages entry-time variants per date and grows equity day-by-day. Off = fixed contracts, all variants preserved.">
+        <input type="checkbox" id="btCompound" style="margin:0;cursor:pointer;">
+        Compound
+      </label>
     </div>
   </div>
 
@@ -1067,43 +1071,93 @@ function fmt$(v) { return (v<0?'-$':'$') + Math.abs(Math.round(v)).toLocaleStrin
 function fmtPct(v) { return v.toFixed(1) + '%'; }
 
 // ── Optional capital × allocation% sizing ────────────────────────────────────
-// Fixed-contracts model: contracts = floor(allocPct% × startCap ÷ $3,000),
-// minimum 1. Every selected trade (every entry-time variant on every date)
-// is scaled by the same contract count. No compounding — the backtester
-// explores multiple entry-time variants per date (hypothetical alternatives,
-// not all actually traded), so compounding day-by-day across all variants
-// is nonsensical (blows up to absurd numbers; collapsing variants destroys
-// the exploration UX the user wants).
+// Two modes (Compound toggle switches between them):
 //
-// Blank inputs = per-contract mode (legacy, unchanged).
+// FIXED (toggle OFF, default): every selected entry-time variant on every
+//   date is scaled by the SAME contract count derived from start capital.
+//   contracts = max(1, floor(allocPct% × startCap ÷ $3,000)). No compounding.
+//   Preserves the user's variant exploration (all trade rows visible).
+//
+// COMPOUND (toggle ON): groups variants by date, averages their per-contract
+//   P&L (treating selected entry times as hypothetical alternatives →
+//   "expected daily outcome"), then compounds equity day-by-day. Contract
+//   count recomputed each date from current equity. Trade count collapses
+//   to one per date — necessary for realistic compounding (the multi-tester
+//   does the same).
+//
+// Blank inputs = per-contract mode (legacy, unchanged regardless of toggle).
 function applySizing(results) {
   const capRaw   = (document.getElementById('btCap')   || {}).value || '';
   const allocRaw = (document.getElementById('btAlloc') || {}).value || '';
   const startCap = parseFloat(capRaw);
   const allocPct = parseFloat(allocRaw);
+  const compound = document.getElementById('btCompound')?.checked === true;
   if (!Number.isFinite(startCap) || startCap <= 0 || !Number.isFinite(allocPct) || allocPct <= 0) {
     window._btSizing = null;
     return results;   // per-contract mode (legacy)
   }
   const CAP_PER_CT = 3000;   // M8BF max risk per contract (matches multi-tester)
-  const raw = Math.floor((allocPct / 100 * startCap) / CAP_PER_CT);
-  const forced = raw < 1;
-  const contracts = Math.max(1, raw);
-  for (const r of results) {
-    if (!r) continue;
-    r.profitPerCt = r.profit;
-    r.profit      = contracts * r.profitPerCt;
-    r.contracts   = contracts;
+
+  if (!compound) {
+    // FIXED-contracts mode — preserves all entry-time variants.
+    const rawCt = Math.floor((allocPct / 100 * startCap) / CAP_PER_CT);
+    const forced = rawCt < 1;
+    const contracts = Math.max(1, rawCt);
+    for (const r of results) {
+      if (!r) continue;
+      r.profitPerCt = r.profit;
+      r.profit      = contracts * r.profitPerCt;
+      r.contracts   = contracts;
+    }
+    const totalPL = results.reduce((s, r) => s + (r?.profit || 0), 0);
+    window._btSizing = {
+      mode: 'fixed',
+      startCap, allocPct, contracts,
+      endCap: startCap + totalPL,
+      totalPL, forced,
+      n: results.length,
+    };
+    return results;
   }
-  const totalPL = results.reduce((s, r) => s + (r?.profit || 0), 0);
+
+  // COMPOUND mode — collapse to per-date aggregate, compound equity daily.
+  const byDate = new Map();
+  for (const r of results) {
+    if (!r || !r.date) continue;
+    if (!byDate.has(r.date)) byDate.set(r.date, []);
+    byDate.get(r.date).push(r);
+  }
+  const sortedDates = [...byDate.keys()].sort();
+  const variantsPerDay = results.length / Math.max(1, sortedDates.length);
+  let equity = startCap;
+  let forcedDays = 0, minCt = Infinity, maxCt = 0;
+  const aggregated = [];
+  for (const date of sortedDates) {
+    const variants = byDate.get(date);
+    const avgPC    = variants.reduce((s, r) => s + (r.profit || 0), 0) / variants.length;
+    let contracts  = Math.floor((allocPct / 100 * equity) / CAP_PER_CT);
+    if (contracts < 1) { contracts = 1; forcedDays++; }
+    if (contracts < minCt) minCt = contracts;
+    if (contracts > maxCt) maxCt = contracts;
+    const proto = variants[0];
+    aggregated.push({
+      ...proto,
+      profit:      contracts * avgPC,
+      profitPerCt: avgPC,
+      contracts,
+      _variantCount: variants.length,
+    });
+    equity += contracts * avgPC;
+  }
   window._btSizing = {
-    startCap, allocPct, contracts,
-    endCap: startCap + totalPL,
-    totalPL,
-    forced,
-    n: results.length,
+    mode: 'compound',
+    startCap, allocPct,
+    endCap: equity, totalPL: equity - startCap,
+    forcedDays, minCt, maxCt,
+    n: aggregated.length, days: sortedDates.length,
+    variantsPerDay: +variantsPerDay.toFixed(1),
   };
-  return results;
+  return aggregated;
 }
 
 // ── KPIs ──────────────────────────────────────────────────────────────────────
@@ -1123,12 +1177,16 @@ function renderKPIs(results) {
   ];
   if (sz) {
     const retPct = sz.startCap > 0 ? (sz.totalPL / sz.startCap * 100) : 0;
-    const ctTag  = `${sz.contracts}ct` + (sz.forced ? ' ⚠' : '');
+    const isCompound = sz.mode === 'compound';
+    const ctTag = isCompound
+      ? (sz.minCt === sz.maxCt ? `${sz.maxCt}ct` : `${sz.minCt}–${sz.maxCt}ct`) + (sz.forcedDays ? ` ⚠${sz.forcedDays}` : '')
+      : `${sz.contracts}ct` + (sz.forced ? ' ⚠' : '');
+    const allocLabel = isCompound ? `Allocation @ ${sz.allocPct}% (cmpd)` : `Allocation @ ${sz.allocPct}%`;
     cards.push(
       { label:'Start Capital', val: fmt$(sz.startCap), cls:'' },
       { label:'End Balance',   val: fmt$(sz.endCap), cls: sz.endCap >= sz.startCap ? 'green' : 'red' },
       { label:'Return',        val: (retPct>=0?'+':'') + retPct.toFixed(1) + '%', cls: retPct>=0 ? 'green' : 'red' },
-      { label:`Allocation @ ${sz.allocPct}%`, val: ctTag, cls: sz.forced ? 'red' : '' },
+      { label: allocLabel, val: ctTag, cls: (sz.forced || sz.forcedDays) ? 'red' : '' },
     );
   }
 
