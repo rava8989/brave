@@ -493,6 +493,15 @@ tfoot td {
   </div>
 
   <div class="fg">
+    <div class="fg-label">Sizing <span style="font-weight:400;color:var(--text3);font-size:10px">(blank = per-contract)</span></div>
+    <div class="fg-row">
+      <input type="number" id="btCap"   class="date-input" placeholder="Start $"  min="0" step="1000" style="width:110px">
+      <span style="color:var(--text3);font-size:11px;padding:0 2px">×</span>
+      <input type="number" id="btAlloc" class="date-input" placeholder="Alloc %" min="0" max="100" step="0.5" style="width:80px">
+    </div>
+  </div>
+
+  <div class="fg">
     <div class="fg-label">Days of Week</div>
     <div class="fg-row" id="dayPills">
       <button class="pill active" data-day="0">MON</button>
@@ -994,6 +1003,7 @@ async function runPipeline(btn) {
       return;
     }
     lastResult = applyTP(filtered).filter(Boolean);
+    lastResult = applySizing(lastResult);
     renderKPIs(lastResult);    await yield$();
     renderEquity(lastResult);  await yield$();
     renderCalendar(lastResult);await yield$();
@@ -1056,9 +1066,74 @@ function chartCard(id, title, sub='') {
 function fmt$(v) { return (v<0?'-$':'$') + Math.abs(Math.round(v)).toLocaleString(); }
 function fmtPct(v) { return v.toFixed(1) + '%'; }
 
+// ── Optional capital × allocation% sizing ────────────────────────────────────
+// Mirrors the multi-strategy-tester compounding model. If either input is
+// blank/0, results are left untouched (per-contract mode = legacy behavior).
+//
+// The backtester explores multiple entry-time variants per date (e.g. 11:00,
+// 11:05, 11:10 all selected) — they're hypothetical alternatives, NOT all
+// taken in real life. So when sizing is enabled we COLLAPSE to one trade per
+// date (averaging per-contract P&L across the selected variants — "expected
+// outcome for the day's M8BF setup"), then compound equity daily.
+//
+// Result: with sizing enabled the trade count becomes 1-per-date and every
+// value (KPIs, equity curve, trade log) reflects a realistic portfolio
+// simulation. Disable sizing (blank inputs) to return to per-contract
+// variant exploration.
+function applySizing(results) {
+  const capRaw   = (document.getElementById('btCap')   || {}).value || '';
+  const allocRaw = (document.getElementById('btAlloc') || {}).value || '';
+  const startCap = parseFloat(capRaw);
+  const allocPct = parseFloat(allocRaw);
+  if (!Number.isFinite(startCap) || startCap <= 0 || !Number.isFinite(allocPct) || allocPct <= 0) {
+    window._btSizing = null;
+    return results;   // per-contract mode (legacy)
+  }
+  const CAP_PER_CT = 3000;   // M8BF max risk per contract (matches multi-tester)
+  // 1) Group variants by date.
+  const byDate = new Map();
+  for (const r of results) {
+    if (!r || !r.date) continue;
+    if (!byDate.has(r.date)) byDate.set(r.date, []);
+    byDate.get(r.date).push(r);
+  }
+  const sortedDates = [...byDate.keys()].sort();
+  const variantsPerDay = results.length / Math.max(1, sortedDates.length);
+  // 2) For each date, average per-contract profit across variants, then size
+  //    + compound. One synthetic aggregate trade per date.
+  let equity = startCap;
+  let forcedDays = 0, minCt = Infinity, maxCt = 0;
+  const aggregated = [];
+  for (const date of sortedDates) {
+    const variants = byDate.get(date);
+    const avgPC    = variants.reduce((s, r) => s + (r.profit || 0), 0) / variants.length;
+    let contracts  = Math.floor((allocPct / 100 * equity) / CAP_PER_CT);
+    if (contracts < 1) { contracts = 1; forcedDays++; }
+    if (contracts < minCt) minCt = contracts;
+    if (contracts > maxCt) maxCt = contracts;
+    const proto = variants[0];
+    const synth = {
+      ...proto,
+      profit:      contracts * avgPC,
+      profitPerCt: avgPC,
+      contracts,
+      _variantCount: variants.length,
+    };
+    aggregated.push(synth);
+    equity += synth.profit;
+  }
+  window._btSizing = {
+    startCap, endCap: equity, allocPct, forcedDays, minCt, maxCt,
+    n: aggregated.length, days: sortedDates.length,
+    variantsPerDay: +variantsPerDay.toFixed(1),
+  };
+  return aggregated;
+}
+
 // ── KPIs ──────────────────────────────────────────────────────────────────────
 function renderKPIs(results) {
   const es = stats(results, 'profit');
+  const sz = window._btSizing;
   const cards = [
     { label:'Trades',       val: results.length.toLocaleString(), cls:'' },
     { label:'Total P&L',    val: fmt$(es.total),  cls: es.total>=0?'green':'red' },
@@ -1070,6 +1145,16 @@ function renderKPIs(results) {
     { label:'Max Loss',     val: fmt$(es.maxLoss), cls:'red' },
     { label:'Sharpe',       val: es.sharpe, cls: +es.sharpe>0?'green':'red' },
   ];
+  if (sz) {
+    const ctTxt = sz.minCt === sz.maxCt ? `${sz.maxCt}ct` : `${sz.minCt}–${sz.maxCt}ct`;
+    const retPct = sz.startCap > 0 ? ((sz.endCap - sz.startCap) / sz.startCap * 100) : 0;
+    cards.push(
+      { label:'Start Capital', val: fmt$(sz.startCap), cls:'' },
+      { label:'End Balance',   val: fmt$(sz.endCap), cls: sz.endCap >= sz.startCap ? 'green' : 'red' },
+      { label:'Return',        val: (retPct>=0?'+':'') + retPct.toFixed(1) + '%', cls: retPct>=0 ? 'green' : 'red' },
+      { label:`Allocation @ ${sz.allocPct}%`, val: ctTxt + (sz.forcedDays ? ` ⚠${sz.forcedDays}` : ''), cls: sz.forcedDays ? 'red' : '' },
+    );
+  }
 
   document.getElementById('statsGrid').innerHTML = cards.map(c => `
     <div class="stat-card ${c.cls}">
