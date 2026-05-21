@@ -3122,9 +3122,20 @@ async function handleScheduled(env) {
               baselinePrice = price; baselineTT = tt;
               console.log(`[proxy] SCHWAB baseline: ${price} @ ${toET(new Date(tt)).toTimeString().slice(0,8)} ET`);
             } else if ((price !== baselinePrice || tt !== baselineTT) && state.vixToday === null) {
-              state.vixToday = price; state.source = 'schwab';
-              console.log(`[proxy] SCHWAB caught FIRST PRINT: ${price} (baseline ${baselinePrice}, attempt ${attempt}, ${Math.round((Date.now()-startedAt)/1000)}s)`);
-              return;
+              // Defense: only accept if tick is from today's regular session
+              // (>= 9:30 ET). Without this, a pre-open rolling timestamp can be
+              // mistaken for a real 9:30 print.
+              const tET = toET(new Date(tt));
+              const fresh = tET.toDateString() === etNow.toDateString()
+                         && (tET.getHours() * 60 + tET.getMinutes()) >= 570;
+              if (fresh) {
+                state.vixToday = price; state.source = 'schwab';
+                console.log(`[proxy] SCHWAB caught FIRST PRINT (FRESH): ${price} @ ${tET.toTimeString().slice(0,8)} ET (attempt ${attempt}, ${Math.round((Date.now()-startedAt)/1000)}s)`);
+                return;
+              }
+              // Tick advanced but still pre-9:30 — rebaseline & keep polling.
+              baselinePrice = price; baselineTT = tt;
+              console.log(`[proxy] SCHWAB tick advanced but pre-9:30 (${tET.toTimeString().slice(0,8)} ET) — rebaselining`);
             }
           }
         } catch (e) { /* keep trying */ }
@@ -3145,9 +3156,24 @@ async function handleScheduled(env) {
             baselinePrice = price; baselineTS = ts;
             console.log(`[proxy] TASTY baseline:  ${price} @ ${ts}`);
           } else if ((price !== baselinePrice || ts !== baselineTS) && state.vixToday === null) {
-            state.vixToday = price; state.source = 'tastytrade';
-            console.log(`[proxy] TASTY caught FIRST PRINT: ${price} (baseline ${baselinePrice}, attempt ${attempt}, ${Math.round((Date.now()-startedAt)/1000)}s)`);
-            return;
+            // Defense: only accept if tick is from today's regular session
+            // (>= 9:30 ET). Without this, Tasty's pre-open rolling timestamps
+            // can be mistaken for a real 9:30 print (the user-reported bug).
+            const dt = ts ? new Date(String(ts)) : null;
+            let fresh = false;
+            if (dt && isFinite(dt.getTime())) {
+              const tET = toET(dt);
+              fresh = tET.toDateString() === etNow.toDateString()
+                   && (tET.getHours() * 60 + tET.getMinutes()) >= 570;
+            }
+            if (fresh) {
+              state.vixToday = price; state.source = 'tastytrade';
+              console.log(`[proxy] TASTY caught FIRST PRINT (FRESH): ${price} @ ${ts} (attempt ${attempt}, ${Math.round((Date.now()-startedAt)/1000)}s)`);
+              return;
+            }
+            // Tick advanced but still pre-9:30 — rebaseline & keep polling.
+            baselinePrice = price; baselineTS = ts;
+            console.log(`[proxy] TASTY tick advanced but pre-9:30 (${ts}) — rebaselining`);
           }
         } catch (e) { /* keep trying — Tasty may not have token cached yet */ }
         if (state.vixToday !== null) return;
@@ -3397,29 +3423,84 @@ async function handleScheduled(env) {
   // The canonical message above is built from whichever source won the VIX
   // race (Schwab vs Tasty). Here we independently pull the *other* source
   // and compute the same signal — so disagreement between feeds is visible.
-  // Wrapped in try/catch: any failure here MUST NOT undo the canonical post.
+  //
+  // CRITICAL: must verify the 2nd source has published a FRESH tick (post-
+  // 9:30 ET today), not yesterday's stale snapshot. Without this check, a
+  // slow-to-publish 2nd source returns its previous-session value and we'd
+  // post a message with the wrong VIX. Poll up to ~15s for freshness.
+  // Wrapped in try/catch: any failure MUST NOT undo the canonical post.
   try {
     const otherSource = vixSource === 'schwab' ? 'tastytrade' : 'schwab';
     let vixOther = null, spxOther = null;
-    if (otherSource === 'tastytrade') {
-      try { const r = await tastyGetVix(env); vixOther = parseFloat(r.price.toFixed(2)); }
-      catch (e) { console.warn('[proxy] dual-msg Tasty VIX:', e.message); }
-      try { const s = await tastyGetSpx(env); const v = s.open ?? s.last ?? s.price; if (v != null) spxOther = parseFloat(v.toFixed(2)); }
-      catch (e) { console.warn('[proxy] dual-msg Tasty SPX:', e.message); }
-    } else if (token) {
-      try {
-        const q = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`, token, env);
-        const vQ = q?.['$VIX']?.quote;
-        if (vQ?.lastPrice != null) vixOther = parseFloat(vQ.lastPrice.toFixed(2));
-      } catch (e) { console.warn('[proxy] dual-msg Schwab VIX:', e.message); }
-      try {
-        const q = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24SPX&fields=quote`, token, env);
-        const sQ = q?.['$SPX']?.quote;
-        const v = sQ?.openPrice || sQ?.lastPrice;
-        if (v != null) spxOther = parseFloat(v.toFixed(2));
-      } catch (e) { console.warn('[proxy] dual-msg Schwab SPX:', e.message); }
-    } else {
-      console.warn('[proxy] dual-msg: Schwab token unavailable, skipping 2nd-source message');
+    let vixOtherTs = null, spxOtherTs = null;
+    // Freshness check: timestamp is from today's regular session (>= 9:30 ET).
+    // Accepts epoch ms (Schwab tradeTime) or ISO string (Tasty updated-at).
+    function _isFreshTick(ts) {
+      if (ts == null) return false;
+      const d = (typeof ts === 'number') ? new Date(ts) : new Date(String(ts));
+      if (!isFinite(d.getTime())) return false;
+      const et = toET(d);
+      if (et.toDateString() !== etNow.toDateString()) return false;
+      return (et.getHours() * 60 + et.getMinutes()) >= 570;  // 9*60+30
+    }
+    const dualDeadline = Date.now() + 15_000;
+    while (Date.now() < dualDeadline && (vixOther == null || spxOther == null)) {
+      if (otherSource === 'tastytrade') {
+        if (vixOther == null) {
+          try {
+            const r = await tastyGetVix(env);
+            const ts = r.raw?.['updated-at'] || r.asOf;
+            if (_isFreshTick(ts)) {
+              vixOther = parseFloat(r.price.toFixed(2));
+              vixOtherTs = ts;
+            }
+          } catch (e) { /* keep polling */ }
+        }
+        if (spxOther == null) {
+          try {
+            const s = await tastyGetSpx(env);
+            const ts = s.asOf || s.raw?.['updated-at'];
+            const v = s.open ?? s.last ?? s.price;
+            if (v != null && _isFreshTick(ts)) {
+              spxOther = parseFloat(v.toFixed(2));
+              spxOtherTs = ts;
+            }
+          } catch (e) { /* keep polling */ }
+        }
+      } else if (token) {
+        if (vixOther == null) {
+          try {
+            const q = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`, token, env);
+            const vQ = q?.['$VIX']?.quote;
+            if (vQ?.lastPrice != null && _isFreshTick(vQ.tradeTime)) {
+              vixOther = parseFloat(parseFloat(vQ.lastPrice).toFixed(2));
+              vixOtherTs = vQ.tradeTime;
+            }
+          } catch (e) { /* keep polling */ }
+        }
+        if (spxOther == null) {
+          try {
+            const q = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24SPX&fields=quote`, token, env);
+            const sQ = q?.['$SPX']?.quote;
+            // Use openPrice (set only after market open). lastPrice pre-open
+            // is yesterday's close — would post a stale signal. Reject unless
+            // openPrice is set AND tradeTime is post-9:30 today.
+            if (sQ?.openPrice != null && sQ.openPrice > 0 && _isFreshTick(sQ.tradeTime)) {
+              spxOther = parseFloat(sQ.openPrice.toFixed(2));
+              spxOtherTs = sQ.tradeTime;
+            }
+          } catch (e) { /* keep polling */ }
+        }
+      } else {
+        console.warn('[proxy] dual-msg: Schwab token unavailable, skipping 2nd-source message');
+        break;
+      }
+      if (vixOther == null || spxOther == null) {
+        await new Promise(r => setTimeout(r, 800));
+      }
+    }
+    if (vixOther == null) {
+      console.warn(`[proxy] dual-msg: 2nd source (${otherSource}) didn't publish a fresh 9:30+ VIX tick within 15s — skipping 2nd message (canonical already sent)`);
     }
     if (vixOther != null) {
       const spxGapOther = (spxYClose && spxOther) ? ((spxOther - spxYClose) / spxYClose) * 100 : spxGapPct;
@@ -6583,6 +6664,9 @@ export default {
       const forceNoToken  = url.searchParams.get('force_no_token')  === '1';
       const out = { ok: true, simulated: { forceNoSchwab, forceNoTasty, forceNoToken }, errors: {} };
       try {
+        // etNow needed by the freshness check below — declare BEFORE Schwab fetch.
+        const etNow = toET(new Date());
+        const todayISO = isoDateET(etNow);
         // 1. Pull VIX + SPX from BOTH sources independently (single-fetch).
         let token = null;
         if (!forceNoToken) {
@@ -6593,8 +6677,20 @@ export default {
         }
 
         let vixSchwab = null, spxSchwab = null, vixTasty = null, spxTasty = null;
+        let vixSchwabTs = null, spxSchwabTs = null, vixTastyTs = null, spxTastyTs = null;
+        let vixSchwabFresh = null, spxSchwabFresh = null, vixTastyFresh = null, spxTastyFresh = null;
 
-        // Schwab VIX + SPX (parallel, single fetch each)
+        // Same freshness gate the morning cron uses: today's date + >= 9:30 ET.
+        function _isFresh(ts) {
+          if (ts == null) return false;
+          const d = (typeof ts === 'number') ? new Date(ts) : new Date(String(ts));
+          if (!isFinite(d.getTime())) return false;
+          const et = toET(d);
+          if (et.toDateString() !== etNow.toDateString()) return false;
+          return (et.getHours() * 60 + et.getMinutes()) >= 570;
+        }
+
+        // Schwab VIX + SPX (parallel, single fetch each) — captures ts + freshness
         if (token && !forceNoSchwab) {
           const [vR, sR] = await Promise.allSettled([
             fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`, token, env),
@@ -6602,12 +6698,20 @@ export default {
           ]);
           if (vR.status === 'fulfilled') {
             const q = vR.value?.['$VIX']?.quote;
-            if (q?.lastPrice != null) vixSchwab = parseFloat(parseFloat(q.lastPrice).toFixed(2));
+            if (q?.lastPrice != null) {
+              vixSchwab = parseFloat(parseFloat(q.lastPrice).toFixed(2));
+              vixSchwabTs = q.tradeTime;
+              vixSchwabFresh = _isFresh(q.tradeTime);
+            }
           } else { out.errors.schwabVix = vR.reason?.message || String(vR.reason); }
           if (sR.status === 'fulfilled') {
             const q = sR.value?.['$SPX']?.quote;
-            const v = q?.openPrice || q?.lastPrice;
-            if (v != null) spxSchwab = parseFloat(parseFloat(v).toFixed(2));
+            // morning cron uses openPrice only (rejects lastPrice — that's yesterday's close pre-market)
+            if (q?.openPrice != null && q.openPrice > 0) {
+              spxSchwab = parseFloat(parseFloat(q.openPrice).toFixed(2));
+              spxSchwabTs = q.tradeTime;
+              spxSchwabFresh = _isFresh(q.tradeTime);
+            }
           } else { out.errors.schwabSpx = sR.reason?.message || String(sR.reason); }
         } else if (forceNoSchwab) {
           out.errors.schwabVix = '(forced)'; out.errors.schwabSpx = '(forced)';
@@ -6616,21 +6720,35 @@ export default {
         // Tasty VIX + SPX (parallel)
         if (!forceNoTasty) {
           const [vR, sR] = await Promise.allSettled([tastyGetVix(env), tastyGetSpx(env)]);
-          if (vR.status === 'fulfilled') vixTasty = parseFloat(vR.value.price.toFixed(2));
-          else out.errors.tastyVix = vR.reason?.message || String(vR.reason);
+          if (vR.status === 'fulfilled') {
+            vixTasty = parseFloat(vR.value.price.toFixed(2));
+            vixTastyTs = vR.value.raw?.['updated-at'] || vR.value.asOf;
+            vixTastyFresh = _isFresh(vixTastyTs);
+          } else out.errors.tastyVix = vR.reason?.message || String(vR.reason);
           if (sR.status === 'fulfilled') {
             const v = sR.value.open ?? sR.value.last ?? sR.value.price;
-            if (v != null) spxTasty = parseFloat(v.toFixed(2));
+            if (v != null) {
+              spxTasty = parseFloat(v.toFixed(2));
+              spxTastyTs = sR.value.asOf || sR.value.raw?.['updated-at'];
+              spxTastyFresh = _isFresh(spxTastyTs);
+            }
           } else { out.errors.tastySpx = sR.reason?.message || String(sR.reason); }
         } else {
           out.errors.tastyVix = '(forced)'; out.errors.tastySpx = '(forced)';
         }
 
         out.values = { vixSchwab, spxSchwab, vixTasty, spxTasty };
+        out.timestamps = { vixSchwabTs, spxSchwabTs, vixTastyTs, spxTastyTs };
+        out.freshness = { vixSchwabFresh, spxSchwabFresh, vixTastyFresh, spxTastyFresh };
+        // Apply the freshness gate to determine which messages WOULD post in production.
+        // If VIX isn't fresh, the morning cron skips that source's message.
+        if (vixSchwabFresh === false) vixSchwab = null;
+        if (vixTastyFresh === false) vixTasty = null;
+        if (spxSchwabFresh === false) spxSchwab = null;
+        if (spxTastyFresh === false) spxTasty = null;
 
         // 2. Read history for prevWR / vixPct20d / rsi14 (mirrors morning cron)
-        const etNow = toET(new Date());
-        const todayISO = isoDateET(etNow);
+        // (etNow + todayISO already declared above for the freshness check)
         let prevWR = null, vixPct20d = null, rsi14 = null, vixYOpen = null, vixYClose = null, spxYClose = null;
         try {
           const histData = await getHistory(env);
