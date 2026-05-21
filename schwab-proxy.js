@@ -3413,7 +3413,8 @@ async function handleScheduled(env) {
 
   // Mark morning signal as fully sent
   await env.SIGNAL_KV.put(msDoneKey, 'sent', { expirationTtl: 86400 });
-  await logEvent(env, 'info', 'morning', 'signal posted to Discord', {
+  await logEvent(env, 'info', 'morning', 'canonical signal posted', {
+    source: vixSource,   // 'schwab' or 'tastytrade' — which won the VIX race
     rec: signal.rec, badge: signal.badge, theme: signal.theme,
     vix: { todayOpen: vixToday, yOpen: vixYOpen, yClose: vixYClose },
     spxOpen: spxTodayOpen, spxGapPct,
@@ -3443,40 +3444,46 @@ async function handleScheduled(env) {
       if (et.toDateString() !== etNow.toDateString()) return false;
       return (et.getHours() * 60 + et.getMinutes()) >= 570;  // 9*60+30
     }
-    const dualDeadline = Date.now() + 15_000;
+    // Budget for the 2nd source to publish a fresh post-9:30 tick. 60s gives
+    // Schwab's quote endpoint time to propagate the new print (it lags faster
+    // sources by 5-30s in practice). User reported missing Schwab 2nd message
+    // 2026-05-21 + previous day — 15s was too tight.
+    const dualDeadline = Date.now() + 60_000;
+    let dualAttempts = 0;
+    let lastVixTs = null, lastSpxTs = null, lastVixVal = null, lastSpxVal = null;
     while (Date.now() < dualDeadline && (vixOther == null || spxOther == null)) {
+      dualAttempts++;
+      let lastFetchErr = null;
       if (otherSource === 'tastytrade') {
         if (vixOther == null) {
           try {
             const r = await tastyGetVix(env);
             const ts = r.raw?.['updated-at'] || r.asOf;
-            if (_isFreshTick(ts)) {
-              vixOther = parseFloat(r.price.toFixed(2));
-              vixOtherTs = ts;
-            }
-          } catch (e) { /* keep polling */ }
+            lastVixVal = parseFloat(r.price.toFixed(2));
+            lastVixTs = ts;
+            if (_isFreshTick(ts)) { vixOther = lastVixVal; vixOtherTs = ts; }
+          } catch (e) { lastFetchErr = `tasty-vix:${e.message}`; }
         }
         if (spxOther == null) {
           try {
             const s = await tastyGetSpx(env);
             const ts = s.asOf || s.raw?.['updated-at'];
             const v = s.open ?? s.last ?? s.price;
-            if (v != null && _isFreshTick(ts)) {
-              spxOther = parseFloat(v.toFixed(2));
-              spxOtherTs = ts;
-            }
-          } catch (e) { /* keep polling */ }
+            if (v != null) { lastSpxVal = parseFloat(v.toFixed(2)); lastSpxTs = ts; }
+            if (v != null && _isFreshTick(ts)) { spxOther = lastSpxVal; spxOtherTs = ts; }
+          } catch (e) { lastFetchErr = `tasty-spx:${e.message}`; }
         }
       } else if (token) {
         if (vixOther == null) {
           try {
             const q = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`, token, env);
             const vQ = q?.['$VIX']?.quote;
-            if (vQ?.lastPrice != null && _isFreshTick(vQ.tradeTime)) {
-              vixOther = parseFloat(parseFloat(vQ.lastPrice).toFixed(2));
-              vixOtherTs = vQ.tradeTime;
+            if (vQ?.lastPrice != null) {
+              lastVixVal = parseFloat(parseFloat(vQ.lastPrice).toFixed(2));
+              lastVixTs = vQ.tradeTime;
+              if (_isFreshTick(vQ.tradeTime)) { vixOther = lastVixVal; vixOtherTs = vQ.tradeTime; }
             }
-          } catch (e) { /* keep polling */ }
+          } catch (e) { lastFetchErr = `schwab-vix:${e.message}`; }
         }
         if (spxOther == null) {
           try {
@@ -3485,22 +3492,28 @@ async function handleScheduled(env) {
             // Use openPrice (set only after market open). lastPrice pre-open
             // is yesterday's close — would post a stale signal. Reject unless
             // openPrice is set AND tradeTime is post-9:30 today.
+            if (sQ?.openPrice != null) { lastSpxVal = parseFloat(sQ.openPrice.toFixed(2)); lastSpxTs = sQ.tradeTime; }
             if (sQ?.openPrice != null && sQ.openPrice > 0 && _isFreshTick(sQ.tradeTime)) {
-              spxOther = parseFloat(sQ.openPrice.toFixed(2));
+              spxOther = lastSpxVal;
               spxOtherTs = sQ.tradeTime;
             }
-          } catch (e) { /* keep polling */ }
+          } catch (e) { lastFetchErr = `schwab-spx:${e.message}`; }
         }
       } else {
-        console.warn('[proxy] dual-msg: Schwab token unavailable, skipping 2nd-source message');
+        await logEvent(env, 'warn', 'morning', `2nd-source dropped — Schwab token unavailable (otherSource=${otherSource})`, { vixSource });
         break;
       }
+      if (lastFetchErr) console.warn('[proxy] dual-msg fetch err:', lastFetchErr);
       if (vixOther == null || spxOther == null) {
         await new Promise(r => setTimeout(r, 800));
       }
     }
     if (vixOther == null) {
-      console.warn(`[proxy] dual-msg: 2nd source (${otherSource}) didn't publish a fresh 9:30+ VIX tick within 15s — skipping 2nd message (canonical already sent)`);
+      // Log to KV so /debug-morning-log shows WHY the 2nd message didn't post.
+      await logEvent(env, 'warn', 'morning', `2nd-source dropped — no fresh VIX after ${Math.round((Date.now()-(dualDeadline-60000))/1000)}s`, {
+        otherSource, canonicalSource: vixSource, attempts: dualAttempts,
+        lastVixVal, lastVixTs, lastSpxVal, lastSpxTs,
+      });
     }
     if (vixOther != null) {
       const spxGapOther = (spxYClose && spxOther) ? ((spxOther - spxYClose) / spxYClose) * 100 : spxGapPct;
@@ -3516,16 +3529,19 @@ async function handleScheduled(env) {
       if (r2.ok) {
         await logEvent(env, 'info', 'morning', `2nd-source signal posted (${otherSource})`, {
           rec: signalOther.rec, badge: signalOther.badge, theme: signalOther.theme,
-          vix: vixOther, spxOpen: spxOther,
+          vix: vixOther, vixTs: vixOtherTs, spxOpen: spxOther, spxTs: spxOtherTs,
+          attempts: dualAttempts,
         });
       } else {
-        console.warn('[proxy] 2nd-source Discord post failed:', JSON.stringify(r2.data || r2.error || {}).slice(0, 200));
+        // 2nd-source send failed — log it so /debug-morning-log shows the error.
+        await logEvent(env, 'warn', 'morning', `2nd-source Discord post FAILED (${otherSource})`, {
+          status: r2.status, error: r2.error, data: JSON.stringify(r2.data || {}).slice(0, 240),
+          rec: signalOther.rec, vix: vixOther,
+        });
       }
-    } else {
-      console.warn(`[proxy] 2nd source (${otherSource}) returned no VIX; skipping second message`);
     }
   } catch (e) {
-    console.warn('[proxy] dual-source 2nd post failed (non-critical, canonical already sent):', e.message);
+    await logEvent(env, 'warn', 'morning', `dual-source 2nd post EXCEPTION (canonical already sent)`, { msg: e.message, stack: (e.stack || '').slice(0, 240) });
   }
 
   // ════════════════════════════════════════════════════════════════════
@@ -5630,6 +5646,28 @@ export default {
     //   GET /logs?date=YYYY-MM-DD            → that day's events
     //   GET /logs?date=...&level=error|warn  → filter by level
     //   GET /logs?date=...&tag=morning       → filter by tag
+    // GET /debug-morning-log?date=YYYY-MM-DD
+    // Read-only public endpoint that returns ONLY morning-tagged log entries
+    // for a single date. No auth — but it only exposes signal-related logs
+    // (tag='morning'), not credentials/tokens/PII. Temporary diagnostic.
+    if (url.pathname === '/debug-morning-log' && request.method === 'GET') {
+      const cors = { 'Access-Control-Allow-Origin': '*' };
+      try {
+        const dateParam = url.searchParams.get('date') || isoDateET(toET(new Date()));
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+          return jsonResp({ error: 'invalid date format' }, 400, cors);
+        }
+        const raw = await env.SIGNAL_KV.get(`daily_log_${dateParam}`);
+        let entries = raw ? JSON.parse(raw) : [];
+        if (!Array.isArray(entries)) entries = [];
+        // Filter to morning-tagged only — that's the only thing safe to expose
+        const morningOnly = entries.filter(e => e.tag === 'morning');
+        return jsonResp({ date: dateParam, count: morningOnly.length, entries: morningOnly }, 200, cors);
+      } catch (e) {
+        return jsonResp({ error: e.message }, 500, cors);
+      }
+    }
+
     if (url.pathname === '/logs' && request.method === 'GET') {
       const secret = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
       if (!secret || secret !== env.SYNC_SECRET) {
