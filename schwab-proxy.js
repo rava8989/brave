@@ -4848,22 +4848,41 @@ async function selectM8bfQualifying(env, etNow) {
   if (!win || sigData.date !== todayT) {
     return { status: 'waiting', reason: 'No window today or no signals', todayT };
   }
+  // Manual-cancellation skip list — write this KV to ignore specific signal
+  // times for the rest of today (bot keeps monitoring for any other signal
+  // in the window). Cleared automatically by EOD via TTL.
+  //   key:   m8bf_skip_signals_<YYYY-MM-DD>
+  //   value: JSON array of "HH:MM" times, e.g. ["13:02"]
+  let skipTimes = new Set();
+  try {
+    const skipRaw = await env.SIGNAL_KV.get(`m8bf_skip_signals_${todayT}`);
+    if (skipRaw) skipTimes = new Set(JSON.parse(skipRaw) || []);
+  } catch (_) { /* no-op */ }
+
   const [winLo, winHi] = win;
   let qualifying = null;
   for (const sig of (sigData.signals || [])) {
     if (!sig.time) continue;
+    if (skipTimes.has(sig.time)) continue;   // ← manual cancellation
     const [h, m] = sig.time.split(':').map(Number);
     const mins = h * 60 + m;
     if (mins >= winLo && mins < winHi && !sig.banned) { qualifying = sig; break; }
   }
   if (!qualifying) {
     const nowMins = etNow.getHours() * 60 + etNow.getMinutes();
+    const winStr = `${Math.floor(winLo/60)}:${String(winLo%60).padStart(2,'0')}-${Math.floor(winHi/60)}:${String(winHi%60).padStart(2,'0')}`;
     if (nowMins >= winHi) {
-      return { status: 'no_signal', reason: 'Window passed, no qualifying signal', todayT };
+      const reason = skipTimes.size
+        ? `Window passed — ${skipTimes.size} signal(s) manually cancelled (${[...skipTimes].join(', ')})`
+        : 'Window passed, no qualifying signal';
+      return { status: 'no_signal', reason, todayT };
     }
     return {
       status: 'waiting',
-      window: `${Math.floor(winLo/60)}:${String(winLo%60).padStart(2,'0')}-${Math.floor(winHi/60)}:${String(winHi%60).padStart(2,'0')}`,
+      window: winStr,
+      reason: skipTimes.size
+        ? `Cancelled ${[...skipTimes].join(', ')} — watching for new signal in ${winStr} ET`
+        : undefined,
       todayT,
     };
   }
