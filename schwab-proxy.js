@@ -2015,6 +2015,21 @@ async function handleBobfEntry(env, etNow, preChain = null) {
   const done = await env.SIGNAL_KV.get(doneKey);
   if (done) return { ...out, status: 'already-done', why: done };
 
+  // Guard: if today's open BOBF trade already exists, don't re-evaluate —
+  // refreshBobfLiveQuotes handles working→filled transitions. Without this
+  // guard, every tick re-runs the full entry filter and could overwrite the
+  // working-order's entry strikes/debit if spot moved between ticks (which
+  // would corrupt the trade record the user is actually holding).
+  try {
+    const existingRaw = await env.SIGNAL_KV.get('bobf_open_trade');
+    if (existingRaw) {
+      const existing = JSON.parse(existingRaw);
+      if (existing.openDate === todayISO && existing.status !== 'closed' && existing.status !== 'expired') {
+        return { ...out, status: 'already-open', existingStatus: existing.status };
+      }
+    }
+  } catch (_) { /* fall through — KV blip will recover next tick */ }
+
   // Past window → mark done permanently (no fire, no trade)
   if (bobfPastWindow(etNow)) {
     await env.SIGNAL_KV.put(doneKey, 'window-passed', { expirationTtl: 86400 });
@@ -2857,11 +2872,18 @@ async function handleScheduled(env) {
   }
 
   // ── BOBF entry: check every market tick during 10:29-12:15 ET window ──
-  //    Also reuses the master chain.
+  //    Also reuses the master chain. handleBobfEntry is self-retrying (it
+  //    re-evaluates each tick when no open trade exists); refreshBobfLiveQuotes
+  //    below handles working→filled transitions once a trade is recorded.
   let bobfResult = {};
   if (isMarket) {
     try { bobfResult = await handleBobfEntry(env, etNow, masterChain); }
-    catch (e) { bobfResult = { bobf: 'error', error: e.message }; console.warn('[bobf] entry failed:', e.message); }
+    catch (e) {
+      bobfResult = { bobf: 'error', error: e.message };
+      console.warn('[bobf] entry failed:', e.message);
+      // Upgrade silent failure → KV log so we can SEE why entry threw.
+      try { await logEvent(env, 'error', 'bobf-open', `entry attempt threw`, { msg: e.message, stack: (e.stack || '').slice(0, 300) }); } catch (_) {}
+    }
   }
 
   // ── GXBF entry: retry every market tick during the 9:33-9:45 ET window ──
