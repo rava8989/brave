@@ -941,11 +941,22 @@ function renderStraddle() {
     let statusLine = 'Straddle fires automatically at 9:32 ET if signal allows.';
     if (skip) {
       if (skip.theme === 'strad-missed') {
-        // Signal said straddle but the 9:32 cron didn't open one (failure
-        // inside openStraddleTrade or cron stall). User likely already made
-        // the trade decision manually — surface the gap.
-        badge = 'MISSED'; badgeClass = 'error';
-        statusLine = `Signal was Straddle but auto-open didn't happen — verify your broker manually. ${skip.rec || ''}`;
+        // Signal said straddle but no working/filled trade exists yet —
+        // the morning debit was above the max limit. Until workCutoffET
+        // (13:30 ET) the order is conceptually still "working" (price may
+        // still drop to the limit). After cutoff, declare price-not-hit.
+        const [sH, sM] = (serverTimeET || '00:00').split(':').map(Number);
+        const [cH, cM] = (workCutoffET || '13:30').split(':').map(Number);
+        const pastCutoff = (sH * 60 + sM) >= (cH * 60 + cM);
+        const strikeStr = (skip.plannedStrike != null) ? ` at strike ${skip.plannedStrike}` : '';
+        const limitStr  = (skip.plannedMaxDebit != null) ? `$${skip.plannedMaxDebit.toFixed(2)}` : '';
+        if (pastCutoff) {
+          badge = 'NO FILL'; badgeClass = 'skip';
+          statusLine = `Price target ${limitStr ? limitStr + ' ' : ''}was not hit by ${workCutoffET} ET — order canceled.`;
+        } else {
+          badge = 'WORKING'; badgeClass = 'pending';
+          statusLine = `Working order for Straddle${strikeStr}${limitStr ? ' · limit ' + limitStr : ''} — waiting to fill, cancels at ${workCutoffET} ET.`;
+        }
       } else {
         badge = 'SKIP'; badgeClass = 'skip';
         statusLine = `No Straddle today`;

@@ -6275,14 +6275,37 @@ export default {
             await env.SIGNAL_KV.delete(`straddle_skip_${todaySt}`);
             skip = null;
           }
+          // Backfill: existing strad-missed skip lacks plannedStrike / plannedMaxDebit
+          // (added 2026-05-22). Force recompute so live page can show working-order info.
+          if (skip && skip.theme === 'strad-missed' && skip.plannedStrike === undefined) {
+            await env.SIGNAL_KV.delete(`straddle_skip_${todaySt}`);
+            skip = null;
+          }
           if (!skip) {
             const morningDataRaw = await env.SIGNAL_KV.get(`morning_signal_data_${todaySt}`);
             if (morningDataRaw) {
               const morningData = JSON.parse(morningDataRaw);
               if (morningData.theme === 'strad') {
-                // Signal genuinely said straddle but no live trade exists
-                skip = { theme: 'strad-missed', rec: `${morningData.rec} — open failed`,
-                         recordedAt: new Date().toISOString(), source: 'morning-data' };
+                // Signal genuinely said straddle but no live trade exists.
+                // Compute planned strike + maxDebit so the live page can show
+                // "Working order at strike X · limit $Y" instead of a generic
+                // "open failed" — until workCutoffET (13:30) hits, this is the
+                // working state. After cutoff the live page flips to "price
+                // target not hit".
+                const spxOpen = parseFloat(morningData.spxOpen);
+                const plannedStrike = isFinite(spxOpen) && spxOpen > 0
+                  ? Math.round(spxOpen / 5) * 5
+                  : null;
+                const plannedMaxDebit = straddleMaxDebit(morningData.badge || 'STRADDLE');
+                skip = {
+                  theme: 'strad-missed',
+                  rec: `${morningData.rec} — open failed`,
+                  badge: morningData.badge || 'STRADDLE',
+                  plannedStrike,
+                  plannedMaxDebit,
+                  recordedAt: new Date().toISOString(),
+                  source: 'morning-data',
+                };
               } else {
                 skip = { theme: morningData.theme, rec: morningData.rec,
                          recordedAt: new Date().toISOString(), source: 'morning-data' };
