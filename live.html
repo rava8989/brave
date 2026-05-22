@@ -2083,6 +2083,37 @@ async function tick() {
 
   // Refresh the left-side total panel after every tick (cheap, just reads state).
   try { renderLiveTotal(); } catch (e) { console.warn('renderLiveTotal failed:', e); }
+
+  // Active cards stay at top, skip cards drop to the bottom.
+  try { reorderStrategySections(); } catch (e) { console.warn('reorderStrategySections failed:', e); }
+}
+
+// ─── Move "skip / no-trade-today" strategy cards to the bottom ───────────────
+// Active = strategy has a currently-open OR closed-today trade record.
+// Inactive = "No X today" / banned / no-signal / RSI-blocked / etc. — uses a
+// SKIP badge in its render and provides no actionable info, so it drops below.
+// liveTotalSection always stays at the very top (not touched here).
+function reorderStrategySections() {
+  const nowET = getNowET();
+  const today = `${nowET.getFullYear()}-${String(nowET.getMonth()+1).padStart(2,'0')}-${String(nowET.getDate()).padStart(2,'0')}`;
+  const SECTIONS = [
+    { id: 'mainContent',     active: () => !!(trade && trade.triggered) },
+    { id: 'bobfSection',     active: () => !!bobf?.open || bobf?.lastClosed?.openDate === today },
+    { id: 'gxbfSection',     active: () => !!gxbf?.open || gxbf?.lastClosed?.openDate === today },
+    { id: 'straddleSection', active: () => !!straddle?.open || straddle?.lastClosed?.closeDate === today },
+    { id: 'diagonalSection', active: () => !!diagonal?.open || diagonal?.lastClosed?.closeDate === today || diagonal?.lastClosed?.openDate === today },
+  ];
+  // Collect skip elements (preserve their original order)
+  const skipEls = [];
+  for (const s of SECTIONS) {
+    const el = document.getElementById(s.id);
+    if (!el) continue;
+    if (el.style.display === 'none') continue;   // hidden = don't reorder
+    try { if (!s.active()) skipEls.push(el); } catch (_) { /* treat error as inactive */ skipEls.push(el); }
+  }
+  // appendChild on an existing child MOVES it — sequential calls push each
+  // skip element to the end while preserving relative order among themselves.
+  for (const el of skipEls) el.parentNode.appendChild(el);
 }
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
@@ -2099,6 +2130,7 @@ async function init() {
     renderBobf();
     renderGxbf();
     try { renderLiveTotal(); } catch (e) { console.warn('renderLiveTotal init failed:', e); }
+    try { reorderStrategySections(); } catch (e) { console.warn('reorderStrategySections init failed:', e); }
     await tick();
     pollTimer = setInterval(tick, 30_000);
     document.addEventListener('visibilitychange', () => {
