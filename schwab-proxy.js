@@ -2806,6 +2806,45 @@ async function handleScheduled(env) {
   // ── Refresh live quotes on the open diagonal, straddle, AND BOBF every market tick ──
   //    All three reuse the master chain fetched above (zero extra Schwab calls).
   if (isMarket && schwabToken) {
+    // ── Straddle RETRY-OPEN ──────────────────────────────────────────
+    // If today's morning signal said theme=strad but no straddle_open_trade
+    // record exists, the 9:32 open attempt failed (Schwab glitch / chain
+    // no-quote / a thrown exception we didn't see). Retry every minute
+    // until cutoff so a transient blip doesn't lose us the whole day.
+    // Once it succeeds, refreshStraddleLiveQuotes (below) will watch the
+    // debit and flip to 'filled' the moment price hits the limit.
+    try {
+      const todayISORet = isoDateET(etNow);
+      const stradExisting = await env.SIGNAL_KV.get('straddle_open_trade');
+      const stradExistingObj = stradExisting ? JSON.parse(stradExisting) : null;
+      const haveTodayStrad = stradExistingObj && stradExistingObj.openDate === todayISORet;
+      const beforeCutoff = etNow.getHours() < STRADDLE_WORK_CUTOFF_HR ||
+        (etNow.getHours() === STRADDLE_WORK_CUTOFF_HR && etNow.getMinutes() < STRADDLE_WORK_CUTOFF_MIN);
+      if (!haveTodayStrad && beforeCutoff) {
+        const msdRaw = await env.SIGNAL_KV.get(`morning_signal_data_${todayISORet}`);
+        if (msdRaw) {
+          const msd = JSON.parse(msdRaw);
+          if (msd.theme === 'strad') {
+            try {
+              const retrySig = { theme: 'strad', badge: msd.badge || 'STRADDLE', rec: msd.rec };
+              const trade = await openStraddleTrade(env, schwabToken, etNow, retrySig, masterChain);
+              await env.SIGNAL_KV.put('straddle_open_trade', JSON.stringify(trade));
+              await logEvent(env, 'info', 'strad-retry', `retry-opened ${trade.status}`, {
+                strike: trade.strike, entryDebit: trade.entryDebit, maxDebit: trade.maxDebit,
+                attemptedAt: `${etNow.getHours()}:${String(etNow.getMinutes()).padStart(2,'0')} ET`,
+              });
+              // Clear the cosmetic skip so the live page flips off "strad-missed"
+              await env.SIGNAL_KV.delete(`straddle_skip_${todayISORet}`);
+              console.log(`[strad-retry] opened ${trade.status} K=${trade.strike} debit=${trade.entryDebit}`);
+            } catch (rErr) {
+              // Don't spam the log on every minute — but keep console visibility.
+              console.warn('[strad-retry] still failing:', rErr.message);
+            }
+          }
+        }
+      }
+    } catch (e) { console.warn('[strad-retry] outer:', e.message); }
+
     try {
       await refreshDiagonalLiveQuotes(env, schwabToken, masterChain);
       await refreshStraddleLiveQuotes(env, schwabToken, etNow, masterChain);
@@ -3264,11 +3303,11 @@ async function handleScheduled(env) {
   // 4. Fetch SPX quote → gap % + today's SPX open
   let spxGapPct = null;
   let spxTodayOpen = null;
+  let spxYClose = null;   // hoisted to function scope — also read by dual-source 2nd-post block below
   try {
     // Get SPX yesterday close from history
     const spxHistUrl = `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24SPX&periodType=day&period=5&frequencyType=minute&frequency=1&startDate=${start}&endDate=${end}&needExtendedHoursData=true`;
     const spxHist = await fetchSchwabJSON(spxHistUrl, token, env);
-    let spxYClose = null;
     if (spxHist.candles && yDate) {
       const spxYCandles = spxHist.candles.filter(c => toET(new Date(c.datetime)).toDateString() === yDate);
       spxYCandles.sort((a, b) => a.datetime - b.datetime);
@@ -3617,7 +3656,14 @@ async function handleScheduled(env) {
           });
         }
       }
-    } catch (e) { console.warn('[strad] open failed:', e.message); }
+    } catch (e) {
+      // Upgrade from console.warn to logEvent so we can SEE these failures.
+      // Today (2026-05-22): the 9:32 cron threw silently and the bot never
+      // retried — straddle_open_trade stayed null all morning, live page
+      // misleadingly showed "Working order" via the cosmetic skip-state.
+      console.warn('[strad] open failed:', e.message);
+      try { await logEvent(env, 'error', 'strad-open', `open attempt failed`, { msg: e.message, stack: (e.stack || '').slice(0, 300) }); } catch (_) {}
+    }
   } else {
     try {
       await env.SIGNAL_KV.put(`straddle_skip_${isoDateET(etNow)}`, JSON.stringify({
