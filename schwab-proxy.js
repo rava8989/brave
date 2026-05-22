@@ -217,7 +217,7 @@ function buildDiscordMessage(signal, vixValues) {
   // Show only when M8BF's OWN status is active (m8bfText starts with "M8BF").
   const si = signal.m8bfStrikeInfo;
   const m8bfActiveOwn = signal.m8bfText && signal.m8bfText.startsWith('M8BF');
-  const strikes = (m8bfActiveOwn && si && si.blocked) ? `Banned center strikes — skip these:  ${si.blocked.join('  ')}  Combo bans (T1 → center):  ${Object.entries(si.comboBans || {}).map(([k,v])=>`${k}→${v}`).join('  ')}` : '';
+  const strikes = (m8bfActiveOwn && si && si.blocked) ? `Banned center strikes — skip these:  ${si.blocked.join('  ')}  Combo bans (wing-width mod 100 → banned center end):  ${Object.entries(si.comboBans || {}).map(([k,v])=>`${k}→${v}`).join('  ')}` : '';
   const m8bfReason = signal.blockT === 'hard' && signal.rec.includes('M8BF') ? signal.blockD : '';
 
   let inner = `${DIM}📅 ${signal.dateStr} — ${signal.dayLabel}${RST}\n`;
