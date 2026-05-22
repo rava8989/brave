@@ -1468,14 +1468,16 @@ async function handleDiagonalTrade(env, etNow, preChain = null) {
 //      If current mid ≤ max_debit → fill, status='filled'
 //   13:30 ET → expire any still-working orders, status='expired'
 //   16:15 ET (EOD) → if filled, compute pnl using SPX close, write stradPL
-// Max debit: NM Straddle = $32, EOM/plain Straddle = $35.
+// Max debit: NM + plain Straddle = $32, EOM Straddle = $35.
+// (Plain regular-day cap lowered from $35 → $32 on 2026-05-22 per user.)
 // KV keys:
 //   straddle_open_trade  — current trade or null
 //   straddle_done_<date> — idempotency for EOD record
 // ════════════════════════════════════════════════════════════════════
 
-const STRADDLE_MAX_DEBIT_NM   = 32.00;   // NM Straddle: $3,200 max risk
-const STRADDLE_MAX_DEBIT_OTHER = 35.00;  // EOM + plain Straddle: $3,500 max risk
+const STRADDLE_MAX_DEBIT_NM    = 32.00;  // NM Straddle: $3,200 max risk
+const STRADDLE_MAX_DEBIT_EOM   = 35.00;  // EOM Straddle: $3,500 max risk
+const STRADDLE_MAX_DEBIT_OTHER = 32.00;  // Plain regular-day Straddle: $3,200 max risk
 const STRADDLE_WORK_CUTOFF_HR  = 13;     // 13:30 ET cutoff
 const STRADDLE_WORK_CUTOFF_MIN = 30;
 
@@ -1581,7 +1583,9 @@ async function chainOrFetch(preChain, token, env, expectedExpiries, contractFilt
 
 function straddleMaxDebit(badge) {
   // badge = 'NM STRADDLE' | 'EOM STRADDLE' | 'STRADDLE'
-  return badge === 'NM STRADDLE' ? STRADDLE_MAX_DEBIT_NM : STRADDLE_MAX_DEBIT_OTHER;
+  if (badge === 'NM STRADDLE')  return STRADDLE_MAX_DEBIT_NM;
+  if (badge === 'EOM STRADDLE') return STRADDLE_MAX_DEBIT_EOM;
+  return STRADDLE_MAX_DEBIT_OTHER;   // plain regular day
 }
 
 // Open or work a straddle. Called from the morning signal block once per day.
@@ -6278,6 +6282,14 @@ export default {
           // Backfill: existing strad-missed skip lacks plannedStrike / plannedMaxDebit
           // (added 2026-05-22). Force recompute so live page can show working-order info.
           if (skip && skip.theme === 'strad-missed' && skip.plannedStrike === undefined) {
+            await env.SIGNAL_KV.delete(`straddle_skip_${todaySt}`);
+            skip = null;
+          }
+          // Backfill: if cached plannedMaxDebit doesn't match the current
+          // straddleMaxDebit() for this badge, the maxDebit constants changed
+          // — force recompute so live page shows the right limit.
+          if (skip && skip.theme === 'strad-missed' && skip.plannedMaxDebit != null
+              && skip.badge && straddleMaxDebit(skip.badge) !== skip.plannedMaxDebit) {
             await env.SIGNAL_KV.delete(`straddle_skip_${todaySt}`);
             skip = null;
           }
