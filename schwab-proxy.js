@@ -6339,7 +6339,7 @@ export default {
           lastClosed,                            // most recent settled trade
           skip,                                  // {theme, rec} when signal said no-straddle today
           serverTimeET: `${String(etNowSt.getHours()).padStart(2,'0')}:${String(etNowSt.getMinutes()).padStart(2,'0')}`,
-          maxDebits: { NM: STRADDLE_MAX_DEBIT_NM, EOM: STRADDLE_MAX_DEBIT_OTHER, plain: STRADDLE_MAX_DEBIT_OTHER },
+          maxDebits: { NM: STRADDLE_MAX_DEBIT_NM, EOM: STRADDLE_MAX_DEBIT_EOM, plain: STRADDLE_MAX_DEBIT_OTHER },
           workCutoffET: '13:30',
         }, 200, publicCors);
       } catch (e) {
