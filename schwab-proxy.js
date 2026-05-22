@@ -1249,8 +1249,11 @@ async function openDiagonalTrade(env, token, etNow, vixPct20d, preChain = null) 
     longStrike: kLong,
     shortExp,
     longExp: longExpUsed,
-    shortDte: 1,
-    longDte: Math.abs(daysBetween(todayISO, longExpUsed)),
+    // shortDte was hard-coded to 1 — wrong on long weekends (Fri Memorial Day
+    // open → Tue expiry is 4 calendar days, not 1). Use calendar-day diff so
+    // shortDte mirrors longDte's semantics.
+    shortDte: Math.abs(daysBetween(todayISO, shortExp)),
+    longDte:  Math.abs(daysBetween(todayISO, longExpUsed)),
     shortSymbol: shortLeg.symbol,
     longSymbol: longLeg.symbol,
     entryShortMid: parseFloat(shortLeg.mid.toFixed(2)),
