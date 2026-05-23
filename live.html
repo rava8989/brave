@@ -1117,10 +1117,21 @@ function _fmtDiagExp(iso) {
 function _renderDiagPanel(which, trade, status, ctx) {
   const { signal, vixPct20d, date, serverTimeET } = ctx;
   const html = [];
-  // Header label varies by panel
+  // For an OPEN trade, the actual close date is the next trading day after
+  // the open date — bot already picked it correctly (stored in trade.shortExp,
+  // e.g. Fri-open with Memorial-Day weekend → shortExp=Tue). Falling back to
+  // `date` (today's calendar date) showed "MAY 22 → MAY 23" on a Saturday,
+  // which is wrong — diagonal isn't closing on the weekend.
+  const closeDateForTitle = trade
+    ? (trade.closeDate || trade.shortExp || date)
+    : null;
+  // Next-diagonal placeholder: on weekend / holiday → "next trading day 12:30 ET"
+  // (we don't know the exact date client-side without a server lookup, but
+  // it's accurate enough). Normal days → "opens 12:30 ET".
+  const nextPlaceholder = (ctx.isWeekend || ctx.isHoliday) ? 'opens next trading day · 12:30 ET' : 'opens 12:30 ET';
   const headerLabel = which === 'overnight'
-    ? `<span>Current diagonal</span> · ${trade ? `${_fmtDiagExp(trade.openDate)} → ${_fmtDiagExp(trade.closeDate || date)}` : 'no open trade'}`
-    : `<span>Next diagonal</span> · ${trade ? `${_fmtDiagExp(trade.openDate)} → ${_fmtDiagExp(trade.shortExp || '')}` : 'opens 12:30 ET'}`;
+    ? `<span>Current diagonal</span> · ${trade ? `${_fmtDiagExp(trade.openDate)} → ${_fmtDiagExp(closeDateForTitle)}` : 'no open trade'}`
+    : `<span>Next diagonal</span> · ${trade ? `${_fmtDiagExp(trade.openDate)} → ${_fmtDiagExp(trade.shortExp || '')}` : nextPlaceholder}`;
 
   html.push(`<div class="diag-card">`);
   html.push(`<div class="diag-header">`);
@@ -1223,7 +1234,7 @@ function renderDiagonal() {
   sec.style.display = '';
 
   const { open, lastClosed, signal, vixPct20d, date, isWeekend, isHoliday, serverTimeET } = diagonal;
-  const ctx = { signal, vixPct20d, date, serverTimeET };
+  const ctx = { signal, vixPct20d, date, serverTimeET, isWeekend, isHoliday };
 
   // Split data into two panels:
   //   overnightTrade — held trade, opened a prior session, closes/closed at
@@ -1256,9 +1267,21 @@ function renderDiagonal() {
         statusText: `Closed at 12:30 ET · final P&L ${fmt$(overnightTrade.pnl)}`,
       };
     }
+    // OPEN trade: actually closes on trade.shortExp (next trading day after
+    // open — bot picked Tuesday after Memorial Day weekend, etc.). If today
+    // isn't a trading day (weekend / holiday) OR shortExp is later than
+    // today, the diagonal is HELD, not closing today.
+    const closeISO = overnightTrade.shortExp || date;
+    const closesToday = !isWeekend && !isHoliday && closeISO === date;
+    if (closesToday) {
+      return {
+        badge: 'LIVE · CLOSING TODAY', badgeClass: 'open',
+        statusText: `Held trade — closes at 12:30 ET today, then today's diagonal opens.`,
+      };
+    }
     return {
-      badge: 'LIVE · CLOSING TODAY', badgeClass: 'open',
-      statusText: `Held trade — closes at 12:30 ET today, then today's diagonal opens.`,
+      badge: `LIVE · HELD · CLOSES ${_fmtDiagExp(closeISO)}`, badgeClass: 'open',
+      statusText: `Held over ${isWeekend ? 'weekend' : isHoliday ? 'market holiday' : 'non-trading day'} — closes at 12:30 ET on ${_fmtDiagExp(closeISO)}.`,
     };
   })();
 
