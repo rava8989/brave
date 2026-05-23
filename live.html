@@ -1035,7 +1035,12 @@ function renderStraddle() {
     } else {
       html.push(`<div class="diag-stat"><div class="diag-stat-label">P&L</div><div class="diag-stat-value">—</div><div class="diag-stat-sub">${t.status === 'working' ? 'pending fill' : ''}</div></div>`);
     }
-    html.push(`<div class="diag-stat"><div class="diag-stat-label">SPX</div><div class="diag-stat-value">${t.currentSpot?.toFixed(2) ?? t.spxClose?.toFixed(2) ?? '—'}</div><div class="diag-stat-sub">Strike ${t.strike}</div></div>`);
+    // For closed (settled) trades, prefer spxClose (the actual close print)
+    // over currentSpot (the last intraday mid-tick before close — which can be
+    // 2-5 points away from the real settle). Observed 2026-05-22 where the
+    // page showed currentSpot=7477 while actual SPX close was 7474.07.
+    const stradEffSpot = (t.status === 'closed' && t.spxClose != null) ? t.spxClose : (t.currentSpot ?? t.spxClose);
+    html.push(`<div class="diag-stat"><div class="diag-stat-label">SPX${t.status==='closed'?' (close)':''}</div><div class="diag-stat-value">${stradEffSpot != null ? stradEffSpot.toFixed(2) : '—'}</div><div class="diag-stat-sub">Strike ${t.strike}</div></div>`);
     html.push(`<div class="diag-stat"><div class="diag-stat-label">Entry debit</div><div class="diag-stat-value">$${(t.entryDebit*100).toFixed(0)}</div><div class="diag-stat-sub">$${t.entryDebit?.toFixed(2)} mid</div></div>`);
     if (t.currentValue != null) {
       html.push(`<div class="diag-stat"><div class="diag-stat-label">Current</div><div class="diag-stat-value">$${(t.currentValue*100).toFixed(0)}</div><div class="diag-stat-sub">${debitDelta != null ? `<span class="${deltaClass}">${debitDelta > 0 ? '+' : ''}${debitDelta.toFixed(2)}</span>` : ''}</div></div>`);
@@ -1047,7 +1052,7 @@ function renderStraddle() {
   html.push(`<div class="diag-position">`);
   html.push(`  <div class="diag-pos-title">Straddle Position · ${t.contracts || 1} contract</div>`);
   html.push(`  <div class="diag-pos-headline">SPX ${t.strike}P <span class="diag-slash">/</span> ${t.strike}C</div>`);
-  html.push(`  <div class="diag-pos-subline">ATM straddle · 0DTE · spot ${t.spotEntry?.toFixed(2)}${t.currentSpot != null && t.currentSpot !== t.spotEntry ? ' → '+t.currentSpot.toFixed(2) : ''}</div>`);
+  html.push(`  <div class="diag-pos-subline">ATM straddle · 0DTE · spot ${t.spotEntry?.toFixed(2)}${stradEffSpot != null && stradEffSpot !== t.spotEntry ? ' → '+stradEffSpot.toFixed(2) : ''}</div>`);
   html.push(`  <div class="diag-pos-legs">`);
   html.push(`    <div class="diag-pos-leg long">`);  // calls = bought, use blue
   html.push(`      <div class="diag-pos-leg-side">Long Call · bought</div>`);

@@ -873,9 +873,21 @@ async function handleEOD(env, etNow) {
       const win = getM8BFWindow(dow, todayISO);
       if (win) {
         const [winLo, winHi] = win;
+        // Honor the manual-cancellation skip list (same KV used by
+        // selectM8bfQualifying). Without this, EOD would compute P&L for a
+        // signal the user explicitly cancelled — observed 2026-05-22 where
+        // EOD recorded m8bfPL from the cancelled 13:02 trade (-$363) instead
+        // of the 13:06 trade actually held (-$1,311).
+        let skipTimes = new Set();
+        try {
+          const skipRaw = await env.SIGNAL_KV.get(`m8bf_skip_signals_${todayISO}`);
+          if (skipRaw) skipTimes = new Set(JSON.parse(skipRaw) || []);
+        } catch (_) { /* no-op */ }
+
         let qualifying = null;
         for (const sig of fullSigs) {
           if (!sig.time) continue;
+          if (skipTimes.has(sig.time)) continue;   // ← manual cancellation
           const [h, m] = sig.time.split(':').map(Number);
           const mins = h * 60 + m;
           if (mins >= winLo && mins < winHi && !isBanned(sig.center, sig.lower)) {
