@@ -1599,8 +1599,10 @@ function renderBFViz(trade, spxNow) {
 
 // ─── Today's Total Live P&L (left-side fixed panel) ──────────────────────────
 // Sums P&L from each strategy active today. Diagonal counts on its CLOSE date
-// (so the May-N→May-(N+1) trade is included in May-(N+1)'s total). A diagonal
-// that OPENS today is excluded — it'll show up in next trading day's total.
+// only (so the May-N → May-(N+1) trade is included in May-(N+1)'s total).
+// A diagonal that OPENED today is excluded from this combined total — it'll
+// show up in next trading day's total when it closes. It still renders in its
+// own dedicated Diagonal card on the page, just not here.
 function renderLiveTotal() {
   const sec = document.getElementById('liveTotalSection');
   if (!sec) return;
@@ -1635,20 +1637,25 @@ function renderLiveTotal() {
   if (stradOpen?.openDate === today && stradOpen.currentPnl != null) stradPL = stradOpen.currentPnl;
   else if (stradLast?.openDate === today && stradLast.pnl != null) stradPL = stradLast.pnl;
 
-  // Diagonal — show live combined P&L from any active position.
-  // Two trades can exist on the same day: yesterday's diagonal CLOSED today
-  // at 12:30 ET (realized pnl) AND today's new diagonal OPENED today at
-  // 12:30 ET (live unrealized pnl). Both contribute to "today's live P&L"
-  // and we sum them. The historical record still commits diagPL on the
-  // closeDate (so backtests count once) — this is just the live view.
+  // Diagonal — only counts on its CLOSE date (the day it settles).
+  // A diagonal opened TODAY is excluded from the combined card: it'll
+  // show up tomorrow when it closes. This matches the historical record
+  // (diagPL commits on closeDate, so the backtest counts it once) and
+  // matches how diagonals contribute to the live total naturally —
+  // a fresh open at 12:30 ET has near-zero P&L until time passes.
+  //   • Pre-12:30 ET:  yesterday's open diagonal is live → show its currentPnl
+  //   • Post-12:30 ET: yesterday's diagonal has closed today → show its realized pnl
+  //   • Today's brand-new open (openDate === today) → EXCLUDED (shows in its
+  //     own card on the page, just not in this combined total)
   let diagPL = null;
   const diagOpen = diagonal?.open;
   const diagLast = diagonal?.lastClosed;
-  const diagClosedTodayPnl = (diagLast?.closeDate === today && diagLast.pnl != null) ? diagLast.pnl : null;
-  const diagLivePnl        = (diagOpen?.currentPnl != null) ? diagOpen.currentPnl : null;
-  if (diagClosedTodayPnl != null || diagLivePnl != null) {
-    diagPL = (diagClosedTodayPnl ?? 0) + (diagLivePnl ?? 0);
+  if (diagLast?.closeDate === today && diagLast.pnl != null) {
+    diagPL = diagLast.pnl;                                  // realized: opened yesterday, closed today
+  } else if (diagOpen?.openDate && diagOpen.openDate < today && diagOpen.currentPnl != null) {
+    diagPL = diagOpen.currentPnl;                           // live: opened yesterday, still open, closes today
   }
+  // else: diagOpen.openDate === today → brand-new open today, excluded
 
   const parts = [
     { name: 'M8BF',     pl: m8bfPL },
