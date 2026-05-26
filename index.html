@@ -2276,14 +2276,17 @@
 
       // Find yesterday's trading day candles
       let yOpen = null, yClose = null;
-      // Find yesterday's date (last trading day)
+      // Find yesterday's date (last *real* trading day — skip holidays AND
+      // weekends). Schwab will sometimes return stale VIX quotes for holiday
+      // dates (e.g., Memorial Day VIX still trades on CBOE proxies); using
+      // those as "yesterday's close" is wrong. We walk back trading-day-aware.
       let yDate = null;
       for(let i = candles.length-1; i >= 0; i--){
         const d = new Date(candles[i].datetime);
-        if(d.toDateString() !== todayStr){
-          yDate = d.toDateString();
-          break;
-        }
+        if(d.toDateString() === todayStr) continue;
+        if(isWkend(d) || isHol(d)) continue;   // skip weekends + market holidays
+        yDate = d.toDateString();
+        break;
       }
       if(yDate){
         const yCandles = candles.filter(c => new Date(c.datetime).toDateString() === yDate);
