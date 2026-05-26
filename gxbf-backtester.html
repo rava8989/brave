@@ -630,14 +630,18 @@ body {
     <div class="fg-label">Gamma center source</div>
     <div class="fg-row" style="gap:16px">
       <label style="display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--text);cursor:pointer;font-weight:600">
-        <input type="radio" name="centerSrc" value="vol" checked style="cursor:pointer">
-        <span>Volume</span> <span style="font-weight:400;color:var(--text3)">(Major Positive by Volume — live default)</span>
+        <input type="radio" name="centerSrc" value="hybrid" checked style="cursor:pointer">
+        <span>Hybrid (auto per-day)</span> <span style="font-weight:400;color:var(--text3)">(OI on OPEX-1 / VIX-exp / FED, else Volume — live default)</span>
+      </label>
+      <label style="display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--text);cursor:pointer;font-weight:600">
+        <input type="radio" name="centerSrc" value="vol" style="cursor:pointer">
+        <span>Volume</span> <span style="font-weight:400;color:var(--text3)">(Major Positive by Volume — force)</span>
       </label>
       <label style="display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--text);cursor:pointer;font-weight:600">
         <input type="radio" name="centerSrc" value="oi" style="cursor:pointer">
-        <span>Open Interest</span> <span style="font-weight:400;color:var(--text3)">(Major Positive by OI — compare)</span>
+        <span>Open Interest</span> <span style="font-weight:400;color:var(--text3)">(Major Positive by OI — force)</span>
       </label>
-      <span style="font-size:10px;color:var(--text3);white-space:nowrap">Backtest-only. Switches the butterfly center between the volume-weighted and OI-weighted gamma strike.</span>
+      <span style="font-size:10px;color:var(--text3);white-space:nowrap">Hybrid routes OPEX-1, VIX expiry (Wed 2 days before OPEX), and FED days to the OI-weighted center; all other days use the volume-weighted center.</span>
     </div>
   </div>
 
@@ -654,7 +658,7 @@ body {
       <label style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--text2)">OPEX+1 VIX gap-up %
         <input type="number" class="num-input" id="gGapPct" value="2" min="0" step="0.5" style="width:54px" title="On OPEX+1, block GXBF if VIX gapped up ≥ this % overnight.">
       </label>
-      <span style="font-size:10px;color:var(--text3);white-space:nowrap">ON → trade iff (overnight drop &gt; thr below OR OPEX+1) AND not (OPEX-1 · VIX≥max · OPEX+1 gap-up≥% · CPI · EOM · NM-non-Mon). Special-days chips still apply on top.</span>
+      <span style="font-size:10px;color:var(--text3);white-space:nowrap">ON → trade iff (overnight drop &gt; thr below OR OPEX+1) AND not (VIX≥max · OPEX+1 gap-up≥% · EOM). OPEX-1, CPI, and NM-non-Mon are ALLOWED. Special-days chips still apply on top.</span>
     </div>
   </div>
 
@@ -1205,7 +1209,7 @@ function getParams() {
     contracts:     parseInt(document.getElementById('contracts').value, 10) || 1,
     ovDropOn:      document.getElementById('ovDropOn').checked,
     ovDropThr:     (() => { const v = parseFloat(document.getElementById('ovDropThr').value); return Number.isFinite(v) ? v : 0.65; })(),
-    centerSrc:     (document.querySelector('input[name="centerSrc"]:checked') || {}).value || 'vol',
+    centerSrc:     (document.querySelector('input[name="centerSrc"]:checked') || {}).value || 'hybrid',
     gxbfGating:    document.getElementById('gxbfGating').checked,
     gVixMax:       (() => { const v = parseFloat(document.getElementById('gVixMax').value); return Number.isFinite(v) ? v : 25; })(),
     gGapPct:       (() => { const v = parseFloat(document.getElementById('gGapPct').value); return Number.isFinite(v) ? v : 2; })(),
@@ -1676,6 +1680,7 @@ function runBacktestBS(data, params) {
   const candSet = new Set(candidates);
   const SD = k => special[k] || new Set();
   const sOpex1 = SD('OPEX+1'), sOpexM1 = SD('OPEX-1'), sCPI = SD('CPI'), sEOM = SD('EOM'), sNM = SD('NM');
+  const sVIX = SD('VIX'), sFED = SD('FED');
   const isMon = iso => new Date(iso + 'T12:00:00Z').getUTCDay() === 1;
 
   let equity = params.startingFunds;
@@ -1692,28 +1697,37 @@ function runBacktestBS(data, params) {
 
     if (params.gxbfGating) {
       // ── REAL GXBF gating (signal-engine.js rule) ──
+      // Hybrid gating: blocks are VIX≥max, OPEX+1 + VIX gap-up≥%, EOM.
+      // OPEX-1 / CPI / NM-non-Mon are ALLOWED (previously banned — removed).
       const d = rec.date;
-      const opex1 = sOpex1.has(d), opexM1 = sOpexM1.has(d), cpi = sCPI.has(d), eom = sEOM.has(d), nm = sNM.has(d);
+      const opex1 = sOpex1.has(d), eom = sEOM.has(d);
       const vixToday = rec.vixOpen;
       const gapPct = (prev && prev.vixClose) ? (rec.vixOpen - prev.vixClose) / prev.vixClose * 100 : 0;
       // Trigger: large overnight VIX drop OR automatic on OPEX+1.
       const trigger = (drop != null && drop > params.ovDropThr) || opex1;
-      // Blocks/overrides → no GXBF. (OPEX-1 = day before expiry: always banned.)
+      // Blocks/overrides → no GXBF.
       const blocked =
-        opexM1 ||
         (vixToday != null && vixToday >= params.gVixMax) ||
         (opex1 && gapPct >= params.gGapPct) ||
-        cpi || eom || (nm && !isMon(d));
+        eom;
       if (!(trigger && !blocked)) { skipped.gating++; continue; }
     } else if (params.ovDropOn) {
       // ── Manual overnight VIX-drop filter (gating OFF) ──
       if (drop == null || drop < params.ovDropThr) { skipped.ovDrop++; continue; }
     }
 
-    // Center source: Volume (default) or Open Interest. OI uses the
-    // separately-computed centerOI + midsOI grid; if a day has no OI center
-    // (older data / no OI), skip it in OI mode.
-    const useOI = params.centerSrc === 'oi';
+    // Center source: Hybrid (default) routes OPEX-1, VIX-expiry, or FED days
+    // to the OI-weighted grid; everything else uses the volume-weighted grid.
+    // Manual 'vol' / 'oi' force the same source for every day. If a hybrid OI
+    // day lacks centerOI (older data / no OI), fall back to volume for that day.
+    let useOI;
+    if (params.centerSrc === 'hybrid') {
+      const d = rec.date;
+      const opexM1 = sOpexM1.has(d), vixExp = sVIX.has(d), fed = sFED.has(d);
+      useOI = (opexM1 || vixExp || fed) && rec.centerOI != null;
+    } else {
+      useOI = params.centerSrc === 'oi';
+    }
     const mids = (useOI ? rec.midsOI : rec.mids) || {};
     const Kc = useOI ? rec.centerOI : rec.center;
     const ce = mids["0"];
@@ -1774,6 +1788,7 @@ function runBacktestBS(data, params) {
       pnl,
       premium,
       priceSource: 'thetadata',
+      centerSource: useOI ? 'oi' : 'vol',              // which grid sourced K (hybrid resolves to one per-day)
       minutesInTrade: 385,                            // 9:35 ET → SPX close (0DTE)
       tags,                                           // array of special-day category names
     });

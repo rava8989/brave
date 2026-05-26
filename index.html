@@ -1588,9 +1588,29 @@
     let strikeInfo=null;
     let cpiLongCall=false; // retained for compatibility (always false under new rule)
 
-    if(cpiDay){
-      // CPI rule: ALL strategies are hard-blocked on CPI days. Zero exceptions.
-      // WR=0%, WR≥90%, overnight VIX direction — nothing can un-block this.
+    // ── GXBF evaluation (STRATEGY-INDEPENDENT) ──
+    // Hybrid gating: blocks are VIX≥max, OPEX+1 + VIX gap-up≥%, EOM.
+    // OPEX-1, CPI day, and NM-non-Mon are ALLOWED (previously banned — removed).
+    // Trigger = (overnight VIX drop > DROP_GXBF) OR OPEX+1 (auto-trigger).
+    const gxbfVixOvernightPct = (!isNaN(vYClose) && vYClose !== 0) ? (vToday - vYClose) / vYClose * 100 : 0;
+    const gxbfTrigger = (oNight > T.DROP_GXBF) || postOpDay;
+    let gxbfFires = false, gxbfBlockedReason = null;
+    if (gxbfTrigger) {
+      if (vToday >= T.VIX_MAX_GXBF) {
+        gxbfBlockedReason = `VIX ${vToday} ≥ ${T.VIX_MAX_GXBF}`;
+      } else if (postOpDay && gxbfVixOvernightPct >= 2) {
+        gxbfBlockedReason = `VIX gapped up ${gxbfVixOvernightPct.toFixed(1)}% overnight`;
+      } else if (eomDay) {
+        gxbfBlockedReason = `EOM`;
+      } else {
+        gxbfFires = true;
+      }
+    }
+
+    if(cpiDay && !gxbfFires){
+      // CPI rule: blocks M8BF and Straddle, but GXBF is independent and can
+      // still fire when its own conditions are met. Other strategies remain
+      // hard-blocked.
       rec="No trades (CPI day)";
       theme="block";
       crossed=true;
@@ -1598,11 +1618,15 @@
       blockD="CPI day — all strategies blocked";
       badge="BLOCKED";
       strikeInfo=null;
+    } else if(gxbfFires){
+      // GXBF fires regardless of CPI / OPEX-1 / NM-non-Mon (strategy-independent).
+      if(postOpDay){rec="GXBF @ 9:36 AM (OPEX+1)";theme="gxbf";entryT="9:36 AM";badge="GXBF";}
+      else        {rec=`GXBF @ 9:36 AM`;          theme="gxbf";entryT="9:36 AM";badge="GXBF";}
+    } else if(gxbfTrigger && gxbfBlockedReason){
+      rec=`No GXBF (${gxbfBlockedReason})`;theme="block";crossed=true;
+      blockT=gxbfBlockedReason.startsWith('VIX')?"vix":"hard";blockD=gxbfBlockedReason;badge="BLOCKED";
     } else {
-      if(oNight>T.DROP_GXBF){
-        if(vToday>=T.VIX_MAX_GXBF){rec=`No GXBF (VIX ${vToday} ≥ ${T.VIX_MAX_GXBF})`;theme="block";crossed=true;blockT="vix";blockD=`VIX ${vToday} ≥ ${T.VIX_MAX_GXBF}`;badge="BLOCKED";}
-        else{rec=`GXBF @ 9:36 AM`;theme="gxbf";entryT="9:36 AM";badge="GXBF";}
-      } else if(oNight>0){
+      if(oNight>0){
         rec="Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="STRADDLE";strikeInfo=null;
       } else {
         rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow,now);entryT=strikeInfo?.window||"";
@@ -1616,7 +1640,9 @@
         else if(isNonAmznTslaEarningsDay()){rec="No M8BF (earnings day)";theme="block";crossed=true;blockT="hard";blockD="Non-AMZN/TSLA mega-cap earnings day";badge="BLOCKED";strikeInfo=null;}
       }
 
-      if(nmDay&&!isMon&&(rec.startsWith("M8BF")||rec.startsWith("No M8BF")||rec.startsWith("Straddle")||rec.startsWith("GXBF")||rec.startsWith("No GXBF"))){rec="NM Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="NM STRADDLE";strikeInfo=null;}
+      // NM-non-Mon override: converts M8BF/Straddle into NM Straddle. GXBF is
+      // intentionally EXCLUDED (strategy independence — NM does not block GXBF).
+      if(nmDay&&!isMon&&(rec.startsWith("M8BF")||rec.startsWith("No M8BF")||rec.startsWith("Straddle"))){rec="NM Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="NM STRADDLE";strikeInfo=null;}
       if(eomDay){rec="Straddle @ 9:32 AM (EOM)";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="EOM STRADDLE";strikeInfo=null;}
       if(isWed&&!fedDay&&!m8bfBlocked&&!nmDay&&rec.startsWith("Straddle")){rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow,now);entryT=strikeInfo?.window||"";}
       if(opexDay&&rec.startsWith("Straddle")){rec="No Straddle (OPEX day)";theme="block";crossed=true;blockT="hard";blockD="Straddle not on OPEX";badge="BLOCKED";}
@@ -1646,18 +1672,8 @@
           const sc=m8Sched(dow,now);rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=sc;entryT=sc?.window||"";blockT="90%rule";
         }
       }
-
-      // OPEX+1 GXBF override — only 0%-rule (forced Straddle) blocks the M8BF→GXBF
-      // conversion; 90%-rule does NOT (GXBF on OPEX+1 fires even with WR ≥ 90%).
-      if(postOpDay && !cpiDay && blockT!=='0%rule'){
-        const isM8=rec.startsWith("M8BF"), isStr=rec.startsWith("Straddle")||rec.startsWith("NM Straddle");
-        if(isM8||isStr){
-          const vixOvernightPct = (vToday - vYClose) / vYClose * 100;
-          if(vToday>=T.VIX_MAX_GXBF){rec=`No GXBF (VIX ${vToday} ≥ ${T.VIX_MAX_GXBF})`;theme="block";crossed=true;pmNote=false;blockT="vix";blockD=`OPEX+1 GXBF blocked, VIX ${vToday}`;badge="BLOCKED";strikeInfo=null;}
-          else if(vixOvernightPct>=2){rec=`No GXBF (VIX gapped up ${vixOvernightPct.toFixed(1)}% overnight)`;theme="block";crossed=true;pmNote=false;blockT="vix";blockD=`OPEX+1 GXBF blocked — VIX gap up ${vixOvernightPct.toFixed(1)}%`;badge="BLOCKED";strikeInfo=null;}
-          else{rec="GXBF @ 9:36 AM (OPEX+1)";theme="gxbf";crossed=false;pmNote=false;blockT="";entryT="9:36 AM";badge="GXBF";strikeInfo=null;}
-        }
-      }
+      // OPEX+1 GXBF override is now folded into the upfront strategy-independent
+      // GXBF evaluation above (postOpDay is part of gxbfTrigger).
     }
 
     if(pmNote) rec+=" (afternoon times preferred)";
@@ -1744,24 +1760,21 @@
     }
 
     // ── CARD 3: GXBF ──
-    if(cpiDay){
-      // CPI day: hard-block GXBF
-      cardGxbf.className='scard active-block';
-      gxbfBadge.textContent='BLOCKED';
-      gxbfRec.innerHTML=`<span class="crossed">No GXBF (CPI day)</span>`;
-      gxbfReason.innerHTML=`<span class="block-hard">⛔ CPI day — all strategies blocked</span>`;
-    } else if(theme==='gxbf'){
+    // GXBF is strategy-independent: CPI day, OPEX-1, NM-non-Mon NO LONGER
+    // block GXBF. Blocks remaining: VIX≥max, OPEX+1 gap-up, EOM.
+    // The card uses gxbfFires / gxbfBlockedReason / gxbfTrigger from the
+    // upfront evaluation above — independent of the primary `theme`.
+    if(theme==='gxbf'){
       cardGxbf.className='scard active-gxbf';
       gxbfBadge.textContent=`⏰ ${entryT}`;
       gxbfRec.textContent=rec;
       gxbfReason.textContent='';
-    } else if(theme==='block' && rec.startsWith('No GXBF')){
-      // OPEX+1 GXBF override blocked (e.g., "No GXBF (VIX gapped up 7.8% overnight)")
-      // Show the specific block reason instead of falling back to generic message.
+    } else if(gxbfTrigger && gxbfBlockedReason){
+      // GXBF trigger fired but a block hit (VIX≥max, EOM, OPEX+1 gap-up).
       cardGxbf.className='scard active-block';
       gxbfBadge.textContent='BLOCKED';
-      gxbfRec.innerHTML=`<span class="crossed">${rec}</span>`;
-      gxbfReason.innerHTML=blockD?`<span class="block-vix">⚠️ ${blockD}</span>`:'';
+      gxbfRec.innerHTML=`<span class="crossed">No GXBF (${gxbfBlockedReason})</span>`;
+      gxbfReason.innerHTML=`<span class="block-vix">⚠️ ${gxbfBlockedReason}</span>`;
     } else if(!isNaN(vToday) && vToday >= T.VIX_MAX_GXBF){
       cardGxbf.className='scard active-block';
       gxbfBadge.textContent='BLOCKED';

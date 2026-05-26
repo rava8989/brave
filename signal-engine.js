@@ -323,7 +323,29 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
   let strikeInfo = null;
   let cpiLongCall = false;
 
-  if (cpiDay) {
+  // ── GXBF evaluation (STRATEGY-INDEPENDENT) ──
+  // Hybrid gating: blocks are VIX≥max, OPEX+1 + VIX gap-up≥%, EOM.
+  // OPEX-1, CPI day, and NM-non-Mon are ALLOWED (previously banned — removed).
+  // Trigger = (overnight VIX drop > DROP_GXBF) OR OPEX+1 (auto-trigger).
+  // Center routing: OPEX-1 / VIX-expiry / FED → OI grid; else Volume.
+  // Computed here so CPI day no longer suppresses GXBF (other strategies still
+  // block on CPI per their own rules).
+  const gxbfVixOvernightPct = (vixYClose != null && vixYClose !== 0) ? (vixToday - vixYClose) / vixYClose * 100 : 0;
+  const gxbfTrigger = (oNight > T.DROP_GXBF) || postOpDay;
+  let gxbfFires = false, gxbfBlockedReason = null;
+  if (gxbfTrigger) {
+    if (vixToday >= T.VIX_MAX_GXBF) {
+      gxbfBlockedReason = `VIX ${vixToday} ≥ ${T.VIX_MAX_GXBF}`;
+    } else if (postOpDay && gxbfVixOvernightPct >= 2) {
+      gxbfBlockedReason = `VIX gapped up ${gxbfVixOvernightPct.toFixed(1)}% overnight`;
+    } else if (eomDay) {
+      gxbfBlockedReason = `EOM`;
+    } else {
+      gxbfFires = true;
+    }
+  }
+
+  if (cpiDay && !gxbfFires) {
     rec = "No trades (CPI day)";
     theme = "block";
     crossed = true;
@@ -331,12 +353,17 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
     blockD = "CPI day — all strategies blocked";
     badge = "BLOCKED";
     strikeInfo = null;
+  } else if (gxbfFires) {
+    // GXBF fires regardless of CPI / OPEX-1 / NM-non-Mon (strategy-independent).
+    if (postOpDay) { rec = "GXBF @ 9:36 AM (OPEX+1)"; theme = "gxbf"; entryT = "9:36 AM"; badge = "GXBF"; }
+    else            { rec = `GXBF @ 9:36 AM`;          theme = "gxbf"; entryT = "9:36 AM"; badge = "GXBF"; }
   } else {
-    if (oNight > T.DROP_GXBF) {
-      if (vixToday >= T.VIX_MAX_GXBF) { rec = `No GXBF (VIX ${vixToday} ≥ ${T.VIX_MAX_GXBF})`; theme = "block"; crossed = true; blockT = "vix"; blockD = `VIX ${vixToday} ≥ ${T.VIX_MAX_GXBF}`; badge = "BLOCKED"; }
-      else if (opex1) { rec = `No GXBF (OPEX-1)`; theme = "block"; crossed = true; blockT = "hard"; blockD = "GXBF not traded the day before OPEX"; badge = "BLOCKED"; }
-      else { rec = `GXBF @ 9:36 AM`; theme = "gxbf"; entryT = "9:36 AM"; badge = "GXBF"; }
-    } else if (oNight > 0) {
+    // GXBF did not fire — either no trigger, or a GXBF-specific block hit
+    // (VIX≥max, OPEX+1 gap-up, EOM). Other strategies still evaluate
+    // INDEPENDENTLY below (strategy independence). The GXBF block reason is
+    // surfaced via `gxbfOwnText()` / `gxbfText`, not via the primary `rec` —
+    // the primary `rec` reflects whatever strategy IS active for the day.
+    if (oNight > 0) {
       rec = "Straddle @ 9:32 AM"; theme = "strad"; entryT = "9:32 AM"; badge = "STRADDLE";
     } else {
       rec = m8Msg(etDate); theme = "m8bf"; badge = "M8BF"; strikeInfo = m8Sched(dow); entryT = strikeInfo?.window || "";
@@ -350,7 +377,9 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
       else if (vixExpAfterOpex) { rec = "No M8BF (VIX exp day)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "VIX exp day when VIX exp falls after OPEX"; badge = "BLOCKED"; strikeInfo = null; }
     }
 
-    if (nmDay && !isMon && (rec.startsWith("M8BF") || rec.startsWith("No M8BF") || rec.startsWith("Straddle") || rec.startsWith("GXBF") || rec.startsWith("No GXBF"))) { rec = "NM Straddle @ 9:32 AM"; theme = "strad"; crossed = false; blockT = ""; entryT = "9:32 AM"; badge = "NM STRADDLE"; strikeInfo = null; }
+    // NM-non-Mon override: converts M8BF/Straddle into NM Straddle. GXBF is
+    // intentionally EXCLUDED (strategy independence — NM does not block GXBF).
+    if (nmDay && !isMon && (rec.startsWith("M8BF") || rec.startsWith("No M8BF") || rec.startsWith("Straddle"))) { rec = "NM Straddle @ 9:32 AM"; theme = "strad"; crossed = false; blockT = ""; entryT = "9:32 AM"; badge = "NM STRADDLE"; strikeInfo = null; }
     if (eomDay) { rec = "Straddle @ 9:32 AM (EOM)"; theme = "strad"; crossed = false; blockT = ""; entryT = "9:32 AM"; badge = "EOM STRADDLE"; strikeInfo = null; }
     if (isWed && !fedDay && !m8bfBanned && !nmDay && rec.startsWith("Straddle")) { rec = m8Msg(etDate); theme = "m8bf"; badge = "M8BF"; strikeInfo = m8Sched(dow); entryT = strikeInfo?.window || ""; }
     if (opexDay && rec.startsWith("Straddle")) { rec = "No Straddle (OPEX day)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "Straddle not on OPEX"; badge = "BLOCKED"; }
@@ -385,18 +414,10 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
     }
   }
 
-  // OPEX+1 GXBF override.
-  // Only the 0%-rule (forced Straddle) blocks the M8BF→GXBF conversion here;
-  // 90%-rule does NOT — GXBF on OPEX+1 should still fire even if prevWR ≥ 90%.
-  if (postOpDay && !cpiDay && blockT !== '0%rule') {
-    const isM8 = rec.startsWith("M8BF"), isStr = rec.startsWith("Straddle") || rec.startsWith("NM Straddle");
-    if (isM8 || isStr) {
-      const vixOvernightPct = (vixToday - vixYClose) / vixYClose * 100;
-      if (vixToday >= T.VIX_MAX_GXBF) { rec = `No GXBF (VIX ${vixToday} ≥ ${T.VIX_MAX_GXBF})`; theme = "block"; crossed = true; pmNote = false; blockT = "vix"; blockD = `OPEX+1 GXBF blocked, VIX ${vixToday}`; badge = "BLOCKED"; strikeInfo = null; }
-      else if (vixOvernightPct >= 2) { rec = `No GXBF (VIX gapped up ${vixOvernightPct.toFixed(1)}% overnight)`; theme = "block"; crossed = true; pmNote = false; blockT = "vix"; blockD = `OPEX+1 GXBF blocked — VIX gap up ${vixOvernightPct.toFixed(1)}%`; badge = "BLOCKED"; strikeInfo = null; }
-      else { rec = "GXBF @ 9:36 AM (OPEX+1)"; theme = "gxbf"; crossed = false; pmNote = false; blockT = ""; entryT = "9:36 AM"; badge = "GXBF"; strikeInfo = null; }
-    }
-  }
+  // OPEX+1 GXBF override is now folded into the upfront strategy-independent
+  // GXBF evaluation above (postOpDay is part of gxbfTrigger). The standalone
+  // block here is removed — GXBF decides for itself before M8BF/Straddle paths
+  // even run, so there's nothing to override at this point.
 
   // ── BOBF card logic ──
   const bobfBlocks = [];
@@ -456,17 +477,23 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
   const m8bfOwnText = () => m8bfBanned
     ? (eomDay?`No M8BF (EOM)`:eom1?`No M8BF (EOM-1)`:opex1?`No M8BF (day before OPEX)`:nonAmznTslaEarn?`No M8BF (earnings)`:vixExpAfterOpex?`No M8BF (VIX exp day)`:`No M8BF`)
     : m8Msg(etDate);
-  const gxbfOwnText = () => (oNight > T.DROP_GXBF)
-    ? (vixToday >= T.VIX_MAX_GXBF ? `No GXBF (VIX ${vixToday} ≥ ${T.VIX_MAX_GXBF})` : `GXBF @ 9:36 AM`)
-    : `No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;
+  // GXBF own status — strategy-independent. CPI day NO LONGER blocks GXBF;
+  // gating is VIX≥max, EOM, and OPEX+1 + VIX gap-up. Trigger is overnight drop
+  // > DROP_GXBF OR OPEX+1 auto-trigger.
+  const gxbfOwnText = () => {
+    if (!gxbfTrigger) return `No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;
+    if (gxbfBlockedReason) return `No GXBF (${gxbfBlockedReason})`;
+    return postOpDay ? `GXBF @ 9:36 AM (OPEX+1)` : `GXBF @ 9:36 AM`;
+  };
   const stradOwnText = () => `No Straddle (${oNight <= 0 ? 'overnight VIX up' : oNight > T.DROP_GXBF ? 'overnight VIX drop > ' + T.DROP_GXBF : blockT === '90%rule' ? 'WR ≥ 90%' : 'non-CPI/Fed Wednesday'})`;
 
   let m8bfText = rec, stradText = rec, gxbfText = rec;
 
   if (cpiDay) {
+    // CPI day blocks M8BF and Straddle, but GXBF is independent — show its own status.
     m8bfText = `No M8BF (CPI day)`;
     stradText = `No Straddle (CPI day)`;
-    gxbfText = `No GXBF (CPI day)`;
+    gxbfText = gxbfOwnText();
   } else if (theme === 'm8bf') {
     stradText = stradOwnText();
     gxbfText = gxbfOwnText();
@@ -495,6 +522,14 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
   // null when the M8BF's OWN status is blocked (CPI/m8bfBanned).
   const m8bfStrikeInfo = (cpiDay || m8bfBanned) ? null : m8Sched(dow);
 
+  // ── GXBF center routing (hybrid) ──
+  // Only meaningful when theme === 'gxbf'. OPEX-1 / VIX-expiry / FED → OI grid;
+  // all other GXBF days use the volume-weighted center (live default).
+  // Consumed by schwab-proxy.js handleGxbfEntry to pick computed.center vs centerOI.
+  const centerSource = (theme === 'gxbf')
+    ? ((opex1 || vixExpDay || fedDay) ? 'oi' : 'vol')
+    : null;
+
   // ── DIAGONAL (companion strategy) — delegated to single source of truth ──
   const { diagText, diagBadge, diagGo, diagSkipCode } = computeDiagonalSignal(etDate, vixPct20d);
 
@@ -503,6 +538,7 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
     strikeInfo, m8bfStrikeInfo, cpiLongCall,
     m8bfText, stradText, gxbfText,
     bobfRec, bobfBadge, bobfBlocks,
+    centerSource,
     // Diagonal (companion — independent of Sigma 3)
     diagText, diagBadge, diagGo, diagSkipCode, vixPct20d,
     oNight, o2o,

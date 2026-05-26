@@ -2497,7 +2497,7 @@ async function handleGxbfEntry(env, etNow, signal, preChain = null) {
   } catch (e) { return { ...out, status: 'error', error: 'chain fetch: ' + e.message }; }
   if (!spot) return { ...out, status: 'error', error: 'no SPX spot' };
 
-  // 2. Compute the gamma center LIVE from the chain (volume-weighted peak).
+  // 2. Compute the gamma center LIVE from the chain (volume- AND OI-weighted).
   //    Replaces the old Discord scraper. snap5/round already applied inside.
   const computed = computeGxbfCenterLive(callExpDateMap, todayISO, spot);
   if (!computed) {
@@ -2505,7 +2505,28 @@ async function handleGxbfEntry(env, etNow, signal, preChain = null) {
     // subsequent cron ticks re-attempt within the entry window.
     return { ...out, status: 'no-center', reason: 'live-gamma compute returned null' };
   }
-  const K = computed.center;
+
+  // 2a. Pick the per-day center via signal.centerSource (hybrid routing).
+  //     'oi'  → OPEX-1 / VIX-expiry / FED days (per signal-engine.js)
+  //     'vol' → all other GXBF days (default)
+  //     Fallback to volume center with a warning if OI was requested but null.
+  const requestedSource = (signal && signal.centerSource) || 'vol';
+  let centerSource = requestedSource;
+  let K;
+  if (requestedSource === 'oi') {
+    if (computed.centerOI != null) {
+      K = computed.centerOI;
+    } else {
+      K = computed.center;
+      centerSource = 'vol-fallback';
+      console.warn(`[gxbf] centerSource=oi requested but computed.centerOI is null; falling back to volume center ${K}`);
+      await logEvent(env, 'warn', 'gxbf-center-fallback',
+        'centerSource=oi requested but centerOI null; using volume center',
+        { volCenter: computed.center, centerOI: computed.centerOI });
+    }
+  } else {
+    K = computed.center;
+  }
 
   // 4. Wing 50/50 selection. midFn pulls the call mid for an exact strike
   //    (no fuzz — symmetric debit math requires exact strikes).
@@ -2522,17 +2543,17 @@ async function handleGxbfEntry(env, etNow, signal, preChain = null) {
   const pick = selectGxbfWing(K, midFn);
   if (!pick) {
     await env.SIGNAL_KV.put(doneKey, 'no-wing: no W with netDebit>0 & risk≤reward', { expirationTtl: 86400 });
-    await logEvent(env, 'warn', 'gxbf-skip', 'no qualifying wing (risk≤reward) found', { center: K, centerSource: 'live-chain-volume', centerOI: computed.centerOI });
+    await logEvent(env, 'warn', 'gxbf-skip', 'no qualifying wing (risk≤reward) found', { center: K, centerSource, centerOI: computed.centerOI, centerVol: computed.center });
     try {
       const dcRaw = await env.SIGNAL_KV.get('discord_config');
       if (dcRaw) {
         const dc = JSON.parse(dcRaw);
         if (dc.channelId) await sendDiscordDM(env, dc.channelId,
-          `⚠️ **GXBF** — no trade. Center ${K} (live gamma calc); no wing 5–100 had netDebit>0 with risk ≤ reward.`,
+          `⚠️ **GXBF** — no trade. Center ${K} (${centerSource} grid); no wing 5–100 had netDebit>0 with risk ≤ reward.`,
           dc.proxyUrl);
       }
     } catch (_) { /* non-critical */ }
-    return { ...out, status: 'no-wing', center: K };
+    return { ...out, status: 'no-wing', center: K, centerSource };
   }
 
   const W = pick.W;
@@ -2554,7 +2575,9 @@ async function handleGxbfEntry(env, etNow, signal, preChain = null) {
     label: 'GXBF',
     center: K,
     wing: W,
-    centerSource: 'live-chain-volume',
+    centerSource,                  // 'oi' | 'vol' | 'vol-fallback' (hybrid per-day)
+    centerSourceRequested: requestedSource,
+    centerVol: computed.center,
     centerOI: computed.centerOI,
     spotEntry: parseFloat(spot.toFixed(2)),
     lowerStrike: kLower, centerStrike: K, upperStrike: kUpper,
@@ -2582,11 +2605,12 @@ async function handleGxbfEntry(env, etNow, signal, preChain = null) {
   await env.SIGNAL_KV.put('gxbf_open_trade', JSON.stringify(trade));
   await env.SIGNAL_KV.put(doneKey, 'filled', { expirationTtl: 86400 });
 
-  console.log(`[gxbf] opened filled center=${K} wing=${W} netDebit=${netDebit.toFixed(2)} (risk ${maxRisk.toFixed(2)} ≤ reward ${maxReward.toFixed(2)})`);
+  console.log(`[gxbf] opened filled center=${K} (source=${centerSource}) wing=${W} netDebit=${netDebit.toFixed(2)} (risk ${maxRisk.toFixed(2)} ≤ reward ${maxReward.toFixed(2)})`);
   await logEvent(env, 'info', 'gxbf-open', 'opened filled', {
     center: K, wing: W, netDebit: parseFloat(netDebit.toFixed(2)),
     maxRisk: parseFloat(maxRisk.toFixed(2)), maxReward: parseFloat(maxReward.toFixed(2)),
-    centerSource: 'live-chain-volume', centerOI: computed.centerOI, spot: parseFloat(spot.toFixed(2)),
+    centerSource, centerSourceRequested: requestedSource,
+    centerVol: computed.center, centerOI: computed.centerOI, spot: parseFloat(spot.toFixed(2)),
   });
 
   // Independent Discord notification (separate from the morning signal post).
@@ -2594,15 +2618,17 @@ async function handleGxbfEntry(env, etNow, signal, preChain = null) {
     const dcRaw = await env.SIGNAL_KV.get('discord_config');
     if (dcRaw) {
       const dc = JSON.parse(dcRaw);
+      const sourceLabel = centerSource === 'oi' ? 'OI-weighted' : centerSource === 'vol-fallback' ? 'Volume (OI fallback)' : 'Volume-weighted';
+      const altLabel = centerSource === 'oi' ? `Volume ${computed.center}` : (computed.centerOI != null ? `OI ${computed.centerOI}` : null);
       if (dc.channelId) await sendDiscordDM(env, dc.channelId,
         `🦋 **GXBF opened** — SPX ${kLower}/${K}/${kUpper} CALL fly (wing ${W})\n` +
         `Net debit $${netDebit.toFixed(2)} · max risk $${(maxRisk*100).toFixed(0)} · max reward $${(maxReward*100).toFixed(0)} · 0DTE\n` +
-        `Center from live gamma calc ${K}${computed.centerOI != null ? ` (OI-weighted ${computed.centerOI})` : ''} · spot ${spot.toFixed(2)}`,
+        `Center ${K} (${sourceLabel} · live gamma calc)${altLabel ? ` · alt ${altLabel}` : ''} · spot ${spot.toFixed(2)}`,
         dc.proxyUrl);
     }
   } catch (_) { /* non-critical */ }
 
-  return { ...out, status: 'opened', center: K, wing: W, netDebit };
+  return { ...out, status: 'opened', center: K, wing: W, netDebit, centerSource };
 }
 
 // Refresh live mids on the open GXBF trade. Reuses the master chain (zero
