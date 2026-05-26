@@ -2340,9 +2340,10 @@ async function settleBobfEOD(env, etNow, spxClose) {
 // ════════════════════════════════════════════════════════════════════
 // GXBF TRADE HANDLER (live)
 // ────────────────────────────────────────────────────────────────────
-// GXBF = scrape the "SPX Gamma" table → use Major Positive by Volume as
-// the butterfly center → widen the wing until risk ≈ reward (closest to
-// exactly 50/50) → 0DTE SPXW long CALL fly → hold to 4 PM cash close.
+// GXBF = compute volume-weighted dealer-gamma peak live from the Schwab
+// 0DTE call chain → use that strike as the butterfly center → widen the
+// wing until risk ≈ reward (closest to exactly 50/50) → 0DTE SPXW long
+// CALL fly → hold to 4 PM cash close.
 //
 // Pipeline mirrors BOBF/Straddle verbatim:
 //   - Gate: only act when the morning signal theme is 'gxbf' (analogous to
@@ -2350,9 +2351,9 @@ async function settleBobfEOD(env, etNow, spxClose) {
 //     INDEPENDENCE: GXBF never blocks / is blocked by M8BF/Straddle/BOBF;
 //     its card reflects only GXBF's own state.
 //   - Idempotent via gxbf_done_<date>.
-//   - Scrape Discord channel 1062542349189791744 (NEW — separate from
-//     M8BF's 1048242197029458040) using env.DISCORD_USER_TOKEN, polled
-//     ~9:33–9:45 ET. Signal posts ~09:34:59 ET.
+//   - Center computed in-house via computeGxbfCenterLive (Black-Scholes
+//     gamma × totalVolume × spot² × 100 × 0.01, per-strike, ±5% range).
+//     Was Discord-scraped historically; now uses the live chain only.
 //   - Long-call butterfly: BUY 1 @ K−W, SELL 2 @ K, BUY 1 @ K+W.
 //   - Wing W ∈ [5,150] step 5. netDebit = mid(K−W) − 2·mid(K) + mid(K+W).
 //     risk = netDebit, reward = W − netDebit. Keep candidates where
@@ -2364,13 +2365,12 @@ async function settleBobfEOD(env, etNow, spxClose) {
 //     settleBobfEOD / settleStraddleEOD).
 // ════════════════════════════════════════════════════════════════════
 
-const GXBF_DISCORD_CHANNEL = '1062542349189791744';
 const GXBF_WING_MIN  = 5;
 const GXBF_WING_MAX  = 100;   // cap → max risk = W/2 = 50pt = $5,000/contract
 const GXBF_WING_STEP = 5;
 
 // GXBF entry window: ~9:33–9:45 ET (signal posts ~09:34:59 ET). Outside the
-// window we don't scrape; past it we mark done with no trade.
+// window we don't compute; past it we mark done with no trade.
 function gxbfInWindow(etNow) {
   const h = etNow.getHours(), m = etNow.getMinutes();
   return h === 9 && m >= 33 && m <= 45;
@@ -2380,73 +2380,70 @@ function gxbfPastWindow(etNow) {
   return (h === 9 && m > 45) || h > 9;
 }
 
-// Parse the "SPX Gamma" monospace ASCII table out of a Discord message.
-// Whitespace/pipe tolerant. Returns { center, spot } or null.
-// Sample row: `| Major Positive by Volume | 7450.00  |`
-function parseGxbfGamma(content) {
-  if (!content || !/SPX\s*Gamma/i.test(content)) return null;
-  const mpv = content.match(/Major Positive by Volume\s*\|?\s*([0-9]+(?:\.[0-9]+)?)/i);
-  if (!mpv) return null;
-  const center = parseFloat(mpv[1]);
-  if (!isFinite(center) || center <= 0) return null;
-  const spotM = content.match(/Spot\s*\|?\s*([0-9]+(?:\.[0-9]+)?)/i);
-  const spot = spotM ? parseFloat(spotM[1]) : null;
-  return { center, spot: (spot != null && isFinite(spot)) ? spot : null };
-}
+// Compute the GXBF gamma center LIVE from the Schwab/Tasty option chain.
+// Replaces the old Discord "Major Positive by Volume" scraper — same idea
+// (volume-weighted dealer gamma peak) but computed in-house from the live
+// 0DTE call chain. Uses the same Black-Scholes gamma formula as calculateGEX
+// (R=0.043, Q=0.013) and the same ±5% strike range filter. Live entry runs
+// at 09:35 ET so we hard-code today's 16:00 ET close for T (half-day case
+// is rare and the morning T is dominated by the day-fraction anyway).
+//
+// Returns { center, centerOI, spot, _source: 'live-chain' } where:
+//   - center   = strike with max volume-weighted gamma (snapped to 5)
+//   - centerOI = strike with max open-interest-weighted gamma (snapped to 5)
+function computeGxbfCenterLive(callExpDateMap, expDate, spot) {
+  if (!callExpDateMap || !spot || spot <= 0) return null;
+  const R = 0.043, Q = 0.013, MULT = 100;
+  const expKey = Object.keys(callExpDateMap).find(k => k.startsWith(expDate + ':'));
+  if (!expKey) return null;
 
-// Scrape the GXBF Discord channel for the most-recent message today that
-// contains an "SPX Gamma" table. Mirrors fetchAllDiscordSignalsForDate's
-// paginated-messages pattern (Authorization: DISCORD_USER_TOKEN). Caches
-// the scraped center + raw msg ts in KV so EOD/endpoint can read it.
-async function scrapeGxbfCenter(env, etNow) {
-  const token = env.DISCORD_USER_TOKEN;
-  if (!token) return { ok: false, reason: 'no token' };
-  const todayISO = isoDateET(etNow);
+  // T = hours-to-16:00-ET / (365·24). Floor of 15 min so T never collapses
+  // to zero if called late in the window. (Matches calculateGEX::zeroDteT.)
+  const etNow = toET(new Date());
+  const hrsLeft = (16 - etNow.getHours()) - (etNow.getMinutes() / 60) - (etNow.getSeconds() / 3600);
+  const safeHrs = Math.max(hrsLeft, 0.25);
+  const T = safeHrs / (365 * 24);
 
-  const cachedRaw = await env.SIGNAL_KV.get(`gxbf_scrape_${todayISO}`);
-  if (cachedRaw) {
-    try { return { ok: true, cached: true, ...JSON.parse(cachedRaw) }; } catch (_) { /* re-scrape */ }
-  }
+  const normPdf = (x) => Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
+  const bsGamma = (S, K, sigma) => {
+    if (T <= 0 || sigma <= 0 || S <= 0) return 0;
+    const d1 = (Math.log(S / K) + (R - Q + 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));
+    return normPdf(d1) * Math.exp(-Q * T) / (S * sigma * Math.sqrt(T));
+  };
 
-  const [y, m, d] = todayISO.split('-').map(Number);
-  const startMs = Date.UTC(y, m - 1, d, 12, 0, 0);
-  const endMs   = Date.UTC(y, m - 1, d, 22, 0, 0);
-  const discordEpoch = 1420070400000n;
-  let afterSnowflake = ((BigInt(startMs) - discordEpoch) << 22n).toString();
-  const beforeSnowflake = ((BigInt(endMs) - discordEpoch) << 22n).toString();
+  // ±5% range matches calculateGEX's chart-window filter (line 3840-3841).
+  const rangePct = 0.05;
+  const lo = spot * (1 - rangePct), hi = spot * (1 + rangePct);
 
-  let best = null;  // most-recent matching message
-  for (let page = 0; page < 5; page++) {
-    const resp = await fetch(
-      `https://discord.com/api/v9/channels/${GXBF_DISCORD_CHANNEL}/messages?limit=100&after=${afterSnowflake}&before=${beforeSnowflake}`,
-      { headers: { 'Authorization': token, 'User-Agent': 'Mozilla/5.0' } }
-    );
-    if (!resp.ok) return { ok: false, status: resp.status };
-    const batch = await resp.json();
-    if (!Array.isArray(batch) || batch.length === 0) break;
-    batch.sort((a, b) => a.id.localeCompare(b.id));
-    for (const msg of batch) {
-      const msgET = toET(new Date(msg.timestamp));
-      const msgDate = `${msgET.getFullYear()}-${String(msgET.getMonth()+1).padStart(2,'0')}-${String(msgET.getDate()).padStart(2,'0')}`;
-      if (msgDate !== todayISO) continue;
-      const g = parseGxbfGamma(msg.content || '');
-      if (!g) continue;
-      // Keep the LAST (most recent) matching message of the day.
-      best = {
-        center: g.center,
-        spot: g.spot,
-        msgId: msg.id,
-        msgTs: msg.timestamp,
-        msgTimeET: `${String(msgET.getHours()).padStart(2,'0')}:${String(msgET.getMinutes()).padStart(2,'0')}:${String(msgET.getSeconds()).padStart(2,'0')}`,
-      };
+  const strikes = callExpDateMap[expKey] || {};
+  let maxVol = 0, centerByVolume = null;
+  let maxOI  = 0, centerByOI     = null;
+
+  for (const strikeStr of Object.keys(strikes)) {
+    const contracts = strikes[strikeStr] || [];
+    for (const c of contracts) {
+      const K = parseFloat(c.strikePrice != null ? c.strikePrice : strikeStr);
+      if (!isFinite(K) || K <= 0) continue;
+      if (K < lo || K > hi) continue;
+      const vol = Math.max(c.totalVolume || 0, 0);
+      const oi  = Math.max(c.openInterest || 0, 0);
+      if (vol === 0 && oi === 0) continue;
+      const iv = (c.volatility || 0) / 100;
+      const gamma = bsGamma(spot, K, iv > 0 ? iv : 0.2);
+      const gex_vol = gamma * vol * spot * spot * MULT * 0.01;
+      const gex_oi  = gamma * oi  * spot * spot * MULT * 0.01;
+      if (gex_vol > maxVol) { maxVol = gex_vol; centerByVolume = K; }
+      if (gex_oi  > maxOI)  { maxOI  = gex_oi;  centerByOI     = K; }
     }
-    if (batch.length < 100) break;
-    afterSnowflake = batch[batch.length - 1].id;
   }
 
-  if (!best) return { ok: false, reason: 'no SPX Gamma table found today' };
-  await env.SIGNAL_KV.put(`gxbf_scrape_${todayISO}`, JSON.stringify(best), { expirationTtl: 86400 });
-  return { ok: true, cached: false, ...best };
+  if (centerByVolume == null) return null;
+  return {
+    center:   snap5(Math.round(centerByVolume)),
+    centerOI: centerByOI != null ? snap5(Math.round(centerByOI)) : null,
+    spot,
+    _source: 'live-chain',
+  };
 }
 
 // Wing selection: KEEP WIDENING, take the WIDEST wing where risk ≤ reward.
@@ -2490,19 +2487,8 @@ async function handleGxbfEntry(env, etNow, signal, preChain = null) {
     return { ...out, status: 'window-passed' };
   }
 
-  // 1. Scrape the gamma center from the GXBF Discord channel.
-  const scraped = await scrapeGxbfCenter(env, etNow);
-  if (!scraped.ok) {
-    // Don't mark done — the signal posts ~09:34:59 ET and the morning block
-    // may run a tick early. Subsequent ticks (handleScheduled GXBF refresh)
-    // re-attempt. If still missing past the window, gxbfPastWindow marks done.
-    return { ...out, status: 'no-scrape', reason: scraped.reason || `discord ${scraped.status || '?'}` };
-  }
-
-  // 2. Center = snap5(round(value)).
-  const K = snap5(Math.round(scraped.center));
-
-  // 3. Build the chain (reuse master chain — zero extra Schwab calls).
+  // 1. Build the chain FIRST (reuse master chain — zero extra Schwab calls).
+  //    We need the chain to compute the gamma center live.
   let token, spot, callExpDateMap;
   try {
     token = await getAccessToken(env);
@@ -2510,6 +2496,16 @@ async function handleGxbfEntry(env, etNow, signal, preChain = null) {
     spot = chain.spot; callExpDateMap = chain.callExpDateMap;
   } catch (e) { return { ...out, status: 'error', error: 'chain fetch: ' + e.message }; }
   if (!spot) return { ...out, status: 'error', error: 'no SPX spot' };
+
+  // 2. Compute the gamma center LIVE from the chain (volume-weighted peak).
+  //    Replaces the old Discord scraper. snap5/round already applied inside.
+  const computed = computeGxbfCenterLive(callExpDateMap, todayISO, spot);
+  if (!computed) {
+    // No qualifying strikes (e.g. empty 0DTE chain). Don't mark done —
+    // subsequent cron ticks re-attempt within the entry window.
+    return { ...out, status: 'no-center', reason: 'live-gamma compute returned null' };
+  }
+  const K = computed.center;
 
   // 4. Wing 50/50 selection. midFn pulls the call mid for an exact strike
   //    (no fuzz — symmetric debit math requires exact strikes).
@@ -2526,13 +2522,13 @@ async function handleGxbfEntry(env, etNow, signal, preChain = null) {
   const pick = selectGxbfWing(K, midFn);
   if (!pick) {
     await env.SIGNAL_KV.put(doneKey, 'no-wing: no W with netDebit>0 & risk≤reward', { expirationTtl: 86400 });
-    await logEvent(env, 'warn', 'gxbf-skip', 'no qualifying wing (risk≤reward) found', { center: K, scrapedCenter: scraped.center });
+    await logEvent(env, 'warn', 'gxbf-skip', 'no qualifying wing (risk≤reward) found', { center: K, centerSource: 'live-chain-volume', centerOI: computed.centerOI });
     try {
       const dcRaw = await env.SIGNAL_KV.get('discord_config');
       if (dcRaw) {
         const dc = JSON.parse(dcRaw);
         if (dc.channelId) await sendDiscordDM(env, dc.channelId,
-          `⚠️ **GXBF** — no trade. Center ${K} (scraped ${scraped.center}); no wing 5–100 had netDebit>0 with risk ≤ reward.`,
+          `⚠️ **GXBF** — no trade. Center ${K} (live gamma calc); no wing 5–100 had netDebit>0 with risk ≤ reward.`,
           dc.proxyUrl);
       }
     } catch (_) { /* non-critical */ }
@@ -2558,10 +2554,8 @@ async function handleGxbfEntry(env, etNow, signal, preChain = null) {
     label: 'GXBF',
     center: K,
     wing: W,
-    scrapedCenter: scraped.center,
-    scrapedSpot: scraped.spot,
-    scrapeMsgTs: scraped.msgTs,
-    scrapeTimeET: scraped.msgTimeET,
+    centerSource: 'live-chain-volume',
+    centerOI: computed.centerOI,
     spotEntry: parseFloat(spot.toFixed(2)),
     lowerStrike: kLower, centerStrike: K, upperStrike: kUpper,
     expDate: todayISO,
@@ -2592,7 +2586,7 @@ async function handleGxbfEntry(env, etNow, signal, preChain = null) {
   await logEvent(env, 'info', 'gxbf-open', 'opened filled', {
     center: K, wing: W, netDebit: parseFloat(netDebit.toFixed(2)),
     maxRisk: parseFloat(maxRisk.toFixed(2)), maxReward: parseFloat(maxReward.toFixed(2)),
-    scrapedCenter: scraped.center, scrapedSpot: scraped.spot,
+    centerSource: 'live-chain-volume', centerOI: computed.centerOI, spot: parseFloat(spot.toFixed(2)),
   });
 
   // Independent Discord notification (separate from the morning signal post).
@@ -2603,7 +2597,7 @@ async function handleGxbfEntry(env, etNow, signal, preChain = null) {
       if (dc.channelId) await sendDiscordDM(env, dc.channelId,
         `🦋 **GXBF opened** — SPX ${kLower}/${K}/${kUpper} CALL fly (wing ${W})\n` +
         `Net debit $${netDebit.toFixed(2)} · max risk $${(maxRisk*100).toFixed(0)} · max reward $${(maxReward*100).toFixed(0)} · 0DTE\n` +
-        `Center from gamma scrape ${scraped.center}${scraped.spot != null ? ` (spot ${scraped.spot})` : ''} @ ${scraped.msgTimeET} ET`,
+        `Center from live gamma calc ${K}${computed.centerOI != null ? ` (OI-weighted ${computed.centerOI})` : ''} · spot ${spot.toFixed(2)}`,
         dc.proxyUrl);
     }
   } catch (_) { /* non-critical */ }
@@ -6190,7 +6184,8 @@ export default {
 
     // ── GET /gxbf-today ── Public live GXBF state (no auth)
     // Mirrors /bobf-today: returns the open/closed GXBF trade, doneState,
-    // skip reason, scrape info. Phantom prior-day/closed-slot cleanup +
+    // and skip reason. Center is computed live from the chain at entry
+    // (no Discord scrape). Phantom prior-day/closed-slot cleanup +
     // staleness self-refresh during market hours. STRATEGY INDEPENDENCE:
     // surfaces only GXBF's own state.
     if (url.pathname === '/gxbf-today' && request.method === 'GET') {
@@ -6264,9 +6259,6 @@ export default {
           }
         }
 
-        const scrapeRaw = await env.SIGNAL_KV.get(`gxbf_scrape_${todayG}`);
-        const scrape = scrapeRaw ? JSON.parse(scrapeRaw) : null;
-
         return jsonResp({
           date: todayG,
           isWeekend: isWeekendG,
@@ -6275,7 +6267,6 @@ export default {
           lastClosed,
           doneState,
           skip,                 // {theme, rec} when signal said no-GXBF today
-          scrape,               // {center, spot, msgTimeET, ...} or null
           serverTimeET: `${String(etNowG.getHours()).padStart(2,'0')}:${String(etNowG.getMinutes()).padStart(2,'0')}`,
           windowET: '09:33 - 09:45',
         }, 200, publicCors);
@@ -7663,118 +7654,6 @@ export default {
       if (url.pathname === '/signals' && request.method === 'GET') {
         const data = await env.SIGNAL_KV.get('signals_today');
         return jsonResp(data ? JSON.parse(data) : { date: '', signals: [] }, 200, corsHeaders);
-      }
-
-      // ── GET /scrape-gamma?from=YYYY-MM-DD&to=YYYY-MM-DD ──
-      // Bulk-scrape the GXBF gamma Discord channel history for a date range
-      // and return the "Major Positive by Volume" center per trading day.
-      // Read-only (no KV writes). Mirrors scrapeGxbfCenter's snowflake +
-      // parseGxbfGamma logic. Takes the FIRST gamma table at/after 09:30 ET
-      // (the one GXBF would scrape in its 09:33–09:45 entry window). Call in
-      // ~monthly chunks to stay well under the subrequest limit.
-      if (url.pathname === '/scrape-gamma' && request.method === 'GET') {
-        const token = env.DISCORD_USER_TOKEN;
-        if (!token) return jsonResp({ error: 'no discord token' }, 500, corsHeaders);
-        const from = url.searchParams.get('from');
-        const to   = url.searchParams.get('to');
-        if (!from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
-          return jsonResp({ error: 'need from & to as YYYY-MM-DD' }, 400, corsHeaders);
-        }
-        // debug=1: widen the window to 09:00–12:00 ET and, for days with no
-        // parse hit, return a raw sample of the longest message that day so
-        // an OLD/different gamma format can be inspected (not just "missing").
-        const debug = url.searchParams.get('debug') === '1';
-        const discordEpoch = 1420070400000n;
-        const out = [];
-        const missing = [];
-        const samples = [];
-        let rateLimited = false;
-        const startD = new Date(from + 'T12:00:00Z');
-        const endD   = new Date(to   + 'T12:00:00Z');
-        for (let d = new Date(startD); d <= endD; d.setUTCDate(d.getUTCDate() + 1)) {
-          const dow = d.getUTCDay();
-          if (dow === 0 || dow === 6) continue;            // skip weekends
-          const dateISO = d.toISOString().slice(0, 10);
-          const [y, mo, dd] = dateISO.split('-').map(Number);
-          // DST-PROOF wide window: 13:00–15:30 UTC brackets 09:35 ET in BOTH
-          // EST (=14:35 UTC) and EDT (=13:35 UTC). Posts come every ~5 min;
-          // we pick the one whose ET time is CLOSEST to 09:35 within the
-          // 09:30–09:45 ET entry band (gamma table may be in msg.content OR
-          // in a Discord embed — old posts used embeds).
-          const startMs = Date.UTC(y, mo - 1, dd, 13,  0, 0);
-          const endMs   = Date.UTC(y, mo - 1, dd, 15, 30, 0);
-          let afterSnowflake = ((BigInt(startMs) - discordEpoch) << 22n).toString();
-          const beforeSnowflake = ((BigInt(endMs) - discordEpoch) << 22n).toString();
-          const TARGET = 9 * 3600 + 35 * 60;                  // 09:35:00 ET, seconds
-          const BAND_LO = 9 * 3600 + 30 * 60;                 // 09:30:00
-          const BAND_HI = 9 * 3600 + 45 * 60;                 // 09:45:00
-          let dayHit = null, bestDelta = Infinity;
-          let dbgLongest = null;
-          for (let page = 0; page < 6; page++) {
-            const resp = await fetch(
-              `https://discord.com/api/v9/channels/${GXBF_DISCORD_CHANNEL}/messages?limit=100&after=${afterSnowflake}&before=${beforeSnowflake}`,
-              { headers: { 'Authorization': token, 'User-Agent': 'Mozilla/5.0' } }
-            );
-            if (resp.status === 429) { rateLimited = true; break; }
-            if (!resp.ok) break;
-            const batch = await resp.json();
-            if (!Array.isArray(batch) || batch.length === 0) break;
-            batch.sort((a, b) => a.id.localeCompare(b.id));   // chronological
-            for (const msg of batch) {
-              const msgET = toET(new Date(msg.timestamp));
-              const md = `${msgET.getFullYear()}-${String(msgET.getMonth()+1).padStart(2,'0')}-${String(msgET.getDate()).padStart(2,'0')}`;
-              if (md !== dateISO) continue;
-              // gamma table can be in plain content OR a Discord embed
-              let body = msg.content || '';
-              if (msg.embeds && msg.embeds.length) {
-                for (const e of msg.embeds) {
-                  if (e.title) body += '\n' + e.title;
-                  if (e.description) body += '\n' + e.description;
-                  if (e.fields) for (const f of e.fields) body += `\n${f.name} ${f.value}`;
-                }
-              }
-              const secET = msgET.getHours()*3600 + msgET.getMinutes()*60 + msgET.getSeconds();
-              if (debug && (!dbgLongest || body.length > dbgLongest.len)) {
-                dbgLongest = {
-                  date: dateISO, len: body.length,
-                  msgTimeET: `${String(msgET.getHours()).padStart(2,'0')}:${String(msgET.getMinutes()).padStart(2,'0')}`,
-                  sample: body.slice(0, 500),
-                };
-              }
-              if (secET < BAND_LO || secET > BAND_HI) continue;  // only the 9:30–9:45 band
-              const g = parseGxbfGamma(body);
-              if (!g) continue;
-              const delta = Math.abs(secET - TARGET);
-              if (delta < bestDelta) {                          // closest to 09:35
-                bestDelta = delta;
-                dayHit = {
-                  date: dateISO,
-                  center: g.center,
-                  spot: g.spot,
-                  msgTimeET: `${String(msgET.getHours()).padStart(2,'0')}:${String(msgET.getMinutes()).padStart(2,'0')}:${String(msgET.getSeconds()).padStart(2,'0')}`,
-                  msgId: msg.id,
-                };
-              }
-            }
-            if (batch.length < 100) break;
-            afterSnowflake = batch[batch.length - 1].id;
-          }
-          if (rateLimited) break;
-          if (dayHit) out.push(dayHit);
-          else {
-            missing.push(dateISO);
-            if (debug && dbgLongest) samples.push(dbgLongest);
-          }
-        }
-        return jsonResp({
-          from, to,
-          found: out.length,
-          missingCount: missing.length,
-          rateLimited,
-          centers: out,
-          missing,
-          ...(debug ? { samples } : {}),
-        }, 200, corsHeaders);
       }
 
       // ── GET /spx-history ── Today's SPX price ticks (replaces dead spx_history.json)
