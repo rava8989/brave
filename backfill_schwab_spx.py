@@ -28,11 +28,24 @@ VIX_DIR.mkdir(parents=True, exist_ok=True)
 WORKER = 'https://schwab-proxy.ravamt4.workers.dev'
 ET = ZoneInfo('America/New_York')
 
-# US holidays 2026 (market closed) — minimal set, expand if needed
-HOLIDAYS_2026 = {
-    '2026-01-01', '2026-01-19', '2026-02-16', '2026-04-03',  # New Year, MLK, Presidents, Good Friday
-    '2026-05-25', '2026-06-19', '2026-07-03', '2026-09-07',  # Memorial, Juneteenth, Jul 3 (Jul 4 Sat), Labor
-    '2026-11-26', '2026-12-25',  # Thanksgiving, Christmas
+# US market holidays — full coverage 2023-2026. Mirrors signal-engine.js holidays list.
+# Half-days (e.g., 2024-11-29 day after Thanksgiving) are NOT in this set — they ARE
+# trading days (shortened session); their data is still pulled.
+US_MARKET_HOLIDAYS = {
+    # 2023
+    '2023-01-02', '2023-01-16', '2023-02-20', '2023-04-07', '2023-05-29',
+    '2023-06-19', '2023-07-04', '2023-09-04', '2023-11-23', '2023-12-25',
+    # 2024
+    '2024-01-01', '2024-01-15', '2024-02-19', '2024-03-29', '2024-05-27',
+    '2024-06-19', '2024-07-04', '2024-09-02', '2024-11-28', '2024-12-25',
+    # 2025
+    '2025-01-01', '2025-01-09',  # Carter Day of Mourning
+    '2025-01-20', '2025-02-17', '2025-04-18', '2025-05-26',
+    '2025-06-19', '2025-07-04', '2025-09-01', '2025-11-27', '2025-12-25',
+    # 2026
+    '2026-01-01', '2026-01-19', '2026-02-16', '2026-04-03', '2026-05-25',
+    '2026-06-19', '2026-07-03',  # Jul 3 observed (Jul 4 Saturday)
+    '2026-09-07', '2026-11-26', '2026-12-25',
 }
 
 
@@ -68,7 +81,7 @@ def save_csv(path: Path, candles: list):
 def iter_trading_days(d0: date, d1: date):
     d = d0
     while d <= d1:
-        if d.weekday() < 5 and d.isoformat() not in HOLIDAYS_2026:
+        if d.weekday() < 5 and d.isoformat() not in US_MARKET_HOLIDAYS:
             yield d
         d += timedelta(days=1)
 
