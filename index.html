@@ -1173,9 +1173,17 @@
     return el.value !== String(_autoValues[fieldId]);
   }
 
+  // Bumped on schema changes that invalidate previously-cached values.
+  // v2 (2026-05-26): introduced after a holiday-VIX bug saved Memorial-Day's
+  // stale 16.59 as "yesterdayClose". Bumping forces a fresh fetch on next
+  // page-load so the dashboard re-pulls from Schwab with the corrected
+  // candle-walker + quote-override-guard logic.
+  const S3_INPUTS_VERSION = 2;
+
   function saveInputs(){
     // Only save auto-filled values — never save manual overrides
     const vals={
+      v:             S3_INPUTS_VERSION,
       todayOpen:     _autoValues.todayOpen     || '',
       yesterdayOpen: _autoValues.yesterdayOpen || '',
       yesterdayClose:_autoValues.yesterdayClose|| '',
@@ -1190,6 +1198,12 @@
       const raw=localStorage.getItem('s3inputs');
       if(!raw) return;
       const v=JSON.parse(raw);
+      // Invalidate pre-v2 cache (could contain holiday-stale VIX values)
+      if((v.v||1) < S3_INPUTS_VERSION){
+        localStorage.removeItem('s3inputs');
+        console.info('[S3] cleared pre-v'+S3_INPUTS_VERSION+' cached inputs (likely holiday-stale)');
+        return;
+      }
       // Only restore if saved today — stale inputs from yesterday are useless
       if(v.savedDate !== new Date().toDateString()) return;
       if(v.todayOpen){     markAutoFilled('todayOpen',     v.todayOpen);     }
