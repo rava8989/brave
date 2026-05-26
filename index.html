@@ -2311,14 +2311,31 @@
         if(closeCandle) yClose = closeCandle.close.toFixed(2);
       }
 
-      // Override yClose with quote's closePrice (official previous close)
+      // Schwab's /market/quotes ?$VIX closePrice returns Schwab's "prior session
+      // close" which can lag holiday boundaries — e.g., on Tue after Memorial
+      // Day Monday, Schwab returns Monday's stale VIX print, not Friday's. So
+      // we only override yClose with the quote when (a) the candle walker
+      // couldn't derive a close at all, OR (b) the quote's close is within
+      // $0.50 of the candle-derived close (sanity-matching to the trading day
+      // we already correctly identified above).
       try{
         const qUrl = `${SCHWAB.proxy()}/market/quotes?symbols=%24VIX&fields=quote`;
         const qResp = await fetch(qUrl, { headers: { Authorization: `Bearer ${token}` } });
         if(!qResp.ok) throw new Error('HTTP ' + qResp.status);
         const qData = await qResp.json();
         const qClose = qData?.['$VIX']?.quote?.closePrice;
-        if(qClose) yClose = qClose.toFixed(2);
+        if(qClose){
+          if(yClose === null){
+            yClose = qClose.toFixed(2);  // no candle data — accept quote as last resort
+          } else {
+            const candleClose = parseFloat(yClose);
+            if(Math.abs(qClose - candleClose) <= 0.5){
+              yClose = qClose.toFixed(2);  // matches candle within $0.50 — use as refinement
+            } else {
+              console.warn(`[S3] VIX quote closePrice (${qClose}) diverges from candle close (${candleClose}) — using candle close`);
+            }
+          }
+        }
       }catch(e){ console.warn('[S3] VIX quote fallback:', e); }
 
       // Fill fields using markAutoFilled so values are tracked as auto
