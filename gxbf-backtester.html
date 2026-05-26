@@ -591,8 +591,9 @@ body {
     <strong>Allowed days</strong> — OPEX-1, CPI, and NM-non-Monday are <em>no longer banned</em>; they fire if the trigger/block check passes.
     GXBF is fully independent of M8BF / Straddle / BOBF — it neither blocks nor is blocked by them.
     <br><br>
-    <strong>Center routing (hybrid, live default)</strong> — at <code>09:35 ET</code> the gamma model computes two centers
-    from the live 0DTE call chain (Black-Scholes γ within ±5% of spot, snapped to the nearest 5):
+    <strong>Center routing (hybrid, live default)</strong> — at the chosen <strong>Entry Time</strong> (default <code>09:35 ET</code>;
+    the dropdown below offers every 5-min step from <code>09:35</code> through <code>14:00</code>) the gamma model computes two centers
+    from the 0DTE call chain (Black-Scholes γ within ±5% of spot, snapped to the nearest 5):
     <ul style="margin:4px 0 4px 18px;padding:0">
       <li><strong>Volume</strong> center — γ × <code>totalVolume</code> peak (captures today's traded flow).</li>
       <li><strong>OI</strong> center — γ × <code>openInterest</code> peak (captures standing dealer inventory).</li>
@@ -614,15 +615,17 @@ body {
     <code>pnl = (intrinsic − nd) × 100 × contracts</code>.
     <br><br>
     <span style="color:var(--accent);font-size:11px;font-weight:600">
-      ★ Default config: <code>entry 09:35 ET, exit SPX close (0DTE), wing 5 → 100 (step 5), widest risk ≤ reward wing,
-      hybrid center, real GXBF gating ON</code>. The toggles below can force vol-only, OI-only, or replace the live gating
-      with the legacy manual overnight VIX-drop filter for what-if studies.
+      ★ Default config: <code>entry 09:35 ET (configurable 09:35–14:00 in 5-min steps), exit SPX close (0DTE), wing 5 → 100 (step 5),
+      widest risk ≤ reward wing, hybrid center, real GXBF gating ON</code>. The Entry Time dropdown studies what-if the bot fired
+      later in the morning / midday. The other toggles can force vol-only, OI-only, or replace the live gating with the legacy
+      manual overnight VIX-drop filter for what-if studies.
     </span>
     <br><br>
     <span style="color:var(--text3);font-size:11px">
-      ⚠ <strong>Backtester scope</strong> — opens one butterfly at 9:35 ET, settles to exact SPX-close intrinsic; no rolling,
-      no mid-trade management, no slippage past mid, no commissions. Sizing is 1 contract by default; equity compounding engages
-      via the allocation sidebar. Special-day filters apply on the entry date. Live execution can differ.
+      ⚠ <strong>Backtester scope</strong> — opens one butterfly at the selected Entry Time ET, settles to exact SPX-close
+      intrinsic; no rolling, no mid-trade management, no slippage past mid, no commissions. Sizing is 1 contract by default;
+      equity compounding engages via the allocation sidebar. Special-day filters apply on the entry date. GXBF trigger / block
+      gating is computed from full-day VIX (vixOpen / vixClose / gap) — unaffected by Entry Time. Live execution can differ.
     </span>
   </div>
 </section>
@@ -639,9 +642,12 @@ body {
   </div>
 
   <div class="fg">
-    <div class="fg-label">Entry / Exit</div>
+    <div class="fg-label">Entry Time (ET)</div>
     <div class="fg-row">
-      <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text2);padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);white-space:nowrap">ENTRY 9:35 ET · EXIT SPX CLOSE (0DTE)</span>
+      <select class="num-input" id="entryTime" style="min-width:96px;cursor:pointer" title="Intraday entry time. Each timestamp uses its own per-strike gamma×volume / gamma×OI snapshot. Exit is still SPX cash close (0DTE).">
+        <!-- Options populated at load time so they match the data file's by_time grid -->
+      </select>
+      <span style="color:var(--text3);font-size:10px;white-space:nowrap">→ exit SPX close (0DTE)</span>
     </div>
   </div>
 
@@ -778,9 +784,9 @@ body {
   <div class="empty-state" id="emptyState">
     <div class="empty-title">Framework ready — no data yet</div>
     <div class="empty-desc">
-      Once the GXBF dataset is loaded (one 9:35-ET SPXW 0DTE call-mid snapshot per trading day, centered on that day's Major-Positive-by-Volume gamma strike, with SPX/VIX open &amp; close), this page will compute results using the parameters above.
+      Once the GXBF dataset is loaded — one SPXW 0DTE call-mid snapshot per trading day at every 5-min entry timestamp from 09:35 → 14:00 ET, centered on that timestamp's Major-Positive-by-Volume (or OI) gamma strike, with SPX/VIX open &amp; close — this page will compute results using the parameters above.
       <br><br>
-      Drop the data file at <code>./gxbf_bt_data.json</code> — a flat chronological array of daily records <code>{date, center, spxClose, spxOpen, vixOpen, vixClose, mids}</code>.
+      Drop the data file at <code>./gxbf_bt_data.json</code> — a flat chronological array of daily records <code>{date, spxOpen, spxClose, vixOpen, vixClose, by_time:{"HH:MM":{center, centerOI, mids, midsOI}}}</code>.
     </div>
   </div>
 
@@ -1233,6 +1239,7 @@ function getParams() {
     // Date + strategy params
     from:          document.getElementById('dateFrom').value,
     to:            document.getElementById('dateTo').value,
+    entryTime:     (document.getElementById('entryTime') || {}).value || '09:35',
     wingMin,
     wingMax,
     contracts:     parseInt(document.getElementById('contracts').value, 10) || 1,
@@ -1677,10 +1684,17 @@ function pickByPolicy(candidates, targetDTE, policy) {
 // GXBF_DATA is a flat chronological array of daily records:
 //   { date:"YYYY-MM-DD", center:<int×5>, spxClose, spxOpen, vixOpen, vixClose,
 //     mids:{ "<off>":<callMid> } }   off ∈ [-100,100] step 5, relative to center.
-// Strategy: at 9:35 ET buy 1 (center−W) call, sell 2 center calls, buy 1
-// (center+W) call. Sweep W = wingMin..wingMax step 5; a width is valid iff
+// Strategy: at params.entryTime ET (default 9:35; configurable 9:35–14:00 in
+// 5-min steps) buy 1 (center−W) call, sell 2 center calls, buy 1 (center+W)
+// call. Sweep W = wingMin..wingMax step 5; a width is valid iff
 // nd = lo − 2·ce + up  is  > 0  AND  ≤ W − nd. Take the WIDEST valid W.
 // Held to SPX close; settled to exact intrinsic.
+//
+// Data shape: per-day record has top-level spxOpen / spxClose / vixOpen /
+// vixClose (full-day values, unchanged regardless of entryTime), plus a
+// `by_time` dict keyed by HH:MM that holds {center, centerOI, mids, midsOI}
+// at that timestamp. Legacy records (without by_time) are read from the
+// flat top-level fields as a fallback so the UI doesn't crash mid-rebuild.
 function runBacktestBS(data, params) {
   const trades = [];
   let skipped = { ovDrop: 0, gating: 0, noWing: 0, contracts0: 0, badData: 0 };
@@ -1745,6 +1759,26 @@ function runBacktestBS(data, params) {
       if (drop == null || drop < params.ovDropThr) { skipped.ovDrop++; continue; }
     }
 
+    // Pick the per-timestamp snapshot for params.entryTime (new format).
+    // Fallback to the legacy flat fields when by_time is absent (old data file).
+    // If by_time exists but doesn't have the selected timestamp (e.g., half-day
+    // past close), skip the day.
+    let snapCenter, snapCenterOI, snapMids, snapMidsOI;
+    if (rec.by_time && typeof rec.by_time === 'object') {
+      const tsSnap = rec.by_time[params.entryTime];
+      if (!tsSnap) { skipped.badData++; continue; }
+      snapCenter   = tsSnap.center;
+      snapCenterOI = tsSnap.centerOI;
+      snapMids     = tsSnap.mids   || {};
+      snapMidsOI   = tsSnap.midsOI || {};
+    } else {
+      // Legacy single-time data (09:35 ET only)
+      snapCenter   = rec.center;
+      snapCenterOI = rec.centerOI;
+      snapMids     = rec.mids   || {};
+      snapMidsOI   = rec.midsOI || {};
+    }
+
     // Center source: Hybrid (default) routes OPEX-1, VIX-expiry, or FED days
     // to the OI-weighted grid; everything else uses the volume-weighted grid.
     // Manual 'vol' / 'oi' force the same source for every day. If a hybrid OI
@@ -1753,12 +1787,12 @@ function runBacktestBS(data, params) {
     if (params.centerSrc === 'hybrid') {
       const d = rec.date;
       const opexM1 = sOpexM1.has(d), vixExp = sVIX.has(d), fed = sFED.has(d);
-      useOI = (opexM1 || vixExp || fed) && rec.centerOI != null;
+      useOI = (opexM1 || vixExp || fed) && snapCenterOI != null;
     } else {
       useOI = params.centerSrc === 'oi';
     }
-    const mids = (useOI ? rec.midsOI : rec.mids) || {};
-    const Kc = useOI ? rec.centerOI : rec.center;
+    const mids = useOI ? snapMidsOI : snapMids;
+    const Kc = useOI ? snapCenterOI : snapCenter;
     const ce = mids["0"];
     if (ce == null || Kc == null) { skipped.badData++; continue; }
 
@@ -1818,7 +1852,18 @@ function runBacktestBS(data, params) {
       premium,
       priceSource: 'thetadata',
       centerSource: useOI ? 'oi' : 'vol',              // which grid sourced K (hybrid resolves to one per-day)
-      minutesInTrade: 385,                            // 9:35 ET → SPX close (0DTE)
+      entryTime:   params.entryTime,                   // chosen entry HH:MM ET
+      minutesInTrade: (function(){
+        // entry HH:MM ET → SPX cash close (16:00 regular, 13:00 half-days)
+        const [eh, em] = (params.entryTime || '09:35').split(':').map(n => parseInt(n, 10));
+        const HALF_DAY_SET = new Set([
+          '2024-07-03','2024-11-29','2024-12-24',
+          '2025-07-03','2025-11-28','2025-12-24',
+          '2026-07-02','2026-11-27','2026-12-24',
+        ]);
+        const closeH = HALF_DAY_SET.has(rec.date) ? 13 : 16;
+        return Math.max(0, (closeH * 60) - (eh * 60 + em));
+      })(),
       tags,                                           // array of special-day category names
     });
   }
@@ -2136,7 +2181,19 @@ async function doRun() {
 
 document.getElementById('runBtn').addEventListener('click', doRun);
 
-// GXBF entry/exit are fixed (9:35 ET → SPX close, 0DTE) — no time selectors.
+// Populate the Entry Time dropdown with the canonical 09:35 → 14:00 (step 5min)
+// grid that the fetcher writes to gxbf_bt_data.json. Default = 09:35 (legacy).
+function populateEntryTimeDropdown() {
+  const sel = document.getElementById('entryTime');
+  if (!sel) return;
+  const grid = [];
+  for (let h = 9, m = 35; (h < 14) || (h === 14 && m === 0); ) {
+    grid.push(`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`);
+    m += 5; if (m >= 60) { h += 1; m -= 60; }
+  }
+  sel.innerHTML = grid.map(t => `<option value="${t}"${t === '09:35' ? ' selected' : ''}>${t}</option>`).join('');
+}
+populateEntryTimeDropdown();
 
 // Equity scale radio — re-render on change
 document.querySelectorAll('input[name="equityScale"]').forEach(r => {
