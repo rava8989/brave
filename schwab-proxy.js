@@ -779,7 +779,7 @@ async function handleEOD(env, etNow) {
       if (fullSigs.length > 0) {
         const signals = fullSigs.map(s => ({
           time: s.time, center: s.center, lower: s.lower, upper: s.upper,
-          t1: s.t1, premium: s.premium, cp: s.cp ?? 0, banned: isBanned(s.center, s.lower),
+          t1: s.t1, premium: s.premium, cp: s.cp ?? 0, banned: isBanned(s.center, s.lower, s.t1),
         }));
         await env.SIGNAL_KV.put('signals_today', JSON.stringify({ date: todayISO, signals }));
         console.log(`[eod] Re-scraped ${signals.length} signals for ${todayISO}`);
@@ -890,7 +890,7 @@ async function handleEOD(env, etNow) {
           if (skipTimes.has(sig.time)) continue;   // ← manual cancellation
           const [h, m] = sig.time.split(':').map(Number);
           const mins = h * 60 + m;
-          if (mins >= winLo && mins < winHi && !isBanned(sig.center, sig.lower)) {
+          if (mins >= winLo && mins < winHi && !isBanned(sig.center, sig.lower, sig.t1)) {
             qualifying = sig;
             break;
           }
@@ -1011,17 +1011,30 @@ function parseDiscordSignal(content) {
   return { center, upper, lower, t1, premium, cp };
 }
 
-// M8BF banned-strike check. Combo rule keyed by SPREAD%100 = (center-lower)%100,
-// NOT t1%100. Matches backtester.html / strike_analysis.js canonical logic.
-// Previous version using t1 mod wrongly banned center=7395 t1=7400 lower=7355
-// (real spread mod = 40 → not in COMBO_BANS), losing Friday 2026-05-08 M8BF.
-function isBanned(center, lower) {
+// M8BF banned-strike check.
+//
+// FULL ban: center % 100 ∈ {10, 25, 35, 40, 65, 80}.
+// COMBO ban: M8BF_COMBO_BANS[t1 % 100] === center % 100  → BANNED.
+//   COMBO_BANS = { 0:95, 20:15, 55:50, 65:60, 85:90 }
+//   t1 is the Discord "Target 1" field (from `Target 1: XXXX` in the post),
+//   distinct from `lower` (= center − wing). The rule is keyed off t1's last
+//   two digits, NOT lower's and NOT (center − lower).
+//
+// Example (today's 09:36 signal): center=7495 (cmod=95), t1=7500 (t1mod=0).
+//   COMBO_BANS[0] === 95 → BANNED. With the previous (center−lower) keying
+//   this got `spread%100 = 50`, missed the ban, and let the trade through.
+//
+// Reference unit-test cases:
+//   isBanned(7495, t1=7500) === true   (t1%100=0, COMBO_BANS[0]=95, center%100=95)
+//   isBanned(7395, t1=7400) === true   (same combo)
+//   isBanned(7395, t1=7355) === false  (t1%100=55, COMBO_BANS[55]=50, center%100=95 ≠ 50)
+function isBanned(center, lower, t1) {
   const FULL_BANS = new Set([10, 25, 35, 40, 65, 80]);
   const COMBO_BANS = { 0: 95, 20: 15, 55: 50, 65: 60, 85: 90 };
   if (FULL_BANS.has(center % 100)) return true;
-  if (lower != null) {
-    const spreadMod = ((center - lower) % 100 + 100) % 100;
-    if (COMBO_BANS[spreadMod] !== undefined && center % 100 === COMBO_BANS[spreadMod]) return true;
+  if (t1 != null) {
+    const t1Mod = ((t1 % 100) + 100) % 100;
+    if (COMBO_BANS[t1Mod] !== undefined && center % 100 === COMBO_BANS[t1Mod]) return true;
   }
   return false;
 }
@@ -1098,7 +1111,7 @@ async function pollDiscordSignals(env) {
       t1: sig.t1,
       premium: sig.premium,
       cp: sig.cp ?? 0,
-      banned: isBanned(sig.center, sig.lower),
+      banned: isBanned(sig.center, sig.lower, sig.t1),
       msgId: msg.id,
     });
     seenMsgIds.add(msg.id);
@@ -4999,7 +5012,7 @@ async function backfillMissingPL(env, targetDates = null) {
         if (!sig.time) continue;
         const [h, m] = sig.time.split(':').map(Number);
         const mins = h * 60 + m;
-        if (mins >= winLo && mins < winHi && !isBanned(sig.center, sig.lower)) {
+        if (mins >= winLo && mins < winHi && !isBanned(sig.center, sig.lower, sig.t1)) {
           qualifying = sig;
           break;
         }
@@ -5103,7 +5116,7 @@ async function appendTradesToBacktester(env, todayISO, etNow, signals, spxClose,
     if (maxp <= 0) continue;
     const intrinsic = Math.max(0, Math.min(spxClose - sig.lower, sig.upper - spxClose));
     const prof = Math.round((intrinsic - sig.premium) * 100);
-    const banned = isBanned(sig.center, sig.lower);
+    const banned = isBanned(sig.center, sig.lower, sig.t1);
     newRows.push([todayISO, dayIdx, bucket, sig.premium, spr, prof, maxp, sig.center, banned]);
   }
 
@@ -5366,7 +5379,7 @@ export default {
           t1: s.t1,
           premium: s.premium,
           cp: s.cp ?? 0,
-          banned: isBanned(s.center, s.lower),
+          banned: isBanned(s.center, s.lower, s.t1),
         }));
         await env.SIGNAL_KV.put('signals_today', JSON.stringify({ date: dateISO, signals }));
         return jsonResp({ date: dateISO, total: signals.length, banned: signals.filter(s => s.banned).length }, 200, { 'Access-Control-Allow-Origin': '*' });
@@ -6042,7 +6055,7 @@ export default {
             signals: sigs.slice(0, 100).map(s => ({
               time: s.time, center: s.center, t1: s.t1,
               lower: s.lower, upper: s.upper, premium: s.premium,
-              banned: isBanned(s.center, s.lower),
+              banned: isBanned(s.center, s.lower, s.t1),
             })),
           }, 200, { 'Access-Control-Allow-Origin': '*' });
         } catch (e) {
@@ -7358,7 +7371,7 @@ export default {
             const allSigs = await fetchAllDiscordSignalsForDate(env.DISCORD_USER_TOKEN, '1048242197029458040', rescrapeDate);
             const signals = allSigs.map(s => ({
               time: s.time, center: s.center, lower: s.lower, upper: s.upper,
-              t1: s.t1, premium: s.premium, cp: s.cp ?? 0, banned: isBanned(s.center, s.lower),
+              t1: s.t1, premium: s.premium, cp: s.cp ?? 0, banned: isBanned(s.center, s.lower, s.t1),
             }));
             await env.SIGNAL_KV.put('signals_today', JSON.stringify({ date: rescrapeDate, signals }));
             console.log(`[gex] Rescrape complete: ${signals.length} signals for ${rescrapeDate}`);
