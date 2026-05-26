@@ -2391,6 +2391,17 @@ function gxbfPastWindow(etNow) {
 // Returns { center, centerOI, spot, _source: 'live-chain' } where:
 //   - center   = strike with max volume-weighted gamma (snapped to 5)
 //   - centerOI = strike with max open-interest-weighted gamma (snapped to 5)
+//
+// ─────────────────────────────────────────────────────────────────────────
+// FULL METHODOLOGY: see tasks/GXBF_METHODOLOGY.md  (the durable reference).
+// Read it before touching this function, fetch_thetadata_gxbf.py::build_day,
+// or any GXBF gating logic in signal-engine.js. It covers:
+//   • why per-strike IV (NOT a uniform VIX-as-σ),
+//   • the S²·100·0.01 dealer-exposure factors (mirrored from calculateGEX),
+//   • the hybrid live rule (OI on OPEX-1 / VIX-exp / FED, else volume),
+//   • known bugs we've hit and the fixes that stuck,
+//   • the deleted Discord scraper (commit 8280d55) — do not chase it.
+// ─────────────────────────────────────────────────────────────────────────
 function computeGxbfCenterLive(callExpDateMap, expDate, spot) {
   if (!callExpDateMap || !spot || spot <= 0) return null;
   const R = 0.043, Q = 0.013, MULT = 100;

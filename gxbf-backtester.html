@@ -571,29 +571,58 @@ body {
 
 <!-- Strategy description -->
 <section class="strategy-banner">
-  <div class="strategy-title">GXBF — 0DTE SPXW Gamma Long-Call Butterfly</div>
+  <div class="strategy-title">GXBF — 0DTE SPXW Long-Call Gamma Butterfly (hybrid)</div>
   <div class="strategy-desc">
-    0DTE SPXW long-call butterfly centered on 9:35 Major-Positive-by-Volume gamma; widen the wing to the widest where risk ≤ reward; held to the SPX close.
+    0DTE SPXW long-call butterfly centered on the morning <strong>Major-Positive gamma strike</strong>, with the
+    center sourced from either traded volume or open interest depending on the day. The day is gated by an overnight VIX
+    rule, the wing widens to the widest <code>risk ≤ reward</code> width, and the position is held to the SPX cash close.
     <br><br>
-    <strong>Setup</strong> — at <code>09:35 ET</code> read the Major-Positive-by-Volume gamma strike (the data file's <code>center</code>, snapped to the nearest 5).
-    Buy 1 lower call (center − wing), sell 2 center calls, buy 1 upper call (center + wing) — a symmetric long-call butterfly for a net debit.
+    <strong>Trigger</strong> (one of must be true):
+    <ul style="margin:4px 0 4px 18px;padding:0">
+      <li>overnight VIX drop &gt; <code>0.65</code> pts (<code>prev VIX close − today VIX open</code>), OR</li>
+      <li>it's <strong>OPEX+1</strong> (the trading day after monthly options expiration — auto-trigger).</li>
+    </ul>
+    <strong>Block</strong> (any one kills the trade):
+    <ul style="margin:4px 0 4px 18px;padding:0">
+      <li>today's VIX open ≥ <code>25</code> (hard volatility cap),</li>
+      <li>OPEX+1 <em>and</em> VIX gapped up ≥ <code>2%</code> overnight,</li>
+      <li>it's <strong>EOM</strong> (last trading day of the month — handed to Straddle).</li>
+    </ul>
+    <strong>Allowed days</strong> — OPEX-1, CPI, and NM-non-Monday are <em>no longer banned</em>; they fire if the trigger/block check passes.
+    GXBF is fully independent of M8BF / Straddle / BOBF — it neither blocks nor is blocked by them.
+    <br><br>
+    <strong>Center routing (hybrid, live default)</strong> — at <code>09:35 ET</code> the gamma model computes two centers
+    from the live 0DTE call chain (Black-Scholes γ within ±5% of spot, snapped to the nearest 5):
+    <ul style="margin:4px 0 4px 18px;padding:0">
+      <li><strong>Volume</strong> center — γ × <code>totalVolume</code> peak (captures today's traded flow).</li>
+      <li><strong>OI</strong> center — γ × <code>openInterest</code> peak (captures standing dealer inventory).</li>
+    </ul>
+    Hybrid routes the day automatically: on <strong>OPEX-1</strong>, <strong>VIX expiry</strong> (Wed two days before OPEX), or <strong>FED</strong>
+    announcement days → use the OI center; on all other days → use the Volume center.
+    <br><br>
+    <strong>Structure</strong> — symmetric long-call butterfly: buy 1 lower call <code>(K − W)</code>, sell 2 center calls <code>K</code>,
+    buy 1 upper call <code>(K + W)</code> for a net debit <code>nd = lower − 2·center + upper</code>.
     <br>
-    <strong>Wing selection</strong> — sweep the wing width from <code>WING MIN</code> to <code>WING MAX</code> in 5-pt steps. For each width compute the net debit
-    <code>nd = lower − 2·center + upper</code>; a width is valid only when <code>nd &gt; 0</code> and <code>nd ≤ wing − nd</code> (max risk ≤ max reward).
-    Take the <strong>widest</strong> valid wing. If no width qualifies that day, no trade is taken.
+    <strong>Wing selection</strong> — sweep <code>W ∈ {5, 10, … 100}</code> (5-pt steps); a width is valid when
+    <code>nd &gt; 0</code> AND <code>nd ≤ W − nd</code> (i.e. <code>nd ≤ W/2</code>, max risk never exceeds max reward).
+    Take the <strong>widest</strong> valid <code>W</code>; if none qualify, no trade.
+    Per-contract risk is the debit paid (capped near $5,000 via the <code>W ≤ 100</code> + <code>risk ≤ reward</code> constraint).
     <br>
-    <strong>Holding / closing</strong> — 0DTE, held to the <strong>SPX close</strong> and settled to exact intrinsic
-    (<code>max(0,S−(K−W)) − 2·max(0,S−K) + max(0,S+W… )</code>, clamped to <code>[0, W]</code>). Max risk per contract is the debit paid; max reward is <code>wing − debit</code>.
+    <strong>Holding / closing</strong> — 0DTE SPXW, held to the SPX <strong>cash close</strong>
+    (16:00 ET; 13:00 ET on half-days). Settled to exact intrinsic
+    <code>clamp(max(0,S−(K−W)) − 2·max(0,S−K) + max(0,S−(K+W)), 0, W)</code>;
+    <code>pnl = (intrinsic − nd) × 100 × contracts</code>.
     <br><br>
     <span style="color:var(--accent);font-size:11px;font-weight:600">
-      ★ Default config: <code>entry 09:35 ET, exit SPX close (0DTE), wing 5 → 100 (step 5), widest risk≤reward wing, 1 contract</code>.
-      Optional <strong>overnight VIX-drop</strong> gate: only trade days where <code>prev VIX close − today VIX open ≥ threshold</code> (default 0.65 pts).
+      ★ Default config: <code>entry 09:35 ET, exit SPX close (0DTE), wing 5 → 100 (step 5), widest risk ≤ reward wing,
+      hybrid center, real GXBF gating ON</code>. The toggles below can force vol-only, OI-only, or replace the live gating
+      with the legacy manual overnight VIX-drop filter for what-if studies.
     </span>
     <br><br>
     <span style="color:var(--text3);font-size:11px">
-      ⚠ <strong>Backtester scope</strong> — opens one butterfly at 9:35 ET, settles to exact SPX-close intrinsic; no rolling, no mid-trade management,
-      no slippage past mid, no commissions. Sizing is 1 contract by default; equity compounding engages via the allocation sidebar.
-      Special-day filters apply on the entry date. Live execution can differ.
+      ⚠ <strong>Backtester scope</strong> — opens one butterfly at 9:35 ET, settles to exact SPX-close intrinsic; no rolling,
+      no mid-trade management, no slippage past mid, no commissions. Sizing is 1 contract by default; equity compounding engages
+      via the allocation sidebar. Special-day filters apply on the entry date. Live execution can differ.
     </span>
   </div>
 </section>

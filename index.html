@@ -565,9 +565,9 @@
     on intraday data.
   </div>
 
-  <!-- CPI DAY — Sigma 3 hard block. Diagonal companion still trades. -->
+  <!-- CPI DAY — M8BF / Straddle / BOBF blocked. GXBF independent; Diagonal companion still trades. -->
   <div id="cpiBlockBanner" class="cpi-blocker" style="display:none;">
-    <div class="cpi-blocker-title">CPI day — Sigma 3 (M8BF · Straddle · GXBF · BOBF) blocked. Diagonal companion still trades — see card below.</div>
+    <div class="cpi-blocker-title">CPI day — M8BF · Straddle · BOBF blocked. GXBF is independent and may still fire on its own rules. Diagonal companion still trades — see cards below.</div>
   </div>
 
   <!-- 4 SIGNAL CARDS — single column -->
@@ -687,13 +687,32 @@
     <div class="strategy-image"><img src="./Straddle.jpg" alt="Straddle" loading="lazy" /></div>
 
     <hr class="divider">
-    <h3>GXBF (GEX Butterfly)</h3>
+    <h3>GXBF (GEX Butterfly) — 0DTE long-call gamma butterfly (hybrid)</h3>
     <ul>
-      <li><strong>The idea.</strong> Every morning a gamma model publishes the SPX strike with the most positive gamma — loosely, the price level that dealer hedging tends to pull the market toward and "pin" into the close. GXBF places an inexpensive long call butterfly centered on that strike, so it profits if the S&amp;P finishes the day near it.</li>
-      <li><strong>When it trades.</strong> GXBF is a calm-market play. It only fires when volatility is coming in overnight — yesterday's VIX close sits clearly above this morning's VIX (a drop of more than ~0.65 points). A smaller VIX dip sends the day to the Straddle instead; a flat or rising VIX sends it to M8BF. Separately, the trading day right after monthly options expiration is <em>always</em> a GXBF day automatically — that day has historically pinned well.</li>
-      <li><strong>When it stays out.</strong> It skips risky conditions: the trading day <strong>before</strong> monthly options expiration (positioning is unstable heading into expiry), VIX at or above 25 (too wild to pin reliably), an after-expiration day where VIX instead jumped up 2%+ overnight, any CPI-release day (every strategy stands down), the last trading day of the month (handed to the Straddle), and the first trading day of a new month unless it's a Monday (handed to the new-month Straddle). Fed-decision days are fine. GXBF runs entirely on its own — it never blocks, and is never blocked by, the other strategies.</li>
-      <li><strong>How the trade is built.</strong> Center a same-day-expiry SPX call butterfly on that gamma strike (buy one lower call, sell two at the center, buy one higher call). Then widen the wings as far as possible while keeping one hard rule: the most you can lose can never exceed the most you can make. Wider wings mean a bigger possible payoff, so it takes the widest width that still satisfies that limit — worst-case loss is capped near $5,000 per contract. If no width can satisfy the rule that day, it doesn't trade.</li>
-      <li><strong>Timing &amp; exit.</strong> Enter just after the open (~9:35 AM ET, once the morning gamma level is out) and hold all the way to the 4:00 PM close — no stop, no early exit. The result is simply where the S&amp;P settles relative to the butterfly.</li>
+      <li><strong>The idea.</strong> Every morning a gamma model computes the SPX call strike with the most positive dealer-positioning gamma — loosely, the level that dealer hedging tends to pull the market toward and "pin" into the close. GXBF builds an inexpensive long-call butterfly centered there, so it profits when SPX settles near that strike.</li>
+      <li><strong>When it trades (trigger).</strong> Either condition fires the day:
+        <ul>
+          <li>Overnight VIX drop &gt; <strong>0.65 pts</strong> (yesterday's VIX close minus today's VIX open), <em>or</em></li>
+          <li>It's <strong>OPEX+1</strong> — the trading day right after monthly options expiration. That day has historically pinned well, so GXBF is automatic regardless of the overnight VIX move.</li>
+        </ul>
+      </li>
+      <li><strong>When it stays out (block).</strong> Even if the trigger fires, the trade is blocked when any of these apply:
+        <ul>
+          <li><strong>VIX ≥ 25</strong> today (too wild to pin reliably — hard volatility cap).</li>
+          <li>It's <strong>OPEX+1 and VIX gapped up ≥ 2%</strong> overnight (the auto-trigger is suppressed when post-expiration vol jumps).</li>
+          <li>It's <strong>EOM</strong> (the last trading day of the month — handed to the Straddle).</li>
+        </ul>
+      </li>
+      <li><strong>What's no longer a block.</strong> <strong>OPEX-1</strong>, <strong>CPI</strong>, and <strong>NM-non-Monday</strong> days used to be banned. Under the current hybrid rules they're allowed — they fire on their own merits when the trigger/block test passes. Fed-decision days remain fine. GXBF is strategy-independent: it never blocks the other Sigma 3 strategies and is never blocked by them.</li>
+      <li><strong>How the center is chosen (hybrid routing).</strong> At <strong>~9:35 AM ET</strong> the gamma model computes two candidate centers from the live 0DTE SPX call chain (Black-Scholes γ within ±5% of spot, snapped to the nearest 5): one weighted by traded volume, one weighted by open interest. The hybrid rule auto-routes the day:
+        <ul>
+          <li><strong>OI center</strong> on OPEX-1, VIX expiry (Wednesday two days before OPEX), and FOMC announcement days.</li>
+          <li><strong>Volume center</strong> on every other day.</li>
+        </ul>
+        The OI center reflects standing dealer inventory; the volume center reflects today's traded flow. The radio buttons on <code>gxbf-backtester.html</code> let you force Volume-only or OI-only for what-if studies.
+      </li>
+      <li><strong>How the trade is built.</strong> Buy one lower call (center − wing), sell two center calls, buy one upper call (center + wing) for a net debit. The wing widens as far as possible while keeping one hard rule: <strong>max risk ≤ max reward</strong> (net debit ≤ half the wing). It picks the <em>widest</em> width that still satisfies that — worst-case loss is capped near $5,000 per contract via the <code>W ≤ 100</code> cap. If no width qualifies that day, no trade.</li>
+      <li><strong>Timing &amp; exit.</strong> Enter ~<strong>9:35 AM ET</strong> (once the morning gamma level is out) and hold all the way to the 4:00 PM SPX cash close — no stop, no early exit. P&amp;L is the exact butterfly intrinsic at the close minus the entry debit.</li>
     </ul>
     <div class="strategy-image"><img src="./gex.jpg" alt="GXBF" loading="lazy" /></div>
 
@@ -744,7 +763,8 @@
       <li><strong>NM Straddle</strong> — first trading day of month, except Mondays. Max risk: <strong>$3,200</strong>.</li>
       <li><strong>EOM Straddle</strong> — last trading day of month. Max risk: <strong>$3,500</strong>.</li>
       <li>Both use standard 9:32 AM Straddle entry.</li>
-      <li>Both <strong>override GXBF</strong> — if NM or EOM falls on a GXBF day, Straddle takes priority.</li>
+      <li><strong>EOM blocks GXBF</strong> — the last trading day of the month is in GXBF's block list, so a GXBF trigger on EOM is suppressed and the day goes to the EOM Straddle.</li>
+      <li><strong>NM does <em>not</em> block GXBF</strong> — under the current hybrid rules NM-non-Monday is allowed for GXBF; the two strategies are independent and can both fire the same day if their own conditions are met.</li>
       <li>NM Monday follows the regular VIX calculator (no NM Straddle override).</li>
     </ul>
 
@@ -846,6 +866,7 @@
     <hr class="divider">
     <h3>Recent Changes</h3>
     <ul>
+      <li><strong>GXBF hybrid gating + per-day OI/Vol center routing (2026-05)</strong> — gating simplified to a clean Trigger/Block rule. <strong>Trigger:</strong> overnight VIX drop &gt; 0.65 pts <em>OR</em> OPEX+1 auto-trigger. <strong>Block:</strong> VIX ≥ 25 <em>OR</em> (OPEX+1 AND VIX gap-up ≥ 2%) <em>OR</em> EOM. <strong>OPEX-1, CPI, and NM-non-Monday are no longer banned</strong> — they fire if the trigger/block check passes. Center routing is now <strong>hybrid</strong>: OPEX-1 / VIX-expiry / FED days use the OI-weighted center (γ × open interest); all other days use the volume-weighted center (γ × volume). Both centers are computed in-house from the live 0DTE call chain via Black-Scholes γ (R=0.043, Q=0.013, ±5% of spot, snap to 5) — replacing the deleted Discord scraper. <code>history_data.json</code>'s <code>gxbfPL</code> values were rebuilt under the new rules.</li>
       <li><strong>1/25 Put Diagonal — canonical defaults updated (2026-04-29)</strong> — strikes deepened from <strong>10 ITM / 20 below</strong> to <strong>30 ITM / 40 below</strong> (long is 10 OTM). Filter stack changed from <code>OPEX-1 + NM + VIX + AAPL/MSFT/TSLA/META</code> to <code>OPEX-1 + EOM + EOM-1 + NM + VIX 40-90%</code> — earnings filters dropped (at deeper strikes the per-ticker gates cost more edge than they preserved); EOM/EOM-1 added (month-end rebalancing chop hurts deeper-ITM structures more). VIX percentile recipe also fixed — uses today's first VIX print at-or-after 9:30 ET (matches live signal — no lookahead bias). Times unchanged at 12:30/12:30 ET.</li>
       <li><strong>1/25 Put Diagonal — entry/exit window finalized (2026-04-23)</strong> — moved to <strong>12:30–15:00 ET window</strong> (24-hour hold, Entry Time === Exit Time, no two diagonals active at once). Long leg shortened to <strong>25 DTE</strong> (from 30). Recommended any clock time between 12:30 and 15:00, as long as Entry Time === Exit Time.</li>
       <li><strong>GXBF on OPEX+1 blocked when VIX gaps up ≥ 2% overnight</strong> — if today's VIX open is ≥ 2% above yesterday's VIX close, the automatic OPEX+1 GXBF signal is suppressed entirely.</li>
