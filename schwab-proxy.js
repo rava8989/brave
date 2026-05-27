@@ -1264,7 +1264,16 @@ async function openDiagonalTrade(env, token, etNow, vixPct20d, preChain = null) 
 
   if (shortLeg.mid == null || longLeg.mid == null) throw new Error('Diagonal open: missing bid/ask on a leg');
 
-  const debit = longLeg.mid - shortLeg.mid;  // positive = net debit paid
+  // Three pricings for the same diagonal:
+  //   debit       = longMid  - shortMid  → theoretical fair value (mid-to-mid)
+  //   askFill     = longAsk  - shortBid  → worst-case fill cost (BUY long at ask, SELL short at bid)
+  //   bidExit     = longBid  - shortAsk  → worst-case close credit (SELL long at bid, BUY short at ask)
+  // Real-world fills on SPX put diagonals typically land between debit and
+  // askFill. The historical entryDebit field (mid-mid) is preserved as-is so
+  // P&L math and prior records don't shift; askFill/bidExit are additive.
+  const debit   = longLeg.mid - shortLeg.mid;
+  const askFill = longLeg.ask - shortLeg.bid;
+  const bidExit = longLeg.bid - shortLeg.ask;
   const trade = {
     openDate: todayISO,
     openTimeET: `${String(etNow.getHours()).padStart(2,'0')}:${String(etNow.getMinutes()).padStart(2,'0')}`,
@@ -1288,12 +1297,16 @@ async function openDiagonalTrade(env, token, etNow, vixPct20d, preChain = null) 
     entryLongBid: longLeg.bid,
     entryLongAsk: longLeg.ask,
     entryDebit: parseFloat(debit.toFixed(2)),
+    entryAskFill: parseFloat(askFill.toFixed(2)),   // realistic worst-case fill
+    entryBidExit: parseFloat(bidExit.toFixed(2)),   // realistic worst-case close
     contracts: 1,
     // Live fields — refreshed by every market-hours cron tick
     currentSpot: parseFloat(spot.toFixed(2)),
     currentShortMid: parseFloat(shortLeg.mid.toFixed(2)),
     currentLongMid: parseFloat(longLeg.mid.toFixed(2)),
     currentValue: parseFloat(debit.toFixed(2)),
+    currentAskFill: parseFloat(askFill.toFixed(2)),
+    currentBidExit: parseFloat(bidExit.toFixed(2)),
     currentPnl: 0,
     lastQuoteAt: new Date().toISOString(),
     status: 'open',
@@ -1337,6 +1350,12 @@ async function refreshDiagonalLiveQuotes(env, token, preChain = null) {
     trade.currentShortMid = parseFloat(sNow.mid.toFixed(2));
     trade.currentLongMid = parseFloat(lNow.mid.toFixed(2));
     trade.currentValue = parseFloat((lNow.mid - sNow.mid).toFixed(2));
+    // Realistic fill estimates — what you'd actually pay to open / get to close
+    // RIGHT NOW. Pulled from the same chain refresh as the mid values.
+    if (sNow.ask != null && sNow.bid != null && lNow.ask != null && lNow.bid != null) {
+      trade.currentAskFill = parseFloat((lNow.ask - sNow.bid).toFixed(2));
+      trade.currentBidExit = parseFloat((lNow.bid - sNow.ask).toFixed(2));
+    }
     trade.currentPnl = Math.round((trade.currentValue - trade.entryDebit) * 100 * trade.contracts);
     trade.lastQuoteAt = new Date().toISOString();
     await env.SIGNAL_KV.put('diagonal_open_trade', JSON.stringify(trade));
