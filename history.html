@@ -1024,8 +1024,12 @@ const cols = [
   { key:'date',        label:'Date',       type:'string' },
   { key:'dayLabel',    label:'Day',        type:'string' },
   { key:'vixOpen',     label:'VIX Open',   type:'number' },
-  { key:'vixPrevClose',label:'Prev Close', type:'number' },
+  // Note: reorder to (Prev Open, Prev Close) so columns match the
+  // VIX Calculator form on index.html — which lists "VIX Yesterday's Open"
+  // BEFORE "VIX Yesterday's Close". Previous order had Close first, which
+  // caused visual mismatch when users compared the two views.
   { key:'vixPrevOpen', label:'Prev Open',  type:'number' },
+  { key:'vixPrevClose',label:'Prev Close', type:'number' },
   { key:'overnightDrop',label:'O/N Drop',  type:'number' },
   { key:'o2o',         label:'O2O',        type:'number' },
   { key:'spxGapPct',   label:'SPX Gap',    type:'number' },
