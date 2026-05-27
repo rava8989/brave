@@ -196,7 +196,7 @@ import {
   isVixAfterOpexDay, isPostOpexMon, isLastTradeMo, isEomN, isFirstTradeMo, isFirstTradeMon,
   m8Sched, m8Msg, ordinal, wdName, tradeWdLabel,
   isEarningsDay, isNonAmznTslaEarningsDay, isDayAfterAnyEarnings,
-  calculateSignal, computeDiagonalSignal,
+  calculateSignal, computeDiagonalSignal, computeVixPct20d,
 } from './signal-engine.js';
 
 
@@ -1469,10 +1469,9 @@ async function handleDiagonalTrade(env, etNow, preChain = null) {
         .sort((a, b) => a.date.localeCompare(b.date))
         .slice(-20)
         .map(r => parseFloat(r.vixClose));
-      if (vix20.length >= 10 && vixToday != null && !isNaN(vixToday)) {
-        const below = vix20.filter(c => c < vixToday).length;
-        vixPct20d = Math.round(100 * below / vix20.length);
-      }
+      // CANONICAL — see signal-engine.js computeVixPct20d (single source of
+      // truth used by both this worker and the backtester).
+      vixPct20d = computeVixPct20d(vixToday, vix20).pct;
     }
   } catch (e) { /* signal will be 'pending' if no vixPct20d */ }
 
@@ -3484,15 +3483,16 @@ async function handleScheduled(env) {
       }
 
       // Pull the last 20 prior vixClose values (newest last) for the diagonal
-      // regime filter. Matches index.html _vix20dCloses semantics exactly.
+      // regime filter. CANONICAL via signal-engine.js computeVixPct20d — DO
+      // NOT inline the percentile math here. See lessons.md P5.
       const vix20 = histData
         .filter(r => r.date < todayISO && r.vixClose != null && r.vixClose > 0)
         .sort((a, b) => a.date.localeCompare(b.date))
         .slice(-20)
         .map(r => parseFloat(r.vixClose));
-      if (vix20.length >= 10 && !isNaN(vixToday)) {
-        const below = vix20.filter(c => c < vixToday).length;
-        vixPct20d = Math.round(100 * below / vix20.length);
+      const { pct: pctComputed } = computeVixPct20d(vixToday, vix20);
+      if (pctComputed != null) {
+        vixPct20d = pctComputed;
         console.log(`[proxy] vixPct20d = ${vixPct20d}% (vixToday=${vixToday} vs last ${vix20.length} closes)`);
       }
 
@@ -6641,10 +6641,8 @@ export default {
               .sort((a, b) => a.date.localeCompare(b.date))
               .slice(-20)
               .map(r => parseFloat(r.vixClose));
-            if (vix20.length >= 10 && vixToday != null && !isNaN(vixToday)) {
-              const below = vix20.filter(c => c < vixToday).length;
-              vixPct20d = Math.round(100 * below / vix20.length);
-            }
+            // CANONICAL — single source: signal-engine.js computeVixPct20d.
+            vixPct20d = computeVixPct20d(vixToday, vix20).pct;
           }
         } catch (_) { /* fall through to null */ }
         try { sigPreview = computeDiagonalSignal(etNowDT, vixPct20d); } catch (_) {}
@@ -7015,10 +7013,8 @@ export default {
             const vix20 = histData.filter(r => r.date < todayISO && r.vixClose != null && r.vixClose > 0)
               .sort((a, b) => a.date.localeCompare(b.date)).slice(-20).map(r => parseFloat(r.vixClose));
             const refVix = vixTasty ?? vixSchwab;
-            if (vix20.length >= 10 && refVix != null && isFinite(refVix)) {
-              const below = vix20.filter(c => c < refVix).length;
-              vixPct20d = Math.round(100 * below / vix20.length);
-            }
+            // CANONICAL — single source: signal-engine.js computeVixPct20d.
+            vixPct20d = computeVixPct20d(refVix, vix20).pct;
 
             const closes30 = histData.filter(r => r.date < todayISO && r.spxClose != null && r.spxClose > 0)
               .sort((a, b) => a.date.localeCompare(b.date)).slice(-30).map(r => parseFloat(r.spxClose));

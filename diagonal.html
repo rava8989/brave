@@ -12,6 +12,11 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
 <script src="https://cdn.plot.ly/plotly-2.27.0.min.js" charset="utf-8"></script>
+<!-- SIGNAL_ENGINE — canonical source for computeVixPct20d. Loaded as module
+     so its side-effect assignment (globalThis.SignalEngine = {...}) lands.
+     The VIX dead-zone filter below uses SignalEngine.computeVixPct20d so
+     it stays in lock-step with the live worker. See lessons.md P5. -->
+<script type="module" src="./signal-engine.js?v=20260527-vix-canonical"></script>
 <style>
 :root {
   --bg:   #f1f5f9;
@@ -1715,58 +1720,45 @@ function buildSpecialDateSets(tradingDays, byDate = null) {
   });
 
   // ── VIX 20-day percentile bands ──
-  // VIX_MID  = today's VIX ranks lo-hi% within prior 20 trading days' VIX
+  // VIX_MID  = today's vix_open ranks lo-hi% within prior 20 trading days' vix_CLOSE
   // VIX_DEAD = VIX_MID AND prior-day SPX |change| < 0.5%
-  // Methodology matches the live signal exactly (schwab-proxy.js
-  // computeDiagonalSignal): today's vix_open is compared against the prior
-  // 20 days' vix_CLOSE values (NOT vix_open). Earlier versions of this
-  // backtester used vix_open vs vix_open, which gave different percentiles
-  // than the live signal and let dead-zone days slip through into trades.
-  // SAFETY: if today's vix_open or any of the prior-20 vix_close values
-  // are missing, treat the day as DEAD ZONE (add to VIX_MID set) rather
-  // than silently passing the filter. Previously, missing data caused
-  // days to drop out of validDays entirely → not added to VIX_MID → the
-  // exclude filter let them trade. That's how the live-vs-backtest
-  // discrepancy on 2026-05-15/18/19/20 happened.
+  // Methodology is canonical via SignalEngine.computeVixPct20d (defined in
+  // signal-engine.js, also used by schwab-proxy.js live worker). Do NOT
+  // re-implement the percentile math here — pre-commit hook
+  // check-vix-pct-canonical.sh blocks that. See lessons.md P5.
   if (byDate) {
     const lo = (typeof window.VIX_BAND_LO === 'number') ? window.VIX_BAND_LO : 50;
     const hi = (typeof window.VIX_BAND_HI === 'number') ? window.VIX_BAND_HI : 80;
-    // Collect prior-20 denominator candidates: must have a usable vix_close.
-    // Prefer vix_close (live signal's denominator); fall back to vix_open
-    // only when vix_close is unavailable on that day (very rare for recent dates).
-    const closeForPctile = d => byDate[d]?.vix_close ?? byDate[d]?.vix_open ?? null;
-    for (let i = 0; i < tradingDays.length; i++) {
-      const today = tradingDays[i];
-      const vToday = byDate[today]?.vix_open ?? byDate[today]?.vix_14 ?? null;
-      // Walk back to collect 20 valid prior closes
-      const priors = [];
-      for (let j = i - 1; j >= 0 && priors.length < 20; j--) {
-        const c = closeForPctile(tradingDays[j]);
-        if (typeof c === 'number' && c > 0) priors.push(c);
-      }
-      // Insufficient data → treat as dead zone (block) to match live-signal safety:
-      // a percentile we can't compute is not a percentile we trust.
-      if (vToday == null || priors.length < 10) {
-        if (i >= 20) sets['VIX_MID'].add(today);   // only mark dates we expect to have data
-        continue;
-      }
-      let below = 0;
-      for (const c of priors) if (c < vToday) below++;
-      const pct = (100 * below) / priors.length;
-      if (pct > lo && pct <= hi) {
-        sets['VIX_MID'].add(today);
-        // VIX_DEAD: also requires prior-day SPX |change| < 0.5%
-        const dPrev  = tradingDays[i - 1];
-        const dPrev2 = tradingDays[i - 2];
-        const sPrev  = byDate[dPrev]?.spot_14;
-        const sPrev2 = byDate[dPrev2]?.spot_14;
-        if (sPrev && sPrev2) {
-          const priorChgPct = (100 * (sPrev - sPrev2)) / sPrev2;
-          if (Math.abs(priorChgPct) < 0.5) sets['VIX_DEAD'].add(today);
+    const SE = (typeof globalThis !== 'undefined' && globalThis.SignalEngine) || null;
+    if (!SE || typeof SE.computeVixPct20d !== 'function') {
+      console.error('[diagonal] SignalEngine.computeVixPct20d not loaded — VIX_MID set will be empty (filter disabled). Refresh the page; if it persists, check the <script type="module"> tag for signal-engine.js.');
+    } else {
+      const closeForPctile = d => byDate[d]?.vix_close ?? byDate[d]?.vix_open ?? null;
+      for (let i = 0; i < tradingDays.length; i++) {
+        const today = tradingDays[i];
+        const vToday = byDate[today]?.vix_open ?? byDate[today]?.vix_14 ?? null;
+        // Collect prior-20 closes (newest last) for the canonical helper
+        const priors = [];
+        for (let j = i - 1; j >= 0 && priors.length < 20; j--) {
+          const c = closeForPctile(tradingDays[j]);
+          if (typeof c === 'number' && c > 0) priors.unshift(c);
         }
-      }
-    }
-  }
+        const { inDeadZone } = SE.computeVixPct20d(vToday, priors, { lo, hi });
+        if (inDeadZone && i >= 20) {
+          sets['VIX_MID'].add(today);
+          // VIX_DEAD: also requires prior-day SPX |change| < 0.5%
+          const dPrev  = tradingDays[i - 1];
+          const dPrev2 = tradingDays[i - 2];
+          const sPrev  = byDate[dPrev]?.spot_14;
+          const sPrev2 = byDate[dPrev2]?.spot_14;
+          if (sPrev && sPrev2) {
+            const priorChgPct = (100 * (sPrev - sPrev2)) / sPrev2;
+            if (Math.abs(priorChgPct) < 0.5) sets['VIX_DEAD'].add(today);
+          }
+        }
+      }   // close for-i
+    }     // close else (SignalEngine present)
+  }       // close if (byDate)
 
   return sets;
 }

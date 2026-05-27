@@ -260,6 +260,54 @@ export function isNonAmznTslaEarningsDay(etDate) { return earningsSchedule.some(
 export function isDayAfterAnyEarnings(etDate) { return earningsSchedule.some(e => isTodayAfter(e.date, etDate)); }
 
 // ════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════
+// CANONICAL VIX 20-DAY PERCENTILE COMPUTATION
+// ════════════════════════════════════════════════════════════════════
+// THE single source of truth for the diagonal regime filter. Used by:
+//   • schwab-proxy.js (live worker — handleScheduled + handleDiagonalTrade)
+//   • diagonal.html (backtester — buildSpecialDateSets)
+//   • computeDiagonalSignal below
+//
+// DO NOT re-implement this inline anywhere. Drift between live + backtest
+// is how the 2026-05-15/18/19/20 "diagonal traded in backtest but live
+// signal blocked" bug happened — bs_data.json had null vix_open AND the
+// backtester compared open-vs-open while live compared open-vs-close. The
+// pre-commit hook scripts/check-vix-pct-canonical.sh enforces this.
+//
+// Inputs:
+//   vixToday              today's first VIX print at-or-after 9:30 ET
+//                         (history_data.json: vixOpen)
+//   prior20VixCloses      newest-last list of the prior 20 trading days'
+//                         vixClose values (history_data.json: vixClose)
+//   opts.lo, opts.hi      dead-zone band (default 40 < pct ≤ 90)
+//
+// Output: { pct, inDeadZone, reason }
+//   • pct          — rounded percentile, or null if data insufficient
+//   • inDeadZone   — true if pct ∈ (lo, hi] OR data is insufficient.
+//                    Missing-data → block is the safety bias: a percentile
+//                    we can't compute is not one we trust.
+//   • reason       — short human string for logs / Discord output
+export function computeVixPct20d(vixToday, prior20VixCloses, opts = {}) {
+  const lo = opts.lo ?? 40;
+  const hi = opts.hi ?? 90;
+  if (vixToday == null || !isFinite(vixToday) || vixToday <= 0) {
+    return { pct: null, inDeadZone: true, reason: 'no-vix-today' };
+  }
+  const valid = (prior20VixCloses || []).filter(c => typeof c === 'number' && isFinite(c) && c > 0);
+  if (valid.length < 10) {
+    return { pct: null, inDeadZone: true, reason: 'insufficient-prior-data' };
+  }
+  const below = valid.filter(c => c < vixToday).length;
+  const pct = Math.round(100 * below / valid.length);
+  const inDeadZone = pct > lo && pct <= hi;
+  return {
+    pct,
+    inDeadZone,
+    reason: inDeadZone ? `dead-zone (${pct}% in ${lo}-${hi})` : `edge (${pct}%)`,
+  };
+}
+
+// ════════════════════════════════════════════════════════════════════
 // DIAGONAL SIGNAL (companion strategy, single source of truth)
 // Consumed by: schwab-proxy.js (via calculateSignal), index.html (direct)
 // ────────────────────────────────────────────────────────────────────
@@ -588,6 +636,7 @@ if (typeof globalThis !== 'undefined') {
     isSecondTradingThursday, m8Sched, m8Msg, ordinal, wdName, tradeWdLabel,
     isEarningsDay, isNonAmznTslaEarningsDay, isDayAfterAnyEarnings,
     computeDiagonalSignal,
+    computeVixPct20d,
     calculateSignal,
   };
 }
