@@ -17,11 +17,13 @@ cat > "$HOOK" << 'EOF'
 set -e
 ./scripts/check-strategy-independence.sh
 ./scripts/check-history-kv-match.sh
+./scripts/check-no-discord-scrape.sh
 EOF
 chmod +x "$HOOK"
 
 echo "✓ Installed pre-commit hook at $HOOK"
 echo "  → runs scripts/check-strategy-independence.sh"
 echo "  → runs scripts/check-history-kv-match.sh"
+echo "  → runs scripts/check-no-discord-scrape.sh"
 echo ""
 echo "Bypass for one-off commits: git commit --no-verify"
