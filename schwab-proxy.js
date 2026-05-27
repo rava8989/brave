@@ -1699,7 +1699,12 @@ async function openStraddleTrade(env, token, etNow, signal, preChain = null) {
     throw new Error(`Straddle open: no common strike with both legs near ${requestedK} for ${expISO}`);
   }
 
-  const debit = callLeg.mid + putLeg.mid;
+  // Long straddle: BUY call at ASK + BUY put at ASK (worst-case real fill).
+  // mid-mid (debit) is the theoretical fair value — what the page shows.
+  // Real cost to open is callAsk + putAsk; close credit is callBid + putBid.
+  const debit   = callLeg.mid + putLeg.mid;
+  const askFill = callLeg.ask + putLeg.ask;
+  const bidExit = callLeg.bid + putLeg.bid;
   const maxDebit = straddleMaxDebit(signal.badge || 'STRADDLE');
 
   const trade = {
@@ -1716,6 +1721,8 @@ async function openStraddleTrade(env, token, etNow, signal, preChain = null) {
     entryCallBid: callLeg.bid, entryCallAsk: callLeg.ask,
     entryPutBid:  putLeg.bid,  entryPutAsk:  putLeg.ask,
     entryDebit: parseFloat(debit.toFixed(2)),
+    entryAskFill: parseFloat(askFill.toFixed(2)),
+    entryBidExit: parseFloat(bidExit.toFixed(2)),
     maxDebit,
     contracts: 1,
     // Live fields
@@ -1723,6 +1730,8 @@ async function openStraddleTrade(env, token, etNow, signal, preChain = null) {
     currentCallMid: parseFloat(callLeg.mid.toFixed(2)),
     currentPutMid:  parseFloat(putLeg.mid.toFixed(2)),
     currentValue:   parseFloat(debit.toFixed(2)),
+    currentAskFill: parseFloat(askFill.toFixed(2)),
+    currentBidExit: parseFloat(bidExit.toFixed(2)),
     currentPnl: 0,
     lastQuoteAt: new Date().toISOString(),
     // Status
@@ -1763,6 +1772,12 @@ async function refreshStraddleLiveQuotes(env, token, etNow, preChain = null) {
     trade.currentCallMid = parseFloat(c.mid.toFixed(2));
     trade.currentPutMid  = parseFloat(p.mid.toFixed(2));
     trade.currentValue   = parseFloat(newDebit.toFixed(2));
+    // Realistic live fill estimates — what you'd actually pay to open / get to
+    // close RIGHT NOW. callAsk + putAsk for entry, callBid + putBid for exit.
+    if (c.ask != null && c.bid != null && p.ask != null && p.bid != null) {
+      trade.currentAskFill = parseFloat((c.ask + p.ask).toFixed(2));
+      trade.currentBidExit = parseFloat((c.bid + p.bid).toFixed(2));
+    }
 
     // Working → filled if price drops to the limit
     if (trade.status === 'working' && newDebit <= trade.maxDebit) {
@@ -1773,6 +1788,11 @@ async function refreshStraddleLiveQuotes(env, token, etNow, preChain = null) {
       trade.entryCallMid = parseFloat(c.mid.toFixed(2));
       trade.entryPutMid  = parseFloat(p.mid.toFixed(2));
       trade.entryDebit   = parseFloat(newDebit.toFixed(2));
+      // Re-snapshot ask-fill / bid-exit at fill time too (matches diagonal)
+      if (c.ask != null && c.bid != null && p.ask != null && p.bid != null) {
+        trade.entryAskFill = parseFloat((c.ask + p.ask).toFixed(2));
+        trade.entryBidExit = parseFloat((c.bid + p.bid).toFixed(2));
+      }
     }
 
     // Live P&L only meaningful when filled
