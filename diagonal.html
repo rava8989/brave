@@ -689,6 +689,22 @@ body {
   </div>
 
   <div class="fg">
+    <div class="fg-label">Take Profit</div>
+    <div class="fg-row" title="Walk intraday timestamps between entry and exit. If the diagonal's mark hits the target, close the trade at that timestamp. Modes: % of opening debit, or absolute $ profit target (scales with contracts — total $ across all contracts). If not hit by exit time, close normally at the chosen exit time. Only timestamps already loaded (matching the entry/exit-time dropdown picks done so far in this session) are walked — pick more times to densify the walk.">
+      <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text2);cursor:pointer;user-select:none">
+        <input type="checkbox" id="tpEnabled" style="cursor:pointer;accent-color:var(--accent)">
+        <span>Enable</span>
+      </label>
+      <select class="num-input" id="tpMode" title="PCT: target = diagOpen × (1 + tpPct/100). DOLLAR: target = total profit in $ across all contracts (per-contract threshold scales with contracts sized for that trade)." style="width:64px">
+        <option value="pct" selected>%</option>
+        <option value="dollar">$</option>
+      </select>
+      <input type="number" class="num-input" id="tpPct" value="50" min="1" max="500" step="5" title="Take-profit target as % of opening debit. Default 50 = close when diagonal mark reaches 1.5× the entry debit. Only fires when diagOpen > 0 (debit trades)." style="width:60px">
+      <input type="number" class="num-input" id="tpDollars" value="1000" min="50" max="50000" step="50" title="Take-profit target as TOTAL $ profit across all contracts. Per-contract mid threshold = diagOpen + tpDollars / (100 × contracts). Example: $1500 target with 2 contracts → diagClose ≥ diagOpen + 7.50. Only fires when diagOpen > 0 and contracts > 0." style="width:74px;display:none">
+    </div>
+  </div>
+
+  <div class="fg">
     <div class="fg-label">Short DTE</div>
     <select class="num-input" id="shortDte" title="Days to expiry for the short leg. Range limited to what the Polygon scrape covers (0–7).">
       <option value="0">0</option>
@@ -1027,6 +1043,7 @@ body {
             <th>Qty</th>
             <th>PnL</th>
             <th title="REAL=Polygon bid/ask, BS=Black-Scholes fallback">Src</th>
+            <th title="When the trade actually closed. ⚡ = take-profit hit early; ⏰ = closed at chosen exit time.">Exit</th>
             <th>Tags</th>
           </tr>
         </thead>
@@ -1425,6 +1442,10 @@ function getParams() {
     to:            document.getElementById('dateTo').value,
     entryTime:     document.getElementById('entryTime').value,
     exitTime:      document.getElementById('exitTime').value,
+    tpEnabled:     !!document.getElementById('tpEnabled')?.checked,
+    tpMode:        document.getElementById('tpMode')?.value || 'pct',
+    tpPct:         numOrNull(document.getElementById('tpPct')?.value) ?? 50,
+    tpDollars:     numOrNull(document.getElementById('tpDollars')?.value) ?? 1000,
     shortDte:      parseInt(document.getElementById('shortDte').value, 10),
     shortOffset:   parseInt(document.getElementById('shortOffset').value, 10),
     longDte:       parseInt(document.getElementById('longDte').value, 10),
@@ -2011,20 +2032,99 @@ function runBacktestBS(data, params) {
       }
       return { mid: bsPut(bsSpot, strike, T, bsIV, r), real: false };
     };
-    const sExitRes = legExitPrice(sExit, shortStrikeUsed, shortExp.date, T_short_exit, spotExit, ivExit);
-    const lExitRes = legExitPrice(lExit, longStrikeUsed,  longExp.date,  T_long_exit,  spotExit, ivExit);
-    diagClose = lExitRes.mid - sExitRes.mid;
-    if (sExitRes.real && lExitRes.real) exitSource = 'REAL';
+    // Position sizing moved up here so the TP-walker (dollar mode) can use
+    // `contracts` to compute the per-contract mid threshold. sizePosition()
+    // depends only on equity, marginPerContract, and params — all available
+    // at this point — so this move is safe and behavior-preserving.
+    // Margin estimate: width × 100 (conservative upper bound for debit diagonal)
+    const marginPerContract = (shortStrikeUsed - longStrikeUsed) * 100;
+    const contracts = sizePosition(equity, marginPerContract, params);
+    if (contracts < 1) { skipped.contracts0++; continue; }
+
+    // ──────────────────────────────────────────────────────────────────
+    // Take-Profit walk (optional): scan intermediate timestamps for an
+    // early exit when the diagonal's intraday mark hits TP target.
+    //   - Only fires for debit trades (diagOpen > 0).
+    //   - Two modes:
+    //       PCT    → tpTarget = diagOpen × (1 + tpPct/100)
+    //       DOLLAR → tpTarget = diagOpen + tpDollars / (100 × contracts)
+    //                (tpDollars is TOTAL $ profit across all contracts)
+    //   - Walks only timestamps that are ALREADY LOADED into
+    //     REAL_DATA_MULTI.by_date[d].by_time (i.e. the entry+exit times the
+    //     user has picked so far this session). We do not force-load new
+    //     timestamps — picking more times in the dropdowns densifies the
+    //     walk over time.
+    //   - Both legs must have quoteOk()-passing quotes at the candidate
+    //     timestamp to fire (no BS-estimated TP fills). Half-day exits are
+    //     naturally bounded because by_time only contains loaded buckets.
+    // If TP never fires (or is disabled), we fall through to the normal
+    // exit-time pricing logic below — current behavior preserved exactly.
+    // ──────────────────────────────────────────────────────────────────
+    let exitDateActual = closeDate;
+    let exitTimeActual = params.exitTime;
+    let exitReason = 'time';
+    let tpHit = false;
+
+    let tpTarget = null;
+    if (params.tpEnabled && diagOpen > 0 && shortTicker && longTicker) {
+      if (params.tpMode === 'dollar' && params.tpDollars > 0 && contracts > 0) {
+        tpTarget = diagOpen + (params.tpDollars / (100 * contracts));
+      } else if (params.tpMode !== 'dollar' && params.tpPct > 0) {
+        tpTarget = diagOpen * (1 + params.tpPct / 100);
+      }
+    }
+
+    if (tpTarget != null) {
+      const entryT = params.entryTime;
+      const exitT  = params.exitTime;
+
+      // Build the ordered list of intermediate (date, time) candidates.
+      // Open-day: every loaded time strictly > entryTime, ascending.
+      // Close-day: every loaded time ≤ exitTime, ascending. (We include the
+      // exit-time bucket itself so TP can fire there — if it does, we still
+      // record reason=TP since the threshold was crossed.)
+      const openBucket  = REAL_DATA_MULTI?.by_date?.[openDate]?.by_time  || {};
+      const closeBucket = REAL_DATA_MULTI?.by_date?.[closeDate]?.by_time || {};
+      const openTimes  = Object.keys(openBucket).filter(t  => t >  entryT).sort();
+      const closeTimes = Object.keys(closeBucket).filter(t => t <= exitT).sort();
+
+      const walk = [];
+      for (const t of openTimes)  walk.push([openDate,  t, openBucket[t]]);
+      for (const t of closeTimes) walk.push([closeDate, t, closeBucket[t]]);
+
+      for (const [d, t, snap] of walk) {
+        const qs = snap?.quotes;
+        if (!qs) continue;
+        const sQ = qs[shortTicker];
+        const lQ = qs[longTicker];
+        if (!quoteOk(sQ) || !quoteOk(lQ)) continue;
+        const sMid = (sQ.bid + sQ.ask) / 2;
+        const lMid = (lQ.bid + lQ.ask) / 2;
+        const mark = lMid - sMid;
+        if (mark >= tpTarget) {
+          diagClose = mark;
+          exitSource = 'REAL';
+          exitDateActual = d;
+          exitTimeActual = t;
+          exitReason = 'TP';
+          tpHit = true;
+          break;
+        }
+      }
+    }
+
+    // Normal exit-time pricing (skipped only when TP already fired above).
+    if (!tpHit) {
+      const sExitRes = legExitPrice(sExit, shortStrikeUsed, shortExp.date, T_short_exit, spotExit, ivExit);
+      const lExitRes = legExitPrice(lExit, longStrikeUsed,  longExp.date,  T_long_exit,  spotExit, ivExit);
+      diagClose = lExitRes.mid - sExitRes.mid;
+      if (sExitRes.real && lExitRes.real) exitSource = 'REAL';
+    }
 
     // Combined source label: REAL (both), BS (neither), REAL/BS (entry real, exit BS), BS/REAL (entry BS, exit real)
     const priceSource = entrySource === exitSource ? entrySource : `${entrySource}/${exitSource}`;
     // Count REAL if EITHER side used real data (not just both)
     priceSourceCount[(entrySource === 'REAL' || exitSource === 'REAL') ? 'REAL' : 'BS']++;
-
-    // Margin estimate: width × 100 (conservative upper bound for debit diagonal)
-    const marginPerContract = (shortStrikeUsed - longStrikeUsed) * 100;
-    const contracts = sizePosition(equity, marginPerContract, params);
-    if (contracts < 1) { skipped.contracts0++; continue; }
 
     const pnl = (diagClose - diagOpen) * 100 * contracts;
     const premium = Math.abs(diagOpen) * 100 * contracts;
@@ -2037,7 +2137,25 @@ function runBacktestBS(data, params) {
       if (daySet.has(openDate)) tags.push(cat);
     }
 
-    // Minutes in trade: 14:00→16:00 (120) + 09:30→14:00 (270) = 390 (market-hours only)
+    // Minutes in trade — market-hours only (overnight gap excluded).
+    //   Same-day exit (TP fired before market close on openDate):
+    //     diff(entryTime, exitTimeActual)
+    //   Overnight exit (TP fired next day OR fell through to normal close):
+    //     (entryTime → 16:00) + (09:30 → exitTimeActual)
+    const _toMin = (hhmm) => {
+      const [h, m] = hhmm.split(':').map(Number);
+      return h * 60 + m;
+    };
+    let minutesInTrade;
+    if (exitDateActual === openDate) {
+      minutesInTrade = Math.max(0, _toMin(exitTimeActual) - _toMin(params.entryTime));
+    } else {
+      const closeOpenMin = 9 * 60 + 30;
+      const closeCloseMin = 16 * 60;
+      minutesInTrade = (closeCloseMin - _toMin(params.entryTime))
+                     + (_toMin(exitTimeActual) - closeOpenMin);
+    }
+
     trades.push({
       openDate, closeDate,
       dow: weekdayFromISO(openDate),                 // 0=Mon..4=Fri
@@ -2053,7 +2171,15 @@ function runBacktestBS(data, params) {
       diagOpen, diagClose,
       contracts, pnl, premium,
       priceSource,                                    // 'REAL' = Polygon bid/ask, 'BS' = Black-Scholes fallback
-      minutesInTrade: 390,
+      minutesInTrade,
+      // TP / exit tracking
+      tpEnabled: !!params.tpEnabled,
+      tpMode: params.tpEnabled ? (params.tpMode || 'pct') : null,
+      tpPctTarget:    params.tpEnabled && params.tpMode !== 'dollar' ? params.tpPct : null,
+      tpDollarTarget: params.tpEnabled && params.tpMode === 'dollar' ? params.tpDollars : null,
+      exitDateActual,
+      exitTimeActual,
+      exitReason,                                     // 'TP' or 'time'
       tags,                                           // array of special-day category names
     });
   }
@@ -2244,7 +2370,7 @@ function renderTradeLog(trades) {
   const body = document.getElementById('tradeTableBody');
   const countEl = document.getElementById('tradeLogCount');
   if (!trades.length) {
-    body.innerHTML = '<tr><td colspan="14" style="text-align:center;padding:24px;color:var(--text3)">No trades</td></tr>';
+    body.innerHTML = '<tr><td colspan="15" style="text-align:center;padding:24px;color:var(--text3)">No trades</td></tr>';
     countEl.textContent = '0 trades';
     return;
   }
@@ -2252,7 +2378,22 @@ function renderTradeLog(trades) {
   const shown = trades.slice(-2000).reverse();
   countEl.textContent = `${trades.length} trades${trades.length > 2000 ? ' (showing last 2000)' : ''} — newest first`;
 
-  body.innerHTML = shown.map(t => `
+  body.innerHTML = shown.map(t => {
+    const isTP = t.exitReason === 'TP';
+    const exitDate = t.exitDateActual || t.closeDate;
+    const exitTime = t.exitTimeActual || '';
+    const tpLabel = t.tpMode === 'dollar'
+      ? `target $${Number(t.tpDollarTarget || 0).toLocaleString()}`
+      : `target +${t.tpPctTarget}%`;
+    const exitBadge = isTP
+      ? `<span title="Take-profit hit (${tpLabel})" style="color:var(--green);font-weight:700">⚡ TP</span>`
+      : `<span title="Closed at chosen exit time" style="color:var(--text3)">⏰</span>`;
+    const exitCell = `
+      <div style="font-size:10px;line-height:1.25">
+        ${exitBadge}<br>
+        <span style="color:var(--text2);font-family:'JetBrains Mono',monospace;font-size:9px">${shortIsoDate(exitDate)} ${exitTime}</span>
+      </div>`;
+    return `
     <tr>
       <td style="font-weight:600;color:var(--text)">${t.openDate}</td>
       <td style="color:var(--accent);font-weight:600">${DOW_NAMES[t.dow] || '—'}</td>
@@ -2273,9 +2414,11 @@ function renderTradeLog(trades) {
       <td>${t.contracts}</td>
       <td class="${t.pnl >= 0 ? 'pos' : 'neg'}">${$fmt(t.pnl)}</td>
       <td style="font-size:9px;font-weight:600;color:${t.priceSource === 'REAL' ? 'var(--green)' : 'var(--text3)'}">${t.priceSource || 'BS'}</td>
+      <td>${exitCell}</td>
       <td style="font-size:9px;color:var(--text3)">${(t.tags || []).join(' ') || '—'}</td>
     </tr>
-  `).join('');
+  `;
+  }).join('');
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -2288,7 +2431,9 @@ function exportTradesCSV(trades) {
     'spx_entry','spx_exit','vix_entry','vix_exit',
     'short_strike','long_strike','short_dte','long_dte',
     'diagonal_open','diagonal_close','contracts','premium','pnl',
-    'price_source','minutes_in_trade','tags'
+    'price_source','minutes_in_trade',
+    'tp_enabled','tp_mode','tp_pct_target','tp_dollar_target','exit_date_actual','exit_time_actual','exit_reason',
+    'tags'
   ];
   const rows = trades.map(t => [
     t.openDate, DOW_NAMES[t.dow] || '', t.closeDate,
@@ -2297,7 +2442,15 @@ function exportTradesCSV(trades) {
     t.diagOpen.toFixed(4), t.diagClose.toFixed(4), t.contracts,
     t.premium.toFixed(2), t.pnl.toFixed(2),
     t.priceSource || 'BS',
-    t.minutesInTrade, (t.tags || []).join(';')
+    t.minutesInTrade,
+    t.tpEnabled ? '1' : '0',
+    t.tpMode ?? '',
+    t.tpPctTarget ?? '',
+    t.tpDollarTarget ?? '',
+    t.exitDateActual ?? t.closeDate,
+    t.exitTimeActual ?? '',
+    t.exitReason ?? 'time',
+    (t.tags || []).join(';')
   ]);
   const csv = [header, ...rows].map(r => r.map(v => {
     const s = String(v);
@@ -2413,6 +2566,21 @@ document.getElementById('exitTime').addEventListener('change', (ev) => {
   SELECTED_EXIT_TIME = ev.target.value;
   reflattenAndRerun('exit time');
 });
+
+// Take-profit mode toggle — show only the relevant value input
+(() => {
+  const modeEl    = document.getElementById('tpMode');
+  const pctEl     = document.getElementById('tpPct');
+  const dollarsEl = document.getElementById('tpDollars');
+  if (!modeEl || !pctEl || !dollarsEl) return;
+  const sync = () => {
+    const isDollar = modeEl.value === 'dollar';
+    pctEl.style.display     = isDollar ? 'none' : '';
+    dollarsEl.style.display = isDollar ? '' : 'none';
+  };
+  modeEl.addEventListener('change', sync);
+  sync();
+})();
 
 // Equity scale radio — re-render on change
 document.querySelectorAll('input[name="equityScale"]').forEach(r => {
