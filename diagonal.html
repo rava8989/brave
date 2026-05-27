@@ -1717,36 +1717,47 @@ function buildSpecialDateSets(tradingDays, byDate = null) {
   // ── VIX 20-day percentile bands ──
   // VIX_MID  = today's VIX ranks lo-hi% within prior 20 trading days' VIX
   // VIX_DEAD = VIX_MID AND prior-day SPX |change| < 0.5%
-  // Uses `vix_open` (first VIX print at-or-after 9:30 ET) — the SAME value the
-  // live signal reads, so backtest matches what you'd see in real time. No
-  // lookahead bias. Falls back to vix_14 only when vix_open is absent (old
-  // bs_data files). Band lo/hi and the underlying field are tunable from the
-  // UI sliders.
+  // Methodology matches the live signal exactly (schwab-proxy.js
+  // computeDiagonalSignal): today's vix_open is compared against the prior
+  // 20 days' vix_CLOSE values (NOT vix_open). Earlier versions of this
+  // backtester used vix_open vs vix_open, which gave different percentiles
+  // than the live signal and let dead-zone days slip through into trades.
+  // SAFETY: if today's vix_open or any of the prior-20 vix_close values
+  // are missing, treat the day as DEAD ZONE (add to VIX_MID set) rather
+  // than silently passing the filter. Previously, missing data caused
+  // days to drop out of validDays entirely → not added to VIX_MID → the
+  // exclude filter let them trade. That's how the live-vs-backtest
+  // discrepancy on 2026-05-15/18/19/20 happened.
   if (byDate) {
-    const vixField = (() => {
-      // Use vix_open if present anywhere; else fall back to vix_14
-      for (const d of tradingDays) {
-        if (byDate[d] && typeof byDate[d].vix_open === 'number') return 'vix_open';
-      }
-      return 'vix_14';
-    })();
     const lo = (typeof window.VIX_BAND_LO === 'number') ? window.VIX_BAND_LO : 50;
     const hi = (typeof window.VIX_BAND_HI === 'number') ? window.VIX_BAND_HI : 80;
-    const validDays = tradingDays.filter(d => {
-      const r = byDate[d];
-      return r && typeof r[vixField] === 'number' && r[vixField] > 0;
-    });
-    for (let i = 20; i < validDays.length; i++) {
-      const today  = validDays[i];
-      const vToday = byDate[today][vixField];
+    // Collect prior-20 denominator candidates: must have a usable vix_close.
+    // Prefer vix_close (live signal's denominator); fall back to vix_open
+    // only when vix_close is unavailable on that day (very rare for recent dates).
+    const closeForPctile = d => byDate[d]?.vix_close ?? byDate[d]?.vix_open ?? null;
+    for (let i = 0; i < tradingDays.length; i++) {
+      const today = tradingDays[i];
+      const vToday = byDate[today]?.vix_open ?? byDate[today]?.vix_14 ?? null;
+      // Walk back to collect 20 valid prior closes
+      const priors = [];
+      for (let j = i - 1; j >= 0 && priors.length < 20; j--) {
+        const c = closeForPctile(tradingDays[j]);
+        if (typeof c === 'number' && c > 0) priors.push(c);
+      }
+      // Insufficient data → treat as dead zone (block) to match live-signal safety:
+      // a percentile we can't compute is not a percentile we trust.
+      if (vToday == null || priors.length < 10) {
+        if (i >= 20) sets['VIX_MID'].add(today);   // only mark dates we expect to have data
+        continue;
+      }
       let below = 0;
-      for (let j = i - 20; j < i; j++) if (byDate[validDays[j]][vixField] < vToday) below++;
-      const pct = (100 * below) / 20;
+      for (const c of priors) if (c < vToday) below++;
+      const pct = (100 * below) / priors.length;
       if (pct > lo && pct <= hi) {
         sets['VIX_MID'].add(today);
         // VIX_DEAD: also requires prior-day SPX |change| < 0.5%
-        const dPrev  = validDays[i - 1];
-        const dPrev2 = validDays[i - 2];
+        const dPrev  = tradingDays[i - 1];
+        const dPrev2 = tradingDays[i - 2];
         const sPrev  = byDate[dPrev]?.spot_14;
         const sPrev2 = byDate[dPrev2]?.spot_14;
         if (sPrev && sPrev2) {
