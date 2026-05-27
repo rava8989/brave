@@ -20,7 +20,7 @@ export const cpiSch   = ["January 11, 2024","February 13, 2024","March 12, 2024"
 export const fedSch   = ["January 31, 2024","March 20, 2024","May 1, 2024","June 12, 2024","July 31, 2024","September 18, 2024","November 7, 2024","December 18, 2024","January 29, 2025","March 19, 2025","May 7, 2025","June 18, 2025","July 30, 2025","September 17, 2025","October 29, 2025","December 10, 2025","January 28, 2026","March 18, 2026","April 29, 2026","June 17, 2026","July 29, 2026","September 16, 2026","October 28, 2026","December 9, 2026"];
 export const opexSch  = ["January 19, 2024","February 16, 2024","March 15, 2024","April 19, 2024","May 17, 2024","June 21, 2024","July 19, 2024","August 16, 2024","September 20, 2024","October 18, 2024","November 15, 2024","December 20, 2024","January 17, 2025","February 21, 2025","March 21, 2025","April 17, 2025","May 16, 2025","June 20, 2025","July 18, 2025","August 15, 2025","September 19, 2025","October 17, 2025","November 21, 2025","December 19, 2025","January 16, 2026","February 20, 2026","March 20, 2026","April 17, 2026","May 15, 2026","June 18, 2026","July 17, 2026","August 21, 2026","September 18, 2026","October 16, 2026","November 20, 2026","December 18, 2026"];
 export const holidays = ["January 1, 2024","January 15, 2024","February 19, 2024","March 29, 2024","May 27, 2024","June 19, 2024","July 4, 2024","September 2, 2024","November 28, 2024","December 25, 2024","January 1, 2025","January 9, 2025","January 20, 2025","February 17, 2025","April 18, 2025","May 26, 2025","June 19, 2025","July 4, 2025","September 1, 2025","November 27, 2025","December 25, 2025","January 1, 2026","January 19, 2026","February 16, 2026","April 3, 2026","May 25, 2026","June 19, 2026","July 3, 2026","September 7, 2026","November 26, 2026","December 25, 2026"];
-export const vixSch   = ["January 17, 2024","February 14, 2024","March 20, 2024","April 17, 2024","May 22, 2024","June 18, 2024","July 17, 2024","August 21, 2024","September 18, 2024","October 16, 2024","November 20, 2024","December 18, 2024","January 22, 2025","February 19, 2025","March 18, 2025","April 16, 2025","May 21, 2025","June 18, 2025","July 16, 2025","August 20, 2025","September 17, 2025","October 22, 2025","November 19, 2025","December 17, 2025","January 21, 2026","February 18, 2026","March 18, 2026","April 15, 2026","May 19, 2026","June 17, 2026","July 22, 2026","August 19, 2026","September 16, 2026","October 21, 2026","November 18, 2026","December 16, 2026"];
+export const vixSch   = ["January 17, 2024","February 14, 2024","March 20, 2024","April 17, 2024","May 22, 2024","June 18, 2024","July 17, 2024","August 21, 2024","September 18, 2024","October 16, 2024","November 20, 2024","December 18, 2024","January 22, 2025","February 19, 2025","March 18, 2025","April 16, 2025","May 21, 2025","June 18, 2025","July 16, 2025","August 20, 2025","September 17, 2025","October 22, 2025","November 19, 2025","December 17, 2025","January 21, 2026","February 18, 2026","March 18, 2026","April 15, 2026","May 20, 2026","June 17, 2026","July 22, 2026","August 19, 2026","September 16, 2026","October 21, 2026","November 18, 2026","December 16, 2026"];
 
 export const earningsSchedule = [
   // ── 2024 (historical, confirmed) ──
@@ -149,8 +149,19 @@ export function toET(d = new Date()) {
   return new Date(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second);
 }
 
+// PERF (iPhone crash fix): toLocaleDateString is ~100-1000x slower than a
+// manual format and is called tens of thousands of times synchronously by
+// history.html (calculateSignal runs ~436x, each doing 6+ schedule lookups
+// via todayLong + isTodayBefore/After scans). On a fast Mac that's ~2s; on a
+// slower iPhone CPU it blocked the main thread long enough to trip iOS's
+// unresponsive-page watchdog ("a problem repeatedly occurred"). This manual
+// formatter returns a BYTE-IDENTICAL string ("May 15, 2026" — month long,
+// no leading zero, no padding), so every schedule.includes(todayLong(d))
+// comparison still matches exactly. Zero logic/number change.
+export const _MONTHS_LONG = ['January','February','March','April','May','June',
+  'July','August','September','October','November','December'];
 export function dateLong(d) {
-  return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  return `${_MONTHS_LONG[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
 }
 
 export function todayLong(etDate) { return dateLong(etDate); }
@@ -197,19 +208,33 @@ export function isFirstTradeMon(d) { return isFirstTradeMo(d) && d.getDay() === 
 // M8BF SCHEDULE + HELPERS
 // ════════════════════════════════════════════════════════════════════
 
-export function m8Sched(dow) {
+// 2nd trading Thursday override — M8BF afternoon window (13:30-14:00) on the
+// 2nd Thursday of the month, instead of the default morning window. Mirrors
+// the inline impl in index.html (line ~992) and backtester.html (line ~617).
+export function isSecondTradingThursday(d) {
+  if (!d || d.getDay() !== 4) return false;
+  let thuCount = 0;
+  for (let day = 1; day <= d.getDate(); day++) {
+    if (new Date(d.getFullYear(), d.getMonth(), day).getDay() === 4) thuCount++;
+  }
+  return thuCount === 2;
+}
+
+export function m8Sched(dow, d) {
   const blocked = ["10","25","35","40","65","80"];
   const comboBans = {0:95,20:15,55:50,65:60,85:90};
   switch (dow) {
     case 1: return { t: "11:00", window: "11:00–11:30", blocked, comboBans };
     case 2: return { t: "13:30", window: "13:30–14:00", blocked, comboBans };
     case 3: return { t: "12:00", window: "12:00–12:30", blocked, comboBans };
-    case 4: return { t: "11:00", window: "11:00–11:30", blocked, comboBans };
+    case 4:
+      if (d && isSecondTradingThursday(d)) return { t: "13:30", window: "13:30–14:00 (2nd Thu)", blocked, comboBans };
+      return { t: "11:00", window: "11:00–11:30", blocked, comboBans };
     case 5: return { t: "13:00", window: "13:00–13:30", blocked, comboBans };
     default: return null;
   }
 }
-export function m8Msg(d) { const sc = m8Sched(d.getDay()); return sc ? `M8BF — Window ${sc.window}` : "M8BF"; }
+export function m8Msg(d) { const sc = m8Sched(d.getDay(), d); return sc ? `M8BF — Window ${sc.window}` : "M8BF"; }
 
 // ════════════════════════════════════════════════════════════════════
 // DAY-OF-WEEK LABELING
@@ -366,7 +391,7 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
     if (oNight > 0) {
       rec = "Straddle @ 9:32 AM"; theme = "strad"; entryT = "9:32 AM"; badge = "STRADDLE";
     } else {
-      rec = m8Msg(etDate); theme = "m8bf"; badge = "M8BF"; strikeInfo = m8Sched(dow); entryT = strikeInfo?.window || "";
+      rec = m8Msg(etDate); theme = "m8bf"; badge = "M8BF"; strikeInfo = m8Sched(dow, etDate); entryT = strikeInfo?.window || "";
     }
 
     if (rec.startsWith("M8BF")) {
@@ -381,7 +406,7 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
     // intentionally EXCLUDED (strategy independence — NM does not block GXBF).
     if (nmDay && !isMon && (rec.startsWith("M8BF") || rec.startsWith("No M8BF") || rec.startsWith("Straddle"))) { rec = "NM Straddle @ 9:32 AM"; theme = "strad"; crossed = false; blockT = ""; entryT = "9:32 AM"; badge = "NM STRADDLE"; strikeInfo = null; }
     if (eomDay) { rec = "Straddle @ 9:32 AM (EOM)"; theme = "strad"; crossed = false; blockT = ""; entryT = "9:32 AM"; badge = "EOM STRADDLE"; strikeInfo = null; }
-    if (isWed && !fedDay && !m8bfBanned && !nmDay && rec.startsWith("Straddle")) { rec = m8Msg(etDate); theme = "m8bf"; badge = "M8BF"; strikeInfo = m8Sched(dow); entryT = strikeInfo?.window || ""; }
+    if (isWed && !fedDay && !m8bfBanned && !nmDay && rec.startsWith("Straddle")) { rec = m8Msg(etDate); theme = "m8bf"; badge = "M8BF"; strikeInfo = m8Sched(dow, etDate); entryT = strikeInfo?.window || ""; }
     if (opexDay && rec.startsWith("Straddle")) { rec = "No Straddle (OPEX day)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "Straddle not on OPEX"; badge = "BLOCKED"; }
     if (postOpMon && rec.startsWith("M8BF")) pmNote = true;
   }
@@ -408,7 +433,7 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
       // 90% rule cannot cancel GXBF — GXBF is independent (overnight VIX drop).
       // For everything else (Straddle, NM Straddle, gap/o2o blocks, M8BF bans
       // like EOM/EOM-1/OPEX-1), 90% rule still forces M8BF as documented.
-      const sc = m8Sched(dow);
+      const sc = m8Sched(dow, etDate);
       rec = m8Msg(etDate); theme = "m8bf"; badge = "M8BF";
       strikeInfo = sc; entryT = sc?.window || ""; blockT = "90%rule";
     }
@@ -520,7 +545,7 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
   // the M8BF banned-strike list even when the main signal was overridden
   // (e.g. OPEX+1 GXBF auto-fire, which nulls the main strikeInfo).
   // null when the M8BF's OWN status is blocked (CPI/m8bfBanned).
-  const m8bfStrikeInfo = (cpiDay || m8bfBanned) ? null : m8Sched(dow);
+  const m8bfStrikeInfo = (cpiDay || m8bfBanned) ? null : m8Sched(dow, etDate);
 
   // ── GXBF center routing (hybrid) ──
   // Only meaningful when theme === 'gxbf'. OPEX-1 / VIX-expiry / FED → OI grid;
@@ -560,7 +585,7 @@ if (typeof globalThis !== 'undefined') {
     toET, dateLong, todayLong, isWkend, isHol, isTrade,
     nextTrade, prevTrade, isTodayAfter, isTodayBefore, parseLong, schedInMonth,
     isVixAfterOpexDay, isPostOpexMon, isLastTradeMo, isEomN, isFirstTradeMo, isFirstTradeMon,
-    m8Sched, m8Msg, ordinal, wdName, tradeWdLabel,
+    isSecondTradingThursday, m8Sched, m8Msg, ordinal, wdName, tradeWdLabel,
     isEarningsDay, isNonAmznTslaEarningsDay, isDayAfterAnyEarnings,
     computeDiagonalSignal,
     calculateSignal,

@@ -349,7 +349,7 @@ const cpiSch   = ["January 11, 2024","February 13, 2024","March 12, 2024","April
 const fedSch   = ["January 31, 2024","March 20, 2024","May 1, 2024","June 12, 2024","July 31, 2024","September 18, 2024","November 7, 2024","December 18, 2024","January 29, 2025","March 19, 2025","May 7, 2025","June 18, 2025","July 30, 2025","September 17, 2025","October 29, 2025","December 10, 2025","January 28, 2026","March 18, 2026","April 29, 2026","June 17, 2026","July 29, 2026","September 16, 2026","October 28, 2026","December 9, 2026"];
 const opexSch  = ["January 19, 2024","February 16, 2024","March 15, 2024","April 19, 2024","May 17, 2024","June 21, 2024","July 19, 2024","August 16, 2024","September 20, 2024","October 18, 2024","November 15, 2024","December 20, 2024","January 17, 2025","February 21, 2025","March 21, 2025","April 17, 2025","May 16, 2025","June 20, 2025","July 18, 2025","August 15, 2025","September 19, 2025","October 17, 2025","November 21, 2025","December 19, 2025","January 16, 2026","February 20, 2026","March 20, 2026","April 17, 2026","May 15, 2026","June 18, 2026","July 17, 2026","August 21, 2026","September 18, 2026","October 16, 2026","November 20, 2026","December 18, 2026"];
 const holidays = ["January 1, 2024","January 15, 2024","February 19, 2024","March 29, 2024","May 27, 2024","June 19, 2024","July 4, 2024","September 2, 2024","November 28, 2024","December 25, 2024","January 1, 2025","January 9, 2025","January 20, 2025","February 17, 2025","April 18, 2025","May 26, 2025","June 19, 2025","July 4, 2025","September 1, 2025","November 27, 2025","December 25, 2025","January 1, 2026","January 19, 2026","February 16, 2026","April 3, 2026","May 25, 2026","June 19, 2026","July 3, 2026","September 7, 2026","November 26, 2026","December 25, 2026"];
-const vixSch   = ["January 17, 2024","February 14, 2024","March 20, 2024","April 17, 2024","May 22, 2024","June 18, 2024","July 17, 2024","August 21, 2024","September 18, 2024","October 16, 2024","November 20, 2024","December 18, 2024","January 22, 2025","February 19, 2025","March 18, 2025","April 16, 2025","May 21, 2025","June 18, 2025","July 16, 2025","August 20, 2025","September 17, 2025","October 22, 2025","November 19, 2025","December 17, 2025","January 21, 2026","February 18, 2026","March 18, 2026","April 15, 2026","May 20, 2026","June 17, 2026","July 15, 2026","August 19, 2026","September 16, 2026","October 21, 2026","November 18, 2026","December 16, 2026"];
+const vixSch   = ["January 17, 2024","February 14, 2024","March 20, 2024","April 17, 2024","May 22, 2024","June 18, 2024","July 17, 2024","August 21, 2024","September 18, 2024","October 16, 2024","November 20, 2024","December 18, 2024","January 22, 2025","February 19, 2025","March 18, 2025","April 16, 2025","May 21, 2025","June 18, 2025","July 16, 2025","August 20, 2025","September 17, 2025","October 22, 2025","November 19, 2025","December 17, 2025","January 21, 2026","February 18, 2026","March 18, 2026","April 15, 2026","May 20, 2026","June 17, 2026","July 22, 2026","August 19, 2026","September 16, 2026","October 21, 2026","November 18, 2026","December 16, 2026"];
 const earningsSchedule = [
   // ── 2024 ──
   { date:"January 24, 2024",  company:"Tesla",     ticker:"TSLA", timing:"AH", confirmed:true },
@@ -470,8 +470,10 @@ const isLastTradeMo = d => nextTrade(d).getMonth()!==d.getMonth();
 function isEomN(n,d){const f=new Date(d.getFullYear(),d.getMonth()+1,1);let t=prevTrade(f);for(let i=0;i<n;i++)t=prevTrade(t);return t.getFullYear()===d.getFullYear()&&t.getMonth()===d.getMonth()&&t.getDate()===d.getDate();}
 const isFirstTradeMo = d => prevTrade(d).getMonth()!==d.getMonth();
 function isFirstTradeMon(d){return isFirstTradeMo(d)&&d.getDay()===1;}
-function m8Sched(dow){const blocked=["10","25","35","40","65","80"];const comboBans={0:95,20:15,55:50,65:60,85:90};switch(dow){case 1:return{t:"11:00",window:"11:00–11:30",blocked:blocked,comboBans:comboBans};case 2:return{t:"13:30",window:"13:30–14:00",blocked:blocked,comboBans:comboBans};case 3:return{t:"12:00",window:"12:00–12:30",blocked:blocked,comboBans:comboBans};case 4:return{t:"11:00",window:"11:00–11:30",blocked:blocked,comboBans:comboBans};case 5:return{t:"13:00",window:"13:00–13:30",blocked:blocked,comboBans:comboBans};default:return null;}}
-function m8Msg(d){const sc=m8Sched(d.getDay());return sc?`M8BF — Window ${sc.window}`:"M8BF";}
+// 2nd-trading-Thursday override — mirrors signal-engine.js isSecondTradingThursday + m8Sched.
+function isSecondTradingThursday(d){if(!d||d.getDay()!==4)return false;let thuCount=0;for(let day=1;day<=d.getDate();day++){if(new Date(d.getFullYear(),d.getMonth(),day).getDay()===4)thuCount++;}return thuCount===2;}
+function m8Sched(dow,d){const blocked=["10","25","35","40","65","80"];const comboBans={0:95,20:15,55:50,65:60,85:90};switch(dow){case 1:return{t:"11:00",window:"11:00–11:30",blocked:blocked,comboBans:comboBans};case 2:return{t:"13:30",window:"13:30–14:00",blocked:blocked,comboBans:comboBans};case 3:return{t:"12:00",window:"12:00–12:30",blocked:blocked,comboBans:comboBans};case 4:if(d&&isSecondTradingThursday(d))return{t:"13:30",window:"13:30–14:00 (2nd Thu)",blocked:blocked,comboBans:comboBans};return{t:"11:00",window:"11:00–11:30",blocked:blocked,comboBans:comboBans};case 5:return{t:"13:00",window:"13:00–13:30",blocked:blocked,comboBans:comboBans};default:return null;}}
+function m8Msg(d){const sc=m8Sched(d.getDay(),d);return sc?`M8BF — Window ${sc.window}`:"M8BF";}
 function ordinal(n){const s=["th","st","nd","rd"],v=n%100;return n+(s[(v-20)%10]||s[v]||s[0]);}
 function wdName(d){return["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][d]||"";}
 function tradeWdLabel(d){const t=new Date(d.getFullYear(),d.getMonth(),d.getDate());const dow=t.getDay(),ms=new Date(t.getFullYear(),t.getMonth(),1);let c=0;for(let x=new Date(ms);x<=t;x.setDate(x.getDate()+1)){if(!isTrade(x))continue;if(x.getDay()===dow)c++;}if(!isTrade(t))return`${wdName(dow)} (market closed)`;return`${ordinal(c)} ${wdName(dow)}`;}
@@ -533,7 +535,7 @@ function calculateSignal({vixToday,vixYOpen,vixYClose,spxGapPct,etDate}){
     if(oNight>0){
       rec="Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="STRADDLE";strikeInfo=null;
     } else {
-      rec=m8Msg(etDate);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";
+      rec=m8Msg(etDate);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow,etDate);entryT=strikeInfo?.window||"";
     }
 
     if(rec.startsWith("M8BF")){
@@ -548,7 +550,7 @@ function calculateSignal({vixToday,vixYOpen,vixYClose,spxGapPct,etDate}){
     // intentionally EXCLUDED (strategy independence — NM does not block GXBF).
     if(nmDay&&!isMon&&(rec.startsWith("M8BF")||rec.startsWith("No M8BF")||rec.startsWith("Straddle"))){rec="NM Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="NM STRADDLE";strikeInfo=null;}
     if(eomDay){rec="Straddle @ 9:32 AM (EOM)";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="EOM STRADDLE";strikeInfo=null;}
-    if(isWed&&!fedDay&&!m8bfBanned&&!nmDay&&rec.startsWith("Straddle")){rec=m8Msg(etDate);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow);entryT=strikeInfo?.window||"";}
+    if(isWed&&!fedDay&&!m8bfBanned&&!nmDay&&rec.startsWith("Straddle")){rec=m8Msg(etDate);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow,etDate);entryT=strikeInfo?.window||"";}
     if(opexDay&&rec.startsWith("Straddle")){rec="No Straddle (OPEX day)";theme="block";crossed=true;blockT="hard";blockD="Straddle not on OPEX";badge="BLOCKED";}
     if(postOpMon&&rec.startsWith("M8BF"))pmNote=true;
 
@@ -920,8 +922,7 @@ function fillStatsGrid(grid, stats) {
 // GXBF P/L from gxbf.csv column 12 (source of truth)
 // GXBF P/L now comes solely from history_data.json (mechanical version). The old hardcoded manual-override map was removed when GXBF went mechanical.
 
-// Straddle P/L from gxbf.csv column 13 (source of truth)
-const STRAD_PL ={"2026-02-27":-1120,"2026-02-12":9600,"2026-01-30":-2900,"2026-01-02":-260,"2025-12-31":2900,"2025-12-04":-1830,"2025-11-10":1550,"2025-11-03":20,"2025-10-31":550,"2025-10-30":560,"2025-10-28":-1160,"2025-10-16":2900,"2025-10-07":1060,"2025-10-02":-460,"2025-10-01":1910,"2025-09-30":860,"2025-09-26":-160,"2025-09-23":1400,"2025-09-05":2350,"2025-09-04":2600,"2025-08-26":900,"2025-08-08":890,"2025-08-01":1550,"2025-07-31":5560,"2025-07-30":-1140,"2025-07-29":1740,"2025-07-25":30,"2025-07-24":-1280,"2025-07-10":-560,"2025-07-03":1400,"2025-06-30":-1520,"2025-06-27":120,"2025-06-26":1000,"2025-06-10":200,"2025-06-05":1400,"2025-06-03":260,"2025-05-29":-420,"2025-05-20":-2510,"2025-05-09":-1190,"2025-05-01":-1100,"2025-04-30":3410,"2025-04-01":100,"2025-03-31":4700,"2025-03-03":8860,"2025-02-28":6450,"2025-02-14":-2530,"2025-02-13":2590,"2025-02-10":-830,"2025-02-07":3020,"2025-01-31":2540,"2025-01-28":1100,"2025-01-24":-150,"2025-01-23":2250,"2025-01-07":5700,"2025-01-03":2040,"2025-01-02":480,"2024-12-31":350,"2024-12-26":-970,"2024-12-19":1600,"2024-12-18":14600,"2024-12-13":230,"2024-12-10":880,"2024-12-06":-1020,"2024-11-26":-150,"2024-11-22":-700,"2024-11-14":1940,"2024-11-05":3140,"2024-11-01":-2740,"2024-10-31":3750,"2024-10-25":-1080,"2024-10-24":-1560,"2024-10-11":1330,"2024-10-01":2160,"2024-09-30":970,"2024-09-27":-440,"2024-09-26":-670,"2024-09-03":6850};
+// Straddle P/L now comes solely from history_data.json (mechanical version). The old hardcoded manual-override map was removed to mirror the same fix already applied to GXBF_PL (commit 9430201).
 
 async function init() {
   try {
@@ -969,7 +970,7 @@ async function init() {
           // 90% rule cannot cancel GXBF — GXBF is independent (overnight VIX drop
           // or OPEX+1 conversion). For everything else (Straddle, NM Straddle,
           // gap/o2o blocks, M8BF bans), 90% rule still forces M8BF.
-          const sc = m8Sched(dow);
+          const sc = m8Sched(dow, etDate);
           signal.rec = m8Msg(etDate); signal.theme = "m8bf"; signal.badge = "M8BF";
           signal.strikeInfo = sc; signal.entryT = sc?.window || ""; signal.blockT = "90%rule";
         }
@@ -994,7 +995,7 @@ async function init() {
         spxClose: cur.spxClose != null ? cur.spxClose : null,
         m8bfWR: cur.m8bfWR != null ? cur.m8bfWR : null,
         m8bfPL: cur.m8bfPL != null ? cur.m8bfPL : null,
-        stradPL: cur.date in STRAD_PL ? STRAD_PL[cur.date] : (cur.stradPL != null ? cur.stradPL : null),
+        stradPL: cur.stradPL != null ? cur.stradPL : null,
         gxbfPL: cur.gxbfPL != null ? cur.gxbfPL : null,
         bobfPL: cur.bobfPL != null ? cur.bobfPL : null,
         diagPL: cur.diagPL != null ? cur.diagPL : null,
@@ -1099,7 +1100,7 @@ function buildSpecialDayHtml(s) {
   if (s.fedDay)    tags.push('<span class="sday sday-fomc" title="FOMC / Fed decision">FOMC</span>');
   if (s.opexDay)   tags.push('<span class="sday sday-opex" title="OPEX Friday">OPEX</span>');
   if (s.opex1)     tags.push('<span class="sday sday-opex" title="Day before OPEX">OPEX-1</span>');
-  if (s.postOpMon) tags.push('<span class="sday sday-opex" title="Monday after OPEX">OPEX+1</span>');
+  if (s.postOpDay) tags.push('<span class="sday sday-opex" title="Day after OPEX">OPEX+1</span>');
   if (s.eomDay)    tags.push('<span class="sday sday-eom" title="End of month (last trade day)">EOM</span>');
   if (s.eom1)      tags.push('<span class="sday sday-eom" title="EOM-1 (2nd-to-last trade day)">EOM-1</span>');
   if (s.eom2)      tags.push('<span class="sday sday-eom" title="EOM-2 (3rd-to-last trade day)">EOM-2</span>');
@@ -1120,7 +1121,7 @@ function buildSpecialDayText(s) {
   if (s.fedDay)    tags.push('FOMC');
   if (s.opexDay)   tags.push('OPEX');
   if (s.opex1)     tags.push('OPEX-1');
-  if (s.postOpMon) tags.push('OPEX+1');
+  if (s.postOpDay) tags.push('OPEX+1');
   if (s.eomDay)    tags.push('EOM');
   if (s.eom1)      tags.push('EOM-1');
   if (s.eom2)      tags.push('EOM-2');

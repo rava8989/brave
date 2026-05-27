@@ -393,7 +393,7 @@ async function loadSPXHistory() {
         return;
       }
     }
-  } catch { /* worker unavailable */ }
+  } catch (e) { console.warn('[live] spx-history worker fetch failed:', e); }
   // Fallback: GitHub raw (legacy, may be stale)
   try {
     const r = await fetchWithRetry(RAW + 'spx_history.json?v=' + Date.now(), { cache: 'no-store' });
@@ -401,7 +401,7 @@ async function loadSPXHistory() {
     const d = await r.json();
     if (d.date !== todayET()) return;
     spxHistory = d.data || [];
-  } catch { /* file not yet created */ }
+  } catch (e) { console.warn('[live] spx-history GH-raw fallback failed:', e); }
 }
 async function loadSignals() {
   try {
@@ -413,7 +413,7 @@ async function loadSignals() {
     const sigMap = {};
     for (const s of (d.signals || [])) sigMap[s.time] = s;
     signalsToday = Object.values(sigMap).sort((a, b) => a.time.localeCompare(b.time));
-  } catch { /* file not yet created by scraper */ }
+  } catch (e) { console.warn('[live] /signals fetch failed:', e); }
 }
 
 // ─── SPX Chart ────────────────────────────────────────────────────────────────
@@ -586,7 +586,7 @@ async function loadBobf() {
   try {
     const r = await fetchWithRetry(PROXY + '/bobf-today', { cache: 'no-store' });
     if (r.ok) bobf = await r.json();
-  } catch { /* keep last known */ }
+  } catch (e) { console.warn('[live] /bobf-today fetch failed:', e); }
 }
 
 function renderBobf() {
@@ -766,7 +766,7 @@ async function loadGxbf() {
   try {
     const r = await fetchWithRetry(PROXY + '/gxbf-today', { cache: 'no-store' });
     if (r.ok) gxbf = await r.json();
-  } catch { /* keep last known */ }
+  } catch (e) { console.warn('[live] /gxbf-today fetch failed:', e); }
 }
 
 function renderGxbf() {
@@ -921,7 +921,7 @@ async function loadStraddle() {
   try {
     const r = await fetchWithRetry(PROXY + '/straddle-today', { cache: 'no-store' });
     if (r.ok) straddle = await r.json();
-  } catch { /* keep last known */ }
+  } catch (e) { console.warn('[live] /straddle-today fetch failed:', e); }
 }
 
 function renderStraddle() {
@@ -1101,7 +1101,7 @@ async function loadDiagonal() {
   try {
     const r = await fetchWithRetry(PROXY + '/diagonal-today', { cache: 'no-store' });
     if (r.ok) diagonal = await r.json();
-  } catch { /* keep last known */ }
+  } catch (e) { console.warn('[live] /diagonal-today fetch failed:', e); }
 }
 
 // Helper: format expiry ISO as "May 8" / "Jun 12"
@@ -1322,13 +1322,13 @@ async function loadTrade() {
       trade = await r.json();
       return;
     }
-  } catch { /* worker unavailable */ }
+  } catch (e) { console.warn('[live] /trade worker fetch failed:', e); }
   // Fallback: GitHub raw (legacy, may be stale)
   try {
     const r = await fetchWithRetry(RAW + 'today_trade.json', { cache: 'no-store' });
     if (!r.ok) return;
     trade = await r.json();
-  } catch { /* keep last known trade */ }
+  } catch (e) { console.warn('[live] /trade GH-raw fallback failed:', e); }
 }
 
 // ─── OAuth Callback Handler ───────────────────────────────────────────────────
@@ -1405,7 +1405,7 @@ async function refreshSPX() {
         }
       }
     }
-  } catch { /* fall through to GH raw fallback */ }
+  } catch (e) { console.warn('[live] spx worker fetch failed, falling back to GH raw:', e); }
 
   // Fallback: legacy spx_live.json on GitHub raw (Windows-machine pipeline, may
   // be stale if that machine isn't running).

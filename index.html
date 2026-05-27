@@ -301,7 +301,7 @@
        This is the SINGLE SOURCE OF TRUTH for diagonal filter logic — the inline
        diagonal card below reads SignalEngine.computeDiagonalSignal() output
        directly so the browser UI, Discord message, and backtester can never drift. -->
-  <script type="module" src="./signal-engine.js?v=20260427-q2earnings"></script>
+  <script type="module" src="./signal-engine.js?v=20260526-gxbf-hybrid"></script>
 </head>
 <body>
 
@@ -1175,9 +1175,10 @@
 
   // Bumped on schema changes that invalidate previously-cached values.
   // v2 (2026-05-26): introduced after a holiday-VIX bug saved Memorial-Day's
-  // stale 16.59 as "yesterdayClose". Bumping forces a fresh fetch on next
-  // page-load so the dashboard re-pulls from Schwab with the corrected
-  // candle-walker + quote-override-guard logic.
+  //   stale 16.59 as "yesterdayClose".
+  // v3 (2026-05-26): bumped again to forcibly invalidate any v2 caches that
+  //   may still hold 16.59 from before the Schwab-quote-override removal
+  //   (commit f66f37d).
   const S3_INPUTS_VERSION = 3;
 
   function saveInputs(){
@@ -2248,7 +2249,7 @@
         // Also trigger a GEX update
         try{
           await fetch(`${proxy}/trigger`, { headers: { 'X-Sync-Secret': secret } });
-        }catch(e){}
+        }catch(e){ console.warn('[gex] /trigger failed:', e); }
       }
     }catch(e){
       schwabSetStatus('error', 'Sync failed: ' + e.message);
