@@ -2486,6 +2486,37 @@ async function doRun() {
   try {
     const params = getParams();
     console.log('[diagonal] backtest params:', params);
+
+    // TP needs intermediate timestamps to walk between entry and exit.
+    // By default only the entry+exit time buckets are loaded — that gives
+    // the walker an empty set to iterate, so TP never fires (the user
+    // reported "press run with TP, nothing happens"). When TP is on,
+    // force-load every timestamp bundle from REAL_INDEX.times so the
+    // walker has the full intraday path available.
+    if (params.tpEnabled && REAL_INDEX?.format === 'per_time_v2') {
+      const allTimes = REAL_INDEX.times || [];
+      const missing = allTimes.filter(t => !LOADED_TIMES.has(t));
+      if (missing.length) {
+        btn.textContent = `LOADING TP TIMESTAMPS (0/${missing.length})…`;
+        let done = 0;
+        // Throttled fetch (4 in flight) to avoid hammering GitHub Pages
+        const batches = [];
+        for (let i = 0; i < missing.length; i += 4) batches.push(missing.slice(i, i + 4));
+        for (const batch of batches) {
+          await Promise.all(batch.map(async t => {
+            try { await fetchTimeAcrossHalves(t); } catch (e) { console.warn(`[diagonal] tp-prefetch ${t} failed:`, e.message); }
+            done++;
+            btn.textContent = `LOADING TP TIMESTAMPS (${done}/${missing.length})…`;
+          }));
+        }
+        // Re-flatten so REAL_DATA picks up any newly-loaded entries
+        if (REAL_DATA_MULTI) {
+          REAL_DATA = flattenRealData(REAL_DATA_MULTI, SELECTED_ENTRY_TIME, SELECTED_EXIT_TIME);
+        }
+        console.log(`[diagonal] TP prefetch: ${done}/${missing.length} timestamps loaded (LOADED_TIMES now ${LOADED_TIMES.size})`);
+        btn.textContent = 'Running...';
+      }
+    }
     const result = runBacktest(DIAGONAL_DATA, params);
     const { trades, kpis, skipped, priceSourceCount } = result;
     lastTrades = trades;
