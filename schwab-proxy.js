@@ -7754,12 +7754,37 @@ export default {
         const etNowT = toET(new Date());
         const todayT = isoDateET(etNowT);  // byte-identical to the old manual y-m-d
 
+        // ── lastClosed (mirrors /bobf-today, /gxbf-today, etc.). bobf-bot's
+        // stats card relies on this for "TRADES" / "CLOSED P/L" counting on
+        // M8BF — without it, every M8BF paper trade stays in 'logged' status
+        // forever (the bot's upLookup only ever sees today's open). Most
+        // recent date < today with m8bfPL non-null. Same-day open + close
+        // because M8BF is 0DTE. See lessons.md P6. ──
+        let lastClosedM8bf = null;
+        try {
+          const _hist = await getHistory(env);
+          if (Array.isArray(_hist)) {
+            const _prior = _hist
+              .filter(r => r.date && r.date < todayT && r.m8bfPL != null)
+              .sort((a, b) => b.date.localeCompare(a.date));
+            if (_prior.length) {
+              lastClosedM8bf = {
+                date: _prior[0].date,
+                openDate: _prior[0].date,
+                closeDate: _prior[0].date,
+                pnl: parseFloat(_prior[0].m8bfPL),
+                status: 'settled',
+              };
+            }
+          }
+        } catch { /* if history fetch fails, lastClosed stays null */ }
+
         // ── M8BF banned-day gate (early return — no Discord poll on banned
         //    days, exactly as before). Logic moved verbatim into
         //    m8bfBannedReason() so refreshM8bfLiveQuotes shares it. ──
         const bannedReason = m8bfBannedReason(etNowT);
         if (bannedReason) {
-          return jsonResp({ date: todayT, triggered: false, status: 'banned', reason: `No M8BF (${bannedReason})` }, 200, corsHeaders);
+          return jsonResp({ date: todayT, triggered: false, status: 'banned', reason: `No M8BF (${bannedReason})`, lastClosed: lastClosedM8bf }, 200, corsHeaders);
         }
 
         // ── Cron-stall self-heal: if the last cron tick is stale AND we're
@@ -7786,13 +7811,13 @@ export default {
         // Shared selection (identical logic to the previous inline block).
         const sel = await selectM8bfQualifying(env, etNowT);
         if (sel.status === 'waiting' && sel.reason) {
-          return jsonResp({ date: todayT, triggered: false, status: 'waiting', reason: sel.reason }, 200, corsHeaders);
+          return jsonResp({ date: todayT, triggered: false, status: 'waiting', reason: sel.reason, lastClosed: lastClosedM8bf }, 200, corsHeaders);
         }
         if (sel.status === 'no_signal') {
-          return jsonResp({ date: todayT, triggered: false, status: 'no_signal', reason: sel.reason }, 200, corsHeaders);
+          return jsonResp({ date: todayT, triggered: false, status: 'no_signal', reason: sel.reason, lastClosed: lastClosedM8bf }, 200, corsHeaders);
         }
         if (sel.status === 'waiting') {
-          return jsonResp({ date: todayT, triggered: false, status: 'waiting', window: sel.window }, 200, corsHeaders);
+          return jsonResp({ date: todayT, triggered: false, status: 'waiting', window: sel.window, lastClosed: lastClosedM8bf }, 200, corsHeaders);
         }
 
         // status === 'open'
@@ -7808,6 +7833,7 @@ export default {
           t1: qualifying.t1,
           premium: qualifying.premium,
           cp: qualifying.cp,
+          lastClosed: lastClosedM8bf,
         };
         // Merge the REAL mark-to-market spread mid written every tick by
         // refreshM8bfLiveQuotes. live.html prefers this over the
