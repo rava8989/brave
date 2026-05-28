@@ -1447,142 +1447,359 @@
     document.getElementById('cpiBlockBanner').style.display='none';
     document.getElementById('signalStack').style.display='';
 
-    const now=new Date(), dow=now.getDay();
-    const isMon=dow===1, isFri=dow===5, isWed=dow===3;
-    const nmDay=isFirstTradeMo(now), nmMon=isFirstTradeMon(now);
-    const fedDay=isFed(), opexDay=isOpex();
-    const postOpMon=isPostOpexMon();
-    const postOpDay=SignalEngine.opexSch.some(isTodayAfter);
-    const eomDay=isLastTradeMo(now), eom1=isEomN(1,now), eom2=isEomN(2,now);
-    const vixExpDay=isVixExp(), opex1=SignalEngine.opexSch.some(isTodayBefore);
-    const earningsDay=isEarningsDay();
+    // ── Display-only metric calculations (no strategy decisions here) ──
+    // Strategy logic is delegated to SignalEngine.calculateSignal() below —
+    // single source of truth shared with schwab-proxy.js (Discord) and
+    // history.html. We only compute what the metrics bar needs.
+    //
+    // Date handling: we pass a plain `new Date()` to the engine to match the
+    // previous inline behavior exactly (the engine internally uses getMonth/
+    // getDate/getDay so it reads whatever wall-clock the Date carries). For
+    // US-ET users during market hours this is the right local day. (For
+    // evening users in PT there's a known ≤3-hour-window drift across the
+    // ET midnight rollover — same as old code, same as the existing isFed/
+    // isOpex/isCpi helpers which all read from new Date() too.)
+    const now = new Date();
+    const dow = now.getDay();
+    const o2o   = isNaN(vYOpen) ? NaN : vYOpen - vToday;
+    const oNight= vYClose - vToday;
 
-    // ── M8BF block rules (checked independently of other strategy cards) ──
-    const m8bfBlocked=(()=>{
-      const blk=(r,n)=>({r,n});
-      if(eomDay)                  return blk("No M8BF (EOM)",              "M8BF not traded on EOM");
-      if(eom1)                    return blk("No M8BF (EOM-1)",            "M8BF not traded on EOM-1");
-      if(opex1)                   return blk("No M8BF (day before OPEX)",  "Skipped day before OPEX");
-      if(isNonAmznTslaEarningsDay()) return blk("No M8BF (earnings)",      "Not traded on earnings days (except AMZN/TSLA)");
-      if(isVixAfterOpexDay(now))  return blk("No M8BF (VIX exp day)",      "VIX exp day when VIX exp falls after OPEX");
-      if(nmDay)                   return blk("No M8BF (first trading day)", "Skipped on first trading day of month");
-      return null;
-    })();
+    // Tag chips (CPI/Fed/OPEX/Post-OPEX/EOM). cpiTag forced false because the
+    // CPI early-return above already handled that branch; we only reach here
+    // on non-CPI days.
+    const tmap = {
+      cpiTag:      false,
+      fedTag:      isFed(),
+      opexTag:     isOpex(),
+      postOpexTag: SignalEngine.opexSch.some(isTodayAfter),
+      eomTag:      isLastTradeMo(now),
+    };
+    let anyTag = false;
+    Object.entries(tmap).forEach(([id, v]) => {
+      document.getElementById(id).style.display = v ? 'inline-flex' : 'none';
+      if (v) anyTag = true;
+    });
+    document.getElementById('tagSep').style.display = anyTag ? 'inline' : 'none';
 
-    // tags
-    const tmap={cpiTag:cpiDay,fedTag:fedDay,opexTag:opexDay,postOpexTag:postOpDay,eomTag:eomDay};
-    let anyTag=false;
-    Object.entries(tmap).forEach(([id,v])=>{document.getElementById(id).style.display=v?'inline-flex':'none';if(v)anyTag=true;});
-    document.getElementById('tagSep').style.display=anyTag?'inline':'none';
+    // Overnight drop + open-to-open display
+    const dEl = document.getElementById('overnightDropDisplay');
+    dEl.textContent = oNight.toFixed(2);
+    dEl.className   = 'mv' + (oNight > 0 ? ' dn' : oNight < 0 ? ' up' : '');
+    const oEl = document.getElementById('openDiffDisplay');
+    const oNote = document.getElementById('openDiffNote');
+    oNote.style.display = 'none';
+    oEl.textContent = isNaN(o2o) ? '—' : o2o.toFixed(2);
+    oEl.className   = 'mv' + (o2o > 0 ? ' dn' : o2o < 0 ? ' up' : '');
 
-    const o2o=isNaN(vYOpen)?NaN:vYOpen-vToday;
-    const oNight=vYClose-vToday;
-
-    const dEl=document.getElementById('overnightDropDisplay');
-    dEl.textContent=oNight.toFixed(2);
-    dEl.className='mv'+(oNight>0?' dn':oNight<0?' up':'');
-    const oEl=document.getElementById('openDiffDisplay'), oNote=document.getElementById('openDiffNote');
-    if(cpiDay){oEl.textContent='—';oNote.style.display='inline-flex';}
-    else{oNote.style.display='none';oEl.textContent=isNaN(o2o)?'—':o2o.toFixed(2);oEl.className='mv'+(o2o>0?' dn':o2o<0?' up':'');}
-
-    // ── SPX gap check (populated by Schwab when connected) ──
+    // SPX gap (Schwab-populated) — display + pass to SignalEngine
     const spxData = SC ? SC.get('spx') : null; // { yClose, todayOpen }
     let spxGapPct = null;
-    let spxGapCancelsStrad = false;
-    if(spxData && spxData.yClose && spxData.todayOpen){
+    if (spxData && spxData.yClose && spxData.todayOpen) {
       spxGapPct = ((spxData.todayOpen - spxData.yClose) / spxData.yClose) * 100;
-      spxGapCancelsStrad = Math.abs(spxGapPct) >= T.SPX_GAP_THRESHOLD;
     }
-
-    // Show SPX gap in metrics bar if available
-    const spxGapWrap=document.getElementById('spxGapWrap');
-    const spxGapEl  =document.getElementById('spxGapDisplay');
-    const spxSepEl  =document.getElementById('spxSep');
-    if(spxGapPct !== null){
-      spxGapWrap.style.display='flex';
-      spxSepEl.style.display='inline';
-      const dir=spxGapPct>0?'▲':'▼';
-      spxGapEl.textContent=`${dir}${Math.abs(spxGapPct).toFixed(2)}%`;
-      spxGapEl.className=spxGapPct>0?'mv gap-up':'mv gap-dn';
-      spxGapEl.style.color='';
+    const spxGapWrap = document.getElementById('spxGapWrap');
+    const spxGapEl   = document.getElementById('spxGapDisplay');
+    const spxSepEl   = document.getElementById('spxSep');
+    if (spxGapPct !== null) {
+      spxGapWrap.style.display = 'flex';
+      spxSepEl.style.display   = 'inline';
+      const dir = spxGapPct > 0 ? '▲' : '▼';
+      spxGapEl.textContent = `${dir}${Math.abs(spxGapPct).toFixed(2)}%`;
+      spxGapEl.className   = spxGapPct > 0 ? 'mv gap-up' : 'mv gap-dn';
+      spxGapEl.style.color = '';
     } else {
-      spxGapWrap.style.display='none';
-      spxSepEl.style.display='none';
+      spxGapWrap.style.display = 'none';
+      spxSepEl.style.display   = 'none';
     }
 
-    // ── VIX 20-day percentile (research: 40–90% band = diagonal dead zone) ──
-    const vixPctWrap=document.getElementById('vixPct20Wrap');
-    const vixPctSep =document.getElementById('vixPctSep');
-    const vixPctEl  =document.getElementById('vixPct20Display');
-    let _vixPctToday = null;  // cached for the regime block below
-    if(_vix20dCloses && _vix20dCloses.length >= 10 && !isNaN(vToday)){
+    // VIX 20-day percentile (40–90% band = diagonal dead zone)
+    const vixPctWrap = document.getElementById('vixPct20Wrap');
+    const vixPctSep  = document.getElementById('vixPctSep');
+    const vixPctEl   = document.getElementById('vixPct20Display');
+    let _vixPctToday = null;
+    if (_vix20dCloses && _vix20dCloses.length >= 10 && !isNaN(vToday)) {
       const below = _vix20dCloses.filter(c => c < vToday).length;
-      const pct   = Math.round(100 * below / _vix20dCloses.length);
-      _vixPctToday = pct;
-      vixPctWrap.style.display='flex';
-      vixPctSep.style.display='inline';
-      vixPctEl.textContent = pct + '%';
-      vixPctEl.className = (pct > 40 && pct <= 90) ? 'mv vix-dead' : 'mv vix-edge';
-      vixPctWrap.title = (pct > 40 && pct <= 90)
-        ? `VIX today ${vToday} ranks ${pct}% in last 20 daily closes — DEAD ZONE (40–90%): Diagonal loses edge here.`
-        : `VIX today ${vToday} ranks ${pct}% in last 20 daily closes — EDGE: outside the 40–90% dead zone.`;
+      _vixPctToday = Math.round(100 * below / _vix20dCloses.length);
+      vixPctWrap.style.display = 'flex';
+      vixPctSep.style.display  = 'inline';
+      vixPctEl.textContent = _vixPctToday + '%';
+      vixPctEl.className   = (_vixPctToday > 40 && _vixPctToday <= 90) ? 'mv vix-dead' : 'mv vix-edge';
+      vixPctWrap.title = (_vixPctToday > 40 && _vixPctToday <= 90)
+        ? `VIX today ${vToday} ranks ${_vixPctToday}% in last 20 daily closes — DEAD ZONE (40–90%): Diagonal loses edge here.`
+        : `VIX today ${vToday} ranks ${_vixPctToday}% in last 20 daily closes — EDGE: outside the 40–90% dead zone.`;
     } else {
-      vixPctWrap.style.display='none';
-      vixPctSep.style.display='none';
+      vixPctWrap.style.display = 'none';
+      vixPctSep.style.display  = 'none';
     }
 
-    // ── Diagonal-strategy regime check (VIX DEAD filter) ──
-    // DEAD = VIX 20d pct in (40,90] AND |yesterday's SPX %chg| < 0.5
-    // Ready by 9:30 AM ET — all inputs (20d VIX, yesterday/day-before-yesterday SPX close) are available at market open.
+    // Diagonal regime: VIX DEAD = (40,90] AND |yest. SPX %chg| < 0.5
     const regimeWrap = document.getElementById('regimeWrap');
     const regimeSep  = document.getElementById('regimeSep');
     const regimeEl   = document.getElementById('regimeDisplay');
-    if(_vixPctToday !== null && _spxPriorDayChgPct !== null){
+    if (_vixPctToday !== null && _spxPriorDayChgPct !== null) {
       const inDeadBand = (_vixPctToday > 40 && _vixPctToday <= 90);
       const priorFlat  = Math.abs(_spxPriorDayChgPct) < 0.5;
       const isDead     = inDeadBand && priorFlat;
       regimeWrap.style.display = 'flex';
       regimeSep.style.display  = 'inline';
       const priorDir = _spxPriorDayChgPct > 0 ? '+' : '';
-      if(isDead){
+      if (isDead) {
         regimeEl.textContent = '⚠ DEAD';
-        regimeEl.className = 'mv regime-dead';
+        regimeEl.className   = 'mv regime-dead';
         regimeWrap.title = `DEAD ZONE: VIX 20d percentile = ${_vixPctToday}% (in 40–90% band) AND yesterday's SPX moved ${priorDir}${_spxPriorDayChgPct.toFixed(2)}% (< 0.5% = flat). Historically this combo has no edge for the diagonal — consider skipping.`;
       } else {
         regimeEl.textContent = '✓ EDGE';
-        regimeEl.className = 'mv regime-edge';
+        regimeEl.className   = 'mv regime-edge';
         const reasons = [];
-        if(!inDeadBand) reasons.push(`VIX 20d percentile = ${_vixPctToday}% (outside 40–90% dead band)`);
-        if(!priorFlat)  reasons.push(`yesterday's SPX moved ${priorDir}${_spxPriorDayChgPct.toFixed(2)}% (≥ 0.5% = directional)`);
+        if (!inDeadBand) reasons.push(`VIX 20d percentile = ${_vixPctToday}% (outside 40–90% dead band)`);
+        if (!priorFlat)  reasons.push(`yesterday's SPX moved ${priorDir}${_spxPriorDayChgPct.toFixed(2)}% (≥ 0.5% = directional)`);
         regimeWrap.title = `EDGE present — ${reasons.join(' · ')}. Diagonal trade has its normal edge today.`;
       }
     } else {
-      // Not enough data yet — show a waiting state so user knows it's coming
       regimeWrap.style.display = 'flex';
       regimeSep.style.display  = 'inline';
       regimeEl.textContent = '…';
-      regimeEl.className = 'mv regime-wait';
+      regimeEl.className   = 'mv regime-wait';
       regimeWrap.title = 'Waiting for today\'s VIX open + prior-day SPX close — connect Schwab and check back shortly after 9:30 AM ET.';
     }
 
-    // ── DIAGONAL signal card — companion strategy ──
-    // SINGLE SOURCE OF TRUTH: signal-engine.js #computeDiagonalSignal().
-    // Browser UI, Worker Discord message, and Python backtester all share the
-    // same filter stack + output text. Do NOT re-implement filters here; add
-    // new filters to signal-engine.js and they'll propagate everywhere.
-    // Independent of Sigma 3 — does not read any M8BF/Straddle/GXBF/BOBF flags.
+    // ── SINGLE SOURCE OF TRUTH ──
+    // All strategy decisions (M8BF/Straddle/GXBF/BOBF/Diagonal) come from
+    // SignalEngine.calculateSignal — same module the worker uses to build the
+    // Discord auto-message and history.html uses for backtest replay. Do NOT
+    // re-implement strategy logic here; add it in signal-engine.js and every
+    // page picks it up. (2026-05-28: removed ~250-line inline duplicate that
+    // had silently drifted from canonical — caused M8BF dashboard vs Discord
+    // divergence on EOM-1 with WR=99%.)
+    const prevWR = wr90.checked ? 99 : (wr0.checked ? 0 : null);
+    const sig = SignalEngine.calculateSignal({
+      vixToday:  vToday,
+      vixYOpen:  isNaN(vYOpen)  ? null : vYOpen,
+      vixYClose: isNaN(vYClose) ? null : vYClose,
+      spxGapPct,
+      etDate:    now,
+      prevWR,
+      vixPct20d: _vixPctToday,
+      rsi14:     _spxRsi14,
+    });
+
+    /* ====== RENDER 5 CARDS ====== */
+
+    const cardM8bf   = document.getElementById('cardM8bf');
+    const m8bfRec    = document.getElementById('m8bfRec');
+    const m8bfBadge  = document.getElementById('m8bfBadge');
+    const m8bfReason = document.getElementById('m8bfReason');
+    const cardStrad  = document.getElementById('cardStrad');
+    const stradRec   = document.getElementById('stradRec');
+    const stradBadge = document.getElementById('stradBadge');
+    const stradReason= document.getElementById('stradReason');
+    const cardGxbf   = document.getElementById('cardGxbf');
+    const gxbfRec    = document.getElementById('gxbfRec');
+    const gxbfBadge  = document.getElementById('gxbfBadge');
+    const gxbfReason = document.getElementById('gxbfReason');
+
+    // Convenience extracts from the canonical signal
+    const {
+      theme, rec, badge, entryT, blockT, blockD, crossed,
+      strikeInfo, m8bfStrikeInfo, m8bfBanned, m8bfText, stradText, gxbfText,
+      bobfRec: bobfRecCanon, bobfBadge: bobfBadgeCanon, bobfBlocks,
+      eomDay, eom1, opex1, vixExpAfterOpex, nonAmznTslaEarn,
+      diagText, diagBadge: diagBadgeCanon, diagGo, diagSkipCode,
+    } = sig;
+
+    // ── CARD 1: M8BF ──
+    // Logic mirrors signal-engine internals: the 90% rule (blockT='90%rule')
+    // overrides M8BF bans — when it fires, theme is 'm8bf' even on EOM/EOM-1/
+    // OPEX-1/earnings/VIX-exp days. Hard-block only when M8BF is banned AND
+    // the 90% override didn't fire.
+    if (sig.cpiDay) {
+      cardM8bf.className     = 'scard active-block';
+      m8bfBadge.textContent  = 'BLOCKED';
+      m8bfRec.innerHTML      = `<span class="crossed">No M8BF (CPI day)</span>`;
+      m8bfReason.innerHTML   = `<span class="block-hard">⛔ CPI day — all strategies blocked</span>`;
+    } else if (theme === 'm8bf') {
+      // M8BF fires — either normally, or the 90% rule overrode a block.
+      const sched = m8bfStrikeInfo || strikeInfo;
+      cardM8bf.className    = 'scard active-m8bf';
+      m8bfBadge.textContent = sched ? `🕐 ${sched.window}` : 'TRADE';
+      m8bfRec.textContent   = sched ? `M8BF — Window ${sched.window}` : 'M8BF';
+      if (blockT === '90%rule') {
+        // Surface what the 90% rule overrode (if anything was banned).
+        let overReason = '';
+        if (m8bfBanned) {
+          if (eomDay)              overReason = `No M8BF (EOM)`;
+          else if (eom1)           overReason = `No M8BF (EOM-1)`;
+          else if (opex1)          overReason = `No M8BF (day before OPEX)`;
+          else if (nonAmznTslaEarn)overReason = `No M8BF (earnings)`;
+          else if (vixExpAfterOpex)overReason = `No M8BF (VIX exp day)`;
+        }
+        const overText = overReason ? ` (overrides "${overReason}")` : '';
+        m8bfReason.innerHTML = `<span style="color:var(--accent);font-style:italic;">📈 90% rule${overText}</span>`;
+      } else {
+        m8bfReason.textContent = '';
+      }
+    } else if (blockT === '0%rule') {
+      // WR=0% forces Straddle — M8BF stands down.
+      cardM8bf.className     = 'scard dimmed';
+      m8bfBadge.textContent  = '—';
+      m8bfRec.textContent    = 'No M8BF (0% WR → Straddle)';
+      m8bfReason.textContent = '';
+    } else if (m8bfBanned) {
+      // Calendar-banned for M8BF (EOM/EOM-1/OPEX-1/earnings/VIX-exp) AND 90%
+      // rule did NOT override. m8bfText already says "No M8BF (...)".
+      const reasonMap = {
+        [`No M8BF (EOM)`]:             'M8BF not traded on EOM',
+        [`No M8BF (EOM-1)`]:           'M8BF not traded on EOM-1',
+        [`No M8BF (day before OPEX)`]: 'Skipped day before OPEX',
+        [`No M8BF (earnings)`]:        'Not traded on earnings days (except AMZN/TSLA)',
+        [`No M8BF (VIX exp day)`]:     'VIX exp day when VIX exp falls after OPEX',
+      };
+      cardM8bf.className    = 'scard active-block';
+      m8bfBadge.textContent = 'BLOCKED';
+      m8bfRec.innerHTML     = `<span class="crossed">${m8bfText}</span>`;
+      m8bfReason.innerHTML  = `<span class="block-hard">⛔ ${reasonMap[m8bfText] || 'M8BF banned'}</span>`;
+    } else {
+      // No M8BF for some other reason (e.g. theme=='strad' on a non-M8BF day).
+      cardM8bf.className     = 'scard dimmed';
+      m8bfBadge.textContent  = '—';
+      m8bfRec.textContent    = m8bfText;
+      m8bfReason.textContent = '';
+    }
+
+    // ── CARD 2: Straddle ──
+    if (sig.cpiDay) {
+      cardStrad.className     = 'scard active-block';
+      stradBadge.textContent  = 'BLOCKED';
+      stradRec.innerHTML      = `<span class="crossed">No Straddle (CPI day)</span>`;
+      stradReason.innerHTML   = `<span class="block-hard">⛔ CPI day — all strategies blocked</span>`;
+    } else if (theme === 'strad') {
+      cardStrad.className = 'scard active-strad';
+      const isNM  = badge === 'NM STRADDLE';
+      const isEOM = badge === 'EOM STRADDLE';
+      if (isNM)       stradBadge.textContent = '📅 NM — 9:32 AM';
+      else if (isEOM) stradBadge.textContent = '📆 EOM — 9:32 AM';
+      else            stradBadge.textContent = entryT ? `⏰ ${entryT}` : 'TRADE';
+      stradRec.innerHTML = crossed ? `<span class="crossed">${rec}</span>` : rec;
+      if (isNM)                       stradReason.textContent = 'First trading day of month · Max risk $3,200';
+      else if (isEOM)                 stradReason.textContent = 'Last trading day of month · Max risk $3,500';
+      else if (blockT === '0%rule')   stradReason.innerHTML   = `<span style="color:var(--accent);font-style:italic;">📉 0% rule — M8BF → Straddle</span>`;
+      else                            stradReason.textContent = '';
+    } else if (theme === 'block' && (rec.includes('Straddle') || rec.includes('CPI') || rec.includes('Trade'))) {
+      cardStrad.className     = 'scard active-block';
+      stradBadge.textContent  = 'BLOCKED';
+      stradRec.innerHTML      = `<span class="crossed">${rec}</span>`;
+      if (blockT === 'hard' || blockT === 'gap' || blockT === 'o2o') {
+        stradReason.innerHTML = `<span class="block-hard">⛔ ${blockD || rec.replace(/^No /, '')}</span>`;
+      } else {
+        stradReason.textContent = '';
+      }
+    } else {
+      cardStrad.className     = 'scard dimmed';
+      stradBadge.textContent  = '—';
+      stradRec.textContent    = stradText;
+      stradReason.textContent = '';
+    }
+
+    // ── CARD 3: GXBF ──
+    // Strategy-independent: drives entirely off sig.theme and sig.gxbfText.
+    // gxbfText ∈ { "GXBF @ 9:36 AM[ (OPEX+1)]", "No GXBF (overnight VIX drop ≤ 0.65)", "No GXBF (<reason>)" }.
+    if (theme === 'gxbf') {
+      cardGxbf.className     = 'scard active-gxbf';
+      gxbfBadge.textContent  = `⏰ ${entryT}`;
+      gxbfRec.textContent    = rec;
+      gxbfReason.textContent = '';
+    } else if (gxbfText.startsWith('No GXBF (overnight VIX drop')) {
+      // Trigger never fired — dimmed.
+      cardGxbf.className     = 'scard dimmed';
+      gxbfBadge.textContent  = '—';
+      gxbfRec.textContent    = gxbfText;
+      gxbfReason.textContent = '';
+    } else if (gxbfText.startsWith('No GXBF')) {
+      // Trigger fired but a block hit (VIX≥max, EOM, OPEX+1 gap-up).
+      const reason = gxbfText.replace(/^No GXBF \((.+)\)$/, '$1');
+      cardGxbf.className    = 'scard active-block';
+      gxbfBadge.textContent = 'BLOCKED';
+      gxbfRec.innerHTML     = `<span class="crossed">${gxbfText}</span>`;
+      gxbfReason.innerHTML  = `<span class="block-vix">⚠️ ${reason}</span>`;
+    } else {
+      cardGxbf.className     = 'scard dimmed';
+      gxbfBadge.textContent  = '—';
+      gxbfRec.textContent    = gxbfText;
+      gxbfReason.textContent = '';
+    }
+
+    // ── STRIKE GRID (inside M8BF card) ──
+    // Uses m8bfStrikeInfo (M8BF's OWN status) when M8BF is active, so the
+    // banned-strikes table renders even on days when the primary signal was
+    // overridden (e.g. 90% rule firing through an OPEX-1 ban).
+    const gw = document.getElementById('strikeGridWrap');
+    const g  = document.getElementById('strikeGrid');
+    g.innerHTML = '';
+    const gridStrikeInfo = (theme === 'm8bf') ? (m8bfStrikeInfo || strikeInfo) : null;
+    if (gridStrikeInfo && gridStrikeInfo.blocked) {
+      gw.style.display = 'block';
+      const lbl = document.getElementById('sgLabel');
+      if (lbl) {
+        lbl.innerHTML = `Window ${gridStrikeInfo.window} <span style="background:#052016;color:#34d399;border:1px solid #34d399;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;margin-left:6px;">Every week</span>`;
+      }
+      const bannedLbl = document.createElement('div');
+      bannedLbl.style.cssText = 'width:100%;font-size:10px;color:#f87171;font-weight:600;margin-bottom:4px;letter-spacing:.04em;text-transform:uppercase;';
+      bannedLbl.textContent = 'Banned center strikes — skip these:';
+      g.appendChild(bannedLbl);
+      gridStrikeInfo.blocked.forEach(s => {
+        const p = document.createElement('span');
+        p.className = 'sp lwr';
+        p.textContent = s;
+        g.appendChild(p);
+      });
+      if (gridStrikeInfo.comboBans) {
+        const comboLbl = document.createElement('div');
+        comboLbl.style.cssText = 'width:100%;font-size:10px;color:#fcd34d;font-weight:600;margin:6px 0 4px;letter-spacing:.04em;text-transform:uppercase;';
+        comboLbl.textContent = 'Combo bans (wing-width mod 100 → banned center end):';
+        g.appendChild(comboLbl);
+        Object.entries(gridStrikeInfo.comboBans).forEach(([t1, center]) => {
+          const p = document.createElement('span');
+          p.className = 'sp lwr';
+          p.style.cssText = 'background:#2b1f00;border-color:#78350f;color:#fcd34d;font-size:10px;';
+          p.textContent = `${t1}→${center}`;
+          g.appendChild(p);
+        });
+      }
+    } else {
+      gw.style.display = 'none';
+    }
+
+    // ── CARD 4: BOBF ──
+    // bobfRec / bobfBadge / bobfBlocks come from SignalEngine.
+    const cardBobf  = document.getElementById('cardBobf');
+    const bobfRec   = document.getElementById('bobfRec');
+    const bobfBadge = document.getElementById('bobfBadge');
+    const bobfReason= document.getElementById('bobfReason');
+    if (bobfBlocks && bobfBlocks.length) {
+      const vb = bobfBlocks.includes('high VIX');
+      const ob = bobfBlocks.some(r => r !== 'high VIX');
+      const cls = vb && !ob ? 'block-vix' : 'block-hard';
+      const icon= vb && !ob ? '⚠️' : '⛔';
+      cardBobf.className     = 'scard active-block';
+      bobfBadge.textContent  = 'BLOCKED';
+      bobfRec.innerHTML      = `<span class="crossed">${bobfRecCanon}</span>`;
+      bobfReason.innerHTML   = `<span class="${cls}">${icon} ${vb && !ob ? 'VIX level' : 'Hard rule'}</span>`;
+    } else {
+      cardBobf.className     = 'scard active-ok';
+      bobfBadge.textContent  = bobfBadgeCanon;
+      bobfRec.textContent    = bobfRecCanon;
+      bobfReason.textContent = '';
+    }
+
+    // ── CARD 5: Diagonal (companion strategy) ──
+    // diagText / diagBadge / diagGo / diagSkipCode are produced by
+    // SignalEngine.computeDiagonalSignal (called inside calculateSignal).
     const diagRec    = document.getElementById('diagRec');
     const diagReason = document.getElementById('diagReason');
     const diagBadge  = document.getElementById('diagBadge');
     const cardDiag   = document.getElementById('cardDiag');
     const pillDiag   = document.getElementById('pillDiag');
 
-    const _diagSig = (typeof SignalEngine !== 'undefined' && SignalEngine.computeDiagonalSignal)
-      ? SignalEngine.computeDiagonalSignal(now, _vixPctToday)
-      : null;
-
-    // Per-skip-code reason copy for the card tooltip (title/badge/gate are
-    // authoritative from signal-engine — only the expanded reason lives here).
     const _diagReasonByCode = {
       'OPEX-1': 'Day before monthly OPEX — pin/gamma noise. Default filter skips this day.',
       'EOM':    'Last trading day of month — month-end rebalancing flow creates noisy reprice. Default filter skips.',
@@ -1591,348 +1808,40 @@
       'VIX_MID':`VIX 20-day percentile = ${_vixPctToday}% — inside the 40–90% "no-edge" band. Default filter skips.`,
     };
 
-    if (!_diagSig) {
-      // signal-engine module hasn't loaded yet (extreme early interaction) — neutral state.
-      diagRec.textContent    = 'Calculate to see signal';
-      diagReason.textContent = '';
-      diagBadge.textContent  = '…';
-      cardDiag.className     = 'scard';
-      if (pillDiag) pillDiag.style.display = 'none';
-    } else if (_diagSig.diagGo) {
-      diagRec.textContent    = _diagSig.diagText;
+    if (diagGo) {
+      diagRec.textContent    = diagText;
       diagReason.textContent = 'Short 1 DTE SPX put +30 pts ITM · long 25 DTE SPX put −40 pts below short (long is 10 OTM) · ±5 pt tol. Entry anywhere in the 12:30–15:00 ET window; exit at the same clock time on the next trading day (24-hour hold, entry time = exit time). All 5 default filters (OPEX-1, EOM, EOM-1, NM, VIX 40-90%) clear today.';
-      diagBadge.textContent  = _diagSig.diagBadge;
+      diagBadge.textContent  = diagBadgeCanon;
       cardDiag.className     = 'scard active-ok';
       if (pillDiag) pillDiag.style.display = '';
-    } else if (_diagSig.diagSkipCode) {
-      diagRec.textContent    = _diagSig.diagText;
-      diagReason.textContent = _diagReasonByCode[_diagSig.diagSkipCode] || '';
-      diagBadge.textContent  = _diagSig.diagBadge;
+    } else if (diagSkipCode) {
+      diagRec.textContent    = diagText;
+      diagReason.textContent = _diagReasonByCode[diagSkipCode] || '';
+      diagBadge.textContent  = diagBadgeCanon;
       cardDiag.className     = 'scard active-block';
       if (pillDiag) pillDiag.style.display = 'none';
     } else {
-      // Calendar filters clear but VIX 20d percentile not yet populated.
+      // Calendar filters cleared but VIX 20d percentile not yet populated.
       diagRec.textContent    = 'Waiting for VIX 20-day percentile…';
       diagReason.textContent = 'Calendar filters all clear, but need today\'s VIX open + last 20 daily closes to confirm regime. Connect Schwab and check back after 9:30 AM ET.';
-      diagBadge.textContent  = _diagSig.diagBadge;
+      diagBadge.textContent  = diagBadgeCanon;
       cardDiag.className     = 'scard';
       if (pillDiag) pillDiag.style.display = 'none';
     }
 
-    let rec="", theme="neutral", crossed=false, pmNote=false;
-    let blockT="", blockD="", entryT="", badge="";
-    let strikeInfo=null;
-    let cpiLongCall=false; // retained for compatibility (always false under new rule)
+    document.getElementById('resultDayLabel').textContent = tradeWdLabel();
 
-    // ── GXBF evaluation (STRATEGY-INDEPENDENT) ──
-    // Hybrid gating: blocks are VIX≥max, OPEX+1 + VIX gap-up≥%, EOM.
-    // OPEX-1, CPI day, and NM-non-Mon are ALLOWED (previously banned — removed).
-    // Trigger = (overnight VIX drop > DROP_GXBF) OR OPEX+1 (auto-trigger).
-    const gxbfVixOvernightPct = (!isNaN(vYClose) && vYClose !== 0) ? (vToday - vYClose) / vYClose * 100 : 0;
-    const gxbfTrigger = (oNight > T.DROP_GXBF) || postOpDay;
-    let gxbfFires = false, gxbfBlockedReason = null;
-    if (gxbfTrigger) {
-      if (vToday >= T.VIX_MAX_GXBF) {
-        gxbfBlockedReason = `VIX ${vToday} ≥ ${T.VIX_MAX_GXBF}`;
-      } else if (postOpDay && gxbfVixOvernightPct >= 2) {
-        gxbfBlockedReason = `VIX gapped up ${gxbfVixOvernightPct.toFixed(1)}% overnight`;
-      } else if (eomDay) {
-        gxbfBlockedReason = `EOM`;
-      } else {
-        gxbfFires = true;
-      }
-    }
+    // Today-trade pill (M8BF/Strad/GXBF/BOBF). BOBF intentionally not pilled
+    // here — it has its own dedicated rendering and is informational.
+    if (theme === 'm8bf')           setTodayTrade('pillM8bf');
+    else if (theme === 'strad')     setTodayTrade('pillStrad');
+    else if (theme === 'gxbf')      setTodayTrade('pillGxbf');
+    else if (theme === 'block' && rec.includes('M8BF'))    setTodayTrade('pillM8bf');
+    else if (theme === 'block' && rec.includes('Straddle'))setTodayTrade('pillStrad');
+    else if (theme === 'block' && rec.includes('GXBF'))    setTodayTrade('pillGxbf');
+    else                            setTodayTrade(null);
 
-    if(cpiDay && !gxbfFires){
-      // CPI rule: blocks M8BF and Straddle, but GXBF is independent and can
-      // still fire when its own conditions are met. Other strategies remain
-      // hard-blocked.
-      rec="No trades (CPI day)";
-      theme="block";
-      crossed=true;
-      blockT="cpi-day";
-      blockD="CPI day — all strategies blocked";
-      badge="BLOCKED";
-      strikeInfo=null;
-    } else if(gxbfFires){
-      // GXBF fires regardless of CPI / OPEX-1 / NM-non-Mon (strategy-independent).
-      if(postOpDay){rec="GXBF @ 9:36 AM (OPEX+1)";theme="gxbf";entryT="9:36 AM";badge="GXBF";}
-      else        {rec=`GXBF @ 9:36 AM`;          theme="gxbf";entryT="9:36 AM";badge="GXBF";}
-    } else if(gxbfTrigger && gxbfBlockedReason){
-      rec=`No GXBF (${gxbfBlockedReason})`;theme="block";crossed=true;
-      blockT=gxbfBlockedReason.startsWith('VIX')?"vix":"hard";blockD=gxbfBlockedReason;badge="BLOCKED";
-    } else {
-      if(oNight>0){
-        rec="Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="STRADDLE";strikeInfo=null;
-      } else {
-        rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow,now);entryT=strikeInfo?.window||"";
-      }
-
-      if(rec.startsWith("M8BF")){
-        if(eomDay){rec="No M8BF (EOM)";theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on EOM";badge="BLOCKED";strikeInfo=null;}
-        else if(eom1){rec="No M8BF (EOM-1)";theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on EOM-1";badge="BLOCKED";strikeInfo=null;}
-        else if(opex1){rec="No M8BF (day before OPEX)";theme="block";crossed=true;blockT="hard";blockD="Skipped day before OPEX";badge="BLOCKED";strikeInfo=null;}
-        else if(isVixAfterOpexDay(now)){rec="No M8BF (VIX exp day)";theme="block";crossed=true;blockT="hard";blockD="VIX exp day when VIX exp falls after OPEX";badge="BLOCKED";strikeInfo=null;}
-        else if(isNonAmznTslaEarningsDay()){rec="No M8BF (earnings day)";theme="block";crossed=true;blockT="hard";blockD="Non-AMZN/TSLA mega-cap earnings day";badge="BLOCKED";strikeInfo=null;}
-      }
-
-      // NM-non-Mon override: converts M8BF/Straddle into NM Straddle. GXBF is
-      // intentionally EXCLUDED (strategy independence — NM does not block GXBF).
-      if(nmDay&&!isMon&&(rec.startsWith("M8BF")||rec.startsWith("No M8BF")||rec.startsWith("Straddle"))){rec="NM Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="NM STRADDLE";strikeInfo=null;}
-      if(eomDay){rec="Straddle @ 9:32 AM (EOM)";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="EOM STRADDLE";strikeInfo=null;}
-      if(isWed&&!fedDay&&!m8bfBlocked&&!nmDay&&rec.startsWith("Straddle")){rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow,now);entryT=strikeInfo?.window||"";}
-      if(opexDay&&rec.startsWith("Straddle")){rec="No Straddle (OPEX day)";theme="block";crossed=true;blockT="hard";blockD="Straddle not on OPEX";badge="BLOCKED";}
-      if(postOpMon&&rec.startsWith("M8BF")) pmNote=true;
-
-      // SPX gap cancels straddle — Straddle blocked, no M8BF fallback. WR=0% forced straddle is immune.
-      if(spxGapCancelsStrad && blockT!=='0%rule' && (rec === "Straddle @ 9:32 AM" || rec === "Straddle @ 9:32 AM (EOM)" || rec.startsWith("NM Straddle"))) {
-        const dir=spxGapPct>0?'▲':'▼';
-        rec=`No Straddle (SPX gap ${dir}${Math.abs(spxGapPct).toFixed(2)}%)`;theme="block";crossed=true;blockT="gap";blockD=`SPX gap ≥ ${T.SPX_GAP_THRESHOLD}%`;badge="BLOCKED";strikeInfo=null;
-      }
-
-      // o2o cancels straddle — Straddle blocked, no M8BF fallback. WR=0% forced straddle is immune.
-      if(o2o > T.O2O_M8BF && blockT!=='0%rule' && (rec === "Straddle @ 9:32 AM" || rec.startsWith("NM Straddle"))) {
-        rec=`No Straddle (o2o ${o2o.toFixed(1)} > ${T.O2O_M8BF})`;theme="block";crossed=true;blockT="o2o";blockD=`Open-to-open ${o2o.toFixed(1)} > ${T.O2O_M8BF}`;badge="BLOCKED";strikeInfo=null;
-      }
-
-      // WR=0% and WR>=90% are the STRONGEST overrides — trump gap, o2o, everything (except CPI/Fed)
-      if(wr0.checked){
-        if(!cpiDay && !fedDay){
-          rec="Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="0%rule";entryT="9:32 AM";badge="STRADDLE";strikeInfo=null;
-        }
-      } else if(wr90.checked){
-        // 90% rule cannot cancel GXBF — GXBF is independent (overnight VIX drop).
-        // Everything else (Straddle, NM Straddle, gap/o2o blocks, M8BF EOM-style bans)
-        // still gets overridden to M8BF as documented.
-        if(!cpiDay && !rec.includes("GXBF")){
-          const sc=m8Sched(dow,now);rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=sc;entryT=sc?.window||"";blockT="90%rule";
-        }
-      }
-      // OPEX+1 GXBF override is now folded into the upfront strategy-independent
-      // GXBF evaluation above (postOpDay is part of gxbfTrigger).
-    }
-
-    if(pmNote) rec+=" (afternoon times preferred)";
-
-    /* ====== RENDER 4 CARDS ====== */
-
-    const cardM8bf  = document.getElementById('cardM8bf');
-    const m8bfRec   = document.getElementById('m8bfRec');
-    const m8bfBadge = document.getElementById('m8bfBadge');
-    const m8bfReason= document.getElementById('m8bfReason');
-    const cardStrad  = document.getElementById('cardStrad');
-    const stradRec   = document.getElementById('stradRec');
-    const stradBadge = document.getElementById('stradBadge');
-    const stradReason= document.getElementById('stradReason');
-    const cardGxbf  = document.getElementById('cardGxbf');
-    const gxbfRec   = document.getElementById('gxbfRec');
-    const gxbfBadge = document.getElementById('gxbfBadge');
-    const gxbfReason= document.getElementById('gxbfReason');
-
-    // ── CARD 1: M8BF ──
-    const dowSched = m8Sched(dow,now);
-
-    if(cpiDay){
-      // CPI day: hard-block M8BF (no exceptions)
-      cardM8bf.className='scard active-block';
-      m8bfBadge.textContent='BLOCKED';
-      m8bfRec.innerHTML=`<span class="crossed">No M8BF (CPI day)</span>`;
-      m8bfReason.innerHTML=`<span class="block-hard">⛔ CPI day — all strategies blocked</span>`;
-      strikeInfo=null;
-    } else if(m8bfBlocked && blockT !== '90%rule'){
-      // Hard-block render — but ONLY if the 90% rule didn't override.
-      // The 90% rule (prevWR ≥ 90%) forces M8BF even through EOM/EOM-1/OPEX-1/
-      // VIX-exp/earnings bans — see signal-engine.js calculateSignal line ~489.
-      // Without this check the dashboard diverged from the live auto-message
-      // (which DOES honor the override) — bit on 2026-05-28 EOM-1 with WR=99%.
-      cardM8bf.className='scard active-block';
-      m8bfBadge.textContent='BLOCKED';
-      m8bfRec.innerHTML=`<span class="crossed">${m8bfBlocked.r}</span>`;
-      m8bfReason.innerHTML=`<span class="block-hard">⛔ ${m8bfBlocked.n}</span>`;
-      strikeInfo=null;
-    } else if(blockT==='0%rule'){
-      // WR=0% forces Straddle — M8BF stands down
-      cardM8bf.className='scard dimmed';
-      m8bfBadge.textContent='—';
-      m8bfRec.textContent='No M8BF (0% WR → Straddle)';
-      m8bfReason.textContent='';
-      strikeInfo=null;
-    } else {
-      // M8BF fires — either it wasn't blocked, OR the 90% rule overrode a block.
-      cardM8bf.className='scard active-m8bf';
-      m8bfBadge.textContent=dowSched?`🕐 ${dowSched.window}`:'TRADE';
-      m8bfRec.textContent=dowSched?`M8BF — Window ${dowSched.window}`:'M8BF';
-      strikeInfo=dowSched;
-      if(blockT==='90%rule') {
-        // Surface WHAT the 90% rule overrode, when applicable.
-        const overText = m8bfBlocked ? ` (overrides "${m8bfBlocked.r}")` : '';
-        m8bfReason.innerHTML=`<span style="color:var(--accent);font-style:italic;">📈 90% rule${overText}</span>`;
-      } else {
-        m8bfReason.textContent='';
-      }
-    }
-
-    // ── CARD 2: Straddle / CPI / NM / EOM ──
-    if(cpiDay){
-      // CPI day: hard-block Straddle (no Long Call, no straddle, nothing)
-      cardStrad.className='scard active-block';
-      stradBadge.textContent='BLOCKED';
-      stradRec.innerHTML=`<span class="crossed">No Straddle (CPI day)</span>`;
-      stradReason.innerHTML=`<span class="block-hard">⛔ CPI day — all strategies blocked</span>`;
-    } else if(theme==='strad'){
-      cardStrad.className='scard active-strad';
-      const isNM  = badge==='NM STRADDLE';
-      const isEOM = badge==='EOM STRADDLE';
-      if(isNM)        stradBadge.textContent='📅 NM — 9:32 AM';
-      else if(isEOM)  stradBadge.textContent='📆 EOM — 9:32 AM';
-      else            stradBadge.textContent=entryT?`⏰ ${entryT}`:'TRADE';
-      stradRec.innerHTML=crossed?`<span class="crossed">${rec}</span>`:rec;
-      if(isNM)                   stradReason.textContent='First trading day of month · Max risk $3,200';
-      else if(isEOM)             stradReason.textContent='Last trading day of month · Max risk $3,500';
-      else if(blockT==='0%rule' && cpiDay) stradReason.innerHTML=`<span style="color:var(--accent);font-style:italic;">📉 0% rule on CPI — Straddle only (no M8BF, no Long Call)</span>`;
-      else if(blockT==='0%rule') stradReason.innerHTML=`<span style="color:var(--accent);font-style:italic;">📉 0% rule — M8BF → Straddle</span>`;
-      else                       stradReason.textContent='';
-    } else if(theme==='block' && (rec.includes('Straddle') || rec.includes('CPI') || rec.includes('Trade'))){
-      cardStrad.className='scard active-block';
-      stradBadge.textContent='BLOCKED';
-      stradRec.innerHTML=`<span class="crossed">${rec}</span>`;
-      if(blockT==='hard') stradReason.innerHTML=`<span class="block-hard">⛔ ${blockD}</span>`;
-      else stradReason.textContent='';
-    } else {
-      cardStrad.className='scard dimmed';
-      stradBadge.textContent='—';
-      stradRec.textContent=`No Straddle (${oNight<=0?'overnight VIX up':oNight>T.DROP_GXBF?'overnight VIX drop > '+T.DROP_GXBF:blockT==='90%rule'?'WR ≥ 90%':'non-CPI/Fed Wednesday'})`;
-      stradReason.textContent='';
-    }
-
-    // ── CARD 3: GXBF ──
-    // GXBF is strategy-independent: CPI day, OPEX-1, NM-non-Mon NO LONGER
-    // block GXBF. Blocks remaining: VIX≥max, OPEX+1 gap-up, EOM.
-    // The card uses gxbfFires / gxbfBlockedReason / gxbfTrigger from the
-    // upfront evaluation above — independent of the primary `theme`.
-    if(theme==='gxbf'){
-      cardGxbf.className='scard active-gxbf';
-      gxbfBadge.textContent=`⏰ ${entryT}`;
-      gxbfRec.textContent=rec;
-      gxbfReason.textContent='';
-    } else if(gxbfTrigger && gxbfBlockedReason){
-      // GXBF trigger fired but a block hit (VIX≥max, EOM, OPEX+1 gap-up).
-      cardGxbf.className='scard active-block';
-      gxbfBadge.textContent='BLOCKED';
-      gxbfRec.innerHTML=`<span class="crossed">No GXBF (${gxbfBlockedReason})</span>`;
-      gxbfReason.innerHTML=`<span class="block-vix">⚠️ ${gxbfBlockedReason}</span>`;
-    } else if(!isNaN(vToday) && vToday >= T.VIX_MAX_GXBF){
-      cardGxbf.className='scard active-block';
-      gxbfBadge.textContent='BLOCKED';
-      gxbfRec.innerHTML=`<span class="crossed">No GXBF (VIX ${vToday} ≥ ${T.VIX_MAX_GXBF})</span>`;
-      gxbfReason.innerHTML=`<span class="block-vix">⚠️ VIX ${vToday} ≥ ${T.VIX_MAX_GXBF}</span>`;
-    } else {
-      cardGxbf.className='scard dimmed';
-      gxbfBadge.textContent='—';
-      gxbfRec.textContent=`No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;
-      gxbfReason.textContent='';
-    }
-
-    // ── STRIKE GRID (inside M8BF card) ──
-    const gw=document.getElementById('strikeGridWrap'), g=document.getElementById('strikeGrid');
-    g.innerHTML='';
-    if(strikeInfo && strikeInfo.blocked){
-      gw.style.display='block';
-      const lbl=document.getElementById('sgLabel');
-      if(lbl){
-        lbl.innerHTML=`Window ${strikeInfo.window} <span style="background:#052016;color:#34d399;border:1px solid #34d399;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;margin-left:6px;">Every week</span>`;
-      }
-      const bannedLbl=document.createElement('div');
-      bannedLbl.style.cssText='width:100%;font-size:10px;color:#f87171;font-weight:600;margin-bottom:4px;letter-spacing:.04em;text-transform:uppercase;';
-      bannedLbl.textContent='Banned center strikes — skip these:';
-      g.appendChild(bannedLbl);
-      strikeInfo.blocked.forEach(s=>{
-        const p=document.createElement('span');
-        p.className='sp lwr';
-        p.textContent=s;
-        g.appendChild(p);
-      });
-      if(strikeInfo.comboBans){
-        const comboLbl=document.createElement('div');
-        comboLbl.style.cssText='width:100%;font-size:10px;color:#fcd34d;font-weight:600;margin:6px 0 4px;letter-spacing:.04em;text-transform:uppercase;';
-        comboLbl.textContent='Combo bans (wing-width mod 100 → banned center end):';
-        g.appendChild(comboLbl);
-        Object.entries(strikeInfo.comboBans).forEach(([t1,center])=>{
-          const p=document.createElement('span');
-          p.className='sp lwr';
-          p.style.cssText='background:#2b1f00;border-color:#78350f;color:#fcd34d;font-size:10px;';
-          p.textContent=`${t1}→${center}`;
-          g.appendChild(p);
-        });
-      }
-    } else { gw.style.display='none'; }
-
-    // ── CARD 4: BOBF ──
-    const cardBobf =document.getElementById('cardBobf');
-    const bobfRec  =document.getElementById('bobfRec');
-    const bobfBadge=document.getElementById('bobfBadge');
-    const bobfReason=document.getElementById('bobfReason');
-    const br=[];
-    if(cpiDay)      br.push("CPI day");
-    if(nmMon)       br.push("NM Monday");
-    if(vixExpDay)   br.push("VIX expiration");
-    if(opexDay)     br.push("OPEX");
-    if(opex1)       br.push("OPEX-1");
-    if(eom2)        br.push("EOM-2");
-    if(eom1)        br.push("EOM-1");
-    if(earningsDay){ const tickers=SignalEngine.earningsSchedule.filter(e=>e.date===todayLong()).map(e=>e.ticker).join(','); br.push(`earnings (${tickers})`); }
-    if(!isNaN(vToday)&&vToday>T.VIX_MAX_BOBF) br.push("high VIX");
-
-    // BOBF type qualification + RSI gate (mirrors signal-engine.js calculateSignal).
-    // Three types: Friday RSI / VIX up / VIX down. Each has its own RSI band.
-    let bobfType=null;
-    if(isFri){
-      bobfType='friday';
-      if(_spxRsi14!=null && (_spxRsi14<40 || _spxRsi14>65)){
-        br.push(`RSI ${_spxRsi14.toFixed(1)} outside 40-65 band`);
-      }
-    } else if(dow>=1 && dow<=4){
-      const oNightDelta = vToday - vYClose;  // positive = VIX up overnight
-      if(oNightDelta >=  0.01) bobfType='vix_up';
-      else if(oNightDelta <= -0.01) bobfType='vix_down';
-      if(!bobfType){
-        br.push('flat overnight VIX (no qualifying type)');
-      } else if(bobfType==='vix_down' && _spxRsi14!=null && _spxRsi14>70){
-        br.push(`RSI ${_spxRsi14.toFixed(1)} > 70 (vix-down type)`);
-      }
-    }
-
-    if(br.length){
-      cardBobf.className='scard active-block';
-      bobfBadge.textContent='BLOCKED';
-      const vb=br.includes("high VIX"), ob=br.some(r=>r!=="high VIX");
-      const cls=vb&&!ob?'block-vix':'block-hard', icon=vb&&!ob?'⚠️':'⛔';
-      bobfRec.innerHTML=`<span class="crossed">No BOBF (${br.join(", ")})</span>`;
-      bobfReason.innerHTML=`<span class="${cls}">${icon} ${vb&&!ob?'VIX level':'Hard rule'}</span>`;
-    } else {
-      cardBobf.className='scard active-ok';
-      let badgeTxt, recTxt;
-      if(bobfType==='friday')        { badgeTxt='FRIDAY RSI';  recTxt='BOBF (Friday RSI)'; }
-      else if(bobfType==='vix_up')   { badgeTxt='VIX UP';      recTxt='BOBF (VIX up)'; }
-      else if(bobfType==='vix_down') { badgeTxt='VIX DOWN';    recTxt='BOBF (VIX down)'; }
-      else                           { badgeTxt='IN PLAY';     recTxt='BOBF in play'; }
-      bobfBadge.textContent=badgeTxt;
-      bobfRec.textContent=recTxt;
-      bobfReason.textContent='';
-    }
-
-    document.getElementById('resultDayLabel').textContent=tradeWdLabel();
-
-    // #5: mark the primary trade card
-    if(theme==='m8bf')          setTodayTrade('pillM8bf');
-    else if(theme==='strad')    setTodayTrade('pillStrad');
-    else if(theme==='gxbf')     setTodayTrade('pillGxbf');
-    else if(theme==='block' && rec.includes('M8BF'))   setTodayTrade('pillM8bf');
-    else if(theme==='block' && rec.includes('Straddle'))setTodayTrade('pillStrad');
-    else if(theme==='block' && rec.includes('GXBF'))   setTodayTrade('pillGxbf');
-    else                        setTodayTrade(null);
-
-    // #7: persist inputs
+    // Persist inputs
     saveInputs();
 
     // Refresh pattern notes so VIX-level note picks up today's open
