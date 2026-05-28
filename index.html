@@ -1739,7 +1739,12 @@
       m8bfRec.innerHTML=`<span class="crossed">No M8BF (CPI day)</span>`;
       m8bfReason.innerHTML=`<span class="block-hard">⛔ CPI day — all strategies blocked</span>`;
       strikeInfo=null;
-    } else if(m8bfBlocked){
+    } else if(m8bfBlocked && blockT !== '90%rule'){
+      // Hard-block render — but ONLY if the 90% rule didn't override.
+      // The 90% rule (prevWR ≥ 90%) forces M8BF even through EOM/EOM-1/OPEX-1/
+      // VIX-exp/earnings bans — see signal-engine.js calculateSignal line ~489.
+      // Without this check the dashboard diverged from the live auto-message
+      // (which DOES honor the override) — bit on 2026-05-28 EOM-1 with WR=99%.
       cardM8bf.className='scard active-block';
       m8bfBadge.textContent='BLOCKED';
       m8bfRec.innerHTML=`<span class="crossed">${m8bfBlocked.r}</span>`;
@@ -1753,13 +1758,18 @@
       m8bfReason.textContent='';
       strikeInfo=null;
     } else {
-      // M8BF always runs when not hard-blocked — independent of overnight VIX
+      // M8BF fires — either it wasn't blocked, OR the 90% rule overrode a block.
       cardM8bf.className='scard active-m8bf';
       m8bfBadge.textContent=dowSched?`🕐 ${dowSched.window}`:'TRADE';
       m8bfRec.textContent=dowSched?`M8BF — Window ${dowSched.window}`:'M8BF';
       strikeInfo=dowSched;
-      if(blockT==='90%rule') m8bfReason.innerHTML=`<span style="color:var(--accent);font-style:italic;">📈 90% rule — M8BF override</span>`;
-      else m8bfReason.textContent='';
+      if(blockT==='90%rule') {
+        // Surface WHAT the 90% rule overrode, when applicable.
+        const overText = m8bfBlocked ? ` (overrides "${m8bfBlocked.r}")` : '';
+        m8bfReason.innerHTML=`<span style="color:var(--accent);font-style:italic;">📈 90% rule${overText}</span>`;
+      } else {
+        m8bfReason.textContent='';
+      }
     }
 
     // ── CARD 2: Straddle / CPI / NM / EOM ──
