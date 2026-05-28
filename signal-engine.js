@@ -15,6 +15,15 @@
 // ════════════════════════════════════════════════════════════════════
 // SCHEDULES (calendar data)
 // ════════════════════════════════════════════════════════════════════
+// Notes on cpiSch:
+//   • October 24, 2025 is the ACTUAL Sep-2025 CPI release. The originally
+//     scheduled date was October 15, 2025, postponed due to the Oct 2025
+//     government shutdown. The live worker on Oct 15 correctly skipped
+//     BOBF/Straddle based on the original schedule, which is why
+//     history_data.json has bobfPL=null on 2025-10-15 even though it
+//     isn't currently in cpiSch.
+//   • November 2025 CPI was suspended (no release for that month due to
+//     the same shutdown disruption) — that's why there's no Nov 2025 entry.
 
 export const cpiSch   = ["January 11, 2024","February 13, 2024","March 12, 2024","April 10, 2024","May 15, 2024","June 12, 2024","July 11, 2024","August 14, 2024","September 11, 2024","October 10, 2024","November 13, 2024","December 11, 2024","January 15, 2025","February 12, 2025","March 12, 2025","April 10, 2025","May 13, 2025","June 11, 2025","July 15, 2025","August 12, 2025","September 11, 2025","October 24, 2025","December 18, 2025","January 13, 2026","February 13, 2026","March 11, 2026","April 10, 2026","May 12, 2026","June 10, 2026","July 14, 2026","August 12, 2026","September 11, 2026","October 14, 2026","November 10, 2026","December 10, 2026"];
 export const fedSch   = ["January 31, 2024","March 20, 2024","May 1, 2024","June 12, 2024","July 31, 2024","September 18, 2024","November 7, 2024","December 18, 2024","January 29, 2025","March 19, 2025","May 7, 2025","June 18, 2025","July 30, 2025","September 17, 2025","October 29, 2025","December 10, 2025","January 28, 2026","March 18, 2026","April 29, 2026","June 17, 2026","July 29, 2026","September 16, 2026","October 28, 2026","December 9, 2026"];

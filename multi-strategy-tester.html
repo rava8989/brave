@@ -434,7 +434,7 @@ body {
     <div class="sz-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">
       <div class="sz-field"><label class="sz-label" for="szCap">Starting Capital</label>
         <div class="sz-wrap sz-d"><input id="szCap" class="sz-input" type="number" value="100000" min="1" step="1000"></div></div>
-      <div class="sz-field"><label class="sz-label">Max risk / contract <span class="sz-dot" data-tip="Fixed per strategy (you decide): M8BF $3,000 · GXBF $5,000 · BOBF $1,200 · Straddle $3,500 · Diagonal $11,000. Not auto-calculated.">ⓘ</span></label>
+      <div class="sz-field"><label class="sz-label">Max risk / contract <span class="sz-dot" data-tip="Fixed per strategy (you decide): M8BF $3,000 · GXBF $5,000 · BOBF $1,200 · Straddle $3,500 · Diagonal $11,000. These are MAX-LOSS DEBIT figures, not caps on profit — e.g. BOBF butterflies can profit up to ~$2,500/ct at body strike. Not auto-calculated.">ⓘ</span></label>
         <input class="sz-input" type="text" value="M8BF 3000 · GXBF 5000 · BOBF 1200 · Strad 3500 · Diag 11000" readonly style="color:var(--text3);font-size:11px"></div>
       <div class="sz-field"><label class="sz-label" for="szFrom">From <span class="sz-dot" data-tip="Backtest start date. Blank = earliest available. Set after data loads to the full range; narrow it to test a window.">ⓘ</span></label>
         <input id="szFrom" class="sz-input" type="date"></div>
@@ -698,8 +698,13 @@ async function loadHistory() {
   }
   out.reverse();
 
-  // Keep only rows that have at least one strategy P/L (drops the ~10 future
-  // empty placeholders, which carry no P/L and would just be no-op rows).
+  // Keep only rows that have at least one strategy P/L. This drops:
+  //   1. Future-dated empty placeholder rows (~10 forward dates the worker
+  //      reserves to maintain index continuity).
+  //   2. "All-zero" settle days where every strategy was either blocked or
+  //      didn't qualify (42 such days as of 2026-05). A $0 settle isn't a
+  //      "trade" — it would inflate trade counts and dilute win-rate.
+  // Both drops are correct: the tester reports edges-per-trade, not days.
   allRows = out.filter(r =>
     (r.m8bfPL != null && r.m8bfPL !== 0) ||
     (r.stradPL != null && r.stradPL !== 0) ||
