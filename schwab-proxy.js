@@ -2734,7 +2734,7 @@ async function refreshGxbfLiveQuotes(env, token, etNow, preChain = null) {
 // selectM8bfQualifying — guaranteeing the quoted legs == the /trade legs.
 async function refreshM8bfLiveQuotes(env, token, etNow, preChain = null) {
   try {
-    if (m8bfBannedReason(etNow)) return;
+    if (await m8bfBannedReason(env, etNow)) return;
     const sel = await selectM8bfQualifying(env, etNow);
     if (sel.status !== 'open' || !sel.qualifying) return;
     const q = sel.qualifying;
@@ -4906,7 +4906,14 @@ function getM8BFWindow(dow, dateISO) {
 // M8BF banned-day reason — pure date math, no side effects. Mirrors the
 // inline check that GET /trade used (signal-engine.js m8bfBanned + NM-non-Mon
 // + CPI). Returns the human reason string, or null when M8BF is tradeable.
-function m8bfBannedReason(etNow) {
+// Returns the M8BF ban reason for `etNow`, OR null if M8BF is allowed.
+// HONORS the 90% override: if prevWR ≥ 90% and it's not a CPI day and GXBF
+// isn't firing today, the override forces M8BF through any calendar ban.
+// Mirrors signal-engine.js calculateSignal lines ~489-495 — keeps /trade
+// (and refreshM8bfLiveQuotes) in lock-step with the Discord auto-message.
+// 2026-05-28: bug bit when EOM-1 + prevWR=99% — /trade said banned, Discord
+// said fire. Both now agree via the same override path.
+async function m8bfBannedReason(env, etNow) {
   const eomDay = isLastTradeMo(etNow);
   const eom1   = isEomN(1, etNow);
   const opex1  = opexSch.some(ds => isTodayBefore(ds, etNow));
@@ -4918,8 +4925,31 @@ function m8bfBannedReason(etNow) {
   const nmNonMon = nmDay && !nmMon;
   const m8bfBanned = eomDay || eom1 || opex1 || vixExpAfterOpex || nonAmznTslaEarn || nmNonMon;
   if (!(m8bfBanned || cpiDay)) return null;
-  return cpiDay ? 'CPI day'
-       : eomDay ? 'EOM'
+  if (cpiDay) return 'CPI day';   // CPI is never overridden
+
+  // 90% override check — prevWR from most recent prior history row.
+  try {
+    const todayISO = isoDateET(etNow);
+    const hist = await getHistory(env);
+    if (Array.isArray(hist) && hist.length) {
+      const sorted = hist
+        .filter(r => r.date && r.date < todayISO && r.m8bfWR != null)
+        .sort((a, b) => b.date.localeCompare(a.date));
+      const prevWR = sorted.length ? parseFloat(sorted[0].m8bfWR) : null;
+      if (prevWR != null && prevWR >= 90) {
+        // Override fires unless GXBF would also fire today (90% rule cannot
+        // cancel GXBF — strategy independence).
+        const todayRow = hist.find(r => r.date === todayISO);
+        const vToday  = todayRow?.vixOpen != null ? parseFloat(todayRow.vixOpen) : null;
+        const vYClose = sorted[0]?.vixClose != null ? parseFloat(sorted[0].vixClose) : null;
+        const oNight  = (vToday != null && vYClose != null) ? (vYClose - vToday) : null;
+        const gxbfFires = oNight != null && oNight > 0.65 && vToday < 25;
+        if (!gxbfFires) return null;   // M8BF fires via 90% override
+      }
+    }
+  } catch { /* if history fetch fails, fall through to ban-reason return */ }
+
+  return eomDay ? 'EOM'
        : eom1   ? 'EOM-1'
        : opex1  ? 'day before OPEX'
        : vixExpAfterOpex ? 'VIX exp day'
@@ -7782,7 +7812,7 @@ export default {
         // ── M8BF banned-day gate (early return — no Discord poll on banned
         //    days, exactly as before). Logic moved verbatim into
         //    m8bfBannedReason() so refreshM8bfLiveQuotes shares it. ──
-        const bannedReason = m8bfBannedReason(etNowT);
+        const bannedReason = await m8bfBannedReason(env, etNowT);
         if (bannedReason) {
           return jsonResp({ date: todayT, triggered: false, status: 'banned', reason: `No M8BF (${bannedReason})`, lastClosed: lastClosedM8bf }, 200, corsHeaders);
         }
