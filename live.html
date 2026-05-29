@@ -1027,6 +1027,16 @@ function renderStraddle() {
   html.push(`<span style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;">max debit $${t.maxDebit?.toFixed(2)}</span>`);
   html.push(`</div>`);
 
+  // For closed (settled) trades, prefer spxClose (the actual close print)
+  // over currentSpot (the last intraday mid-tick before close — which can be
+  // 2-5 points away from the real settle). Observed 2026-05-22 where the
+  // page showed currentSpot=7477 while actual SPX close was 7474.07.
+  // Hoisted out of the if-block below so line ~1055 (position-card subline)
+  // can also read it — was a const inside the block → ReferenceError on
+  // every render. Caught 2026-05-29 on the EOM Straddle when the page
+  // showed "Failed to load: stradEffSpot is not defined — try refreshing".
+  const stradEffSpot = (t.status === 'closed' && t.spxClose != null) ? t.spxClose : (t.currentSpot ?? t.spxClose);
+
   // Stats grid (only meaningful when we have prices)
   if (t.entryDebit != null) {
     html.push(`<div class="diag-grid">`);
@@ -1035,11 +1045,6 @@ function renderStraddle() {
     } else {
       html.push(`<div class="diag-stat"><div class="diag-stat-label">P&L</div><div class="diag-stat-value">—</div><div class="diag-stat-sub">${t.status === 'working' ? 'pending fill' : ''}</div></div>`);
     }
-    // For closed (settled) trades, prefer spxClose (the actual close print)
-    // over currentSpot (the last intraday mid-tick before close — which can be
-    // 2-5 points away from the real settle). Observed 2026-05-22 where the
-    // page showed currentSpot=7477 while actual SPX close was 7474.07.
-    const stradEffSpot = (t.status === 'closed' && t.spxClose != null) ? t.spxClose : (t.currentSpot ?? t.spxClose);
     html.push(`<div class="diag-stat"><div class="diag-stat-label">SPX${t.status==='closed'?' (close)':''}</div><div class="diag-stat-value">${stradEffSpot != null ? stradEffSpot.toFixed(2) : '—'}</div><div class="diag-stat-sub">Strike ${t.strike}</div></div>`);
     html.push(`<div class="diag-stat"><div class="diag-stat-label">Entry debit</div><div class="diag-stat-value">$${(t.entryDebit*100).toFixed(0)}</div><div class="diag-stat-sub">$${t.entryDebit?.toFixed(2)} mid</div></div>`);
     if (t.currentValue != null) {
