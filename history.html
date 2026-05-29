@@ -752,6 +752,33 @@ async function init() {
       const prevWREntry = filtered.slice(0, i).reverse().find(r => r.m8bfWR != null);
       const prevWR = prevWREntry ? prevWREntry.m8bfWR : null;
 
+      // Compute RSI(14) from prior spxClose values — required for the BOBF
+      // Friday + Mon-Thu vix-down gates. Without this, the 2026-05-29
+      // fail-safe change in signal-engine.js (which now BLOCKS BOBF when
+      // rsi14 is null instead of silently passing) would block every
+      // Friday and vix-down row in the backtest → total P/L silently drops
+      // by ~$34k. Same fix the dashboard got in commit 13eee67 — every
+      // caller of calculateSignal must supply rsi14, or BOBF will defer.
+      const priorClosesForRsi = filtered.slice(0, i)
+        .map(r => r.spxClose)
+        .filter(v => v != null && v > 0);
+      let rsi14 = null;
+      if (priorClosesForRsi.length >= 15) {
+        const closes = priorClosesForRsi.slice(-30);  // 30 most-recent prior closes
+        let gain = 0, loss = 0;
+        for (let j = 1; j <= 14; j++) {
+          const diff = closes[j] - closes[j-1];
+          if (diff > 0) gain += diff; else loss -= diff;
+        }
+        let avgGain = gain / 14, avgLoss = loss / 14;
+        for (let j = 15; j < closes.length; j++) {
+          const diff = closes[j] - closes[j-1];
+          avgGain = (avgGain * 13 + Math.max(diff, 0)) / 14;
+          avgLoss = (avgLoss * 13 + Math.max(-diff, 0)) / 14;
+        }
+        rsi14 = avgLoss === 0 ? 100 : 100 - 100 / (1 + (avgGain / avgLoss));
+      }
+
       const signal = calculateSignal({
         vixToday: cur.vixOpen,
         vixYOpen: prev.vixOpen,
@@ -759,6 +786,7 @@ async function init() {
         spxGapPct,
         etDate,
         prevWR,
+        rsi14,
       });
 
       // M8BF ran if history_data has a non-zero m8bfPL for this date
