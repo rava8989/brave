@@ -2353,8 +2353,32 @@
         .map(r => parseFloat(r.vixClose));
       if(priors.length){
         _vix20dCloses = priors.slice(-20);  // most recent 20 prior trading days
-        calculateStrategy();
       }
+      // ── ALSO compute RSI(14) + prior-day SPX %chg from history_data.json's
+      // spxClose values — no Schwab token needed. Same data source the worker
+      // uses (schwab-proxy.js prefilterBobf reads m8bfWR + spxClose from
+      // history), so the dashboard gates BOBF identically to the live
+      // worker / Discord auto-message regardless of Schwab connection.
+      // 2026-05-29: bit a Friday EOM where Schwab wasn't connected on the
+      // dashboard, _spxRsi14 stayed null, RSI gate in calculateSignal got
+      // skipped (line 534 only fires when rsi14 != null), and the page
+      // showed "BOBF (Friday RSI)" while the worker said "No BOBF (RSI 72.9
+      // outside 40-65)". Workers and dashboards must agree.
+      const spxPriors = data
+        .filter(r => r.spxClose != null && parseFloat(r.spxClose) > 0)
+        .sort((a,b) => a.date.localeCompare(b.date))
+        .map(r => parseFloat(r.spxClose));
+      if(spxPriors.length >= 2){
+        const yClose  = spxPriors[spxPriors.length - 1];
+        const yyClose = spxPriors[spxPriors.length - 2];
+        if(_spxPriorDayChgPct == null){
+          _spxPriorDayChgPct = ((yClose - yyClose) / yyClose) * 100;
+        }
+      }
+      if(spxPriors.length >= 15 && _spxRsi14 == null){
+        _spxRsi14 = _wilderRsi14(spxPriors.slice(-30));
+      }
+      calculateStrategy();
     }catch(e){ console.warn('[vix20d] history load:', e); }
   }
 
