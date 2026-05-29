@@ -470,10 +470,19 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
 
   if (pmNote) rec += " (afternoon times preferred)";
 
-  // SPX gap cancels straddle
-  if (spxGapCancelsStrad && blockT !== '0%rule' && (rec === "Straddle @ 9:32 AM" || rec === "Straddle @ 9:32 AM (EOM)" || rec.startsWith("NM Straddle"))) {
-    const dir = spxGapPct > 0 ? '▲' : '▼';
-    rec = `No Straddle (SPX gap ${dir}${Math.abs(spxGapPct).toFixed(2)}%)`; theme = "block"; crossed = true; blockT = "gap"; blockD = `SPX gap ≥ ${T.SPX_GAP_THRESHOLD}%`; badge = "BLOCKED"; strikeInfo = null;
+  // SPX gap cancels straddle. FAIL-SAFE: if rec is Straddle-flavored but
+  // spxGapPct couldn't be computed (caller didn't supply it), block with
+  // a "waiting" message rather than silently passing the gate. Worker
+  // always has spxGapPct (computed from today's spxOpen / yesterday's
+  // spxClose in history_data.json); dashboards must mirror that path.
+  const recIsStraddleVariant = (rec === "Straddle @ 9:32 AM" || rec === "Straddle @ 9:32 AM (EOM)" || rec.startsWith("NM Straddle"));
+  if (recIsStraddleVariant && blockT !== '0%rule') {
+    if (spxGapPct === null || spxGapPct === undefined) {
+      rec = `No Straddle (waiting for SPX gap data)`; theme = "block"; crossed = true; blockT = "data"; blockD = "SPX gap not yet computed"; badge = "BLOCKED"; strikeInfo = null;
+    } else if (spxGapCancelsStrad) {
+      const dir = spxGapPct > 0 ? '▲' : '▼';
+      rec = `No Straddle (SPX gap ${dir}${Math.abs(spxGapPct).toFixed(2)}%)`; theme = "block"; crossed = true; blockT = "gap"; blockD = `SPX gap ≥ ${T.SPX_GAP_THRESHOLD}%`; badge = "BLOCKED"; strikeInfo = null;
+    }
   }
 
   // o2o cancels straddle
@@ -531,7 +540,16 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
   let bobfType = null;
   if (isFri) {
     bobfType = 'friday';
-    if (rsi14 != null && (rsi14 < 40 || rsi14 > 65)) {
+    // FAIL-SAFE: if the caller couldn't supply RSI(14), block rather than
+    // silently passing the gate. The dashboard had this bug on 2026-05-29
+    // EOM Friday — Schwab was disconnected, rsi14 stayed null, the
+    // dashboard rendered "BOBF (Friday RSI)" green while the worker
+    // (which always reads RSI from history_data.json) correctly blocked
+    // with "No BOBF (RSI 72.9 outside 40-65 band)". Mismatch is now
+    // structurally impossible: missing data → block, never silent-pass.
+    if (rsi14 == null) {
+      bobfBlocks.push('Waiting for RSI data');
+    } else if (rsi14 < 40 || rsi14 > 65) {
       bobfBlocks.push(`RSI ${rsi14.toFixed(1)} outside 40-65 band`);
     }
   } else if (dow >= 1 && dow <= 4) {
@@ -540,10 +558,16 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
     else if (oNightDelta <= -0.01) bobfType = 'vix_down';
     if (!bobfType) {
       bobfBlocks.push('flat overnight VIX (no qualifying type)');
-    } else if (bobfType === 'vix_down' && rsi14 != null && rsi14 > 70) {
-      bobfBlocks.push(`RSI ${rsi14.toFixed(1)} > 70 (vix-down type)`);
+    } else if (bobfType === 'vix_down') {
+      // FAIL-SAFE: vix-down BOBF type also needs RSI to evaluate. Block
+      // on missing data rather than silently passing.
+      if (rsi14 == null) {
+        bobfBlocks.push('Waiting for RSI data (vix-down type)');
+      } else if (rsi14 > 70) {
+        bobfBlocks.push(`RSI ${rsi14.toFixed(1)} > 70 (vix-down type)`);
+      }
     }
-    // vix_up type has no RSI filter
+    // vix_up type has no RSI filter — fires regardless of rsi14 by design
   }
 
   let bobfRec, bobfBadge;
