@@ -19,6 +19,7 @@ set -e
 ./scripts/check-history-kv-match.sh
 ./scripts/check-no-discord-scrape.sh
 ./scripts/check-vix-pct-canonical.sh
+./scripts/check-html-js.sh
 EOF
 chmod +x "$HOOK"
 
@@ -27,5 +28,6 @@ echo "  → runs scripts/check-strategy-independence.sh"
 echo "  → runs scripts/check-history-kv-match.sh"
 echo "  → runs scripts/check-no-discord-scrape.sh"
 echo "  → runs scripts/check-vix-pct-canonical.sh"
+echo "  → runs scripts/check-html-js.sh   (NEW: ESLint on inline HTML JS)"
 echo ""
 echo "Bypass for one-off commits: git commit --no-verify"
