@@ -679,8 +679,7 @@
       <li><strong>Not traded</strong> on Wednesdays — converts to M8BF (unless Fed, EOM, NM, or m8bfBanned day).</li>
       <li><strong>SPX gap ≥ 0.9%</strong> (up or down) → Straddle cancelled. No effect on M8BF or GXBF.</li>
       <li><strong>Open-to-open VIX drop &gt; 1.4</strong> → Straddle cancelled. Does <strong>not</strong> apply on EOM days. No effect on M8BF or GXBF.</li>
-      <li>Win rate = 0% prior day → next day is automatic Straddle regardless of VIX signal.</li>
-      <li>Win rate = 0% prior day on a <strong>Fed day</strong> → Straddle still blocked (Fed day takes priority).</li>
+      <li>Win rate = 0% prior day → next day is automatic Straddle regardless of VIX signal. Treats Fed day the same as any other day (Fed day is <strong>not</strong> a special case for WR rules).</li>
       <li>EOM (last trading day of month) → automatic <strong>EOM Straddle</strong> @ 9:32 AM. BOBF remains in play. Max risk: <strong>$3,500</strong>.</li>
       <li>NM (first trading day of month, non-Monday) → <strong>NM Straddle</strong> @ 9:32 AM. Max risk: <strong>$3,200</strong>.</li>
     </ul>
@@ -771,9 +770,8 @@
     <hr class="divider">
     <h3>Win Rate Rules (Strongest Overrides)</h3>
     <ul>
-      <li><strong>WR = 0%</strong> prior day → forces Straddle. Trumps M8BF, GXBF, SPX gap block, o2o block. Only Fed day takes priority.</li>
+      <li><strong>WR = 0%</strong> prior day → forces Straddle. Trumps M8BF, GXBF, SPX gap block, o2o block. WR rule treats Fed day the same as any other day — only CPI day overrides (CPI hard-blocks every strategy).</li>
       <li><strong>WR ≥ 90%</strong> prior day → forces M8BF. Trumps Straddle, NM Straddle, SPX gap block, o2o block, M8BF EOM-style bans. <strong>Does NOT cancel GXBF</strong> — GXBF is independent.</li>
-      <li>Win rate = 0% on a Fed day → Fed day takes priority (Straddle not forced).</li>
       <li>These are the <strong>strongest signals</strong> in the system. Gap and o2o rules only apply when neither WR=0% nor WR≥90% is active.</li>
     </ul>
 
@@ -873,7 +871,7 @@
       <li><strong>SPX gap ≥ 0.9% cancels Straddle only</strong> — when the absolute SPX gap (today's open vs yesterday's close) is ≥ 0.9%, any Straddle or NM Straddle signal is cancelled. No effect on M8BF or GXBF. Gap and o2o have zero connection to butterfly.</li>
       <li><strong>o2o &gt; 1.4 cancels Straddle only (except EOM)</strong> — when the open-to-open VIX drop exceeds 1.4, any Straddle or NM Straddle signal is cancelled. Does not apply on EOM days. No effect on M8BF or GXBF.</li>
       <li><strong>m8bfBanned days</strong> — M8BF is blocked on EOM, EOM-1, day before OPEX, and VIX exp day (when VIX exp falls after OPEX). Only a previous day WR ≥ 90% can override this ban.</li>
-      <li><strong>WR=0% / WR≥90% now trump gap and o2o</strong> — these are the strongest overrides in the system. If previous day WR=0%, straddle is forced even if SPX gap or o2o would have blocked it. If WR≥90%, M8BF is forced regardless. Only Fed day takes priority (for WR=0%).</li>
+      <li><strong>WR=0% / WR≥90% now trump gap and o2o</strong> — these are the strongest overrides in the system. If previous day WR=0%, Straddle is forced even if SPX gap or o2o would have blocked it. If WR≥90%, M8BF is forced regardless. WR rules treat Fed day the same as any other day; only CPI overrides (CPI hard-blocks all strategies).</li>
       <li><strong>VIX close corrected to 4:15 PM</strong> — all historical VIX/SPX close values now use 4:15 PM Schwab data instead of 3:59 PM ThetaData.</li>
     </ul>
   </section>

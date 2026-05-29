@@ -483,7 +483,13 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
 
   // WR=0% and WR>=90% overrides
   if (prevWR != null) {
-    if (prevWR === 0 && !cpiDay && !fedDay) {
+    if (prevWR === 0 && !cpiDay) {
+      // 0% WR forces Straddle the next day — Fed day is NOT a special case
+      // (canonical rule per user: WR rules treat Fed days like any other day).
+      // CPI stays in the gate because CPI hard-blocks ALL strategies upstream;
+      // the 0% rule cannot override a CPI block. 2026-05-28: removed an
+      // erroneous `!fedDay` clause that had been falsely documented as
+      // "Fed day takes priority" — it never was a real rule.
       rec = "Straddle @ 9:32 AM"; theme = "strad"; crossed = false;
       blockT = "0%rule"; entryT = "9:32 AM"; badge = "STRADDLE"; strikeInfo = null;
     } else if (prevWR >= 90 && !cpiDay && !rec.includes("GXBF")) {
