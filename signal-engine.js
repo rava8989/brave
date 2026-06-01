@@ -584,15 +584,28 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
   const m8bfOwnText = () => m8bfBanned
     ? (eomDay?`No M8BF (EOM)`:eom1?`No M8BF (EOM-1)`:opex1?`No M8BF (day before OPEX)`:nonAmznTslaEarn?`No M8BF (earnings)`:vixExpAfterOpex?`No M8BF (VIX exp day)`:`No M8BF`)
     : m8Msg(etDate);
-  // GXBF own status — strategy-independent. CPI day NO LONGER blocks GXBF;
-  // gating is VIX≥max, EOM, and OPEX+1 + VIX gap-up. Trigger is overnight drop
-  // > DROP_GXBF OR OPEX+1 auto-trigger.
+  // GXBF own status — strategy-independent. As of 2026-06-01, CPI day
+  // hard-blocks GXBF (added to gxbfBlockedReason chain above). Other gating:
+  // VIX≥max, EOM, OPEX+1 + VIX gap-up. Trigger: overnight drop > DROP_GXBF
+  // OR OPEX+1 auto-trigger.
   const gxbfOwnText = () => {
     if (!gxbfTrigger) return `No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;
     if (gxbfBlockedReason) return `No GXBF (${gxbfBlockedReason})`;
     return postOpDay ? `GXBF @ 9:36 AM (OPEX+1)` : `GXBF @ 9:36 AM`;
   };
-  const stradOwnText = () => `No Straddle (${oNight <= 0 ? 'overnight VIX up' : oNight > T.DROP_GXBF ? 'overnight VIX drop > ' + T.DROP_GXBF : blockT === '90%rule' ? 'WR ≥ 90%' : 'non-CPI/Fed Wednesday'})`;
+  // Straddle own status — strategy-independent. Range: 0 < oNight ≤ DROP_GXBF.
+  // When in range and not 90%-WR-suppressed and not its own block (gap/o2o/OPEX),
+  // Straddle WOULD fire even if another strategy claimed the primary `rec` slot.
+  const stradOwnText = () => {
+    if (oNight <= 0)              return `No Straddle (overnight VIX up)`;
+    if (oNight > T.DROP_GXBF)     return `No Straddle (overnight VIX drop > ${T.DROP_GXBF})`;
+    if (blockT === '90%rule')     return `No Straddle (WR ≥ 90%)`;
+    if (spxGapCancelsStrad)       return `No Straddle (SPX gap ${spxGapPct >= 0 ? '▲' : '▼'}${Math.abs(spxGapPct).toFixed(2)}%)`;
+    if (o2o > T.O2O_M8BF)         return `No Straddle (o2o ${o2o.toFixed(1)} > ${T.O2O_M8BF})`;
+    if (opexDay)                  return `No Straddle (OPEX day)`;
+    // In range and not blocked — Straddle would fire on its own rules.
+    return `Straddle @ 9:32 AM`;
+  };
 
   let m8bfText = rec, stradText = rec, gxbfText = rec;
 
