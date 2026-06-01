@@ -416,7 +416,9 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
   const gxbfTrigger = (oNight > T.DROP_GXBF) || postOpDay;
   let gxbfFires = false, gxbfBlockedReason = null;
   if (gxbfTrigger) {
-    if (vixToday >= T.VIX_MAX_GXBF) {
+    if (cpiDay) {
+      gxbfBlockedReason = `CPI day`;
+    } else if (vixToday >= T.VIX_MAX_GXBF) {
       gxbfBlockedReason = `VIX ${vixToday} ≥ ${T.VIX_MAX_GXBF}`;
     } else if (postOpDay && gxbfVixOvernightPct >= 2) {
       gxbfBlockedReason = `VIX gapped up ${gxbfVixOvernightPct.toFixed(1)}% overnight`;
@@ -427,16 +429,19 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
     }
   }
 
-  if (cpiDay && !gxbfFires) {
+  if (cpiDay) {
+    // CPI day hard-blocks Sigma 3 strategies (M8BF, Straddle, GXBF, BOBF).
+    // Only the Diagonal companion can still trade on CPI days (it has its
+    // own gating in computeDiagonalSignal).
     rec = "No trades (CPI day)";
     theme = "block";
     crossed = true;
     blockT = "cpi-day";
-    blockD = "CPI day — all strategies blocked";
+    blockD = "CPI day — all Sigma 3 strategies blocked";
     badge = "BLOCKED";
     strikeInfo = null;
   } else if (gxbfFires) {
-    // GXBF fires regardless of CPI / OPEX-1 / NM-non-Mon (strategy-independent).
+    // GXBF fires regardless of OPEX-1 / NM-non-Mon (strategy-independent).
     if (postOpDay) { rec = "GXBF @ 9:36 AM (OPEX+1)"; theme = "gxbf"; entryT = "9:36 AM"; badge = "GXBF"; }
     else            { rec = `GXBF @ 9:36 AM`;          theme = "gxbf"; entryT = "9:36 AM"; badge = "GXBF"; }
   } else {

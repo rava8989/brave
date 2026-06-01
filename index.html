@@ -565,9 +565,9 @@
     on intraday data.
   </div>
 
-  <!-- CPI DAY — M8BF / Straddle / BOBF blocked. GXBF independent; Diagonal companion still trades. -->
+  <!-- CPI DAY — all Sigma 3 (M8BF / Straddle / GXBF / BOBF) blocked. Only Diagonal companion can trade. -->
   <div id="cpiBlockBanner" class="cpi-blocker" style="display:none;">
-    <div class="cpi-blocker-title">CPI day — M8BF · Straddle · BOBF blocked. GXBF is independent and may still fire on its own rules. Diagonal companion still trades — see cards below.</div>
+    <div class="cpi-blocker-title">CPI day — all Sigma 3 strategies blocked (M8BF · Straddle · GXBF · BOBF). Only the Diagonal companion can trade — see cards below.</div>
   </div>
 
   <!-- 4 SIGNAL CARDS — single column -->
@@ -699,9 +699,10 @@
           <li><strong>VIX ≥ 25</strong> today (too wild to pin reliably — hard volatility cap).</li>
           <li>It's <strong>OPEX+1 and VIX gapped up ≥ 2%</strong> overnight (the auto-trigger is suppressed when post-expiration vol jumps).</li>
           <li>It's <strong>EOM</strong> (the last trading day of the month — handed to the Straddle).</li>
+          <li>It's a <strong>CPI day</strong> — hard block, no GXBF on CPI days regardless of trigger.</li>
         </ul>
       </li>
-      <li><strong>What's no longer a block.</strong> <strong>OPEX-1</strong>, <strong>CPI</strong>, and <strong>NM-non-Monday</strong> days used to be banned. Under the current hybrid rules they're allowed — they fire on their own merits when the trigger/block test passes. Fed-decision days remain fine. GXBF is strategy-independent: it never blocks the other Sigma 3 strategies and is never blocked by them.</li>
+      <li><strong>What's no longer a block.</strong> <strong>OPEX-1</strong> and <strong>NM-non-Monday</strong> days used to be banned. Under the current rules they're allowed — they fire on their own merits when the trigger/block test passes. Fed-decision days remain fine. GXBF is strategy-independent: it never blocks the other Sigma 3 strategies and is never blocked by them — except for the CPI hard block which applies to all Sigma 3 strategies.</li>
       <li><strong>How the center is chosen (hybrid routing).</strong> At <strong>~9:35 AM ET</strong> the gamma model computes two candidate centers from the live 0DTE SPX call chain (Black-Scholes γ within ±5% of spot, snapped to the nearest 5): one weighted by traded volume, one weighted by open interest. The hybrid rule auto-routes the day:
         <ul>
           <li><strong>OI center</strong> on OPEX-1, VIX expiry (Wednesday two days before OPEX), and FOMC announcement days.</li>
