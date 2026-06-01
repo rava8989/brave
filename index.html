@@ -673,14 +673,24 @@
     <hr class="divider">
     <h3>Straddle</h3>
     <ul>
-      <li>Used when overnight VIX drop is <strong>between 0.01 and 0.65</strong>.</li>
-      <li>Entry: <strong>9:32 AM</strong>.</li>
-      <li><strong>Not traded</strong> on OPEX days.</li>
-      <li><strong>SPX gap ≥ 0.9%</strong> (up or down) → Straddle cancelled. No effect on M8BF or GXBF.</li>
-      <li><strong>Open-to-open VIX drop &gt; 1.4</strong> → Straddle cancelled. Does <strong>not</strong> apply on EOM days. No effect on M8BF or GXBF.</li>
-      <li>Win rate = 0% prior day → next day is automatic Straddle regardless of VIX signal. Treats Fed day the same as any other day (Fed day is <strong>not</strong> a special case for WR rules).</li>
-      <li>EOM (last trading day of month) → automatic <strong>EOM Straddle</strong> @ 9:32 AM. BOBF remains in play. Max risk: <strong>$3,500</strong>.</li>
-      <li>NM (first trading day of month, non-Monday) → <strong>NM Straddle</strong> @ 9:32 AM. Max risk: <strong>$3,200</strong>.</li>
+      <li><strong>Range:</strong> fires when overnight VIX drop is strictly between <strong>0 and 0.65</strong> (yesterday's VIX close − today's VIX open). Self-contained range; no reference to other strategies.</li>
+      <li><strong>Entry:</strong> 9:32 AM.</li>
+      <li><strong>Auto-fire overrides</strong> (force Straddle regardless of range):
+        <ul>
+          <li><strong>EOM</strong> (last trading day of month) → <strong>EOM Straddle</strong> @ 9:32 AM. Max risk: <strong>$3,500</strong>.</li>
+          <li><strong>NM non-Monday</strong> (first trading day of new month, not Monday) → <strong>NM Straddle</strong> @ 9:32 AM. Max risk: <strong>$3,200</strong>.</li>
+          <li>Win rate = 0% prior day → forces Straddle. WR rule treats Fed day like any other day.</li>
+        </ul>
+      </li>
+      <li><strong>Blocks:</strong>
+        <ul>
+          <li><strong>CPI day</strong> (hard-block — all Sigma 3 strategies).</li>
+          <li><strong>OPEX day</strong> (monthly options expiration Friday).</li>
+          <li><strong>SPX gap ≥ 0.9%</strong> at open (up or down).</li>
+          <li><strong>Open-to-open VIX drop &gt; 1.4</strong> (yesterday's VIX open − today's VIX open).</li>
+          <li>Win rate ≥ 90% prior day → forces M8BF (Straddle suppressed).</li>
+        </ul>
+      </li>
     </ul>
     <div class="strategy-image"><img src="./Straddle.jpg" alt="Straddle" loading="lazy" /></div>
 
