@@ -440,13 +440,14 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
     if (postOpDay) { rec = "GXBF @ 9:36 AM (OPEX+1)"; theme = "gxbf"; entryT = "9:36 AM"; badge = "GXBF"; }
     else            { rec = `GXBF @ 9:36 AM`;          theme = "gxbf"; entryT = "9:36 AM"; badge = "GXBF"; }
   } else {
-    // GXBF did not fire. Primary `rec` ONLY reflects Straddle's own status
-    // (fires if oNight > 0, else "No Straddle"). M8BF evaluates 100%
-    // independently — its status lives in `m8bfOwnText` / `m8bfText` and
-    // never touches the primary `rec`. The 0%/90% WR overrides below can
-    // still force Straddle / M8BF as the primary headline.
-    if (oNight > 0) {
+    // STRADDLE — independent strategy. Has its OWN range: overnight VIX
+    // drop must be between 0 (exclusive) and T.DROP_GXBF (inclusive, =0.65).
+    // No reference to GXBF — Straddle stands on its own.
+    // M8BF is also independent — its status lives in m8bfText only.
+    if (oNight > 0 && oNight <= T.DROP_GXBF) {
       rec = "Straddle @ 9:32 AM"; theme = "strad"; entryT = "9:32 AM"; badge = "STRADDLE";
+    } else if (oNight > T.DROP_GXBF) {
+      rec = `No Straddle (overnight VIX drop > ${T.DROP_GXBF})`; theme = "block"; crossed = true; blockT = "vix-down-big"; blockD = `Drop > ${T.DROP_GXBF}`; badge = "BLOCKED"; strikeInfo = null;
     } else {
       rec = "No Straddle (overnight VIX up)"; theme = "block"; crossed = true; blockT = "vix-up"; blockD = "No overnight VIX drop"; badge = "BLOCKED"; strikeInfo = null;
     }
