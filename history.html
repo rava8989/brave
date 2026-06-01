@@ -861,7 +861,7 @@ function getValue(row, col) {
   switch(col.key) {
     case 'dayLabel': return row.dayLabel || '';
     case 'm8bfWR': return row.m8bfWR != null ? row.m8bfWR : -1;
-    case 'm8bfPL': return row.signal?.theme === 'm8bf' ? (row.m8bfPL != null ? row.m8bfPL : 0.1) : -Infinity;
+    case 'm8bfPL': return row.signal?.m8bfRan ? (row.m8bfPL != null ? row.m8bfPL : 0.1) : -Infinity;
     case 'stradPL': return row.signal?.stradRan && row.stradPL != null ? row.stradPL : -Infinity;
     case 'gxbfPL': return row.gxbfPL != null ? row.gxbfPL : -Infinity;
     case 'bobfPL': return row.signal?.bobfBadge !== 'BLOCKED' ? (row.bobfPL != null ? row.bobfPL : 0.1) : -Infinity;

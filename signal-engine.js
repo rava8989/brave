@@ -440,32 +440,21 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
     if (postOpDay) { rec = "GXBF @ 9:36 AM (OPEX+1)"; theme = "gxbf"; entryT = "9:36 AM"; badge = "GXBF"; }
     else            { rec = `GXBF @ 9:36 AM`;          theme = "gxbf"; entryT = "9:36 AM"; badge = "GXBF"; }
   } else {
-    // GXBF did not fire — either no trigger, or a GXBF-specific block hit
-    // (VIX≥max, OPEX+1 gap-up, EOM). Other strategies still evaluate
-    // INDEPENDENTLY below (strategy independence). The GXBF block reason is
-    // surfaced via `gxbfOwnText()` / `gxbfText`, not via the primary `rec` —
-    // the primary `rec` reflects whatever strategy IS active for the day.
+    // GXBF did not fire. Primary `rec` ONLY reflects Straddle's own status
+    // (fires if oNight > 0, else "No Straddle"). M8BF evaluates 100%
+    // independently — its status lives in `m8bfOwnText` / `m8bfText` and
+    // never touches the primary `rec`. The 0%/90% WR overrides below can
+    // still force Straddle / M8BF as the primary headline.
     if (oNight > 0) {
       rec = "Straddle @ 9:32 AM"; theme = "strad"; entryT = "9:32 AM"; badge = "STRADDLE";
     } else {
-      rec = m8Msg(etDate); theme = "m8bf"; badge = "M8BF"; strikeInfo = m8Sched(dow, etDate); entryT = strikeInfo?.window || "";
+      rec = "No Straddle (overnight VIX up)"; theme = "block"; crossed = true; blockT = "vix-up"; blockD = "No overnight VIX drop"; badge = "BLOCKED"; strikeInfo = null;
     }
 
-    if (rec.startsWith("M8BF")) {
-      if (eomDay) { rec = "No M8BF (EOM)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "M8BF not traded on EOM"; badge = "BLOCKED"; strikeInfo = null; }
-      else if (eom1) { rec = "No M8BF (EOM-1)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "M8BF not traded on EOM-1"; badge = "BLOCKED"; strikeInfo = null; }
-      else if (opex1) { rec = "No M8BF (day before OPEX)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "Skipped day before OPEX"; badge = "BLOCKED"; strikeInfo = null; }
-      else if (nonAmznTslaEarn) { rec = "No M8BF (earnings)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "Not traded on earnings days (except AMZN/TSLA)"; badge = "BLOCKED"; strikeInfo = null; }
-      else if (vixExpAfterOpex) { rec = "No M8BF (VIX exp day)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "VIX exp day when VIX exp falls after OPEX"; badge = "BLOCKED"; strikeInfo = null; }
-    }
-
-    // NM-non-Mon override: converts M8BF/Straddle into NM Straddle. GXBF is
-    // intentionally EXCLUDED (strategy independence — NM does not block GXBF).
-    if (nmDay && !isMon && (rec.startsWith("M8BF") || rec.startsWith("No M8BF") || rec.startsWith("Straddle"))) { rec = "NM Straddle @ 9:32 AM"; theme = "strad"; crossed = false; blockT = ""; entryT = "9:32 AM"; badge = "NM STRADDLE"; strikeInfo = null; }
+    // NM-non-Mon override: Straddle/NoStraddle → NM Straddle. (GXBF unaffected.)
+    if (nmDay && !isMon && (rec.startsWith("Straddle") || rec.startsWith("No Straddle"))) { rec = "NM Straddle @ 9:32 AM"; theme = "strad"; crossed = false; blockT = ""; entryT = "9:32 AM"; badge = "NM STRADDLE"; strikeInfo = null; }
     if (eomDay) { rec = "Straddle @ 9:32 AM (EOM)"; theme = "strad"; crossed = false; blockT = ""; entryT = "9:32 AM"; badge = "EOM STRADDLE"; strikeInfo = null; }
-    if (isWed && !fedDay && !m8bfBanned && !nmDay && rec.startsWith("Straddle")) { rec = m8Msg(etDate); theme = "m8bf"; badge = "M8BF"; strikeInfo = m8Sched(dow, etDate); entryT = strikeInfo?.window || ""; }
     if (opexDay && rec.startsWith("Straddle")) { rec = "No Straddle (OPEX day)"; theme = "block"; crossed = true; blockT = "hard"; blockD = "Straddle not on OPEX"; badge = "BLOCKED"; }
-    if (postOpMon && rec.startsWith("M8BF")) pmNote = true;
   }
 
   if (pmNote) rec += " (afternoon times preferred)";
