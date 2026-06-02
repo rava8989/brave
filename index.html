@@ -2353,7 +2353,7 @@
   let _vix20dCloses = null;  // array of prior daily closes, most recent last
   async function loadVix20dFromHistory(){
     try{
-      const resp = await fetchWithRetry('./history_data.json');
+      const resp = await fetchWithRetry('./history_data.json?v=' + Date.now(), { cache: 'no-store' });
       if(!resp.ok) throw new Error('HTTP ' + resp.status);
       const data = await resp.json();
       // vixClose is only set on completed prior days. Today's row has
@@ -2846,7 +2846,7 @@
     if (_wrFetchInProgress) return;
     _wrFetchInProgress = true;
     try {
-      const resp = await fetchWithRetry('./history_data.json');
+      const resp = await fetchWithRetry('./history_data.json?v=' + Date.now(), { cache: 'no-store' });
       if(!resp.ok) throw new Error('HTTP ' + resp.status);
       const data = await resp.json();
       const rows = data.filter(r => r.m8bfWR != null)
