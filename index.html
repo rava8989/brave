@@ -1381,6 +1381,7 @@
         const el=document.getElementById(id); if(el) el.style.display='';
       });
       const sgw=document.getElementById('strikeGridWrap'); if(sgw) sgw.style.display='none';
+<<<<<<< Updated upstream
 
       // Mark each Sigma 3 card as CPI-blocked (its own status, same as any
       // calendar block — matches how non-CPI 'No X (EOM)' / 'No X (NM)' render).
@@ -1396,6 +1397,9 @@
       setSigmaBlocked('bobfRec',  'bobfReason',  'bobfBadge',  'cardBobf',  'BOBF');
 
       // Tag row (📊 CPI chip etc.)
+=======
+      // keep tag row updated so the "📊 CPI" chip shows
+>>>>>>> Stashed changes
       const tmapCpi={cpiTag:true,fedTag:isFed(),opexTag:isOpex(),postOpexTag:SignalEngine.opexSch.some(isTodayAfter),eomTag:isLastTradeMo(new Date())};
       let anyTagCpi=false;
       Object.entries(tmapCpi).forEach(([id,v])=>{document.getElementById(id).style.display=v?'inline-flex':'none';if(v)anyTagCpi=true;});
@@ -1455,6 +1459,7 @@
     document.getElementById('cpiBlockBanner').style.display='none';
     document.getElementById('signalStack').style.display='';
 
+<<<<<<< Updated upstream
     // ── Display-only metric calculations (no strategy decisions here) ──
     // Strategy logic is delegated to SignalEngine.calculateSignal() below —
     // single source of truth shared with schwab-proxy.js (Discord) and
@@ -1471,6 +1476,17 @@
     const dow = now.getDay();
     const o2o   = isNaN(vYOpen) ? NaN : vYOpen - vToday;
     const oNight= vYClose - vToday;
+=======
+    const now=new Date(), dow=now.getDay();
+    const isMon=dow===1, isFri=dow===5, isWed=dow===3;
+    const nmDay=isFirstTradeMo(now), nmMon=isFirstTradeMon(now);
+    const fedDay=isFed(), opexDay=isOpex();
+    const postOpMon=isPostOpexMon();
+    const postOpDay=SignalEngine.opexSch.some(isTodayAfter);
+    const eomDay=isLastTradeMo(now), eom1=isEomN(1,now), eom2=isEomN(2,now);
+    const vixExpDay=isVixExp(), opex1=SignalEngine.opexSch.some(isTodayBefore);
+    const earningsDay=isEarningsDay();
+>>>>>>> Stashed changes
 
     // Tag chips (CPI/Fed/OPEX/Post-OPEX/EOM). cpiTag forced false because the
     // CPI early-return above already handled that branch; we only reach here
@@ -1850,7 +1866,245 @@
     else if (theme === 'block' && rec.includes('GXBF'))    setTodayTrade('pillGxbf');
     else                            setTodayTrade(null);
 
+<<<<<<< Updated upstream
     // Persist inputs
+=======
+      if(rec.startsWith("M8BF")){
+        if(eomDay){rec="No M8BF (EOM)";theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on EOM";badge="BLOCKED";strikeInfo=null;}
+        else if(eom1){rec="No M8BF (EOM-1)";theme="block";crossed=true;blockT="hard";blockD="M8BF not traded on EOM-1";badge="BLOCKED";strikeInfo=null;}
+        else if(opex1){rec="No M8BF (day before OPEX)";theme="block";crossed=true;blockT="hard";blockD="Skipped day before OPEX";badge="BLOCKED";strikeInfo=null;}
+        else if(isVixAfterOpexDay(now)){rec="No M8BF (VIX exp day)";theme="block";crossed=true;blockT="hard";blockD="VIX exp day when VIX exp falls after OPEX";badge="BLOCKED";strikeInfo=null;}
+        else if(isNonAmznTslaEarningsDay()){rec="No M8BF (earnings day)";theme="block";crossed=true;blockT="hard";blockD="Non-AMZN/TSLA mega-cap earnings day";badge="BLOCKED";strikeInfo=null;}
+      }
+
+      if(nmDay&&!isMon&&(rec.startsWith("M8BF")||rec.startsWith("No M8BF")||rec.startsWith("Straddle")||rec.startsWith("GXBF")||rec.startsWith("No GXBF"))){rec="NM Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="NM STRADDLE";strikeInfo=null;}
+      if(eomDay){rec="Straddle @ 9:32 AM (EOM)";theme="strad";crossed=false;blockT="";entryT="9:32 AM";badge="EOM STRADDLE";strikeInfo=null;}
+      if(isWed&&!fedDay&&!m8bfBlocked&&!nmDay&&rec.startsWith("Straddle")){rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=m8Sched(dow,now);entryT=strikeInfo?.window||"";}
+      if(opexDay&&rec.startsWith("Straddle")){rec="No Straddle (OPEX day)";theme="block";crossed=true;blockT="hard";blockD="Straddle not on OPEX";badge="BLOCKED";}
+      if(postOpMon&&rec.startsWith("M8BF")) pmNote=true;
+
+      // SPX gap cancels straddle — Straddle blocked, no M8BF fallback. WR=0% forced straddle is immune.
+      if(spxGapCancelsStrad && blockT!=='0%rule' && (rec === "Straddle @ 9:32 AM" || rec === "Straddle @ 9:32 AM (EOM)" || rec.startsWith("NM Straddle"))) {
+        const dir=spxGapPct>0?'▲':'▼';
+        rec=`No Straddle (SPX gap ${dir}${Math.abs(spxGapPct).toFixed(2)}%)`;theme="block";crossed=true;blockT="gap";blockD=`SPX gap ≥ ${T.SPX_GAP_THRESHOLD}%`;badge="BLOCKED";strikeInfo=null;
+      }
+
+      // o2o cancels straddle — Straddle blocked, no M8BF fallback. WR=0% forced straddle is immune.
+      if(o2o > T.O2O_M8BF && blockT!=='0%rule' && (rec === "Straddle @ 9:32 AM" || rec.startsWith("NM Straddle"))) {
+        rec=`No Straddle (o2o ${o2o.toFixed(1)} > ${T.O2O_M8BF})`;theme="block";crossed=true;blockT="o2o";blockD=`Open-to-open ${o2o.toFixed(1)} > ${T.O2O_M8BF}`;badge="BLOCKED";strikeInfo=null;
+      }
+
+      // WR=0% and WR>=90% are the STRONGEST overrides — trump gap, o2o, everything (except CPI/Fed)
+      if(wr0.checked){
+        if(!cpiDay && !fedDay){
+          rec="Straddle @ 9:32 AM";theme="strad";crossed=false;blockT="0%rule";entryT="9:32 AM";badge="STRADDLE";strikeInfo=null;
+        }
+      } else if(wr90.checked){
+        if(!cpiDay){const sc=m8Sched(dow,now);rec=m8Msg(now);theme="m8bf";badge="M8BF";strikeInfo=sc;entryT=sc?.window||"";blockT="90%rule";}
+      }
+
+      // OPEX+1 GXBF override — but NOT when WR 0% or 90% forced the signal, and NOT on CPI days
+      if(postOpDay && !cpiDay && blockT!=='0%rule' && blockT!=='90%rule'){
+        const isM8=rec.startsWith("M8BF"), isStr=rec.startsWith("Straddle")||rec.startsWith("NM Straddle");
+        if(isM8||isStr){
+          const vixOvernightPct = (vToday - vYClose) / vYClose * 100;
+          if(vToday>=T.VIX_MAX_GXBF){rec=`No GXBF (VIX ${vToday} ≥ ${T.VIX_MAX_GXBF})`;theme="block";crossed=true;pmNote=false;blockT="vix";blockD=`OPEX+1 GXBF blocked, VIX ${vToday}`;badge="BLOCKED";strikeInfo=null;}
+          else if(vixOvernightPct>=2){rec=`No GXBF (VIX gapped up ${vixOvernightPct.toFixed(1)}% overnight)`;theme="block";crossed=true;pmNote=false;blockT="vix";blockD=`OPEX+1 GXBF blocked — VIX gap up ${vixOvernightPct.toFixed(1)}%`;badge="BLOCKED";strikeInfo=null;}
+          else{rec="GXBF @ 9:36 AM (OPEX+1)";theme="gxbf";crossed=false;pmNote=false;blockT="";entryT="9:36 AM";badge="GXBF";strikeInfo=null;}
+        }
+      }
+    }
+
+    if(pmNote) rec+=" (afternoon times preferred)";
+
+    /* ====== RENDER 4 CARDS ====== */
+
+    const cardM8bf  = document.getElementById('cardM8bf');
+    const m8bfRec   = document.getElementById('m8bfRec');
+    const m8bfBadge = document.getElementById('m8bfBadge');
+    const m8bfReason= document.getElementById('m8bfReason');
+    const cardStrad  = document.getElementById('cardStrad');
+    const stradRec   = document.getElementById('stradRec');
+    const stradBadge = document.getElementById('stradBadge');
+    const stradReason= document.getElementById('stradReason');
+    const cardGxbf  = document.getElementById('cardGxbf');
+    const gxbfRec   = document.getElementById('gxbfRec');
+    const gxbfBadge = document.getElementById('gxbfBadge');
+    const gxbfReason= document.getElementById('gxbfReason');
+
+    // ── CARD 1: M8BF ──
+    const dowSched = m8Sched(dow,now);
+
+    if(cpiDay){
+      // CPI day: hard-block M8BF (no exceptions)
+      cardM8bf.className='scard active-block';
+      m8bfBadge.textContent='BLOCKED';
+      m8bfRec.innerHTML=`<span class="crossed">No M8BF (CPI day)</span>`;
+      m8bfReason.innerHTML=`<span class="block-hard">⛔ CPI day — all strategies blocked</span>`;
+      strikeInfo=null;
+    } else if(m8bfBlocked){
+      cardM8bf.className='scard active-block';
+      m8bfBadge.textContent='BLOCKED';
+      m8bfRec.innerHTML=`<span class="crossed">${m8bfBlocked.r}</span>`;
+      m8bfReason.innerHTML=`<span class="block-hard">⛔ ${m8bfBlocked.n}</span>`;
+      strikeInfo=null;
+    } else if(blockT==='0%rule'){
+      // WR=0% forces Straddle — M8BF stands down
+      cardM8bf.className='scard dimmed';
+      m8bfBadge.textContent='—';
+      m8bfRec.textContent='No M8BF (0% WR → Straddle)';
+      m8bfReason.textContent='';
+      strikeInfo=null;
+    } else {
+      // M8BF always runs when not hard-blocked — independent of overnight VIX
+      cardM8bf.className='scard active-m8bf';
+      m8bfBadge.textContent=dowSched?`🕐 ${dowSched.window}`:'TRADE';
+      m8bfRec.textContent=dowSched?`M8BF — Window ${dowSched.window}`:'M8BF';
+      strikeInfo=dowSched;
+      if(blockT==='90%rule') m8bfReason.innerHTML=`<span style="color:var(--accent);font-style:italic;">📈 90% rule — M8BF override</span>`;
+      else m8bfReason.textContent='';
+    }
+
+    // ── CARD 2: Straddle / CPI / NM / EOM ──
+    if(cpiDay){
+      // CPI day: hard-block Straddle (no Long Call, no straddle, nothing)
+      cardStrad.className='scard active-block';
+      stradBadge.textContent='BLOCKED';
+      stradRec.innerHTML=`<span class="crossed">No Straddle (CPI day)</span>`;
+      stradReason.innerHTML=`<span class="block-hard">⛔ CPI day — all strategies blocked</span>`;
+    } else if(theme==='strad'){
+      cardStrad.className='scard active-strad';
+      const isNM  = badge==='NM STRADDLE';
+      const isEOM = badge==='EOM STRADDLE';
+      if(isNM)        stradBadge.textContent='📅 NM — 9:32 AM';
+      else if(isEOM)  stradBadge.textContent='📆 EOM — 9:32 AM';
+      else            stradBadge.textContent=entryT?`⏰ ${entryT}`:'TRADE';
+      stradRec.innerHTML=crossed?`<span class="crossed">${rec}</span>`:rec;
+      if(isNM)                   stradReason.textContent='First trading day of month · Max risk $3,200';
+      else if(isEOM)             stradReason.textContent='Last trading day of month · Max risk $3,500';
+      else if(blockT==='0%rule' && cpiDay) stradReason.innerHTML=`<span style="color:var(--accent);font-style:italic;">📉 0% rule on CPI — Straddle only (no M8BF, no Long Call)</span>`;
+      else if(blockT==='0%rule') stradReason.innerHTML=`<span style="color:var(--accent);font-style:italic;">📉 0% rule — M8BF → Straddle</span>`;
+      else                       stradReason.textContent='';
+    } else if(theme==='block' && (rec.includes('Straddle') || rec.includes('CPI') || rec.includes('Trade'))){
+      cardStrad.className='scard active-block';
+      stradBadge.textContent='BLOCKED';
+      stradRec.innerHTML=`<span class="crossed">${rec}</span>`;
+      if(blockT==='hard') stradReason.innerHTML=`<span class="block-hard">⛔ ${blockD}</span>`;
+      else stradReason.textContent='';
+    } else {
+      cardStrad.className='scard dimmed';
+      stradBadge.textContent='—';
+      stradRec.textContent=`No Straddle (${oNight<=0?'overnight VIX up':oNight>T.DROP_GXBF?'overnight VIX drop > '+T.DROP_GXBF:blockT==='90%rule'?'WR ≥ 90%':'non-CPI/Fed Wednesday'})`;
+      stradReason.textContent='';
+    }
+
+    // ── CARD 3: GXBF ──
+    if(cpiDay){
+      // CPI day: hard-block GXBF
+      cardGxbf.className='scard active-block';
+      gxbfBadge.textContent='BLOCKED';
+      gxbfRec.innerHTML=`<span class="crossed">No GXBF (CPI day)</span>`;
+      gxbfReason.innerHTML=`<span class="block-hard">⛔ CPI day — all strategies blocked</span>`;
+    } else if(theme==='gxbf'){
+      cardGxbf.className='scard active-gxbf';
+      gxbfBadge.textContent=`⏰ ${entryT}`;
+      gxbfRec.textContent=rec;
+      gxbfReason.textContent='';
+    } else if(theme==='block' && rec.startsWith('No GXBF')){
+      // OPEX+1 GXBF override blocked (e.g., "No GXBF (VIX gapped up 7.8% overnight)")
+      // Show the specific block reason instead of falling back to generic message.
+      cardGxbf.className='scard active-block';
+      gxbfBadge.textContent='BLOCKED';
+      gxbfRec.innerHTML=`<span class="crossed">${rec}</span>`;
+      gxbfReason.innerHTML=blockD?`<span class="block-vix">⚠️ ${blockD}</span>`:'';
+    } else if(!isNaN(vToday) && vToday >= T.VIX_MAX_GXBF){
+      cardGxbf.className='scard active-block';
+      gxbfBadge.textContent='BLOCKED';
+      gxbfRec.innerHTML=`<span class="crossed">No GXBF (VIX ${vToday} ≥ ${T.VIX_MAX_GXBF})</span>`;
+      gxbfReason.innerHTML=`<span class="block-vix">⚠️ VIX ${vToday} ≥ ${T.VIX_MAX_GXBF}</span>`;
+    } else {
+      cardGxbf.className='scard dimmed';
+      gxbfBadge.textContent='—';
+      gxbfRec.textContent=`No GXBF (overnight VIX drop ≤ ${T.DROP_GXBF})`;
+      gxbfReason.textContent='';
+    }
+
+    // ── STRIKE GRID (inside M8BF card) ──
+    const gw=document.getElementById('strikeGridWrap'), g=document.getElementById('strikeGrid');
+    g.innerHTML='';
+    if(strikeInfo && strikeInfo.blocked){
+      gw.style.display='block';
+      const lbl=document.getElementById('sgLabel');
+      if(lbl){
+        lbl.innerHTML=`Window ${strikeInfo.window} <span style="background:#052016;color:#34d399;border:1px solid #34d399;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;margin-left:6px;">Every week</span>`;
+      }
+      const bannedLbl=document.createElement('div');
+      bannedLbl.style.cssText='width:100%;font-size:10px;color:#f87171;font-weight:600;margin-bottom:4px;letter-spacing:.04em;text-transform:uppercase;';
+      bannedLbl.textContent='Banned center strikes — skip these:';
+      g.appendChild(bannedLbl);
+      strikeInfo.blocked.forEach(s=>{
+        const p=document.createElement('span');
+        p.className='sp lwr';
+        p.textContent=s;
+        g.appendChild(p);
+      });
+      if(strikeInfo.comboBans){
+        const comboLbl=document.createElement('div');
+        comboLbl.style.cssText='width:100%;font-size:10px;color:#fcd34d;font-weight:600;margin:6px 0 4px;letter-spacing:.04em;text-transform:uppercase;';
+        comboLbl.textContent='Combo bans (T1 → center):';
+        g.appendChild(comboLbl);
+        Object.entries(strikeInfo.comboBans).forEach(([t1,center])=>{
+          const p=document.createElement('span');
+          p.className='sp lwr';
+          p.style.cssText='background:#2b1f00;border-color:#78350f;color:#fcd34d;font-size:10px;';
+          p.textContent=`${t1}→${center}`;
+          g.appendChild(p);
+        });
+      }
+    } else { gw.style.display='none'; }
+
+    // ── CARD 4: BOBF ──
+    const cardBobf =document.getElementById('cardBobf');
+    const bobfRec  =document.getElementById('bobfRec');
+    const bobfBadge=document.getElementById('bobfBadge');
+    const bobfReason=document.getElementById('bobfReason');
+    const br=[];
+    if(cpiDay)      br.push("CPI day");
+    if(nmMon)       br.push("NM Monday");
+    if(vixExpDay)   br.push("VIX expiration");
+    if(opexDay)     br.push("OPEX");
+    if(opex1)       br.push("OPEX-1");
+    if(eom2)        br.push("EOM-2");
+    if(eom1)        br.push("EOM-1");
+    if(earningsDay){ const tickers=SignalEngine.earningsSchedule.filter(e=>e.date===todayLong()).map(e=>e.ticker).join(','); br.push(`earnings (${tickers})`); }
+    if(!isNaN(vToday)&&vToday>T.VIX_MAX_BOBF) br.push("high VIX");
+    if(br.length){
+      cardBobf.className='scard active-block';
+      bobfBadge.textContent='BLOCKED';
+      const vb=br.includes("high VIX"), ob=br.some(r=>r!=="high VIX");
+      const cls=vb&&!ob?'block-vix':'block-hard', icon=vb&&!ob?'⚠️':'⛔';
+      bobfRec.innerHTML=`<span class="crossed">No BOBF (${br.join(", ")})</span>`;
+      bobfReason.innerHTML=`<span class="${cls}">${icon} ${vb&&!ob?'VIX level':'Hard rule'}</span>`;
+    } else {
+      cardBobf.className='scard active-ok';
+      bobfBadge.textContent=isFri?'FRIDAY VERSION':'IN PLAY';
+      bobfRec.textContent=isFri?'BOBF (Friday version)':'BOBF in play';
+      bobfReason.textContent='';
+    }
+
+    document.getElementById('resultDayLabel').textContent=tradeWdLabel();
+
+    // #5: mark the primary trade card
+    if(theme==='m8bf')          setTodayTrade('pillM8bf');
+    else if(theme==='strad')    setTodayTrade('pillStrad');
+    else if(theme==='gxbf')     setTodayTrade('pillGxbf');
+    else if(theme==='block' && rec.includes('M8BF'))   setTodayTrade('pillM8bf');
+    else if(theme==='block' && rec.includes('Straddle'))setTodayTrade('pillStrad');
+    else if(theme==='block' && rec.includes('GXBF'))   setTodayTrade('pillGxbf');
+    else                        setTodayTrade(null);
+
+    // #7: persist inputs
+>>>>>>> Stashed changes
     saveInputs();
 
     // Refresh pattern notes so VIX-level note picks up today's open
@@ -1866,8 +2120,11 @@
     // group by date — filter out past dates (already-reported earnings)
     const grouped={};
     SignalEngine.earningsSchedule.forEach(e=>{
+<<<<<<< Updated upstream
       const d = parseLong(e.date);
       if(d && d < todayMidday) return;  // skip past
+=======
+>>>>>>> Stashed changes
       if(!grouped[e.date]) grouped[e.date]=[];
       grouped[e.date].push(e);
     });
