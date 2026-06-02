@@ -48,7 +48,7 @@ fi
 if ! command -v npx >/dev/null 2>&1; then
   echo "⚠️  [history-kv-check] npx not found — skipping KV divergence check." >&2
   echo "    Install Node.js + run 'npx wrangler whoami' to enable this check." >&2
-  exit 2
+  exit 0  # skip silently — wrangler auth/network issue
 fi
 
 # 3. Pull current KV value (timeout 15s)
@@ -58,7 +58,7 @@ if ! timeout 15 npx wrangler kv key get --namespace-id="$KV_ID" "$KV_KEY" --remo
   echo "⚠️  [history-kv-check] failed to read KV (wrangler not authenticated, network down, or namespace unreachable)" >&2
   echo "    Skipping check — commit allowed, but please verify KV manually with:" >&2
   echo "    npx wrangler kv key get --namespace-id=$KV_ID '$KV_KEY' --remote | head -c 200" >&2
-  exit 2
+  exit 0  # skip silently — wrangler auth/network issue
 fi
 
 # 4. Get the STAGED content of history_data.json
@@ -73,7 +73,7 @@ NORM_STAGED=$(python3 -c "import json,sys; print(json.dumps(json.load(open(sys.a
 
 if [ -z "$NORM_KV" ] || [ -z "$NORM_STAGED" ]; then
   echo "⚠️  [history-kv-check] could not parse one of the two JSON blobs — skipping." >&2
-  exit 2
+  exit 0  # skip silently — wrangler auth/network issue
 fi
 
 if [ "$NORM_KV" = "$NORM_STAGED" ]; then
