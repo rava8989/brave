@@ -1735,13 +1735,16 @@
     }
 
     // ── STRIKE GRID (inside M8BF card) ──
-    // Uses m8bfStrikeInfo (M8BF's OWN status) when M8BF is active, so the
-    // banned-strikes table renders even on days when the primary signal was
-    // overridden (e.g. 90% rule firing through an OPEX-1 ban).
+    // Renders the M8BF window + banned center strikes + combo bans whenever
+    // M8BF is firing on its OWN rules. Mirrors the card-color decision above:
+    // M8BF fires unless CPI / 0%-WR forced Straddle / (m8bfBanned AND no 90%-WR).
+    // The old `theme === 'm8bf'` check was wrong — `theme` is only 'm8bf' on
+    // 90%-WR override days, so on normal Tue/Wed/Thu the strikes never rendered.
     const gw = document.getElementById('strikeGridWrap');
     const g  = document.getElementById('strikeGrid');
     g.innerHTML = '';
-    const gridStrikeInfo = (theme === 'm8bf') ? (m8bfStrikeInfo || strikeInfo) : null;
+    const m8bfFiresForGrid = !sig.cpiDay && blockT !== '0%rule' && !(m8bfBanned && blockT !== '90%rule');
+    const gridStrikeInfo = m8bfFiresForGrid ? (m8bfStrikeInfo || strikeInfo) : null;
     if (gridStrikeInfo && gridStrikeInfo.blocked) {
       gw.style.display = 'block';
       const lbl = document.getElementById('sgLabel');
