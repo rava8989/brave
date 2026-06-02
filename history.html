@@ -998,8 +998,8 @@ function renderTable() {
     h += `<td class="col-date">${row.date}</td>`;
     h += `<td class="col-day">${row.dayLabel}</td>`;
     h += `<td>${fmtNum(row.vixOpen)}</td>`;
-    h += `<td>${fmtNum(row.vixPrevClose)}</td>`;
     h += `<td>${fmtNum(row.vixPrevOpen)}</td>`;
+    h += `<td>${fmtNum(row.vixPrevClose)}</td>`;
     h += `<td class="${valClass(row.overnightDrop)}">${fmtNum(row.overnightDrop)}</td>`;
     h += `<td class="${valClass(row.o2o)}">${fmtNum(row.o2o)}</td>`;
     h += `<td class="${valClass(row.spxGapPct)}">${row.spxGapPct!=null?row.spxGapPct.toFixed(2)+'%':'—'}</td>`;
