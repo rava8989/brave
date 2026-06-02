@@ -2254,6 +2254,36 @@
         if(closeCandle) yClose = closeCandle.close.toFixed(2);
       }
 
+      // ── AUTHORITATIVE VIX CLOSE OVERRIDE (2026-06-02) ──
+      // Schwab 1-min VIX data stops at 4:00 PM ET. The official CBOE settle
+      // is at 4:15 PM. The candle walker above falls back to the 4:00 candle
+      // when no 4:10-4:15 candle exists (it never does for VIX), which is
+      // wrong by ~$0.04 daily on average. The worker writes the authoritative
+      // 4:15 close (from Tastytrade `prev-close`) to history_data.json at EOD.
+      // Override yClose with history_data.json if available.
+      try {
+        const hResp = await fetch('./history_data.json?v=' + Date.now(), { cache: 'no-store' });
+        if (hResp.ok) {
+          const hist = await hResp.json();
+          // Build ISO date for yDate (e.g. "Mon Jun 01 2026" → "2026-06-01")
+          if (yDate) {
+            const yd = new Date(yDate);
+            const isoY = yd.getFullYear() + '-'
+                       + String(yd.getMonth() + 1).padStart(2, '0') + '-'
+                       + String(yd.getDate()).padStart(2, '0');
+            const hRow = hist.find(r => r.date === isoY);
+            if (hRow && typeof hRow.vixClose === 'number') {
+              yClose = hRow.vixClose.toFixed(2);
+            }
+            if (hRow && typeof hRow.vixOpen === 'number') {
+              yOpen = hRow.vixOpen.toFixed(2);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[S3] history_data.json VIX override failed:', e);
+      }
+
       // Schwab's /market/quotes ?$VIX closePrice is unreliable on day-after-
       // holiday: on Tue after Memorial Day Monday, Schwab returns Monday's
       // stale after-hours VIX (16.59) instead of Friday's actual close (16.81).
