@@ -1616,17 +1616,41 @@
     } = sig;
 
     // ── CARD 1: M8BF ──
-    // Logic mirrors signal-engine internals: the 90% rule (blockT='90%rule')
-    // overrides M8BF bans — when it fires, theme is 'm8bf' even on EOM/EOM-1/
-    // OPEX-1/earnings/VIX-exp days. Hard-block only when M8BF is banned AND
-    // the 90% override didn't fire.
+    // Strategy-independent: M8BF card reflects M8BF's OWN status only —
+    // never the primary `rec` theme. M8BF fires every Mon-Fri at its window
+    // UNLESS:
+    //   1. CPI day (hard-blocks all Sigma 3 strategies)
+    //   2. 0%-WR rule (forces Straddle, M8BF stands down per user rule)
+    //   3. Calendar-banned (EOM/EOM-1/OPEX-1/earnings/VIX-exp) AND no 90%-WR override
+    // The old `theme === 'm8bf'` check was wrong — it required M8BF to be
+    // the PRIMARY signal, but per strategy independence M8BF fires regardless
+    // of what Straddle/GXBF/BOBF are doing.
     if (sig.cpiDay) {
       cardM8bf.className     = 'scard active-block';
       m8bfBadge.textContent  = 'BLOCKED';
       m8bfRec.innerHTML      = `<span class="crossed">No M8BF (CPI day)</span>`;
       m8bfReason.innerHTML   = `<span class="block-hard">⛔ CPI day — all strategies blocked</span>`;
-    } else if (theme === 'm8bf') {
-      // M8BF fires — either normally, or the 90% rule overrode a block.
+    } else if (blockT === '0%rule') {
+      // WR=0% forces Straddle — M8BF stands down (per user-confirmed rule).
+      cardM8bf.className     = 'scard dimmed';
+      m8bfBadge.textContent  = '—';
+      m8bfRec.textContent    = 'No M8BF (0% WR → Straddle)';
+      m8bfReason.textContent = '';
+    } else if (m8bfBanned && blockT !== '90%rule') {
+      // Calendar-banned for M8BF AND 90%-WR did NOT override.
+      const reasonMap = {
+        [`No M8BF (EOM)`]:             'M8BF not traded on EOM',
+        [`No M8BF (EOM-1)`]:           'M8BF not traded on EOM-1',
+        [`No M8BF (day before OPEX)`]: 'Skipped day before OPEX',
+        [`No M8BF (earnings)`]:        'Not traded on earnings days (except AMZN/TSLA)',
+        [`No M8BF (VIX exp day)`]:     'VIX exp day when VIX exp falls after OPEX',
+      };
+      cardM8bf.className    = 'scard active-block';
+      m8bfBadge.textContent = 'BLOCKED';
+      m8bfRec.innerHTML     = `<span class="crossed">${m8bfText}</span>`;
+      m8bfReason.innerHTML  = `<span class="block-hard">⛔ ${reasonMap[m8bfText] || 'M8BF banned'}</span>`;
+    } else {
+      // M8BF fires — either normally, or 90%-WR rule overrode a calendar ban.
       const sched = m8bfStrikeInfo || strikeInfo;
       cardM8bf.className    = 'scard active-m8bf';
       m8bfBadge.textContent = sched ? `🕐 ${sched.window}` : 'TRADE';
@@ -1646,32 +1670,6 @@
       } else {
         m8bfReason.textContent = '';
       }
-    } else if (blockT === '0%rule') {
-      // WR=0% forces Straddle — M8BF stands down.
-      cardM8bf.className     = 'scard dimmed';
-      m8bfBadge.textContent  = '—';
-      m8bfRec.textContent    = 'No M8BF (0% WR → Straddle)';
-      m8bfReason.textContent = '';
-    } else if (m8bfBanned) {
-      // Calendar-banned for M8BF (EOM/EOM-1/OPEX-1/earnings/VIX-exp) AND 90%
-      // rule did NOT override. m8bfText already says "No M8BF (...)".
-      const reasonMap = {
-        [`No M8BF (EOM)`]:             'M8BF not traded on EOM',
-        [`No M8BF (EOM-1)`]:           'M8BF not traded on EOM-1',
-        [`No M8BF (day before OPEX)`]: 'Skipped day before OPEX',
-        [`No M8BF (earnings)`]:        'Not traded on earnings days (except AMZN/TSLA)',
-        [`No M8BF (VIX exp day)`]:     'VIX exp day when VIX exp falls after OPEX',
-      };
-      cardM8bf.className    = 'scard active-block';
-      m8bfBadge.textContent = 'BLOCKED';
-      m8bfRec.innerHTML     = `<span class="crossed">${m8bfText}</span>`;
-      m8bfReason.innerHTML  = `<span class="block-hard">⛔ ${reasonMap[m8bfText] || 'M8BF banned'}</span>`;
-    } else {
-      // No M8BF for some other reason (e.g. theme=='strad' on a non-M8BF day).
-      cardM8bf.className     = 'scard dimmed';
-      m8bfBadge.textContent  = '—';
-      m8bfRec.textContent    = m8bfText;
-      m8bfReason.textContent = '';
     }
 
     // ── CARD 2: Straddle ──
