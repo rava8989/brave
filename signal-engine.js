@@ -288,7 +288,10 @@ export function isDayAfterAnyEarnings(etDate) { return earningsSchedule.some(e =
 //                         (history_data.json: vixOpen)
 //   prior20VixCloses      newest-last list of the prior 20 trading days'
 //                         vixClose values (history_data.json: vixClose)
-//   opts.lo, opts.hi      dead-zone band (default 40 < pct ≤ 90)
+//   opts.lo, opts.hi      dead-zone band (default 50 < pct ≤ 90)
+//                         CHANGED 2026-06-02 from (40, 90] to (50, 90] —
+//                         re-optimization on corrected VIX data found pct
+//                         41-50% adds +$12.4k / 24 trades / lower MaxDD.
 //
 // Output: { pct, inDeadZone, reason }
 //   • pct          — rounded percentile, or null if data insufficient
@@ -297,7 +300,7 @@ export function isDayAfterAnyEarnings(etDate) { return earningsSchedule.some(e =
 //                    we can't compute is not one we trust.
 //   • reason       — short human string for logs / Discord output
 export function computeVixPct20d(vixToday, prior20VixCloses, opts = {}) {
-  const lo = opts.lo ?? 40;
+  const lo = opts.lo ?? 50;
   const hi = opts.hi ?? 90;
   if (vixToday == null || !isFinite(vixToday) || vixToday <= 0) {
     return { pct: null, inDeadZone: true, reason: 'no-vix-today' };
@@ -321,7 +324,7 @@ export function computeVixPct20d(vixToday, prior20VixCloses, opts = {}) {
 // Consumed by: schwab-proxy.js (via calculateSignal), index.html (direct)
 // ────────────────────────────────────────────────────────────────────
 // Canonical 5-filter stack — priority:
-//   OPEX-1 > EOM > EOM-1 > NM > VIX_MID (40–90%)
+//   OPEX-1 > EOM > EOM-1 > NM > VIX_MID (50–90%)
 // Mirrors compute_diagonal_pnl.py DEFAULT_PARAMS.special_active exactly.
 // FED / CPI / VIX-EXP / OPEX / OPEX+1 / per-ticker earnings intentionally NOT
 // in the stack. Earnings filters dropped 2026-04-29 (per backtest sweep —
@@ -354,7 +357,7 @@ export function computeDiagonalSignal(etDate, vixPct20d = null) {
     diagSkipCode = 'NM';
     diagText = 'No Diagonal (NM)';
     diagBadge = 'SKIP';
-  } else if (vixPct20d !== null && vixPct20d !== undefined && vixPct20d > 40 && vixPct20d <= 90) {
+  } else if (vixPct20d !== null && vixPct20d !== undefined && vixPct20d > 50 && vixPct20d <= 90) {
     diagSkipCode = 'VIX_MID';
     diagText = `No Diagonal (VIX 20d ${vixPct20d}% — dead zone)`;
     diagBadge = 'SKIP';

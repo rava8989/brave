@@ -483,11 +483,11 @@
     <span class="msep" id="spxSep" style="display:none;">|</span>
     <div class="mi" id="spxGapWrap" style="display:none;"><span class="ml">SPX Gap</span><span class="mv" id="spxGapDisplay">—</span></div>
     <span class="msep" id="vixPctSep" style="display:none;">|</span>
-    <div class="mi" id="vixPct20Wrap" style="display:none;" title="VIX 20-day percentile: ranks today's VIX against the last 20 trading days' VIX values. 0% = lowest in 20 days, 100% = highest. The 40–90% band is a 'no-edge' regime for short-premium diagonal strategies (research: -$117/trade avg there vs +$220 elsewhere). Outside that band = edge present. Click for full explanation.">
+    <div class="mi" id="vixPct20Wrap" style="display:none;" title="VIX 20-day percentile: ranks today's VIX against the last 20 trading days' VIX values. 0% = lowest in 20 days, 100% = highest. The 50–90% band is a 'no-edge' regime for short-premium diagonal strategies (re-optimized 2026-06-02 from 40–90 on corrected VIX data — +$12.4k / 24 trades / lower MaxDD / MAR 14.94). Outside that band = edge present. Click for full explanation.">
       <span class="ml" style="cursor:help" onclick="document.getElementById('vixPctExplain').hidden=!document.getElementById('vixPctExplain').hidden">VIX 20d %ile</span><span class="mv" id="vixPct20Display">—</span>
     </div>
     <span class="msep" id="regimeSep" style="display:none;">|</span>
-    <div class="mi" id="regimeWrap" style="display:none;" title="Diagonal-strategy regime check (ready by 9:30 AM ET — well before the 12:30 ET entry). DEAD = VIX ranks 40–90% vs last 20 days AND yesterday's SPX moved less than 0.5%. EDGE = any other combo. DEAD days historically cost the strategy ~$26K in P/L and ~26% of max drawdown across the backtest — this is the sharpest skip filter we have.">
+    <div class="mi" id="regimeWrap" style="display:none;" title="Diagonal-strategy regime check (ready by 9:30 AM ET — well before the 12:30 ET entry). DEAD = VIX ranks 50–90% vs last 20 days AND yesterday's SPX moved less than 0.5%. EDGE = any other combo. DEAD days historically cost the strategy ~$26K in P/L and ~26% of max drawdown across the backtest — this is the sharpest skip filter we have. (Band re-optimized 2026-06-02 from 40–90 to 50–90.)">
       <span class="ml" style="cursor:help" onclick="document.getElementById('regimeExplain').hidden=!document.getElementById('regimeExplain').hidden">Diagonal Regime</span>
       <span class="mv" id="regimeDisplay">—</span>
     </div>
@@ -520,12 +520,10 @@
     <br><br>
     <strong>What the bands mean (from diagonal backtest, 800+ trades):</strong>
     <ul style="margin:4px 0 0 16px;padding:0">
-      <li><strong style="color:#22c55e">0–50% (calm edge)</strong> — VIX cheap vs recent norm. Premium sellers get paid.
-          ~+$170/trade, 65% WR.</li>
-      <li><strong style="color:#fcd34d">40–90% (dead zone)</strong> — elevated but not spiky. Ambiguous regime, no edge.
-          ~<span style="color:#ef4444">−$117/trade</span>, 56% WR.</li>
-      <li><strong style="color:#22c55e">80–100% (panic edge)</strong> — VIX near recent highs. Mean-reversion + skew crush pay you.
-          ~+$450/trade, 68% WR.</li>
+      <li><strong style="color:#22c55e">0–50% (calm edge)</strong> — VIX cheap vs recent norm. Premium sellers get paid.</li>
+      <li><strong style="color:#fcd34d">50–90% (dead zone)</strong> — elevated but not spiky. Ambiguous regime, no edge.
+          <em>(Lower bound moved from 40 to 50 on 2026-06-02 after re-optimizing on corrected VIX data — pct=41–50 turned out to be profitable, not dead.)</em></li>
+      <li><strong style="color:#22c55e">90–100% (panic edge)</strong> — VIX near recent highs. Mean-reversion + skew crush pay you.</li>
     </ul>
     <br>
     <strong>Reading the dashboard number:</strong>
@@ -553,7 +551,7 @@
       <li style="margin-top:5px">
         <strong style="color:#fcd34d">⚠ DEAD</strong> — both conditions true at the same time:
         <ol style="margin:2px 0 0 18px;padding:0">
-          <li>Today's VIX ranks <strong>40–90%</strong> of its last-20-day range (the "uncomfortable middle"), <strong>AND</strong></li>
+          <li>Today's VIX ranks <strong>50–90%</strong> of its last-20-day range (the "uncomfortable middle"), <strong>AND</strong></li>
           <li>Yesterday's SPX closed within <strong>±0.5%</strong> of the day before (a "flat / sleepy" prior session).</li>
         </ol>
         Historically these days have <em>no edge</em> — skipping them in backtest added ~$26K P/L and cut max drawdown
@@ -632,7 +630,7 @@
     </div>
 
     <!-- CARD 5: Diagonal (companion — not part of Sigma 3) -->
-    <div class="scard" id="cardDiag" title="1/25 Put Diagonal — default config (short 30 ITM, long 40 below = 10 OTM) with OPEX-1, EOM, EOM-1, NM, and VIX 40–90% dead zone excluded (no earnings filter — dropped 2026-04-29). Entry anywhere in the 12:30–15:00 ET window, exit at the same clock time next day (24-hour hold; Entry Time === Exit Time; one diagonal in the book at a time). See the '1/25 Put Diagonal' section below the calculator for full strategy details.">
+    <div class="scard" id="cardDiag" title="1/25 Put Diagonal — default config (short 30 ITM, long 40 below = 10 OTM) with OPEX-1, EOM, EOM-1, NM, and VIX 50–90% dead zone excluded (no earnings filter — dropped 2026-04-29; band re-optimized 2026-06-02 from 40–90 to 50–90). Entry anywhere in the 12:30–15:00 ET window, exit at the same clock time next day (24-hour hold; Entry Time === Exit Time; one diagonal in the book at a time). See the '1/25 Put Diagonal' section below the calculator for full strategy details.">
       <div class="scard-header">
         <span class="scard-label">Diagonal <span style="font-weight:400;font-size:10px;opacity:.7;letter-spacing:normal;text-transform:none">· companion</span></span>
         <span class="today-trade-pill" id="pillDiag" style="display:none;">▶ TODAY'S TRADE</span>
@@ -794,7 +792,7 @@
     </ul>
 
     <hr class="divider">
-    <h3>1/25 Put Diagonal — Companion Strategy <span style="font-weight:400;font-size:12px;color:var(--text3)">(separate from Sigma 3; OPEX-1 + EOM + EOM-1 + NM + VIX 40–90% filtered default, 30 ITM / 40 below)</span></h3>
+    <h3>1/25 Put Diagonal — Companion Strategy <span style="font-weight:400;font-size:12px;color:var(--text3)">(separate from Sigma 3; OPEX-1 + EOM + EOM-1 + NM + VIX 50–90% filtered default, 30 ITM / 40 below)</span></h3>
     <p>
       A <strong>SPX put-diagonal spread</strong> that runs alongside the Sigma 3 bundle. Different instrument,
       different DTE, and different trade windows — so it's largely <strong>uncorrelated</strong> with M8BF / Straddle /
@@ -836,10 +834,11 @@
       <li><strong>EOM</strong> — skip the last trading day of the month. Month-end rebalancing flow creates noisy reprice that hurts deeper-ITM short structures.</li>
       <li><strong>EOM-1</strong> — skip the second-to-last trading day too. Rebalancing pressure starts the day before EOM and leaks into pricing.</li>
       <li><strong>NM</strong> — skip the first trading day of the month. NM overlaps the Straddle/auto-flow day and the overnight gap risk dominates theta burn.</li>
-      <li><strong>VIX 40-90% (dead zone)</strong> — skip days where today's VIX 20-day rolling percentile lands in the 40–90% band
+      <li><strong>VIX 50-90% (dead zone)</strong> — skip days where today's VIX 20-day rolling percentile lands in the 50–90% band
           (the "uncomfortable middle" — elevated but not spiky). Historically the strategy has <em>no edge</em> there;
-          trade normally in 0–40% (calm → cheap vol sellers get paid) or 90–100% (panic → mean-reversion + skew crush pay).
-          Percentile is ready by 9:30 AM ET (uses today's first VIX print at-or-after 9:30 vs the prior 20 days' first prints — same value the live signal banner reads).</li>
+          trade normally in 0–50% (calm → cheap vol sellers get paid) or 90–100% (panic → mean-reversion + skew crush pay).
+          Percentile is ready by 9:30 AM ET (uses today's first VIX print at-or-after 9:30 vs the prior 20 days' first prints — same value the live signal banner reads).
+          <em>Re-optimized 2026-06-02 from 40–90 to 50–90 on corrected VIX data: +$12.4k, lower MaxDD, MAR 14.94 vs 12.16.</em></li>
       <li><strong>Earnings filters dropped (2026-04-29)</strong> — at the new 30/40 strikes, the per-ticker earnings gates (AAPL/MSFT/TSLA/META) were costing more edge than they preserved. The deeper-ITM short collects enough extrinsic that a single mega-cap report doesn't break it. EOM/EOM-1 added in their place because month-end flow hurts deeper structures more.</li>
       <li>This filter stack is the <strong>default version</strong> of the strategy on this site — the one plotted on the
           historical backtester and the one counted in the default-diagonal equity line. All references to
@@ -851,7 +850,7 @@
       <li><strong>Not 0DTE</strong> — both legs carry overnight (1 DTE short + 25 DTE long).</li>
       <li><strong>Not a credit spread</strong> — it's a long-calendar-style diagonal; different DTEs, different strikes.</li>
       <li><strong>Not part of Sigma 3</strong> — separate sizing and separate signals. It does not displace M8BF / Straddle / GXBF / BOBF.</li>
-      <li><strong>Not blocked by CPI, FED, or earnings</strong> — the default filter stack only skips OPEX-1, EOM, EOM-1, NM, and VIX 40-90%. Per-ticker earnings filters were dropped 2026-04-29 because at 30/40 strikes they cost more edge than they preserved.</li>
+      <li><strong>Not blocked by CPI, FED, or earnings</strong> — the default filter stack only skips OPEX-1, EOM, EOM-1, NM, and VIX 50-90%. Per-ticker earnings filters were dropped 2026-04-29 because at 30/40 strikes they cost more edge than they preserved.</li>
       <li><strong>Never two diagonals at once</strong> — because entry time equals exit time, the previous day's position exits at the exact instant the next one opens. One position in the book, always.</li>
     </ul>
 
@@ -876,7 +875,7 @@
     <h3>Recent Changes</h3>
     <ul>
       <li><strong>GXBF hybrid gating + per-day OI/Vol center routing (2026-05)</strong> — gating simplified to a clean Trigger/Block rule. <strong>Trigger:</strong> overnight VIX drop &gt; 0.65 pts <em>OR</em> OPEX+1 auto-trigger. <strong>Block:</strong> VIX ≥ 25 <em>OR</em> (OPEX+1 AND VIX gap-up ≥ 2%) <em>OR</em> EOM. <strong>OPEX-1, CPI, and NM-non-Monday are no longer banned</strong> — they fire if the trigger/block check passes. Center routing is now <strong>hybrid</strong>: OPEX-1 / VIX-expiry / FED days use the OI-weighted center (γ × open interest); all other days use the volume-weighted center (γ × volume). Both centers are computed in-house from the live 0DTE call chain via Black-Scholes γ (R=0.043, Q=0.013, ±5% of spot, snap to 5) — replacing the deleted Discord scraper. <code>history_data.json</code>'s <code>gxbfPL</code> values were rebuilt under the new rules.</li>
-      <li><strong>1/25 Put Diagonal — canonical defaults updated (2026-04-29)</strong> — strikes deepened from <strong>10 ITM / 20 below</strong> to <strong>30 ITM / 40 below</strong> (long is 10 OTM). Filter stack changed from <code>OPEX-1 + NM + VIX + AAPL/MSFT/TSLA/META</code> to <code>OPEX-1 + EOM + EOM-1 + NM + VIX 40-90%</code> — earnings filters dropped (at deeper strikes the per-ticker gates cost more edge than they preserved); EOM/EOM-1 added (month-end rebalancing chop hurts deeper-ITM structures more). VIX percentile recipe also fixed — uses today's first VIX print at-or-after 9:30 ET (matches live signal — no lookahead bias). Times unchanged at 12:30/12:30 ET.</li>
+      <li><strong>1/25 Put Diagonal — VIX dead-zone re-optimized (2026-06-02)</strong> — band moved from <strong>(40, 90]</strong> to <strong>(50, 90]</strong> after the May ThetaData VIX audit corrected 56 historical VIX prints. Re-running the sweep with the now-accurate VIX data found the pct=41–50% band is actually <em>profitable</em> (24 marginal trades = +$12,405 historically). Net effect on history: +$12.4k P/L, lower MaxDD ($7,515→$6,945), higher MAR (12.16→14.94). Strikes (30 ITM / 40 below), times (12:30/12:30), filter stack (OPEX-1 + EOM + EOM-1 + NM) all unchanged from the 2026-04-29 spec.</li>
       <li><strong>1/25 Put Diagonal — entry/exit window finalized (2026-04-23)</strong> — moved to <strong>12:30–15:00 ET window</strong> (24-hour hold, Entry Time === Exit Time, no two diagonals active at once). Long leg shortened to <strong>25 DTE</strong> (from 30). Recommended any clock time between 12:30 and 15:00, as long as Entry Time === Exit Time.</li>
       <li><strong>GXBF on OPEX+1 blocked when VIX gaps up ≥ 2% overnight</strong> — if today's VIX open is ≥ 2% above yesterday's VIX close, the automatic OPEX+1 GXBF signal is suppressed entirely.</li>
       <li><strong>SPX gap ≥ 0.9% cancels Straddle only</strong> — when the absolute SPX gap (today's open vs yesterday's close) is ≥ 0.9%, any Straddle or NM Straddle signal is cancelled. No effect on M8BF or GXBF. Gap and o2o have zero connection to butterfly.</li>
@@ -1521,7 +1520,7 @@
       spxSepEl.style.display   = 'none';
     }
 
-    // VIX 20-day percentile (40–90% band = diagonal dead zone)
+    // VIX 20-day percentile (50–90% band = diagonal dead zone; re-opt 2026-06-02)
     const vixPctWrap = document.getElementById('vixPct20Wrap');
     const vixPctSep  = document.getElementById('vixPctSep');
     const vixPctEl   = document.getElementById('vixPct20Display');
@@ -1532,21 +1531,21 @@
       vixPctWrap.style.display = 'flex';
       vixPctSep.style.display  = 'inline';
       vixPctEl.textContent = _vixPctToday + '%';
-      vixPctEl.className   = (_vixPctToday > 40 && _vixPctToday <= 90) ? 'mv vix-dead' : 'mv vix-edge';
-      vixPctWrap.title = (_vixPctToday > 40 && _vixPctToday <= 90)
-        ? `VIX today ${vToday} ranks ${_vixPctToday}% in last 20 daily closes — DEAD ZONE (40–90%): Diagonal loses edge here.`
-        : `VIX today ${vToday} ranks ${_vixPctToday}% in last 20 daily closes — EDGE: outside the 40–90% dead zone.`;
+      vixPctEl.className   = (_vixPctToday > 50 && _vixPctToday <= 90) ? 'mv vix-dead' : 'mv vix-edge';
+      vixPctWrap.title = (_vixPctToday > 50 && _vixPctToday <= 90)
+        ? `VIX today ${vToday} ranks ${_vixPctToday}% in last 20 daily closes — DEAD ZONE (50–90%): Diagonal loses edge here.`
+        : `VIX today ${vToday} ranks ${_vixPctToday}% in last 20 daily closes — EDGE: outside the 50–90% dead zone.`;
     } else {
       vixPctWrap.style.display = 'none';
       vixPctSep.style.display  = 'none';
     }
 
-    // Diagonal regime: VIX DEAD = (40,90] AND |yest. SPX %chg| < 0.5
+    // Diagonal regime: VIX DEAD = (50,90] AND |yest. SPX %chg| < 0.5
     const regimeWrap = document.getElementById('regimeWrap');
     const regimeSep  = document.getElementById('regimeSep');
     const regimeEl   = document.getElementById('regimeDisplay');
     if (_vixPctToday !== null && _spxPriorDayChgPct !== null) {
-      const inDeadBand = (_vixPctToday > 40 && _vixPctToday <= 90);
+      const inDeadBand = (_vixPctToday > 50 && _vixPctToday <= 90);
       const priorFlat  = Math.abs(_spxPriorDayChgPct) < 0.5;
       const isDead     = inDeadBand && priorFlat;
       regimeWrap.style.display = 'flex';
@@ -1555,12 +1554,12 @@
       if (isDead) {
         regimeEl.textContent = '⚠ DEAD';
         regimeEl.className   = 'mv regime-dead';
-        regimeWrap.title = `DEAD ZONE: VIX 20d percentile = ${_vixPctToday}% (in 40–90% band) AND yesterday's SPX moved ${priorDir}${_spxPriorDayChgPct.toFixed(2)}% (< 0.5% = flat). Historically this combo has no edge for the diagonal — consider skipping.`;
+        regimeWrap.title = `DEAD ZONE: VIX 20d percentile = ${_vixPctToday}% (in 50–90% band) AND yesterday's SPX moved ${priorDir}${_spxPriorDayChgPct.toFixed(2)}% (< 0.5% = flat). Historically this combo has no edge for the diagonal — consider skipping.`;
       } else {
         regimeEl.textContent = '✓ EDGE';
         regimeEl.className   = 'mv regime-edge';
         const reasons = [];
-        if (!inDeadBand) reasons.push(`VIX 20d percentile = ${_vixPctToday}% (outside 40–90% dead band)`);
+        if (!inDeadBand) reasons.push(`VIX 20d percentile = ${_vixPctToday}% (outside 50–90% dead band)`);
         if (!priorFlat)  reasons.push(`yesterday's SPX moved ${priorDir}${_spxPriorDayChgPct.toFixed(2)}% (≥ 0.5% = directional)`);
         regimeWrap.title = `EDGE present — ${reasons.join(' · ')}. Diagonal trade has its normal edge today.`;
       }
@@ -1815,12 +1814,12 @@
       'EOM':    'Last trading day of month — month-end rebalancing flow creates noisy reprice. Default filter skips.',
       'EOM-1':  'Second-to-last trading day of month — early rebalance flow. Default filter skips.',
       'NM':     'First trading day of month — gap risk dominates theta burn. Default filter skips.',
-      'VIX_MID':`VIX 20-day percentile = ${_vixPctToday}% — inside the 40–90% "no-edge" band. Default filter skips.`,
+      'VIX_MID':`VIX 20-day percentile = ${_vixPctToday}% — inside the 50–90% "no-edge" band. Default filter skips.`,
     };
 
     if (diagGo) {
       diagRec.textContent    = diagText;
-      diagReason.textContent = 'Short 1 DTE SPX put +30 pts ITM · long 25 DTE SPX put −40 pts below short (long is 10 OTM) · ±5 pt tol. Entry anywhere in the 12:30–15:00 ET window; exit at the same clock time on the next trading day (24-hour hold, entry time = exit time). All 5 default filters (OPEX-1, EOM, EOM-1, NM, VIX 40-90%) clear today.';
+      diagReason.textContent = 'Short 1 DTE SPX put +30 pts ITM · long 25 DTE SPX put −40 pts below short (long is 10 OTM) · ±5 pt tol. Entry anywhere in the 12:30–15:00 ET window; exit at the same clock time on the next trading day (24-hour hold, entry time = exit time). All 5 default filters (OPEX-1, EOM, EOM-1, NM, VIX 50-90%) clear today.';
       diagBadge.textContent  = diagBadgeCanon;
       cardDiag.className     = 'scard active-ok';
       if (pillDiag) pillDiag.style.display = '';
