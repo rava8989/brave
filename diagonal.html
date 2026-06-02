@@ -1192,10 +1192,13 @@ let SELECTED_EXIT_TIME  = document.getElementById('exitTime')?.value  || '12:30'
 async function fetchGzJson(url) {
   // Fetch a gzipped JSON file and decompress via native DecompressionStream.
   // Throws on any failure so the caller can fall back.
-  // Add a daily cache-buster so GitHub Pages CDN (Fastly) can't serve stale
-  // .json.gz when the .gz binary changes — `cache: 'no-cache'` alone is not
-  // enough for binary assets behind aggressive CDN caching.
-  const bust = `${url.includes('?') ? '&' : '?'}v=${new Date().toISOString().slice(0,10)}`;
+  // Cache-buster: per-page-load timestamp so the CDN (GitHub Pages / Fastly)
+  // can never serve a stale .json.gz. Cost is one network round-trip per
+  // (entry-time, exit-time) load — tiny, and worth it: when backfills land
+  // the page picks them up on the very next reload, not "eventually when the
+  // CDN expires." Worked around `cache: 'no-cache'` being a hint (not a hard
+  // bypass) for binary CDN assets.
+  const bust = `${url.includes('?') ? '&' : '?'}cb=${Date.now()}`;
   const r = await fetch(url + bust, { cache: 'no-cache' });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   const ds = new DecompressionStream('gzip');
