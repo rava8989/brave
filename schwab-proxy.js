@@ -716,27 +716,48 @@ async function handleEOD(env, etNow) {
   const start = end - 3 * 24 * 60 * 60 * 1000;
   const todayStr = etNow.toDateString();
 
-  // Fetch VIX close
+  // Fetch VIX close — Tastytrade PRIMARY (gives true 4:15 PM official close),
+  // Schwab fallback (1-min data stops at 4:00 PM so it's only ever 4:00 value).
+  // Tastytrade's prev-close field reflects the previous trading day's official
+  // close. Call NEXT morning to capture today's close — or use today's `last`
+  // if calling at EOD before next-day refresh.
   let vixClose = null;
   try {
-    const vixHist = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24VIX&periodType=day&period=3&frequencyType=minute&frequency=1&startDate=${start}&endDate=${end}&needExtendedHoursData=true`, token);
-    if (vixHist.candles) {
-      const todayCandles = vixHist.candles.filter(c => toET(new Date(c.datetime)).toDateString() === todayStr);
-      todayCandles.sort((a, b) => a.datetime - b.datetime);
-      // Last candle at or before 16:15
-      const closeCandle = todayCandles.slice().reverse().find(c => {
-        const d = toET(new Date(c.datetime));
-        return d.getHours() * 60 + d.getMinutes() <= 16 * 60 + 15;
-      });
-      if (closeCandle) vixClose = parseFloat(closeCandle.close.toFixed(2));
+    const tastyVix = await tastyGetVix(env);
+    const prevClose = parseFloat(tastyVix?.raw?.['prev-close']);
+    const prevDate  = tastyVix?.raw?.['prev-close-date'];
+    // If Tasty's prev-close-date == today's ISO, that IS today's official close.
+    // (Tasty rolls prev-close at next-day open, so this branch fires when worker
+    // runs the day-after-EOD reconciliation cron.)
+    if (prevDate === todayISO && Number.isFinite(prevClose)) {
+      vixClose = parseFloat(prevClose.toFixed(2));
+    } else if (Number.isFinite(parseFloat(tastyVix?.raw?.last))) {
+      // Same-day EOD path: use Tasty's current `last` near 4:15. May be 4:14
+      // tick instead of the true 4:15 settle, but closer than Schwab 4:00.
+      vixClose = parseFloat(parseFloat(tastyVix.raw.last).toFixed(2));
     }
-    // Fallback: quote closePrice
-    if (vixClose === null) {
-      const q = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`, token);
-      const cp = q?.['$VIX']?.quote?.closePrice;
-      if (cp) vixClose = parseFloat(cp.toFixed(2));
-    }
-  } catch (e) { console.warn('[proxy]', e.message || e); }
+  } catch (e) { console.warn('[proxy] tasty vixClose err:', e.message || e); }
+  // Schwab fallback if Tasty failed (1-min data cuts off at 4:00 PM so this is
+  // a "better than null" value, not the official 4:15).
+  if (vixClose === null) {
+    try {
+      const vixHist = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24VIX&periodType=day&period=3&frequencyType=minute&frequency=1&startDate=${start}&endDate=${end}&needExtendedHoursData=true`, token);
+      if (vixHist.candles) {
+        const todayCandles = vixHist.candles.filter(c => toET(new Date(c.datetime)).toDateString() === todayStr);
+        todayCandles.sort((a, b) => a.datetime - b.datetime);
+        const closeCandle = todayCandles.slice().reverse().find(c => {
+          const d = toET(new Date(c.datetime));
+          return d.getHours() * 60 + d.getMinutes() <= 16 * 60 + 15;
+        });
+        if (closeCandle) vixClose = parseFloat(closeCandle.close.toFixed(2));
+      }
+      if (vixClose === null) {
+        const q = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`, token);
+        const cp = q?.['$VIX']?.quote?.closePrice;
+        if (cp) vixClose = parseFloat(cp.toFixed(2));
+      }
+    } catch (e) { console.warn('[proxy] schwab vixClose err:', e.message || e); }
+  }
 
   // Fetch SPX close
   let spxClose = null;
