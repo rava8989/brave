@@ -302,7 +302,7 @@
        This is the SINGLE SOURCE OF TRUTH for diagonal filter logic — the inline
        diagonal card below reads SignalEngine.computeDiagonalSignal() output
        directly so the browser UI, Discord message, and backtester can never drift. -->
-  <script type="module" src="./signal-engine.js?v=20260528-canonical-refactor"></script>
+  <script type="module" src="./signal-engine.js?v=20260602-diag-deadzone-50"></script>
 </head>
 <body>
 
@@ -837,7 +837,7 @@
       <li><strong>VIX 50-90% (dead zone)</strong> — skip days where today's VIX 20-day rolling percentile lands in the 50–90% band
           (the "uncomfortable middle" — elevated but not spiky). Historically the strategy has <em>no edge</em> there;
           trade normally in 0–50% (calm → cheap vol sellers get paid) or 90–100% (panic → mean-reversion + skew crush pay).
-          Percentile is ready by 9:30 AM ET (uses today's first VIX print at-or-after 9:30 vs the prior 20 days' first prints — same value the live signal banner reads).
+          Percentile is ready by 9:30 AM ET (uses today's first VIX print at-or-after 9:30 vs the prior 20 days' <strong>closes</strong> — canonical per <code>signal-engine.js::computeVixPct20d</code>; same value the live signal banner reads).
           <em>Re-optimized 2026-06-02 from 40–90 to 50–90 on corrected VIX data: +$12.4k, lower MaxDD, MAR 14.94 vs 12.16.</em></li>
       <li><strong>Earnings filters dropped (2026-04-29)</strong> — at the new 30/40 strikes, the per-ticker earnings gates (AAPL/MSFT/TSLA/META) were costing more edge than they preserved. The deeper-ITM short collects enough extrinsic that a single mega-cap report doesn't break it. EOM/EOM-1 added in their place because month-end flow hurts deeper structures more.</li>
       <li>This filter stack is the <strong>default version</strong> of the strategy on this site — the one plotted on the

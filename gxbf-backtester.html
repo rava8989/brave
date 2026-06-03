@@ -6,12 +6,15 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<!-- v2026-04-29: 1/25 DTE, 12:30-15:00 ET window (24h hold, entry=exit time), +30 ITM, -40 below (long 10 OTM), OPEX-1 + EOM + EOM-1 + NM + VIX 40-90% (no earnings filters) -->
+<!-- v2026-06-02: GXBF (Major Positive Gamma) backtester — hybrid OI/Vol center (γ-weighted), Trigger=oNight>0.65 OR OPEX+1, Block=VIX≥25 OR (OPEX+1 + gap≥2%) OR EOM. Sister page to diagonal.html which uses VIX 50-90% dead-zone (re-opt 2026-06-02 from 40-90). -->
 <title>SPX-BF // GXBF Backtester</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
 <script src="https://cdn.plot.ly/plotly-2.27.0.min.js" charset="utf-8"></script>
+<!-- SIGNAL_ENGINE — canonical computeVixPct20d (today's vix_open vs prior 20 vix_close).
+     Loaded as module so SignalEngine global is available for VIX_MID classification. -->
+<script type="module" src="./signal-engine.js?v=20260602-diag-deadzone-50"></script>
 <style>
 :root {
   --bg:   #f1f5f9;
@@ -1158,7 +1161,7 @@ async function loadData() {
   //     vixClose, mids:{ "<off>":<callMid> } }
   // off ∈ [-100,100] step 5, relative to `center` ("0" = center-strike call).
   try {
-    const resp = await fetch('./gxbf_bt_data.json', { cache: 'no-cache' });
+    const resp = await fetch('./gxbf_bt_data.json?v=' + Date.now(), { cache: 'no-store' });
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const d = await resp.json();
     if (!Array.isArray(d)) throw new Error('Invalid data format (expected array)');
@@ -1525,35 +1528,39 @@ function buildSpecialDateSets(tradingDays, byDate = null) {
   // bs_data files). Band lo/hi and the underlying field are tunable from the
   // UI sliders.
   if (byDate) {
-    const vixField = (() => {
-      // Use vix_open if present anywhere; else fall back to vix_14
-      for (const d of tradingDays) {
-        if (byDate[d] && typeof byDate[d].vix_open === 'number') return 'vix_open';
-      }
-      return 'vix_14';
-    })();
+    // CANONICAL: today's vix_open vs prior 20 vix_close via SignalEngine.
+    // Per CLAUDE.md rule #11 + lessons P5 — DO NOT re-implement inline.
+    const SE = globalThis.SignalEngine;
     const lo = (typeof window.VIX_BAND_LO === 'number') ? window.VIX_BAND_LO : 50;
-    const hi = (typeof window.VIX_BAND_HI === 'number') ? window.VIX_BAND_HI : 80;
-    const validDays = tradingDays.filter(d => {
-      const r = byDate[d];
-      return r && typeof r[vixField] === 'number' && r[vixField] > 0;
-    });
-    for (let i = 20; i < validDays.length; i++) {
-      const today  = validDays[i];
-      const vToday = byDate[today][vixField];
-      let below = 0;
-      for (let j = i - 20; j < i; j++) if (byDate[validDays[j]][vixField] < vToday) below++;
-      const pct = (100 * below) / 20;
-      if (pct > lo && pct <= hi) {
-        sets['VIX_MID'].add(today);
-        // VIX_DEAD: also requires prior-day SPX |change| < 0.5%
-        const dPrev  = validDays[i - 1];
-        const dPrev2 = validDays[i - 2];
-        const sPrev  = byDate[dPrev]?.spot_14;
-        const sPrev2 = byDate[dPrev2]?.spot_14;
-        if (sPrev && sPrev2) {
-          const priorChgPct = (100 * (sPrev - sPrev2)) / sPrev2;
-          if (Math.abs(priorChgPct) < 0.5) sets['VIX_DEAD'].add(today);
+    const hi = (typeof window.VIX_BAND_HI === 'number') ? window.VIX_BAND_HI : 90;
+    if (!SE || typeof SE.computeVixPct20d !== 'function') {
+      console.error('[gxbf-bt] SignalEngine.computeVixPct20d not loaded — VIX_MID set will be empty (filter disabled).');
+    } else {
+      const validDays = tradingDays.filter(d => {
+        const r = byDate[d];
+        return r && typeof r.vix_open === 'number' && r.vix_open > 0;
+      });
+      for (let i = 0; i < validDays.length; i++) {
+        const today  = validDays[i];
+        const vToday = byDate[today].vix_open;
+        // Collect prior 20 vix_close values (newest-last)
+        const priors = [];
+        for (let j = Math.max(0, i - 20); j < i; j++) {
+          const vc = byDate[validDays[j]]?.vix_close;
+          if (typeof vc === 'number' && vc > 0) priors.push(vc);
+        }
+        const { inDeadZone } = SE.computeVixPct20d(vToday, priors, { lo, hi });
+        if (inDeadZone) {
+          sets['VIX_MID'].add(today);
+          // VIX_DEAD: also requires prior-day SPX |change| < 0.5%
+          const dPrev  = validDays[i - 1];
+          const dPrev2 = validDays[i - 2];
+          const sPrev  = byDate[dPrev]?.spot_14;
+          const sPrev2 = byDate[dPrev2]?.spot_14;
+          if (sPrev && sPrev2) {
+            const priorChgPct = (100 * (sPrev - sPrev2)) / sPrev2;
+            if (Math.abs(priorChgPct) < 0.5) sets['VIX_DEAD'].add(today);
+          }
         }
       }
     }
@@ -1709,7 +1716,7 @@ function runBacktestBS(data, params) {
   const byDate = {};
   const recByDate = {};
   arr.forEach(rec => {
-    byDate[rec.date]   = { vix_open: rec.vixOpen, spot_14: null };
+    byDate[rec.date]   = { vix_open: rec.vixOpen, vix_close: rec.vixClose, spot_14: null };
     recByDate[rec.date] = rec;
   });
 

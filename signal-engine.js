@@ -368,7 +368,7 @@ export function computeDiagonalSignal(etDate, vixPct20d = null) {
   } else {
     // All filters cleared → GO.
     diagGo = true;
-    const band = vixPct20d <= 40 ? 'calm' : 'panic';
+    const band = vixPct20d <= 50 ? 'calm' : 'panic';
     diagText = `Diagonal 12:30–15:00 ET window (VIX 20d ${vixPct20d}% — ${band} edge)`;
     diagBadge = '⏰ 12:30–15:00 ET';
   }

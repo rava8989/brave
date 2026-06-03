@@ -16,7 +16,7 @@
      so its side-effect assignment (globalThis.SignalEngine = {...}) lands.
      The VIX dead-zone filter below uses SignalEngine.computeVixPct20d so
      it stays in lock-step with the live worker. See lessons.md P5. -->
-<script type="module" src="./signal-engine.js?v=20260527-vix-canonical"></script>
+<script type="module" src="./signal-engine.js?v=20260602-diag-deadzone-50"></script>
 <style>
 :root {
   --bg:   #f1f5f9;
@@ -1316,7 +1316,7 @@ async function loadData() {
   try {
     // No cache-buster: `cache: 'no-cache'` triggers a conditional GET, so the
     // browser sees 304s on unchanged files and reuses local copies.
-    const idxResp = await fetch('./data/diagonal_real_index.json', { cache: 'no-cache' });
+    const idxResp = await fetch('./data/diagonal_real_index.json?v=' + Date.now(), { cache: 'no-store' });
     if (idxResp.ok) {
       REAL_INDEX = await idxResp.json();
       // New per_time_v2 format — fetch only the two needed timestamps
@@ -1368,7 +1368,7 @@ async function loadData() {
   // dataset). Used to price expired shorts exactly when their expiration falls
   // on a half-day and closeDate is the next full trading day.
   try {
-    const hdResp = await fetch('./data/spx_halfday_close.json', { cache: 'no-cache' });
+    const hdResp = await fetch('./data/spx_halfday_close.json?v=' + Date.now(), { cache: 'no-store' });
     if (hdResp.ok) {
       HALFDAY_CLOSE = await hdResp.json() || {};
       console.log(`[diagonal] half-day closes loaded: ${Object.keys(HALFDAY_CLOSE).length} dates`);
@@ -1379,7 +1379,7 @@ async function loadData() {
 
   // Always load B-S data for spot/VIX reference + fallback pricing
   try {
-    const resp = await fetch('./data/diagonal_bs_data.json', { cache: 'no-cache' });
+    const resp = await fetch('./data/diagonal_bs_data.json?v=' + Date.now(), { cache: 'no-store' });
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const d = await resp.json();
     if (!d.dates || !d.by_date) throw new Error('Invalid data format');
@@ -1735,7 +1735,7 @@ function buildSpecialDateSets(tradingDays, byDate = null) {
   // check-vix-pct-canonical.sh blocks that. See lessons.md P5.
   if (byDate) {
     const lo = (typeof window.VIX_BAND_LO === 'number') ? window.VIX_BAND_LO : 50;
-    const hi = (typeof window.VIX_BAND_HI === 'number') ? window.VIX_BAND_HI : 80;
+    const hi = (typeof window.VIX_BAND_HI === 'number') ? window.VIX_BAND_HI : 90;
     const SE = (typeof globalThis !== 'undefined' && globalThis.SignalEngine) || null;
     if (!SE || typeof SE.computeVixPct20d !== 'function') {
       console.error('[diagonal] SignalEngine.computeVixPct20d not loaded — VIX_MID set will be empty (filter disabled). Refresh the page; if it persists, check the <script type="module"> tag for signal-engine.js.');

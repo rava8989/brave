@@ -40,7 +40,7 @@
        and caused signal mismatches between dashboard, history, and Discord
        output. Cache-buster matches index.html / multi-strategy-tester.html so
        all three pages invalidate together when the engine changes. -->
-  <script type="module" src="./signal-engine.js?v=20260526-gxbf-hybrid"></script>
+  <script type="module" src="./signal-engine.js?v=20260602-diag-deadzone-50"></script>
   <style>
     :root {
       --bg:#f1f5f9; --bg2:#ffffff; --bg3:#f8fafc;
@@ -633,7 +633,7 @@ function computeStats(visibleRows) {
     if (activeStrats.strad && s.stradRan && row.stradPL != null) cum += row.stradPL;
     if (activeStrats.gxbf && row.gxbfPL != null) cum += row.gxbfPL;
     if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) cum += row.bobfPL;
-    if (activeStrats.diagonal && row.diagPL != null) cum += row.diagPL;
+    if (activeStrats.diagonal && row.diagPL != null && row.diagPL !== 0) cum += row.diagPL;  // diagPL===0 = no-trade day (matches getRowPL)
     if (cum > peak) peak = cum;
     const dd = peak - cum;
     if (dd > maxDD) { maxDD = dd; peakAtMaxDD = peak; }
@@ -872,7 +872,7 @@ function getValue(row, col) {
       if (activeStrats.strad && s.stradRan && row.stradPL != null) t += row.stradPL;
       if (activeStrats.gxbf && row.gxbfPL != null) t += row.gxbfPL;
       if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) t += row.bobfPL;
-      if (activeStrats.diagonal && row.diagPL != null) t += row.diagPL;
+      if (activeStrats.diagonal && row.diagPL != null && row.diagPL !== 0) t += row.diagPL;  // 0 = no-trade day
       return t;
     }
     case 'specialDay': return row.specialDayText || '';
@@ -986,7 +986,7 @@ function renderTable() {
     if (activeStrats.strad && s.stradRan && row.stradPL != null) totStrad += row.stradPL;
     if (activeStrats.gxbf && row.gxbfPL != null) totGxbf += row.gxbfPL;
     if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) totBobf += row.bobfPL;
-    if (activeStrats.diagonal && row.diagPL != null) totDiag += row.diagPL;
+    if (activeStrats.diagonal && row.diagPL != null && row.diagPL !== 0) totDiag += row.diagPL;  // 0 = no-trade day
   }
 
   const renderRows = tableShowAll ? rows : rows.slice(-TABLE_DEFAULT_LIMIT);
@@ -1409,7 +1409,7 @@ function renderChart() {
     if (activeStrats.strad && s.stradRan && row.stradPL != null) { rs += row.stradPL; dayPL += row.stradPL; }
     if (activeStrats.gxbf && row.gxbfPL != null) { rg += row.gxbfPL; dayPL += row.gxbfPL; }
     if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) { rb += row.bobfPL; dayPL += row.bobfPL; }
-    if (activeStrats.diagonal && row.diagPL != null) { rd += row.diagPL; dayPL += row.diagPL; }
+    if (activeStrats.diagonal && row.diagPL != null && row.diagPL !== 0) { rd += row.diagPL; dayPL += row.diagPL; }  // 0 = no-trade day
 
     const total = rm+rs+rg+rb+rd;
     dates.push(row.date);
