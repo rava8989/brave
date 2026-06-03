@@ -2933,20 +2933,20 @@
     }
   }
 
-  /* Test post — uses Option E embed */
+  /* Test post */
   async function discordTest(){
     discordSetStatus('connected', 'Posting test message…');
-    const embed = discordBuildEmbed();
-    const ok  = await discordPost(embed);
+    const msg = discordBuildMessage();
+    const ok  = await discordPost(msg);
     if(ok) discordSetStatus('connected', 'Discord bot configured ✓ · Test posted!');
   }
 
-  /* Auto-post after calculate — uses Option E embed */
+  /* Auto-post after calculate — called by calculateStrategy when Schwab auto-fills */
   async function discordAutoPost(){
     const c = DC.get('config');
-    if(!c) return;
-    const embed = discordBuildEmbed();
-    await discordPost(embed);
+    if(!c) return; // not configured — skip silently
+    const msg = discordBuildMessage();
+    await discordPost(msg);
   }
 
   let _wrFetchInProgress = false;
