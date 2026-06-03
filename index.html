@@ -2827,21 +2827,101 @@
     return `\`\`\`ansi\n${inner}\`\`\`\n*Not financial advice. For informational purposes only.*`;
   }
 
-  /* Post as DM via Cloudflare Worker proxy (avoids CORS) */
-  async function discordPost(message){
+  /* Build Option E embed (rich Discord card) — mirrors worker buildSigma3Embed */
+  function discordBuildEmbed(){
+    const m8bf  = document.getElementById('m8bfRec').textContent;
+    const strad = document.getElementById('stradRec').textContent;
+    const gxbf  = document.getElementById('gxbfRec').textContent;
+    const bobf  = document.getElementById('bobfRec').textContent;
+    const diag  = document.getElementById('diagRec').textContent;
+    const grid  = document.getElementById('strikeGrid');
+    const strikes = grid ? Array.from(grid.children).map(p=>p.textContent.trim()).filter(Boolean) : [];
+    const date  = document.getElementById('todayDate').textContent;
+    const day   = document.getElementById('dayLabel').textContent;
+
+    const notCalc = text => text && !text.startsWith('Calculate');
+    const isActive  = text => notCalc(text) && !text.startsWith('No ');
+    const isBlocked = text => notCalc(text) && text.startsWith('No ');
+    const stripPref = (s, pfx) => s.replace(new RegExp(`^${pfx}\\s*[—-]?\\s*`), '').replace(/^No\s+\w+\s*\(?/, '').replace(/\)\s*$/, '');
+
+    const fires = [], blocked = [];
+    if (isActive(m8bf))   fires.push(`• **M8BF** — ${stripPref(m8bf, 'M8BF') || 'active'}`);
+    else if (isBlocked(m8bf)) blocked.push(`• **M8BF** — ${stripPref(m8bf, 'No M8BF')}`);
+
+    if (isActive(strad))  fires.push(`• **Straddle** — ${stripPref(strad, 'Straddle|NM Straddle') || 'active'}`);
+    else if (isBlocked(strad)) blocked.push(`• **Straddle** — ${stripPref(strad, 'No Straddle')}`);
+
+    if (isActive(gxbf))   fires.push(`• **GXBF** — ${stripPref(gxbf, 'GXBF') || 'active'}`);
+    else if (isBlocked(gxbf)) blocked.push(`• **GXBF** — ${stripPref(gxbf, 'No GXBF')}`);
+
+    if (isActive(bobf))   fires.push(`• **BOBF** — ${stripPref(bobf, 'BOBF') || 'active'}`);
+    else if (isBlocked(bobf)) blocked.push(`• **BOBF** — ${stripPref(bobf, 'No BOBF')}`);
+
+    if (isActive(diag))   fires.push(`• **Diagonal** — ${stripPref(diag, 'Diagonal') || '12:30–15:00 ET'}`);
+    else if (isBlocked(diag)) blocked.push(`• **Diagonal** — ${stripPref(diag, 'No Diagonal')}`);
+
+    const color = fires.length > 0 ? 0x22c55e : 0xef4444;
+
+    // VIX block
+    const yC  = document.getElementById('yesterdayClose').value;
+    const yO  = document.getElementById('yesterdayOpen').value;
+    const tO  = document.getElementById('todayOpen').value;
+    const oN  = document.getElementById('overnightDropDisplay').textContent;
+    const oo  = document.getElementById('openDiffDisplay').textContent;
+    const spxStored = (typeof SC !== 'undefined' && SC) ? SC.get('spx') : null;
+    let gapStr = '—';
+    if(spxStored && spxStored.yClose && spxStored.todayOpen){
+      const gap = ((spxStored.todayOpen - spxStored.yClose) / spxStored.yClose * 100);
+      gapStr = `${gap > 0 ? '▲' : '▼'}${Math.abs(gap).toFixed(2)}%`;
+    }
+    const marketData =
+      '```\n' +
+      `VIX  ${yC || '—'} → ${tO || '—'}   o/n ${oN || '—'}   o2o ${oo || '—'}\n` +
+      `SPX  gap ${gapStr}\n` +
+      '```';
+
+    const fields = [];
+    if (fires.length)   fields.push({ name: '✅ Today\'s plan', value: fires.join('\n'),   inline: false });
+    if (blocked.length) fields.push({ name: '❌ Skipping',      value: blocked.join('\n'), inline: false });
+    fields.push({ name: '📊 Market data', value: marketData, inline: false });
+
+    // M8BF strike map (only if M8BF fires AND we have strikes)
+    if (isActive(m8bf) && strikes.length > 0) {
+      fields.push({
+        name: '🚫 M8BF strike map',
+        value: 'Skip centers: `' + strikes.join(' · ') + '`',
+        inline: false,
+      });
+    }
+
+    return {
+      title: `Sigma 3 — ${date}`,
+      description: `_${day}_`,
+      color,
+      fields,
+      footer: { text: '📡 Browser test · Not financial advice' },
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  /* Post as DM via Cloudflare Worker proxy (avoids CORS).
+     Accepts either a string (legacy text) or an embed object (Option E). */
+  async function discordPost(payload){
     const c = DC.get('config');
     if(!c) return false;
     try{
-      const proxyUrl = c.proxyUrl; // set during setup
+      const proxyUrl = c.proxyUrl;
       if(!proxyUrl) throw new Error('Proxy URL not configured');
+
+      const isEmbed = typeof payload === 'object' && payload !== null;
+      const body = isEmbed
+        ? { userId: c.channelId, embed:   payload }
+        : { userId: c.channelId, message: payload };
 
       const resp = await fetch(proxyUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId:  c.channelId,
-          message: message,
-        }),
+        body: JSON.stringify(body),
       });
       if(!resp.ok) throw new Error('HTTP ' + resp.status);
       const data = await resp.json();
@@ -2853,20 +2933,20 @@
     }
   }
 
-  /* Test post */
+  /* Test post — uses Option E embed */
   async function discordTest(){
     discordSetStatus('connected', 'Posting test message…');
-    const msg = discordBuildMessage();
-    const ok  = await discordPost(msg);
+    const embed = discordBuildEmbed();
+    const ok  = await discordPost(embed);
     if(ok) discordSetStatus('connected', 'Discord bot configured ✓ · Test posted!');
   }
 
-  /* Auto-post after calculate — called by calculateStrategy when Schwab auto-fills */
+  /* Auto-post after calculate — uses Option E embed */
   async function discordAutoPost(){
     const c = DC.get('config');
-    if(!c) return; // not configured — skip silently
-    const msg = discordBuildMessage();
-    await discordPost(msg);
+    if(!c) return;
+    const embed = discordBuildEmbed();
+    await discordPost(embed);
   }
 
   let _wrFetchInProgress = false;
