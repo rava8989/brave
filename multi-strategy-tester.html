@@ -468,6 +468,15 @@ body {
       <div class="sz-field"><label class="sz-label" for="szM_diagonal">Diagonal</label><div class="sz-wrap"><input id="szM_diagonal" class="sz-input" type="number" placeholder="no cap" min="1" step="1"></div></div>
     </div>
 
+    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px;font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.05em;margin:14px 0 8px;">
+      Tail Hedge — fixed contracts
+      <span style="font-weight:500;color:var(--text3);text-transform:none;letter-spacing:0;">max risk $200/contract · sized differently from the Sigma 3 strategies (not % allocation)</span>
+    </div>
+    <div class="sz-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">
+      <div class="sz-field"><label class="sz-label" for="szT_tail">Tail Hedge contracts <span class="sz-dot" data-tip="Fixed number of contracts traded on every Sweet Spot trigger day. Max risk per contract is $200 (worst put premium paid historically was $5.20 = $520 — leaving buffer for slippage). 0 = strategy off.">ⓘ</span></label>
+        <div class="sz-wrap"><input id="szT_tail" class="sz-input" type="number" value="1" min="0" step="1"></div></div>
+    </div>
+
     <div style="margin:4px 0 14px;">
       <button onclick="_sizingRun()" class="schwab-btn primary" style="font-size:13px;font-weight:700;padding:9px 28px;">▶ RUN</button>
     </div>
@@ -736,7 +745,16 @@ async function loadHistory() {
 // (The only addition is the `window._szLast = {...}` stash + tab build at the
 //  very end of _sizingRun; the math, IDs and formulas are byte-identical.)
 // ══════════════════════════════════════════════════════════════════════
+// _SZ_KEYS: strategies that participate in the equity simulation.
+// Tail Hedge is special: NOT in the allocation/% grid (it's sized as fixed
+// contracts), but IS in this list so the engine evaluates it per-row.
 const _SZ_KEYS = [['m8bf','M8BF','m8bfPL'],['strad','Straddle','stradPL'],
+  ['gxbf','GXBF','gxbfPL'],['bobf','BOBF','bobfPL'],['diagonal','Diagonal','diagPL'],
+  ['tail','Tail Hedge','tailPL']];
+
+// Strategies that use the % allocation model (the original Sigma 3 + Diagonal).
+// Tail Hedge is fixed-contracts, NOT % allocation, so it's excluded.
+const _SZ_ALLOC_KEYS = [['m8bf','M8BF','m8bfPL'],['strad','Straddle','stradPL'],
   ['gxbf','GXBF','gxbfPL'],['bobf','BOBF','bobfPL'],['diagonal','Diagonal','diagPL']];
 
 function _szDays(aISO, bISO) {
@@ -776,8 +794,9 @@ function _szKPIs(series, startCap) {
   };
 }
 function _szUpdateSum() {
+  // Sum the % allocation grid (Tail Hedge is excluded — fixed contracts).
   let s = 0;
-  for (const [k] of _SZ_KEYS) s += Math.max(0, parseFloat(document.getElementById('szA_'+k).value) || 0);
+  for (const [k] of _SZ_ALLOC_KEYS) s += Math.max(0, parseFloat(document.getElementById('szA_'+k).value) || 0);
   const el = document.getElementById('szWeightSum');
   if (el) el.innerHTML = `total allocation ${s}% of equity` +
     (s > 100 ? ' <span style="color:#f59e0b">(over 100% — leveraged)</span>' : '');
@@ -785,8 +804,9 @@ function _szUpdateSum() {
 function _sizingUseOptimizer() {
   // Fill the per-strategy ALLOCATION % fields from the best-Sharpe search's
   // current weights (the self-contained optimizer below runs first).
+  // Tail Hedge isn't part of the optimizer — it has its own fixed-contract sizing.
   if (typeof allocWeights === 'undefined') return;
-  for (const [k] of _SZ_KEYS) {
+  for (const [k] of _SZ_ALLOC_KEYS) {
     const el = document.getElementById('szA_' + k);
     if (el && allocWeights[k] != null) el.value = allocWeights[k];
   }
@@ -835,18 +855,22 @@ function _sizingRun() {
   const startCap = Math.max(1, parseFloat(document.getElementById('szCap').value)    || 1);
 
   // Allocation % per strategy (Option Omega "Allocate X% of portfolio").
+  // Tail Hedge is NOT in the allocation grid — it's fixed contracts (see tailContracts below).
   const allocPct = {};
-  for (const [k] of _SZ_KEYS)
+  for (const [k] of _SZ_ALLOC_KEYS)
     allocPct[k] = Math.max(0, parseFloat(document.getElementById('szA_'+k).value) || 0);
   _szUpdateSum();
 
   // OPTIONAL per-strategy max-contracts cap. Empty / 0 / NaN = no cap.
   const maxCt = {};
-  for (const [k] of _SZ_KEYS) {
+  for (const [k] of _SZ_ALLOC_KEYS) {
     const raw = (document.getElementById('szM_'+k)?.value || '').trim();
     const n = parseInt(raw, 10);
     maxCt[k] = (raw !== '' && Number.isFinite(n) && n > 0) ? n : null;
   }
+
+  // Tail Hedge — fixed contracts (NOT allocation-based). 0 = strategy off.
+  const tailContracts = Math.max(0, parseInt(document.getElementById('szT_tail')?.value, 10) || 0);
 
   // Compact currency so values always fit their cell (Option-Omega style):
   // < $1M shown in full with commas; $1M+ abbreviated M/B/T.
@@ -860,7 +884,8 @@ function _sizingRun() {
 
   // Max risk per contract — FIXED hard values, user-decided. NOT auto-calculated
   // (no historical drawdown, no stress multiplier). Change only on request.
-  const capPerCt = { m8bf: 3000, strad: 3500, gxbf: 5000, bobf: 1200, diagonal: 11000 };
+  // tail: $200 = small-loss tail hedge (worst trade historically -$520 = capped by per-trade put debit).
+  const capPerCt = { m8bf: 3000, strad: 3500, gxbf: 5000, bobf: 1200, diagonal: 11000, tail: 200 };
 
   // ── Path-dependent compounding portfolio simulation (Option Omega style):
   //    each day, each strategy's contracts = floor( alloc% × CURRENT equity ÷
@@ -883,12 +908,20 @@ function _sizingRun() {
     for (const [k,, fld] of _SZ_KEYS) {
       const v = row[fld];
       if (v == null || v === 0) continue;
-      const cpc = capPerCt[k];
-      let contracts = cpc > 0 ? Math.floor((allocPct[k] / 100 * equity) / cpc) : 0;
-      if (contracts < 1 && allocPct[k] > 0) { contracts = 1; perStrat[k].forced = true; }
-      if (contracts < 1) continue;             // 0% allocation = excluded
-      // Apply optional per-strategy max-contracts cap (null = no cap).
-      if (maxCt[k] != null && contracts > maxCt[k]) { contracts = maxCt[k]; perStrat[k].capped = true; }
+      let contracts;
+      if (k === 'tail') {
+        // Tail Hedge: fixed contracts (not % allocation). 0 = off.
+        contracts = tailContracts;
+        if (contracts < 1) continue;
+      } else {
+        // Sigma 3 + Diagonal: Option-Omega style compounding % allocation.
+        const cpc = capPerCt[k];
+        contracts = cpc > 0 ? Math.floor((allocPct[k] / 100 * equity) / cpc) : 0;
+        if (contracts < 1 && allocPct[k] > 0) { contracts = 1; perStrat[k].forced = true; }
+        if (contracts < 1) continue;             // 0% allocation = excluded
+        // Apply optional per-strategy max-contracts cap (null = no cap).
+        if (maxCt[k] != null && contracts > maxCt[k]) { contracts = maxCt[k]; perStrat[k].capped = true; }
+      }
       const p = v * contracts;
       perStrat[k].series.push({ date: row.date, pnl: p });
       perStrat[k].pnl += p;
