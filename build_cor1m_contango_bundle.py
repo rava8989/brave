@@ -215,7 +215,7 @@ def main():
         'daily': daily,
         'presets': PRESETS,
         'preset_results': preset_results,
-        'default_preset': 'champion',
+        'default_preset': 'sweet_spot',
     }
 
     out_path = ROOT / args.out

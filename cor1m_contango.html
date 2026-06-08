@@ -145,14 +145,13 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);font-
 </div>
 
 <div class="banner">
-  <div class="banner-title">TAIL HEDGE — COR1M × VIX TERM STRUCTURE</div>
+  <div class="banner-title">TAIL HEDGE — SWEET SPOT (DEFAULT)</div>
   <div class="banner-desc">
-    <strong>What it does:</strong> Buy a cheap 0DTE SPX put when stock correlation (COR1M) drops below a threshold (default 9.0). VVIX must be under 110 (otherwise puts are too expensive).
-    Hold to 4 PM close. Most days lose a little; a few days print huge when the market shocks.
+    <strong>The strategy:</strong> Buy a cheap 0DTE SPX put at 9:45 AM ET whenever stock correlation (COR1M) crashes below <strong>7.75</strong> — but only if VVIX is under <strong>110</strong>. Hold to 4 PM close. Most days you lose $100-500 (the put expires worthless). A few days print <strong>$5k-$15k</strong> when the market shocks. Over 4 years: <strong>+$50,880 across 59 trades</strong>, worst single loss only <strong>−$520</strong>.
     <br>
-    <strong>The trigger (ANY cross):</strong> Watch COR1M hourly bars. Whenever it crosses from above to at-or-below the threshold (intraday OR overnight), enter at the next 9:45 AM ET. If the cross is at the 9:30 bar (overnight) → trade same day. If the cross is at 10:30 or later (intraday) → trade tomorrow at 9:45. Keep buying every day until first profitable day, then back to WAITING.
+    <strong>The trigger (catches EVERY cross):</strong> Watch COR1M's hourly bars. The moment it transitions from above 7.75 to at-or-below 7.75 — overnight OR intraday — you're in buying mode. If the cross is on the 9:30 bar → trade same day at 9:45. If it's at 10:30 or later → trade next trading day. Keep buying every morning until the first profitable day, then back to waiting for the next cross.
     <br>
-    <strong>The page:</strong> All numbers are NO-LOOK-AHEAD (9:30 opens only) with conservative fills (entry mid rounded UP to $0.10, P/L floored to $10). Pick a preset above to see its equity curve, trade log, and per-regime performance.
+    <strong>The page:</strong> All numbers are NO-LOOK-AHEAD (uses only 9:30 opens) with conservative fills (entry mid rounded UP to $0.10, P/L floored to $10 for commissions + slippage). Pick any preset above to compare — Sweet Spot is the default and recommended baseline.
   </div>
 </div>
 

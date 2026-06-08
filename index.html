@@ -644,21 +644,21 @@
     </div>
 
     <!-- CARD 6: Tail Hedge (companion — added 2026-06-08) -->
-    <div class="scard" id="cardTail" title="Tail Hedge (Total Champion) — buy a 0DTE SPX put when correlation cracks. ANY-cross trigger: watch COR1M hourly bars; whenever it crosses from above to at-or-below 9.0 (intraday or overnight), enter at the next 9:45 AM ET. VVIX gate: block when VVIX_open ≥ 110. Delta -0.20 put, hold to 4 PM. State stays TRIGGERED daily until first profitable day. Full backtester: cor1m_contango.html.">
+    <div class="scard" id="cardTail" title="Tail Hedge (Sweet Spot — DEFAULT). Watch COR1M hourly bars; whenever it crosses from above to at-or-below 7.75 (intraday or overnight), enter at the next 9:45 AM ET. VVIX gate: block when VVIX_open ≥ 110. Buy 0DTE SPXW put delta -0.20, hold to 4 PM. Keep buying daily until first profitable day. 59 trades over 4 years, +$50,880 total, MAR 9.56, worst trade only -$520. Full backtester: cor1m_contango.html.">
       <div class="scard-header">
-        <span class="scard-label">Tail Hedge <span style="font-weight:400;font-size:10px;opacity:.7;letter-spacing:normal;text-transform:none">· companion</span></span>
+        <span class="scard-label">Tail Hedge <span style="font-weight:400;font-size:10px;opacity:.7;letter-spacing:normal;text-transform:none">· companion · Sweet Spot</span></span>
         <span class="today-trade-pill" id="pillTail" style="display:none;">▶ TODAY'S TRADE</span>
         <span class="scard-badge" id="tailBadge">—</span>
       </div>
       <div class="scard-body">
-        <div class="scard-main" id="tailRec">Watch COR1M hourly for the next cross-down</div>
+        <div class="scard-main" id="tailRec">Watch COR1M hourly for the next cross-down below 7.75</div>
         <div class="scard-reason" id="tailReason"></div>
         <div style="font-size:10px;color:var(--text3);margin-top:6px;line-height:1.5;">
-          <strong>Trigger fires on ANY cross</strong> of <code style="background:var(--bg3);padding:0 4px;border-radius:3px;">$COR1M</code> from above to at-or-below <strong>9.0</strong>:<br>
+          <strong>Trigger fires on ANY cross</strong> of <code style="background:var(--bg3);padding:0 4px;border-radius:3px;">$COR1M</code> from above to at-or-below <strong>7.75</strong>:<br>
           • Cross at 9:30 bar (overnight) → trade <strong>today</strong> at 9:45<br>
           • Cross at 10:30+ (intraday) → trade <strong>tomorrow</strong> at 9:45<br>
           • Gate: <code style="background:var(--bg3);padding:0 4px;border-radius:3px;">$VVIX</code> open must be &lt; <strong>110</strong><br>
-          Buy 0DTE SPX put delta −0.20, hold to 4 PM. Keep buying daily until profit.
+          Buy 0DTE SPXW put delta −0.20 at 9:45, hold to 4 PM. Keep buying daily until profit.
         </div>
       </div>
     </div>
@@ -876,39 +876,45 @@
     </ul>
 
     <hr class="divider">
-    <h3>Tail Hedge (Champion + VVIX) — Companion Strategy <span style="font-weight:400;font-size:12px;color:var(--text3)">(separate from Sigma 3; correlation-shock hedge using cheap 0DTE SPX puts)</span></h3>
+    <h3>Tail Hedge — Sweet Spot (default) <span style="font-weight:400;font-size:12px;color:var(--text3)">(companion strategy, separate from Sigma 3 — buys cheap 0DTE SPX puts when stock correlation crashes)</span></h3>
     <p>
-      A <strong>regime-based tail hedge</strong> that buys cheap SPX 0DTE puts on days when stocks
-      stop moving together. When correlation suddenly drops, it often snaps back with a coordinated
-      selloff — and the puts we bought for $1-5 each can pay $5,000-$15,000 when SPX drops 2-3% intraday.
+      A <strong>tail-risk hedge</strong> that lays out cheap insurance on days when S&amp;P 500 stocks
+      stop moving together. When correlation suddenly drops below 7.75 — meaning everyone is doing their
+      own thing — history says a coordinated selloff often follows within days. The puts we bought for
+      <strong>$1-5 each</strong> can pay <strong>$5,000-$15,000</strong> when that selloff arrives.
     </p>
     <p class="muted-note" style="margin-top:4px">
       Full interactive backtester + live regime visualization:
       <a href="./cor1m_contango.html" style="color:var(--accent);text-decoration:underline">cor1m_contango.html</a>.
-      Backtested <strong>2022-06 → 2026-06</strong> on real ThetaData quotes (SPX option chain, COR1M + VIX-term-structure intraday).
+      Backtested <strong>2022-06 → 2026-06</strong> on real ThetaData quotes with conservative fills (entry mid rounded UP to $0.10, P/L floored to $10 to cover commissions + slippage).
     </p>
 
     <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">In plain English</h4>
     <ul>
-      <li><strong>COR1M</strong> measures how much S&amp;P 500 stocks move together. Low number = stocks doing their own thing (independent). High number = everyone selling together (panic).</li>
-      <li><strong>VVIX</strong> measures how nervous people are about VIX itself. Normal: 80-95. Spiking: above 110 = panic already priced in.</li>
-      <li>When COR1M drops below 9, the market is unusually calm and stocks are uncorrelated. <em>That's exactly when an unexpected shock tends to break things — and a cheap put pays asymmetrically.</em></li>
-      <li>When VVIX is above 110, the options market has already priced in panic, so the puts are too expensive to pay off. Skip.</li>
+      <li><strong>COR1M</strong> measures how much S&amp;P 500 stocks move together. Low number (under 8) = stocks doing their own thing — calm, complacent. High number (over 30) = everyone selling together in panic.</li>
+      <li><strong>VVIX</strong> measures how jumpy options traders are about VIX itself. Normal: 80-95. Spiking above 110 = panic is already priced in, so puts cost too much.</li>
+      <li>When COR1M drops below 7.75, the market is unusually calm and stocks are doing their own thing. <em>That's exactly when an unexpected shock tends to break things — and a cheap put pays back 10× to 30× because nobody saw it coming.</em></li>
+      <li>When VVIX is above 110, the options market has already priced in the panic. The puts we want are too expensive to pay off. Skip the trade that day.</li>
     </ul>
 
-    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Daily trigger — ANY cross fires it</h4>
+    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">The trigger — any cross of 7.75 fires it</h4>
     <ul>
-      <li><strong>Watch COR1M hourly</strong> (CBOE 1-Month Implied Correlation Index, ticker <code>$COR1M</code>). Each hourly bar prints at 9:30, 10:30, 11:30, ... 15:30 ET.</li>
-      <li><strong>The trigger:</strong> whenever COR1M transitions from <em>above 9.0</em> to <em>at-or-below 9.0</em> on consecutive bars. That includes overnight gaps (yesterday's 15:30 bar was above, today's 9:30 bar is below) AND intraday moves (e.g. today's 9:30 was above, today's 10:30 is below).</li>
-      <li><strong>When to enter:</strong>
+      <li><strong>Watch COR1M hourly</strong> (ticker <code>$COR1M</code> on TradingView / Schwab / ToS). Each hourly bar prints at 9:30, 10:30, 11:30, … 15:30 ET.</li>
+      <li><strong>What fires it:</strong> whenever COR1M transitions from <em>above 7.75</em> to <em>at-or-below 7.75</em> on consecutive bars. That includes both:
         <ul>
-          <li>Cross detected at the <strong>9:30 bar (overnight cross)</strong> → trade <strong>same day</strong> at 9:45 AM ET.</li>
-          <li>Cross detected at <strong>10:30 or later (intraday cross)</strong> → trade <strong>next trading day</strong> at 9:45 AM ET.</li>
+          <li><strong>Overnight gap</strong>: yesterday's last bar was above 7.75, today's 9:30 bar is below.</li>
+          <li><strong>Intraday move</strong>: today's 9:30 was above 7.75, today's 10:30 (or later) is below.</li>
         </ul>
       </li>
-      <li><strong>VVIX gate:</strong> on the trade day, check <code>$VVIX</code> open. If <strong>VVIX ≥ 110</strong>, skip the trade that day (puts too expensive). Stay TRIGGERED for tomorrow.</li>
-      <li>If trigger active AND VVIX OK, at <strong>9:45 AM ET</strong> buy <strong>1 contract</strong> of a 0DTE SPX put with delta closest to <strong>−0.20</strong> (typically 1-2% OTM, around $1-5 premium).</li>
-      <li>Hold to <strong>4:00 PM close</strong>. Put settles to intrinsic value (or expires worthless if SPX above strike).</li>
+      <li><strong>When to enter:</strong>
+        <ul>
+          <li>Cross detected at the <strong>9:30 bar</strong> → trade <strong>same day</strong> at 9:45 AM ET.</li>
+          <li>Cross detected at <strong>10:30 or later</strong> → trade <strong>next trading day</strong> at 9:45 AM ET.</li>
+        </ul>
+      </li>
+      <li><strong>VVIX gate:</strong> on the trade day morning, check <code>$VVIX</code> open. If VVIX ≥ <strong>110</strong>, skip the trade that day (puts too expensive). Stay in buying-mode for tomorrow.</li>
+      <li>If both checks pass, at <strong>9:45 AM ET</strong> buy <strong>1 contract</strong> of a 0DTE SPXW put with delta closest to <strong>−0.20</strong> (typically 1-2% OTM, around $1-5 premium).</li>
+      <li>Hold to <strong>4:00 PM close</strong>. Put settles to intrinsic value (or expires worthless if SPX stayed above strike).</li>
     </ul>
 
     <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">State machine — keep buying until you win</h4>
@@ -919,13 +925,22 @@
       <li>Typical pattern: 5-10 small losses (~$100-500 each) followed by one big winner ($5k-$15k) that pays for all of them and adds profit. <em>Most days lose a little. A few days print huge. That's the trade.</em></li>
     </ul>
 
-    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Historical results (Total Champion preset, 2022-06 → 2026-06, any-cross trigger, realistic fills)</h4>
+    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Historical results (Sweet Spot — default, 2022-06 → 2026-06)</h4>
     <ul>
-      <li><strong>134 trades</strong> over ~28 active months. 15 wins, 119 losses. Win rate <strong>11.2%</strong>.</li>
-      <li><strong>Total P/L: +$57,190</strong>. Max drawdown <strong>$5,990</strong>. <strong>MAR 9.55</strong>.</li>
-      <li>Biggest win: <strong>+$15,070</strong> (2025-10-10, SPX −3.05% intraday). Biggest loss: <strong>−$1,880</strong>.</li>
-      <li><strong>Sweet Spot variant</strong> (thr 7.75, half the activity): <strong>59 trades, +$50,880, MAR 9.56, worst loss only −$520</strong>. Same edge with much cleaner risk profile.</li>
-      <li>Strategy was <strong>dormant 2022-06 → 2024-03</strong> — COR1M never dropped below 9.0 during the bear market. Low-correlation-regime hedge, not always-on insurance.</li>
+      <li><strong>59 trades</strong> over 4 years. 8 wins, 51 losses. Win rate <strong>13.6%</strong>.</li>
+      <li><strong>Total P/L: +$50,880</strong>. Max drawdown <strong>$5,320</strong>. <strong>MAR 9.56</strong>.</li>
+      <li><strong>Biggest single win: +$15,070</strong> (2025-10-10, SPX dropped 3.05% intraday). <strong>Biggest single loss: only −$520</strong>.</li>
+      <li>Walk-forward validated — train (2022-2024) and test (2025-2026) halves both positive with similar MAR.</li>
+      <li>Strategy was <strong>dormant 2022-06 → 2024-03</strong> — COR1M never dropped below 7.75 during the bear market era. <em>This is a low-correlation regime hedge, not an always-on insurance policy.</em> It does nothing during high-correlation environments (2022 grind down, 2008-style crashes).</li>
+      <li>On your existing portfolio's <strong>15 worst days</strong>, Sweet Spot caught <strong>9 of them</strong> and netted <strong>+$21,442</strong> in rescue P/L. The dates: 2025-11-20 NVDA crash (rescued $13,987), 2026-06-05 (last Friday's selloff, rescued $8,740), 2024-12-18 FOMC, plus others.</li>
+    </ul>
+
+    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Why Sweet Spot over higher-threshold variants</h4>
+    <ul>
+      <li>Threshold 7.75 fires only <strong>8 times in 4 years</strong> (vs 15 at threshold 9.0). Each trigger is a high-conviction setup.</li>
+      <li><strong>Half the activity</strong> of the next-highest variant (59 vs 134 trades) for 89% of the return.</li>
+      <li><strong>Worst trade only −$520</strong> (vs −$1,880 at threshold 9.0) — much cleaner risk profile, easier to size.</li>
+      <li>Same risk-adjusted return (MAR 9.56 vs 9.55).</li>
     </ul>
 
     <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Why this hedges your other strategies</h4>
