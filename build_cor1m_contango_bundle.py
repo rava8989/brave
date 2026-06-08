@@ -78,9 +78,17 @@ PRESETS = [
     {
         'id': 'mar_champ',
         'name': 'MAR Champion',
-        'desc': 'Best risk-adjusted. Very cheap puts (delta -0.05) at thr 8.5. 99 trades, +$24.8k, MAR 16.4.',
-        'threshold': 8.5, 'delta': -0.05, 'time': '0945',
-        'regimes': [],
+        'desc': 'Best risk-adjusted (upgraded). thr 9.0, delta -0.075. 110 trades, +$33.6k, MAR 16.1. Walk-forward MAR ~9 both halves.',
+        'threshold': 9.0, 'delta': -0.075, 'time': '0945',
+        'regimes': [], 'vvix_max': None,
+        'recommended': False,
+    },
+    {
+        'id': 'high_wr_champ',
+        'name': 'High-WR Champion',
+        'desc': 'Fewer trades, higher hit rate. thr 9.25, delta -0.30. 41 trades, 27% WR, +$42.8k, MAR 10.1.',
+        'threshold': 9.25, 'delta': -0.30, 'time': '0945',
+        'regimes': [], 'vvix_max': None,
         'recommended': False,
     },
     {
