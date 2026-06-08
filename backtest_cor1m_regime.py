@@ -46,6 +46,7 @@ from backtest_cor1m_put import (
 )
 from regime_classifier import (
     load_vix_term, classify_series, RegimeThresholds, REGIMES,
+    load_cor1m_open_and_close,
 )
 
 
@@ -137,26 +138,36 @@ def pick_put_by_delta(snapshot: dict, target_exp: str, target_delta: float,
 
 
 def run(args) -> dict:
-    print(f'Loading data...')
-    cor1m = load_cor1m_daily()
+    """NO-LOOK-AHEAD backtester.
+
+    At 9:30 AM ET on date D, we know:
+      - Yesterday's full COR1M close (yesterday's EOD)
+      - Today's COR1M 9:30 OPEN (just printed)
+      - Today's VIX/VIX3M/VIX9D 9:30 OPENs (just printed)
+      - 5-day rolling COR1M = average of prior 5 days' CLOSE values
+    All of those are honest live data at 9:30 ET.
+    Trigger compares yesterday's CLOSE vs today's OPEN (both fully known at 9:30).
+    """
+    print(f'Loading data (NO-LOOK-AHEAD: 9:30 opens for today, EOD closes for prior days)...')
+    cor1m_open, cor1m_close = load_cor1m_open_and_close()
     vt = load_vix_term()
     dates = trading_dates(args.from_date, args.to_date)
-    print(f'  COR1M: {len(cor1m)} days  |  VIX-term: {len(vt)} days  |  Backtest: {len(dates)} days')
+    print(f'  COR1M opens: {len(cor1m_open)}  |  COR1M closes: {len(cor1m_close)}  |  '
+          f'VIX-term: {len(vt)}  |  Backtest dates: {len(dates)}')
 
-    # Build regime label per day (uses default thresholds for now)
     th = RegimeThresholds()
     if args.cor1m_low is not None:
         th.cor1m_low = args.cor1m_low
     if args.cor1m_high is not None:
         th.cor1m_high = args.cor1m_high
-    cls = classify_series(dates, cor1m, vt, th)
+    cls = classify_series(dates, cor1m_open, cor1m_close, vt, th)
 
     allowed = set(args.regimes.split(',')) if args.regimes else None
     if allowed:
         print(f'  Regime gating: {allowed}')
 
     state = 'WAITING'
-    prev_c = None
+    prev_close = None   # yesterday's COR1M CLOSE (fully known at today's 9:30 AM)
     current_trigger = None
     trades = []
     triggers = []
@@ -164,37 +175,40 @@ def run(args) -> dict:
     skipped = {'no_snap': 0, 'no_vix': 0, 'no_put': 0, 'no_spx_close': 0, 'regime': 0}
 
     for d in dates:
-        c = cor1m.get(d)
-        # Crossing detection
-        if state == 'WAITING' and c is not None and c <= args.threshold:
-            if prev_c is None or prev_c > args.threshold:
+        c_open = cor1m_open.get(d)   # today's 9:30 OPEN (the live print)
+        c_close = cor1m_close.get(d) # today's EOD CLOSE (only used to update prev_close after)
+
+        # Trigger detection at 9:30 today:
+        #   yesterday's CLOSE > threshold AND today's OPEN ≤ threshold
+        # (yesterday's close is the last fully-known value, today's open is the
+        # just-printed 9:30 reading — both are honest data at 9:30 ET)
+        if state == 'WAITING' and c_open is not None and c_open <= args.threshold:
+            if prev_close is None or prev_close > args.threshold:
                 state = 'TRIGGERED'
                 current_trigger = {
-                    'trigger_date': d, 'cor1m_at_trigger': c,
+                    'trigger_date': d, 'cor1m_at_trigger': c_open,
                     'trades': [], 'total_pnl': 0.0,
                 }
                 triggers.append(current_trigger)
 
         if state == 'TRIGGERED':
-            # Optional regime gating — skip days outside allowed regimes,
-            # but DON'T reset the state machine (still firing the trigger event).
             day_regime = cls.get(d, {}).get('regime', 'R0')
             if allowed and day_regime not in allowed:
                 skipped['regime'] += 1
-                if c is not None: prev_c = c
+                if c_close is not None: prev_close = c_close
                 continue
 
             snap = load_snapshot(d, args.time)
             if snap is None:
                 skipped['no_snap'] += 1
-                if c is not None: prev_c = c
+                if c_close is not None: prev_close = c_close
                 continue
 
             time_hhmm = f'{args.time[:2]}:{args.time[2:]}'
             vix = load_vix_intraday_at(d, time_hhmm)
             if vix is None or vix <= 0:
                 skipped['no_vix'] += 1
-                if c is not None: prev_c = c
+                if c_close is not None: prev_close = c_close
                 continue
             sigma = vix / 100.0
             T = time_to_close(time_hhmm, d in HALF_DAYS)
@@ -202,12 +216,12 @@ def run(args) -> dict:
             put = pick_put_by_delta(snap, d, args.delta, sigma, T)
             if put is None:
                 skipped['no_put'] += 1
-                if c is not None: prev_c = c
+                if c_close is not None: prev_close = c_close
                 continue
             spx_cls = load_spx_close(d)
             if spx_cls is None:
                 skipped['no_spx_close'] += 1
-                if c is not None: prev_c = c
+                if c_close is not None: prev_close = c_close
                 continue
             intrinsic = max(put['strike'] - spx_cls, 0)
             pnl = round((intrinsic - put['mid']) * 100, 2)
@@ -216,7 +230,9 @@ def run(args) -> dict:
             rec = {
                 'date': d, 'regime': day_regime,
                 'regime_label': REGIMES[day_regime]['label'],
-                'cor1m': c, 'vix_open': vix,
+                'cor1m': c_open,           # 9:30 OPEN (live-correct, NOT EOD close)
+                'cor1m_eod_close': c_close, # for forensic only
+                'vix_open': vix,
                 'spot': put['spot'], 'strike': put['strike'],
                 'bid': put['bid'], 'ask': put['ask'], 'mid': put['mid'],
                 'delta': put['delta'],
@@ -236,16 +252,17 @@ def run(args) -> dict:
                 current_trigger['days_to_profit'] = len(current_trigger['trades'])
                 current_trigger = None
 
-        # Exit on cross-up
+        # Exit on cross-up (today's OPEN > threshold AND yesterday's CLOSE ≤ threshold)
         if state == 'TRIGGERED' and args.exit_on_cross_up:
-            if c is not None and c > args.threshold and prev_c is not None and prev_c <= args.threshold:
-                current_trigger['exit_reason'] = f'COR1M crossed up to {c:.2f}'
+            if c_open is not None and c_open > args.threshold and prev_close is not None and prev_close <= args.threshold:
+                current_trigger['exit_reason'] = f'COR1M crossed up to {c_open:.2f}'
                 current_trigger['exit_date'] = d
                 current_trigger['days_to_profit'] = len(current_trigger['trades'])
                 state = 'WAITING'; current_trigger = None
 
-        if c is not None:
-            prev_c = c
+        # Advance prev_close to today's CLOSE — that's what we'd know at tomorrow's 9:30
+        if c_close is not None:
+            prev_close = c_close
 
     # Summary
     def stat(rows):

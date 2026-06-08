@@ -35,6 +35,7 @@ sys.path.insert(0, str(ROOT))
 from backtest_cor1m_put import load_cor1m_daily, trading_dates
 from regime_classifier import (
     load_vix_term, classify_series, RegimeThresholds, REGIMES,
+    load_cor1m_open_and_close,
 )
 from backtest_cor1m_regime import run as run_backtest
 
@@ -43,46 +44,50 @@ class A:
     def __init__(self, **kw): self.__dict__.update(kw)
 
 
-# ────────── presets from sweep results ──────────
+# ────────── presets — NO-LOOK-AHEAD (rebuilt 2026-06-08) ──────────
+# Old presets (Champion R3+R4, Sweet Spot R4-only etc.) were inflated by EOD
+# look-ahead bias — they assumed we knew today's CLOSE before trading at 9:35.
+# These honest presets use 9:30 AM ET OPEN values (the live print at market open)
+# for trigger + regime classification. Numbers are smaller but real.
 PRESETS = [
     {
-        'id': 'champion',
-        'name': 'Champion',
-        'desc': 'Most absolute return — fire on R3 + R4 only. 26 trades, +$39k, MAR 6.5.',
-        'threshold': 9.5, 'delta': -0.30, 'time': '0935',
-        'regimes': ['R3', 'R4'],
+        'id': 'total_champ',
+        'name': 'Total Champion',
+        'desc': 'Most absolute return. thr 9.0, delta -0.25, no regime filter. 70 trades, +$40k, MAR 5.5.',
+        'threshold': 9.0, 'delta': -0.25, 'time': '0935',
+        'regimes': [],
         'recommended': True,
     },
     {
-        'id': 'sweet_spot',
-        'name': 'Sweet Spot',
-        'desc': 'Best risk/reward. R4-only at -0.30 delta. 56% WR, +$34.6k, MAR 22.',
-        'threshold': 9.0, 'delta': -0.30, 'time': '0935',
-        'regimes': ['R4'],
+        'id': 'mar_champ',
+        'name': 'MAR Champion',
+        'desc': 'Best risk-adjusted. thr 8.0, delta -0.10, skip R1 bleed days. 43 trades, +$19.4k, MAR 10.',
+        'threshold': 8.0, 'delta': -0.10, 'time': '0935',
+        'regimes': ['R0', 'R2', 'R3', 'R4'],
         'recommended': True,
     },
     {
-        'id': 'risk_adjusted',
-        'name': 'Risk-Adjusted',
-        'desc': 'Tiny drawdown (~$480). Cheap puts at -0.10 delta, R4 only. MAR 51.',
-        'threshold': 9.0, 'delta': -0.10, 'time': '0935',
-        'regimes': ['R4'],
+        'id': 'balanced',
+        'name': 'Balanced',
+        'desc': 'Cheap wide net. thr 8.25, delta -0.10. 91 trades, +$29.6k, MAR 7.5.',
+        'threshold': 8.25, 'delta': -0.10, 'time': '0935',
+        'regimes': [],
         'recommended': False,
     },
     {
         'id': 'baseline',
         'name': 'Baseline (article)',
-        'desc': 'Article\'s default: threshold 8.25, delta -0.20, no regime filter.',
+        'desc': 'Article\'s literal default. thr 8.25, delta -0.20, no filter. 66 trades, +$33k, MAR 6.4.',
         'threshold': 8.25, 'delta': -0.20, 'time': '0935',
         'regimes': [],
         'recommended': False,
     },
     {
-        'id': 'broad',
-        'name': 'Broad (no R1)',
-        'desc': 'Wide trigger but skip R1 bleed days. 130 trades, less concentrated.',
-        'threshold': 9.0, 'delta': -0.20, 'time': '0935',
-        'regimes': ['R0', 'R2', 'R3', 'R4'],
+        'id': 'r3_r4_only',
+        'name': 'R3+R4 (cautionary)',
+        'desc': 'Fire only in R3/R4. Look-ahead version was +$50k — HONEST is -$11.5k. Don\'t use, kept to expose the bias.',
+        'threshold': 9.5, 'delta': -0.30, 'time': '0935',
+        'regimes': ['R3', 'R4'],
         'recommended': False,
     },
 ]
@@ -112,30 +117,32 @@ def main():
     p.add_argument('--out', default='cor1m_contango_bundle.json')
     args = p.parse_args()
 
-    cor1m = load_cor1m_daily()
+    cor1m_open, cor1m_close = load_cor1m_open_and_close()
     vt = load_vix_term()
     dates = trading_dates(args.from_date, args.to_date)
 
     th = RegimeThresholds()
     th.cor1m_low = args.cor1m_low
     th.cor1m_high = args.cor1m_high
-    cls = classify_series(dates, cor1m, vt, th)
+    cls = classify_series(dates, cor1m_open, cor1m_close, vt, th)
 
-    # Daily rows
+    # Daily rows (use 9:30 opens as the "live" values; expose EOD for forensic)
     daily = []
     for d in dates:
         v = cls.get(d, {})
         m = v.get('metrics', {})
         regime = v.get('regime', 'R0')
+        vt_row = vt.get(d, {})
         daily.append({
             'date': d,
-            'cor1m': m.get('cor1m'),
+            'cor1m': m.get('cor1m'),                # 9:30 OPEN
+            'cor1m_eod_close': cor1m_close.get(d),  # forensic
             'cor1m_5d_avg': m.get('cor1m_5d_avg'),
-            'vix9d': m.get('vix9d'),
-            'vix': m.get('vix'),
-            'vix3m': m.get('vix3m'),
-            'vix6m': vt.get(d, {}).get('vix6m'),
-            'vvix': vt.get(d, {}).get('vvix'),
+            'vix9d': m.get('vix9d'),                # 9:30 OPEN
+            'vix': m.get('vix'),                    # 9:30 OPEN
+            'vix3m': m.get('vix3m'),                # 9:30 OPEN
+            'vix6m': vt_row.get('vix6m_open'),
+            'vvix': vt_row.get('vvix_open'),
             'vix_vix3m_ratio': m.get('vix_vix3m_ratio'),
             'vix9d_vix_ratio': m.get('vix9d_vix_ratio'),
             'regime': regime,

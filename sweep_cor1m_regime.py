@@ -28,6 +28,7 @@ from backtest_cor1m_put import (
 )
 from regime_classifier import (
     load_vix_term, classify_series, RegimeThresholds, REGIMES,
+    load_cor1m_open_and_close,
 )
 from backtest_cor1m_regime import put_delta, time_to_close
 
@@ -109,33 +110,34 @@ def pick_put_cached(snap: dict, target_exp: str, target_delta: float,
     return best
 
 
-def run_one(dates, cor1m, cls, snap_cache, vix_cache, spx_close,
+def run_one(dates, cor1m_open, cor1m_close, cls, snap_cache, vix_cache, spx_close,
              threshold, delta_target, time_tag, allowed_regimes):
-    state = 'WAITING'; prev_c = None
+    """NO-LOOK-AHEAD: uses 9:30 OPEN for today's trigger, prior days' CLOSE for prev."""
+    state = 'WAITING'; prev_close = None
     trades = []
     cum = 0.0
 
-    time_hhmm = f'{time_tag[:2]}:{time_tag[2:]}'
     is_half_for = lambda d: d in HALF_DAYS
 
     for d in dates:
-        c = cor1m.get(d)
-        if state == 'WAITING' and c is not None and c <= threshold:
-            if prev_c is None or prev_c > threshold:
+        c_open = cor1m_open.get(d)
+        c_close = cor1m_close.get(d)
+
+        if state == 'WAITING' and c_open is not None and c_open <= threshold:
+            if prev_close is None or prev_close > threshold:
                 state = 'TRIGGERED'
 
         if state == 'TRIGGERED':
             day_regime = cls.get(d, {}).get('regime', 'R0')
             if allowed_regimes and day_regime not in allowed_regimes:
-                if c is not None: prev_c = c
+                if c_close is not None: prev_close = c_close
                 continue
 
             snap = snap_cache.get((d, time_tag))
             if snap is None:
-                # try fallback to 0945
                 snap = snap_cache.get((d, '0945'))
                 if snap is None:
-                    if c is not None: prev_c = c
+                    if c_close is not None: prev_close = c_close
                     continue
                 actual_time = '0945'
             else:
@@ -143,17 +145,17 @@ def run_one(dates, cor1m, cls, snap_cache, vix_cache, spx_close,
 
             vix = vix_cache.get((d, actual_time))
             if vix is None or vix <= 0:
-                if c is not None: prev_c = c
+                if c_close is not None: prev_close = c_close
                 continue
             sigma = vix / 100.0
             T = time_to_close(f'{actual_time[:2]}:{actual_time[2:]}', is_half_for(d))
             put = pick_put_cached(snap, d, delta_target, sigma, T)
             if put is None:
-                if c is not None: prev_c = c
+                if c_close is not None: prev_close = c_close
                 continue
             spx_cls = spx_close.get(d)
             if spx_cls is None:
-                if c is not None: prev_c = c
+                if c_close is not None: prev_close = c_close
                 continue
             intrinsic = max(put['K'] - spx_cls, 0)
             pnl = (intrinsic - put['mid']) * 100
@@ -164,7 +166,7 @@ def run_one(dates, cor1m, cls, snap_cache, vix_cache, spx_close,
             if pnl > 0:
                 state = 'WAITING'
 
-        if c is not None: prev_c = c
+        if c_close is not None: prev_close = c_close
 
     if not trades:
         return None
@@ -196,14 +198,14 @@ def run_one(dates, cor1m, cls, snap_cache, vix_cache, spx_close,
 
 # ────────── main sweep ──────────
 def main():
-    print('Loading data...')
-    cor1m = load_cor1m_daily()
+    print('Loading data (NO-LOOK-AHEAD: 9:30 opens for trigger + regime)...')
+    cor1m_open, cor1m_close = load_cor1m_open_and_close()
     vt = load_vix_term()
     dates = trading_dates('2023-06-01', date.today().isoformat())
-    cls = classify_series(dates, cor1m, vt, RegimeThresholds())
-    print(f'  {len(dates)} trading days')
+    cls = classify_series(dates, cor1m_open, cor1m_close, vt, RegimeThresholds())
+    print(f'  {len(dates)} trading days  |  COR1M opens: {len(cor1m_open)}  closes: {len(cor1m_close)}')
 
-    times = ['0945', '1000']
+    times = ['0935', '0945', '1000']
     print(f'  Caching snapshots @ {times}...')
     t0 = time.time()
     snap_cache = cache_snapshots(times, dates)
@@ -221,7 +223,7 @@ def main():
     # ────────── grid ──────────
     THRESHOLDS = [7.0, 7.5, 8.0, 8.25, 8.5, 9.0, 9.5, 10.0]
     DELTAS = [-0.05, -0.10, -0.15, -0.20, -0.25, -0.30]
-    TIMES = times
+    TIMES = ['0935', '0945', '1000']
     REGIME_SETS = {
         'ALL': None,
         'NO_R1': {'R2','R3','R4','R0'},
@@ -237,7 +239,7 @@ def main():
     rows = []
     t0 = time.time()
     for i, (tm, th, dl, (rg_name, rg_set)) in enumerate(grid, 1):
-        r = run_one(dates, cor1m, cls, snap_cache, vix_cache, spx_close,
+        r = run_one(dates, cor1m_open, cor1m_close, cls, snap_cache, vix_cache, spx_close,
                     th, dl, tm, rg_set)
         if r is None or r['n'] < 5:  # skip configs with too few trades to matter
             continue
