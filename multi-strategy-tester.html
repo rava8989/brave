@@ -704,6 +704,7 @@ async function loadHistory() {
       gxbfPL: cur.gxbfPL != null ? cur.gxbfPL : null,
       bobfPL: cur.bobfPL != null ? cur.bobfPL : null,
       diagPL: cur.diagPL != null ? cur.diagPL : null,
+      tailPL: cur.tailPL != null ? cur.tailPL : null,
     });
   }
   out.reverse();
@@ -720,7 +721,8 @@ async function loadHistory() {
     (r.stradPL != null && r.stradPL !== 0) ||
     (r.gxbfPL != null && r.gxbfPL !== 0) ||
     (r.bobfPL != null && r.bobfPL !== 0) ||
-    (r.diagPL != null && r.diagPL !== 0));
+    (r.diagPL != null && r.diagPL !== 0) ||
+    (r.tailPL != null && r.tailPL !== 0));
 
   const dn = document.getElementById('dataNotice');
   const hm = document.getElementById('hdrMeta');
@@ -982,6 +984,7 @@ function _sizingRun() {
   for (const [k,label] of _SZ_KEYS) {
     const ps = perStrat[k];
     const kpi = _szKPIs(ps.series, startCap);
+    if (!kpi) continue;  // strategy had zero trades in this window — skip card
     // Override drawdown with the compounding-balance figure (fixes >100%);
     // recompute MAR from it so MAR matches the shown drawdown.
     kpi.maxDDpct = ps.ddFrac * 100;
