@@ -44,49 +44,58 @@ class A:
     def __init__(self, **kw): self.__dict__.update(kw)
 
 
-# ────────── presets — NO-LOOK-AHEAD (rebuilt 2026-06-08) ──────────
-# Old presets (Champion R3+R4, Sweet Spot R4-only etc.) were inflated by EOD
-# look-ahead bias — they assumed we knew today's CLOSE before trading at 9:35.
-# These honest presets use 9:30 AM ET OPEN values (the live print at market open)
-# for trigger + regime classification. Numbers are smaller but real.
+# ────────── presets — NO-LOOK-AHEAD + FIX C (rebuilt 2026-06-08) ──────────
+# Two fixes baked in:
+#  • NO LOOK-AHEAD: use 9:30 OPEN for trigger + regime classification
+#  • FIX C: require BS delta within ±0.05 of target (skip if no valid put);
+#    entry shifted to 09:45 where the chain is actually quoted (9:35 was
+#    too sparse — see methodology §14)
 PRESETS = [
     {
         'id': 'total_champ',
         'name': 'Total Champion',
-        'desc': 'Most absolute return. thr 9.0, delta -0.25, no regime filter. 70 trades, +$40k, MAR 5.5.',
-        'threshold': 9.0, 'delta': -0.25, 'time': '0935',
+        'desc': 'Most absolute return. thr 9.0, delta -0.20, no filter, 9:45. 71 trades, +$42.3k, MAR 6.9.',
+        'threshold': 9.0, 'delta': -0.20, 'time': '0945',
+        'regimes': [], 'vvix_max': None,
+        'recommended': True,
+    },
+    {
+        'id': 'total_champ_vvix',
+        'name': 'Champion + VVIX filter',
+        'desc': 'Total Champion but skip days when VVIX_open ≥ 110 (those days bleed). Cleaner risk.',
+        'threshold': 9.0, 'delta': -0.20, 'time': '0945',
+        'regimes': [], 'vvix_max': 110,
+        'recommended': True,
+    },
+    {
+        'id': 'balanced',
+        'name': 'Balanced',
+        'desc': 'Sweet spot — high MAR + good return. thr 9.0, delta -0.10. 87 trades, +$35k, MAR 13.1.',
+        'threshold': 9.0, 'delta': -0.10, 'time': '0945',
         'regimes': [],
         'recommended': True,
     },
     {
         'id': 'mar_champ',
         'name': 'MAR Champion',
-        'desc': 'Best risk-adjusted. thr 8.0, delta -0.10, skip R1 bleed days. 43 trades, +$19.4k, MAR 10.',
-        'threshold': 8.0, 'delta': -0.10, 'time': '0935',
-        'regimes': ['R0', 'R2', 'R3', 'R4'],
-        'recommended': True,
-    },
-    {
-        'id': 'balanced',
-        'name': 'Balanced',
-        'desc': 'Cheap wide net. thr 8.25, delta -0.10. 91 trades, +$29.6k, MAR 7.5.',
-        'threshold': 8.25, 'delta': -0.10, 'time': '0935',
+        'desc': 'Best risk-adjusted. Very cheap puts (delta -0.05) at thr 8.5. 99 trades, +$24.8k, MAR 16.4.',
+        'threshold': 8.5, 'delta': -0.05, 'time': '0945',
         'regimes': [],
         'recommended': False,
     },
     {
         'id': 'baseline',
         'name': 'Baseline (article)',
-        'desc': 'Article\'s literal default. thr 8.25, delta -0.20, no filter. 66 trades, +$33k, MAR 6.4.',
-        'threshold': 8.25, 'delta': -0.20, 'time': '0935',
+        'desc': 'Article\'s literal default. thr 8.25, delta -0.20, no filter. 67 trades, +$37.7k, MAR 5.2.',
+        'threshold': 8.25, 'delta': -0.20, 'time': '0945',
         'regimes': [],
         'recommended': False,
     },
     {
         'id': 'r3_r4_only',
         'name': 'R3+R4 (cautionary)',
-        'desc': 'Fire only in R3/R4. Look-ahead version was +$50k — HONEST is -$11.5k. Don\'t use, kept to expose the bias.',
-        'threshold': 9.5, 'delta': -0.30, 'time': '0935',
+        'desc': 'Fire only in R3/R4. Look-ahead version was +$50k — HONEST is around -$8k under Fix C. Kept as bias exhibit.',
+        'threshold': 9.5, 'delta': -0.30, 'time': '0945',
         'regimes': ['R3', 'R4'],
         'recommended': False,
     },
@@ -162,6 +171,7 @@ def main():
             threshold=pr['threshold'], delta=pr['delta'], time=pr['time'],
             regimes=regimes_str, exit_on_cross_up=False,
             cor1m_low=args.cor1m_low, cor1m_high=args.cor1m_high,
+            vvix_max=pr.get('vvix_max'),
         )
         bt = run_backtest(bt_args)
         trades = bt['trades']

@@ -88,8 +88,11 @@ def cache_spx_close(dates: list[str]) -> dict[str, float]:
 
 
 # ────────── one backtest run (no IO) ──────────
+DELTA_TOLERANCE = 0.05  # match backtest_cor1m_regime.py — skip if no put within tolerance
+
+
 def pick_put_cached(snap: dict, target_exp: str, target_delta: float,
-                     sigma: float, T: float) -> dict | None:
+                     sigma: float, T: float, tolerance: float = DELTA_TOLERANCE) -> dict | None:
     quotes = snap.get('quotes', {})
     spot = snap.get('spot', 0) or 0
     if not quotes or spot <= 0 or sigma <= 0: return None
@@ -104,6 +107,7 @@ def pick_put_cached(snap: dict, target_exp: str, target_delta: float,
         if bid <= 0 or ask <= 0 or ask < bid: continue
         d = put_delta(spot, K, T, sigma)
         diff = abs(d - target_delta)
+        if diff > tolerance: continue  # NO fallback to far-off strikes
         if diff < best_diff:
             best_diff = diff
             best = {'K': K, 'mid': (bid + ask) / 2, 'delta': d, 'spot': spot}

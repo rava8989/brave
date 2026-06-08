@@ -104,9 +104,17 @@ def load_snapshot(date_iso: str, time_tag: str) -> dict | None:
     return None
 
 
+DELTA_TOLERANCE = 0.05  # require |actual_delta - target_delta| ≤ this, else SKIP
+
+
 def pick_put_by_delta(snapshot: dict, target_exp: str, target_delta: float,
-                       sigma: float, T: float) -> dict | None:
-    """Find OTM put with BS delta closest to target_delta (negative)."""
+                       sigma: float, T: float,
+                       tolerance: float = DELTA_TOLERANCE) -> dict | None:
+    """Find OTM put with BS delta within `tolerance` of `target_delta`.
+
+    Returns None if no valid put is within tolerance — caller must skip the
+    trade (don't fall back to a junk strike, that's how the prior bug crept in).
+    """
     quotes = snapshot.get('quotes', {})
     spot = snapshot.get('spot', 0) or 0
     if not quotes or spot <= 0 or sigma <= 0:
@@ -126,6 +134,8 @@ def pick_put_by_delta(snapshot: dict, target_exp: str, target_delta: float,
             continue
         d = put_delta(spot, K, T, sigma)
         diff = abs(d - target_delta)
+        if diff > tolerance:
+            continue   # outside tolerance — skip, don't grab as fallback
         if diff < best_diff:
             best_diff = diff
             mid = (bid + ask) / 2
@@ -138,17 +148,23 @@ def pick_put_by_delta(snapshot: dict, target_exp: str, target_delta: float,
 
 
 def run(args) -> dict:
-    """NO-LOOK-AHEAD backtester.
+    """NO-LOOK-AHEAD backtester with FIX C (tolerance) and optional VVIX filter.
 
     At 9:30 AM ET on date D, we know:
       - Yesterday's full COR1M close (yesterday's EOD)
       - Today's COR1M 9:30 OPEN (just printed)
-      - Today's VIX/VIX3M/VIX9D 9:30 OPENs (just printed)
+      - Today's VIX/VIX3M/VIX9D/VVIX 9:30 OPENs (just printed)
       - 5-day rolling COR1M = average of prior 5 days' CLOSE values
     All of those are honest live data at 9:30 ET.
-    Trigger compares yesterday's CLOSE vs today's OPEN (both fully known at 9:30).
+
+    Trigger fires when yesterday's CLOSE > threshold AND today's OPEN ≤ threshold.
+
+    Put selection (Fix C): require BS delta within ±0.05 of target. If no put
+    qualifies, SKIP the trade — do NOT fall back to a junk strike.
+
+    Optional VVIX filter: --vvix-max (block trades when VVIX_open ≥ this).
     """
-    print(f'Loading data (NO-LOOK-AHEAD: 9:30 opens for today, EOD closes for prior days)...')
+    print(f'Loading data (NO-LOOK-AHEAD + Fix C: 9:30 opens, ±0.05 delta tolerance)...')
     cor1m_open, cor1m_close = load_cor1m_open_and_close()
     vt = load_vix_term()
     dates = trading_dates(args.from_date, args.to_date)
@@ -165,6 +181,9 @@ def run(args) -> dict:
     allowed = set(args.regimes.split(',')) if args.regimes else None
     if allowed:
         print(f'  Regime gating: {allowed}')
+    vvix_max = getattr(args, 'vvix_max', None)
+    if vvix_max:
+        print(f'  VVIX filter: skip trades when VVIX_open ≥ {vvix_max}')
 
     state = 'WAITING'
     prev_close = None   # yesterday's COR1M CLOSE (fully known at today's 9:30 AM)
@@ -172,7 +191,7 @@ def run(args) -> dict:
     trades = []
     triggers = []
     cum = 0.0
-    skipped = {'no_snap': 0, 'no_vix': 0, 'no_put': 0, 'no_spx_close': 0, 'regime': 0}
+    skipped = {'no_snap': 0, 'no_vix': 0, 'no_put': 0, 'no_spx_close': 0, 'regime': 0, 'vvix': 0}
 
     for d in dates:
         c_open = cor1m_open.get(d)   # today's 9:30 OPEN (the live print)
@@ -197,6 +216,14 @@ def run(args) -> dict:
                 skipped['regime'] += 1
                 if c_close is not None: prev_close = c_close
                 continue
+
+            # VVIX filter (Fix research #4: VVIX ≥ 110 days lose money historically)
+            if vvix_max is not None:
+                vvix_open = vt.get(d, {}).get('vvix_open')
+                if vvix_open is not None and vvix_open >= vvix_max:
+                    skipped['vvix'] += 1
+                    if c_close is not None: prev_close = c_close
+                    continue
 
             snap = load_snapshot(d, args.time)
             if snap is None:
@@ -309,6 +336,8 @@ def main():
     p.add_argument('--exit-on-cross-up', action='store_true')
     p.add_argument('--cor1m-low', type=float, default=None)
     p.add_argument('--cor1m-high', type=float, default=None)
+    p.add_argument('--vvix-max', type=float, default=None,
+                    help='Skip trades when VVIX_open ≥ this (default off; 110 is the historical breakpoint)')
     args = p.parse_args()
 
     out = run(args)
