@@ -643,6 +643,25 @@
       </div>
     </div>
 
+    <!-- CARD 6: Tail Hedge (companion — added 2026-06-08) -->
+    <div class="scard" id="cardTail" title="Tail Hedge (Champion + VVIX) — buy a 0DTE SPX put when stock correlation cracks. Trigger at 9:30 AM ET: yesterday's COR1M close ≥ 9.0 AND today's COR1M open ≤ 9.0. Block when VVIX open ≥ 110. Buy delta -0.20 put at 9:45 ET, hold to 4 PM. State stays TRIGGERED daily until first profitable day. Full backtester: cor1m_contango.html. Companion strategy, not part of Sigma 3.">
+      <div class="scard-header">
+        <span class="scard-label">Tail Hedge <span style="font-weight:400;font-size:10px;opacity:.7;letter-spacing:normal;text-transform:none">· companion</span></span>
+        <span class="today-trade-pill" id="pillTail" style="display:none;">▶ TODAY'S TRADE</span>
+        <span class="scard-badge" id="tailBadge">—</span>
+      </div>
+      <div class="scard-body">
+        <div class="scard-main" id="tailRec">Look up COR1M &amp; VVIX manually for now</div>
+        <div class="scard-reason" id="tailReason"></div>
+        <div style="font-size:10px;color:var(--text3);margin-top:6px;line-height:1.5;">
+          <strong>At 9:30 ET</strong>, check:<br>
+          • <code style="background:var(--bg3);padding:0 4px;border-radius:3px;">$COR1M</code> open ≤ <strong>9.0</strong> (cross from yesterday's close above 9.0)<br>
+          • <code style="background:var(--bg3);padding:0 4px;border-radius:3px;">$VVIX</code> open &lt; <strong>110</strong><br>
+          Both YES → buy 0DTE SPX put delta −0.20 at 9:45 ET. Hold to 4 PM.
+        </div>
+      </div>
+    </div>
+
   </div>
 
   <!-- copy/print row -->
@@ -853,6 +872,69 @@
       <li><strong>Not part of Sigma 3</strong> — separate sizing and separate signals. It does not displace M8BF / Straddle / GXBF / BOBF.</li>
       <li><strong>Not blocked by CPI, FED, or earnings</strong> — the default filter stack only skips OPEX-1, EOM, EOM-1, NM, and VIX 50-90%. Per-ticker earnings filters were dropped 2026-04-29 because at 30/40 strikes they cost more edge than they preserved.</li>
       <li><strong>Never two diagonals at once</strong> — because entry time equals exit time, the previous day's position exits at the exact instant the next one opens. One position in the book, always.</li>
+    </ul>
+
+    <hr class="divider">
+    <h3>Tail Hedge (Champion + VVIX) — Companion Strategy <span style="font-weight:400;font-size:12px;color:var(--text3)">(separate from Sigma 3; correlation-shock hedge using cheap 0DTE SPX puts)</span></h3>
+    <p>
+      A <strong>regime-based tail hedge</strong> that buys cheap SPX 0DTE puts on days when stocks
+      stop moving together. When correlation suddenly drops, it often snaps back with a coordinated
+      selloff — and the puts we bought for $1-5 each can pay $5,000-$15,000 when SPX drops 2-3% intraday.
+    </p>
+    <p class="muted-note" style="margin-top:4px">
+      Full interactive backtester + live regime visualization:
+      <a href="./cor1m_contango.html" style="color:var(--accent);text-decoration:underline">cor1m_contango.html</a>.
+      Backtested <strong>2022-06 → 2026-06</strong> on real ThetaData quotes (SPX option chain, COR1M + VIX-term-structure intraday).
+    </p>
+
+    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">In plain English</h4>
+    <ul>
+      <li><strong>COR1M</strong> measures how much S&amp;P 500 stocks move together. Low number = stocks doing their own thing (independent). High number = everyone selling together (panic).</li>
+      <li><strong>VVIX</strong> measures how nervous people are about VIX itself. Normal: 80-95. Spiking: above 110 = panic already priced in.</li>
+      <li>When COR1M drops below 9, the market is unusually calm and stocks are uncorrelated. <em>That's exactly when an unexpected shock tends to break things — and a cheap put pays asymmetrically.</em></li>
+      <li>When VVIX is above 110, the options market has already priced in panic, so the puts are too expensive to pay off. Skip.</li>
+    </ul>
+
+    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Daily trigger — what to look up at 9:30 AM ET</h4>
+    <ul>
+      <li><strong>Check COR1M</strong> (CBOE 1-Month Implied Correlation Index, ticker <code>$COR1M</code> on TradingView/Schwab/ToS).</li>
+      <li><strong>Check VVIX</strong> (CBOE VIX of VIX, ticker <code>$VVIX</code>).</li>
+      <li><strong>Trigger fires</strong> when: yesterday's COR1M close <strong>≥ 9.0</strong> AND today's COR1M open <strong>≤ 9.0</strong> (a fresh cross from above to below the threshold).</li>
+      <li><strong>VVIX gate:</strong> if today's VVIX open is <strong>≥ 110</strong>, skip the trade for today (puts too expensive). Stay TRIGGERED for tomorrow.</li>
+      <li>If both pass, at <strong>9:45 AM ET</strong> buy <strong>1 contract</strong> of a 0DTE SPX put with delta closest to <strong>−0.20</strong> (typically 1-2% OTM, around $1-5 premium).</li>
+      <li>Hold to <strong>4:00 PM close</strong>. If the put expires with intrinsic value, the trade pays. If SPX rallies or stays flat, the put expires worthless and you lose the premium.</li>
+    </ul>
+
+    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">State machine — keep buying until you win</h4>
+    <ul>
+      <li><strong>Once TRIGGERED, buy a put every trading morning</strong> until one of them pays off.</li>
+      <li><strong>First profitable day → exit to WAITING</strong>. No more trades until the next fresh cross.</li>
+      <li><strong>VVIX block does NOT exit</strong> — if VVIX ≥ 110 today, just skip today's buy, stay TRIGGERED.</li>
+      <li>Typical pattern: 5-10 small losses (~$100-500 each) followed by one big winner ($5k-$15k) that pays for all of them and adds profit. <em>Most days lose a little. A few days print huge. That's the trade.</em></li>
+    </ul>
+
+    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Historical results (Champion + VVIX preset, 2022-06 → 2026-06, realistic fills)</h4>
+    <ul>
+      <li><strong>67 trades</strong> over ~28 active months. 8 wins, 59 losses. Win rate <strong>11.9%</strong>.</li>
+      <li><strong>Total P/L: +$53,940</strong>. Max drawdown <strong>$4,170</strong>. <strong>MAR 12.94</strong>.</li>
+      <li>Biggest win: <strong>+$15,070</strong> (2025-10-10, SPX −3.05% intraday). Biggest loss: <strong>−$520</strong>.</li>
+      <li>Strategy was <strong>dormant 2022-06 → 2024-03</strong> — COR1M never dropped below 9.0 during the bear market. This is a low-correlation-regime hedge, not an always-on insurance policy.</li>
+    </ul>
+
+    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Why this hedges your other strategies</h4>
+    <ul>
+      <li>On your 15 worst portfolio days, Tail Hedge saved <strong>+$21,442 on 9 of them</strong> (rescued days like 2025-11-20 NVDA crash, 2026-06-05 Friday selloff).</li>
+      <li>On Tail Hedge's trade days, <strong>Diagonal historically bleeds −$4,722</strong> — the conditions that fire Tail Hedge are exactly when Diagonal struggles. Tail Hedge wins fully cover that.</li>
+      <li>Straddle is the biggest co-beneficiary — fires only 15 times in this window but adds <strong>+$23,760</strong>.</li>
+      <li>M8BF runs normally and stays profitable — Tail Hedge doesn't interfere.</li>
+    </ul>
+
+    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">What it is <em>not</em></h4>
+    <ul>
+      <li><strong>Not an always-on hedge</strong> — only fires during low-correlation regimes (most of 2024 onward). Sat dormant during 2022 bear market.</li>
+      <li><strong>Not a part of Sigma 3</strong> — separate sizing, separate signal. Companion strategy, layered on top.</li>
+      <li><strong>Not protection against gradual decline</strong> — it pays on sharp 1-day shocks (FOMC surprises, geopolitical events). Won't help on slow grinding bear markets.</li>
+      <li><strong>Not requiring a profit to exit</strong> — wait, actually yes it does: stays in buying mode until first profitable day.</li>
     </ul>
 
     <hr class="divider">
