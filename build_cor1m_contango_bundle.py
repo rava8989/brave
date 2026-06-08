@@ -119,7 +119,7 @@ def compute_max_dd_and_mar(trades):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('--from', dest='from_date', default='2023-06-01')
+    p.add_argument('--from', dest='from_date', default='2022-06-01')
     p.add_argument('--to', dest='to_date', default=date.today().isoformat())
     p.add_argument('--cor1m-low', type=float, default=9.0)
     p.add_argument('--cor1m-high', type=float, default=20.0)
