@@ -287,9 +287,11 @@ def run(args) -> dict:
                 current_trigger['days_to_profit'] = len(current_trigger['trades'])
                 current_trigger = None
 
-        # Exit on cross-up (today's OPEN > threshold AND yesterday's CLOSE ≤ threshold)
+        # Exit on cross-up (today's OPEN >= threshold AND yesterday's CLOSE <= threshold)
+        # SYMMETRIC to cross-down: both use >= / <= for boundary safety.
+        # Cross-down uses (prev_close >= threshold AND c_open <= threshold) — see §15 in methodology.
         if state == 'TRIGGERED' and args.exit_on_cross_up:
-            if c_open is not None and c_open > args.threshold and prev_close is not None and prev_close <= args.threshold:
+            if c_open is not None and c_open >= args.threshold and prev_close is not None and prev_close <= args.threshold:
                 current_trigger['exit_reason'] = f'COR1M crossed up to {c_open:.2f}'
                 current_trigger['exit_date'] = d
                 current_trigger['days_to_profit'] = len(current_trigger['trades'])
