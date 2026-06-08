@@ -105,10 +105,18 @@ def load_snapshot(date_iso: str, time_tag: str) -> dict | None:
 
 
 DELTA_TOLERANCE = 0.10  # require |actual_delta - target_delta| ≤ this, else SKIP
-# Loosened from 0.05 → 0.10 because SPX has 5-pt strike spacing near the money,
-# which makes finer delta targeting impossible — closest available is often
-# +0.08 from target. 0.10 is still a meaningful filter (rejects junk delta-0.005
-# trades) but accommodates real strike granularity.
+
+# ────────── Real-world fill assumptions ──────────
+import math as _math
+def round_mid_up(mid: float) -> float:
+    """Round entry premium UP to nearest $0.10 — accounts for paying ask + slippage.
+    e.g. $0.72 → $0.80, $1.43 → $1.50, $2.87 → $2.90."""
+    return _math.ceil(mid * 10) / 10
+
+def round_pnl_down(pnl: float) -> int:
+    """Floor P/L to nearest $10 — accounts for commissions ($1-3) + exit slippage.
+    e.g. +$5,003 → +$5,000, -$78 → -$80 (losses get slightly worse, wins get slightly cut)."""
+    return int(_math.floor(pnl / 10) * 10)
 
 
 def pick_put_by_delta(snapshot: dict, target_exp: str, target_delta: float,
@@ -142,10 +150,12 @@ def pick_put_by_delta(snapshot: dict, target_exp: str, target_delta: float,
             continue   # outside tolerance — skip, don't grab as fallback
         if diff < best_diff:
             best_diff = diff
-            mid = (bid + ask) / 2
+            mid_raw = (bid + ask) / 2
             best = {
                 'ticker': ticker, 'strike': K, 'bid': bid, 'ask': ask,
-                'mid': round(mid, 2), 'delta': round(d, 4),
+                'mid_raw': round(mid_raw, 2),         # for forensic
+                'mid': round_mid_up(mid_raw),          # what we actually pay (entry slippage)
+                'delta': round(d, 4),
                 'spot': spot, 'expiration': target_exp,
             }
     return best
@@ -259,8 +269,9 @@ def run(args) -> dict:
                 if c_close is not None: prev_close = c_close
                 continue
             intrinsic = max(put['strike'] - spx_cls, 0)
-            pnl = round((intrinsic - put['mid']) * 100, 2)
-            cum = round(cum + pnl, 2)
+            pnl_raw = (intrinsic - put['mid']) * 100  # entry mid already rounded UP
+            pnl = round_pnl_down(pnl_raw)             # floor to nearest $10 (commissions+exit slip)
+            cum = cum + pnl
 
             rec = {
                 'date': d, 'regime': day_regime,
@@ -269,11 +280,15 @@ def run(args) -> dict:
                 'cor1m_eod_close': c_close, # for forensic only
                 'vix_open': vix,
                 'spot': put['spot'], 'strike': put['strike'],
-                'bid': put['bid'], 'ask': put['ask'], 'mid': put['mid'],
+                'bid': put['bid'], 'ask': put['ask'],
+                'mid': put['mid'],          # entry premium ROUNDED UP to $0.10
+                'mid_raw': put.get('mid_raw', put['mid']),  # original (bid+ask)/2 for forensic
                 'delta': put['delta'],
                 'spx_close': spx_cls,
                 'intrinsic': round(intrinsic, 2),
-                'pnl': pnl, 'cum_pnl': cum,
+                'pnl': pnl,                # P/L FLOORED to $10 (commissions + slippage cushion)
+                'pnl_raw': round(pnl_raw, 2),  # uncrunched P/L for forensic
+                'cum_pnl': cum,
                 'trigger_date': current_trigger['trigger_date'],
             }
             trades.append(rec)

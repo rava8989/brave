@@ -89,6 +89,9 @@ def cache_spx_close(dates: list[str]) -> dict[str, float]:
 
 # ────────── one backtest run (no IO) ──────────
 DELTA_TOLERANCE = 0.10  # match backtest_cor1m_regime.py — loosened for SPX 5-pt strike spacing
+import math as _math
+def round_mid_up(mid):  return _math.ceil(mid * 10) / 10
+def round_pnl_down(pnl): return int(_math.floor(pnl / 10) * 10)
 
 
 def pick_put_cached(snap: dict, target_exp: str, target_delta: float,
@@ -110,7 +113,7 @@ def pick_put_cached(snap: dict, target_exp: str, target_delta: float,
         if diff > tolerance: continue  # NO fallback to far-off strikes
         if diff < best_diff:
             best_diff = diff
-            best = {'K': K, 'mid': (bid + ask) / 2, 'delta': d, 'spot': spot}
+            best = {'K': K, 'mid': round_mid_up((bid + ask) / 2), 'delta': d, 'spot': spot}
     return best
 
 
@@ -162,7 +165,7 @@ def run_one(dates, cor1m_open, cor1m_close, cls, snap_cache, vix_cache, spx_clos
                 if c_close is not None: prev_close = c_close
                 continue
             intrinsic = max(put['K'] - spx_cls, 0)
-            pnl = (intrinsic - put['mid']) * 100
+            pnl = round_pnl_down((intrinsic - put['mid']) * 100)  # mid already rounded up
             cum += pnl
             trades.append({'date': d, 'regime': day_regime, 'pnl': pnl, 'cum': cum,
                             'K': put['K'], 'mid': put['mid'], 'delta': put['delta']})
