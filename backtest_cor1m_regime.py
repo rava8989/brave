@@ -104,7 +104,11 @@ def load_snapshot(date_iso: str, time_tag: str) -> dict | None:
     return None
 
 
-DELTA_TOLERANCE = 0.05  # require |actual_delta - target_delta| ≤ this, else SKIP
+DELTA_TOLERANCE = 0.10  # require |actual_delta - target_delta| ≤ this, else SKIP
+# Loosened from 0.05 → 0.10 because SPX has 5-pt strike spacing near the money,
+# which makes finer delta targeting impossible — closest available is often
+# +0.08 from target. 0.10 is still a meaningful filter (rejects junk delta-0.005
+# trades) but accommodates real strike granularity.
 
 
 def pick_put_by_delta(snapshot: dict, target_exp: str, target_delta: float,
@@ -198,11 +202,15 @@ def run(args) -> dict:
         c_close = cor1m_close.get(d) # today's EOD CLOSE (only used to update prev_close after)
 
         # Trigger detection at 9:30 today:
-        #   yesterday's CLOSE > threshold AND today's OPEN ≤ threshold
-        # (yesterday's close is the last fully-known value, today's open is the
-        # just-printed 9:30 reading — both are honest data at 9:30 ET)
+        #   yesterday's CLOSE >= threshold AND today's OPEN ≤ threshold
+        # We use >= (not strict >) to catch boundary cases — e.g. 2026-05-27
+        # closed at EXACTLY 9.00 (the threshold). Strict > would treat that as
+        # "not above" and miss the cross on 5-28 (open 8.85). With >=, the
+        # cross fires correctly. The only edge case >= introduces is a flat-
+        # at-threshold sequence (prev=9.00 AND open=9.00), which would spuri-
+        # ously trigger — but that's extremely rare and is just one extra trade.
         if state == 'WAITING' and c_open is not None and c_open <= args.threshold:
-            if prev_close is None or prev_close > args.threshold:
+            if prev_close is None or prev_close >= args.threshold:
                 state = 'TRIGGERED'
                 current_trigger = {
                     'trigger_date': d, 'cor1m_at_trigger': c_open,

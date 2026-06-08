@@ -88,7 +88,7 @@ def cache_spx_close(dates: list[str]) -> dict[str, float]:
 
 
 # ────────── one backtest run (no IO) ──────────
-DELTA_TOLERANCE = 0.05  # match backtest_cor1m_regime.py — skip if no put within tolerance
+DELTA_TOLERANCE = 0.10  # match backtest_cor1m_regime.py — loosened for SPX 5-pt strike spacing
 
 
 def pick_put_cached(snap: dict, target_exp: str, target_delta: float,
@@ -128,7 +128,7 @@ def run_one(dates, cor1m_open, cor1m_close, cls, snap_cache, vix_cache, spx_clos
         c_close = cor1m_close.get(d)
 
         if state == 'WAITING' and c_open is not None and c_open <= threshold:
-            if prev_close is None or prev_close > threshold:
+            if prev_close is None or prev_close >= threshold:  # >= catches 9.00 boundary
                 state = 'TRIGGERED'
 
         if state == 'TRIGGERED':
