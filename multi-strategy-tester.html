@@ -469,11 +469,11 @@ body {
     </div>
 
     <div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px;font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.05em;margin:14px 0 8px;">
-      Tail Hedge — fixed contracts
-      <span style="font-weight:500;color:var(--text3);text-transform:none;letter-spacing:0;">max risk $200/contract · sized differently from the Sigma 3 strategies (not % allocation)</span>
+      Tail Hedge — contracts per $50k of equity
+      <span style="font-weight:500;color:var(--text3);text-transform:none;letter-spacing:0;">scales with portfolio value · sized differently from the Sigma 3 strategies (not % allocation)</span>
     </div>
-    <div class="sz-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">
-      <div class="sz-field"><label class="sz-label" for="szT_tail">Tail Hedge contracts <span class="sz-dot" data-tip="Fixed number of contracts traded on every Sweet Spot trigger day. Max risk per contract is $200 (worst put premium paid historically was $5.20 = $520 — leaving buffer for slippage). 0 = strategy off.">ⓘ</span></label>
+    <div class="sz-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr))">
+      <div class="sz-field"><label class="sz-label" for="szT_tail">Contracts per $50k <span class="sz-dot" data-tip="On each trigger day, Tail Hedge contracts = floor(equity × N / $50,000). Example: N=2 → 2 contracts per $50k of equity → 4 ct at $100k, 8 ct at $200k, 1 ct at $25k, 0 ct under $25k. Max risk per contract is $200 (worst Sweet Spot trade historically was -$520). 0 = strategy off.">ⓘ</span></label>
         <div class="sz-wrap"><input id="szT_tail" class="sz-input" type="number" value="1" min="0" step="1"></div></div>
     </div>
 
@@ -871,8 +871,11 @@ function _sizingRun() {
     maxCt[k] = (raw !== '' && Number.isFinite(n) && n > 0) ? n : null;
   }
 
-  // Tail Hedge — fixed contracts (NOT allocation-based). 0 = strategy off.
-  const tailContracts = Math.max(0, parseInt(document.getElementById('szT_tail')?.value, 10) || 0);
+  // Tail Hedge — contracts-per-$50k-equity scaling.
+  // contracts = floor(equity × N / 50000). N=1 default → 1 ct/$50k, 2 ct/$100k.
+  // (Distinct from % allocation: this scales linearly with account value, with
+  // a $50k granularity step — no fractional contracts, no fixed dollar budget.)
+  const tailPer50k = Math.max(0, parseInt(document.getElementById('szT_tail')?.value, 10) || 0);
 
   // Compact currency so values always fit their cell (Option-Omega style):
   // < $1M shown in full with commas; $1M+ abbreviated M/B/T.
@@ -912,8 +915,9 @@ function _sizingRun() {
       if (v == null || v === 0) continue;
       let contracts;
       if (k === 'tail') {
-        // Tail Hedge: fixed contracts (not % allocation). 0 = off.
-        contracts = tailContracts;
+        // Tail Hedge: contracts-per-$50k-equity scaling.
+        // contracts = floor(equity × N / 50000). 0 = strategy off.
+        contracts = tailPer50k > 0 ? Math.floor(equity * tailPer50k / 50000) : 0;
         if (contracts < 1) continue;
       } else {
         // Sigma 3 + Diagonal: Option-Omega style compounding % allocation.
