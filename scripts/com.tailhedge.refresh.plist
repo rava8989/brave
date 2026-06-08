@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tailhedge.refresh</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/ravshanrakhmanov/Desktop/spx-backtester/spx-backtester/scripts/refresh_tail_hedge.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/ravshanrakhmanov/Desktop/spx-backtester/spx-backtester</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/ravshanrakhmanov</string>
+    </dict>
+
+    <!-- Run every weekday at 5:00 PM ET (after market close, settle data ready) -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>17</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>17</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>17</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>17</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>17</integer><key>Minute</key><integer>0</integer></dict>
+    </array>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/ravshanrakhmanov/Desktop/spx-backtester/spx-backtester/scripts/refresh_tail_hedge.launchd.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/ravshanrakhmanov/Desktop/spx-backtester/spx-backtester/scripts/refresh_tail_hedge.launchd.log</string>
+</dict>
+</plist>
