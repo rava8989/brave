@@ -46,7 +46,7 @@ from backtest_cor1m_put import (
 )
 from regime_classifier import (
     load_vix_term, classify_series, RegimeThresholds, REGIMES,
-    load_cor1m_open_and_close,
+    load_cor1m_open_and_close, load_cor1m_hourly_bars, detect_cross_entries,
 )
 
 
@@ -178,12 +178,16 @@ def run(args) -> dict:
 
     Optional VVIX filter: --vvix-max (block trades when VVIX_open ≥ this).
     """
-    print(f'Loading data (NO-LOOK-AHEAD + Fix C: 9:30 opens, ±0.05 delta tolerance)...')
+    print(f'Loading data (NO-LOOK-AHEAD + Fix C + any-cross trigger)...')
     cor1m_open, cor1m_close = load_cor1m_open_and_close()
+    cor1m_bars = load_cor1m_hourly_bars()
     vt = load_vix_term()
     dates = trading_dates(args.from_date, args.to_date)
-    print(f'  COR1M opens: {len(cor1m_open)}  |  COR1M closes: {len(cor1m_close)}  |  '
-          f'VIX-term: {len(vt)}  |  Backtest dates: {len(dates)}')
+    # Detect ALL cross-down events (intraday + overnight). Same-day entry if cross at 9:30,
+    # otherwise next trading day at 9:45.
+    entry_days = detect_cross_entries(cor1m_bars, args.threshold, US_HOLIDAYS)
+    print(f'  COR1M opens: {len(cor1m_open)}  closes: {len(cor1m_close)}  bars: {len(cor1m_bars)}  '
+          f'cross entries: {len(entry_days)}  |  VIX-term: {len(vt)}  dates: {len(dates)}')
 
     th = RegimeThresholds()
     if args.cor1m_low is not None:
@@ -208,25 +212,19 @@ def run(args) -> dict:
     skipped = {'no_snap': 0, 'no_vix': 0, 'no_put': 0, 'no_spx_close': 0, 'regime': 0, 'vvix': 0}
 
     for d in dates:
-        c_open = cor1m_open.get(d)   # today's 9:30 OPEN (the live print)
-        c_close = cor1m_close.get(d) # today's EOD CLOSE (only used to update prev_close after)
+        c_open = cor1m_open.get(d)   # today's 9:30 OPEN (live print, used for record)
+        c_close = cor1m_close.get(d) # today's EOD CLOSE (forensic only)
 
-        # Trigger detection at 9:30 today:
-        #   yesterday's CLOSE >= threshold AND today's OPEN ≤ threshold
-        # We use >= (not strict >) to catch boundary cases — e.g. 2026-05-27
-        # closed at EXACTLY 9.00 (the threshold). Strict > would treat that as
-        # "not above" and miss the cross on 5-28 (open 8.85). With >=, the
-        # cross fires correctly. The only edge case >= introduces is a flat-
-        # at-threshold sequence (prev=9.00 AND open=9.00), which would spuri-
-        # ously trigger — but that's extremely rare and is just one extra trade.
-        if state == 'WAITING' and c_open is not None and c_open <= args.threshold:
-            if prev_close is None or prev_close >= args.threshold:
-                state = 'TRIGGERED'
-                current_trigger = {
-                    'trigger_date': d, 'cor1m_at_trigger': c_open,
-                    'trades': [], 'total_pnl': 0.0,
-                }
-                triggers.append(current_trigger)
+        # Trigger detection: any cross-down in COR1M hourly bars maps to an entry day.
+        # Entry day = same day if cross was at 9:30; otherwise next trading day.
+        # State machine: only fire from WAITING; absorbed crosses don't restart.
+        if state == 'WAITING' and d in entry_days:
+            state = 'TRIGGERED'
+            current_trigger = {
+                'trigger_date': d, 'cor1m_at_trigger': c_open,
+                'trades': [], 'total_pnl': 0.0,
+            }
+            triggers.append(current_trigger)
 
         if state == 'TRIGGERED':
             day_regime = cls.get(d, {}).get('regime', 'R0')

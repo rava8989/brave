@@ -28,7 +28,7 @@ from backtest_cor1m_put import (
 )
 from regime_classifier import (
     load_vix_term, classify_series, RegimeThresholds, REGIMES,
-    load_cor1m_open_and_close,
+    load_cor1m_open_and_close, load_cor1m_hourly_bars, detect_cross_entries,
 )
 from backtest_cor1m_regime import put_delta, time_to_close
 
@@ -117,9 +117,9 @@ def pick_put_cached(snap: dict, target_exp: str, target_delta: float,
     return best
 
 
-def run_one(dates, cor1m_open, cor1m_close, cls, snap_cache, vix_cache, spx_close,
-             threshold, delta_target, time_tag, allowed_regimes):
-    """NO-LOOK-AHEAD: uses 9:30 OPEN for today's trigger, prior days' CLOSE for prev."""
+def run_one(dates, entry_days, cor1m_open, cor1m_close, cls, snap_cache, vix_cache, spx_close,
+             threshold, delta_target, time_tag, allowed_regimes, vvix_max=None, vt=None):
+    """ANY-CROSS trigger: entry_days is pre-computed set of trade-start dates."""
     state = 'WAITING'; prev_close = None
     trades = []
     cum = 0.0
@@ -130,15 +130,20 @@ def run_one(dates, cor1m_open, cor1m_close, cls, snap_cache, vix_cache, spx_clos
         c_open = cor1m_open.get(d)
         c_close = cor1m_close.get(d)
 
-        if state == 'WAITING' and c_open is not None and c_open <= threshold:
-            if prev_close is None or prev_close >= threshold:  # >= catches 9.00 boundary
-                state = 'TRIGGERED'
+        if state == 'WAITING' and d in entry_days:
+            state = 'TRIGGERED'
 
         if state == 'TRIGGERED':
             day_regime = cls.get(d, {}).get('regime', 'R0')
             if allowed_regimes and day_regime not in allowed_regimes:
                 if c_close is not None: prev_close = c_close
                 continue
+            # VVIX filter
+            if vvix_max is not None and vt is not None:
+                v = vt.get(d, {}).get('vvix_open')
+                if v is not None and v >= vvix_max:
+                    if c_close is not None: prev_close = c_close
+                    continue
 
             snap = snap_cache.get((d, time_tag))
             if snap is None:
@@ -205,12 +210,14 @@ def run_one(dates, cor1m_open, cor1m_close, cls, snap_cache, vix_cache, spx_clos
 
 # ────────── main sweep ──────────
 def main():
-    print('Loading data (NO-LOOK-AHEAD: 9:30 opens for trigger + regime)...')
+    print('Loading data (NO-LOOK-AHEAD + any-cross trigger + Fix C)...')
     cor1m_open, cor1m_close = load_cor1m_open_and_close()
+    cor1m_bars = load_cor1m_hourly_bars()
     vt = load_vix_term()
-    dates = trading_dates('2023-06-01', date.today().isoformat())
+    dates = trading_dates('2022-06-01', date.today().isoformat())
     cls = classify_series(dates, cor1m_open, cor1m_close, vt, RegimeThresholds())
-    print(f'  {len(dates)} trading days  |  COR1M opens: {len(cor1m_open)}  closes: {len(cor1m_close)}')
+    print(f'  {len(dates)} trading days  |  COR1M bars: {len(cor1m_bars)}  '
+          f'opens: {len(cor1m_open)}  closes: {len(cor1m_close)}')
 
     times = ['0935', '0945', '1000']
     print(f'  Caching snapshots @ {times}...')
@@ -227,32 +234,36 @@ def main():
     spx_close = cache_spx_close(dates)
     print(f'  SPX closes: {len(spx_close)}')
 
-    # ────────── grid ──────────
-    # Fine-grained sweep — 0.25 thresholds, 0.025 deltas
-    THRESHOLDS = [7.0, 7.25, 7.5, 7.75, 8.0, 8.25, 8.5, 8.75, 9.0, 9.25, 9.5, 9.75, 10.0, 10.25, 10.5]
-    DELTAS = [-0.05, -0.075, -0.10, -0.125, -0.15, -0.175, -0.20, -0.225, -0.25, -0.275, -0.30, -0.35, -0.40]
-    TIMES = ['0935', '0945', '1000']
+    # ────────── grid (any-cross trigger; VVIX filter explored) ──────────
+    THRESHOLDS = [7.0, 7.25, 7.5, 7.75, 8.0, 8.25, 8.5, 8.75, 9.0, 9.25, 9.5]
+    DELTAS = [-0.05, -0.075, -0.10, -0.125, -0.15, -0.175, -0.20, -0.225, -0.25, -0.275, -0.30]
+    TIMES = ['0945']  # canonical entry time
+    VVIX_MAXES = [None, 110, 100]
     REGIME_SETS = {
         'ALL': None,
         'NO_R1': {'R2','R3','R4','R0'},
-        'R3_R4_ONLY': {'R3','R4'},
-        'R4_ONLY': {'R4'},
-        'R0_R3_R4': {'R0','R3','R4'},
-        'EXCLUDE_R1_R2': {'R0','R3','R4'},
     }
 
-    grid = list(product(TIMES, THRESHOLDS, DELTAS, REGIME_SETS.items()))
+    # Pre-detect cross entries per threshold (expensive otherwise)
+    print(f'\nPre-detecting cross entry days for each threshold...')
+    entries_by_thr = {th: detect_cross_entries(cor1m_bars, th, US_HOLIDAYS) for th in THRESHOLDS}
+    for th, e in entries_by_thr.items():
+        print(f'  thr {th}: {len(e)} entry days')
+
+    grid = list(product(TIMES, THRESHOLDS, DELTAS, VVIX_MAXES, REGIME_SETS.items()))
     print(f'\nGrid: {len(grid)} configs')
 
     rows = []
     t0 = time.time()
-    for i, (tm, th, dl, (rg_name, rg_set)) in enumerate(grid, 1):
-        r = run_one(dates, cor1m_open, cor1m_close, cls, snap_cache, vix_cache, spx_close,
-                    th, dl, tm, rg_set)
+    for i, (tm, th, dl, vvm, (rg_name, rg_set)) in enumerate(grid, 1):
+        entry_days = entries_by_thr[th]
+        r = run_one(dates, entry_days, cor1m_open, cor1m_close, cls, snap_cache, vix_cache, spx_close,
+                    th, dl, tm, rg_set, vvix_max=vvm, vt=vt)
         if r is None or r['n'] < 5:  # skip configs with too few trades to matter
             continue
         rows.append({
             'time': tm, 'threshold': th, 'delta': dl, 'regimes': rg_name,
+            'vvix_max': vvm if vvm is not None else 999,
             **{k: round(v, 2) if isinstance(v, float) else v
                for k, v in r.items() if k != 'by_regime'},
         })

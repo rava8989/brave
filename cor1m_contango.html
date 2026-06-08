@@ -147,12 +147,12 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);font-
 <div class="banner">
   <div class="banner-title">TAIL HEDGE — COR1M × VIX TERM STRUCTURE</div>
   <div class="banner-desc">
-    <strong>What it does:</strong> Buy a cheap 0DTE SPX put at 9:45 AM ET on days when stock correlation (COR1M) crashes below 9.0 and VVIX is calm (under 110).
-    Hold to 4 PM close. Most days lose a little ($100-500). A few days print huge ($5k-$15k) when the market shocks.
+    <strong>What it does:</strong> Buy a cheap 0DTE SPX put when stock correlation (COR1M) drops below a threshold (default 9.0). VVIX must be under 110 (otherwise puts are too expensive).
+    Hold to 4 PM close. Most days lose a little; a few days print huge when the market shocks.
     <br>
-    <strong>The signal:</strong> At 9:30 AM check <code>$COR1M</code> open and <code>$VVIX</code> open. Trigger fires on fresh cross from above-9 to below-9. VVIX ≥ 110 blocks that day. Keep buying every day until first profitable day, then back to waiting.
+    <strong>The trigger (ANY cross):</strong> Watch COR1M hourly bars. Whenever it crosses from above to at-or-below the threshold (intraday OR overnight), enter at the next 9:45 AM ET. If the cross is at the 9:30 bar (overnight) → trade same day. If the cross is at 10:30 or later (intraday) → trade tomorrow at 9:45. Keep buying every day until first profitable day, then back to WAITING.
     <br>
-    <strong>The page:</strong> Pick a preset above (Champion + VVIX recommended) to see its equity curve, trade log, and per-regime performance. All numbers are NO-LOOK-AHEAD (uses 9:30 opens only) with conservative fills (entry mid rounded UP to $0.10, P/L floored to $10 for commissions + slippage).
+    <strong>The page:</strong> All numbers are NO-LOOK-AHEAD (9:30 opens only) with conservative fills (entry mid rounded UP to $0.10, P/L floored to $10). Pick a preset above to see its equity curve, trade log, and per-regime performance.
   </div>
 </div>
 

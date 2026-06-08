@@ -644,20 +644,21 @@
     </div>
 
     <!-- CARD 6: Tail Hedge (companion — added 2026-06-08) -->
-    <div class="scard" id="cardTail" title="Tail Hedge (Champion + VVIX) — buy a 0DTE SPX put when stock correlation cracks. Trigger at 9:30 AM ET: yesterday's COR1M close ≥ 9.0 AND today's COR1M open ≤ 9.0. Block when VVIX open ≥ 110. Buy delta -0.20 put at 9:45 ET, hold to 4 PM. State stays TRIGGERED daily until first profitable day. Full backtester: cor1m_contango.html. Companion strategy, not part of Sigma 3.">
+    <div class="scard" id="cardTail" title="Tail Hedge (Total Champion) — buy a 0DTE SPX put when correlation cracks. ANY-cross trigger: watch COR1M hourly bars; whenever it crosses from above to at-or-below 9.0 (intraday or overnight), enter at the next 9:45 AM ET. VVIX gate: block when VVIX_open ≥ 110. Delta -0.20 put, hold to 4 PM. State stays TRIGGERED daily until first profitable day. Full backtester: cor1m_contango.html.">
       <div class="scard-header">
         <span class="scard-label">Tail Hedge <span style="font-weight:400;font-size:10px;opacity:.7;letter-spacing:normal;text-transform:none">· companion</span></span>
         <span class="today-trade-pill" id="pillTail" style="display:none;">▶ TODAY'S TRADE</span>
         <span class="scard-badge" id="tailBadge">—</span>
       </div>
       <div class="scard-body">
-        <div class="scard-main" id="tailRec">Look up COR1M &amp; VVIX manually for now</div>
+        <div class="scard-main" id="tailRec">Watch COR1M hourly for the next cross-down</div>
         <div class="scard-reason" id="tailReason"></div>
         <div style="font-size:10px;color:var(--text3);margin-top:6px;line-height:1.5;">
-          <strong>At 9:30 ET</strong>, check:<br>
-          • <code style="background:var(--bg3);padding:0 4px;border-radius:3px;">$COR1M</code> open ≤ <strong>9.0</strong> (cross from yesterday's close above 9.0)<br>
-          • <code style="background:var(--bg3);padding:0 4px;border-radius:3px;">$VVIX</code> open &lt; <strong>110</strong><br>
-          Both YES → buy 0DTE SPX put delta −0.20 at 9:45 ET. Hold to 4 PM.
+          <strong>Trigger fires on ANY cross</strong> of <code style="background:var(--bg3);padding:0 4px;border-radius:3px;">$COR1M</code> from above to at-or-below <strong>9.0</strong>:<br>
+          • Cross at 9:30 bar (overnight) → trade <strong>today</strong> at 9:45<br>
+          • Cross at 10:30+ (intraday) → trade <strong>tomorrow</strong> at 9:45<br>
+          • Gate: <code style="background:var(--bg3);padding:0 4px;border-radius:3px;">$VVIX</code> open must be &lt; <strong>110</strong><br>
+          Buy 0DTE SPX put delta −0.20, hold to 4 PM. Keep buying daily until profit.
         </div>
       </div>
     </div>
@@ -895,14 +896,19 @@
       <li>When VVIX is above 110, the options market has already priced in panic, so the puts are too expensive to pay off. Skip.</li>
     </ul>
 
-    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Daily trigger — what to look up at 9:30 AM ET</h4>
+    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Daily trigger — ANY cross fires it</h4>
     <ul>
-      <li><strong>Check COR1M</strong> (CBOE 1-Month Implied Correlation Index, ticker <code>$COR1M</code> on TradingView/Schwab/ToS).</li>
-      <li><strong>Check VVIX</strong> (CBOE VIX of VIX, ticker <code>$VVIX</code>).</li>
-      <li><strong>Trigger fires</strong> when: yesterday's COR1M close <strong>≥ 9.0</strong> AND today's COR1M open <strong>≤ 9.0</strong> (a fresh cross from above to below the threshold).</li>
-      <li><strong>VVIX gate:</strong> if today's VVIX open is <strong>≥ 110</strong>, skip the trade for today (puts too expensive). Stay TRIGGERED for tomorrow.</li>
-      <li>If both pass, at <strong>9:45 AM ET</strong> buy <strong>1 contract</strong> of a 0DTE SPX put with delta closest to <strong>−0.20</strong> (typically 1-2% OTM, around $1-5 premium).</li>
-      <li>Hold to <strong>4:00 PM close</strong>. If the put expires with intrinsic value, the trade pays. If SPX rallies or stays flat, the put expires worthless and you lose the premium.</li>
+      <li><strong>Watch COR1M hourly</strong> (CBOE 1-Month Implied Correlation Index, ticker <code>$COR1M</code>). Each hourly bar prints at 9:30, 10:30, 11:30, ... 15:30 ET.</li>
+      <li><strong>The trigger:</strong> whenever COR1M transitions from <em>above 9.0</em> to <em>at-or-below 9.0</em> on consecutive bars. That includes overnight gaps (yesterday's 15:30 bar was above, today's 9:30 bar is below) AND intraday moves (e.g. today's 9:30 was above, today's 10:30 is below).</li>
+      <li><strong>When to enter:</strong>
+        <ul>
+          <li>Cross detected at the <strong>9:30 bar (overnight cross)</strong> → trade <strong>same day</strong> at 9:45 AM ET.</li>
+          <li>Cross detected at <strong>10:30 or later (intraday cross)</strong> → trade <strong>next trading day</strong> at 9:45 AM ET.</li>
+        </ul>
+      </li>
+      <li><strong>VVIX gate:</strong> on the trade day, check <code>$VVIX</code> open. If <strong>VVIX ≥ 110</strong>, skip the trade that day (puts too expensive). Stay TRIGGERED for tomorrow.</li>
+      <li>If trigger active AND VVIX OK, at <strong>9:45 AM ET</strong> buy <strong>1 contract</strong> of a 0DTE SPX put with delta closest to <strong>−0.20</strong> (typically 1-2% OTM, around $1-5 premium).</li>
+      <li>Hold to <strong>4:00 PM close</strong>. Put settles to intrinsic value (or expires worthless if SPX above strike).</li>
     </ul>
 
     <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">State machine — keep buying until you win</h4>
@@ -913,12 +919,13 @@
       <li>Typical pattern: 5-10 small losses (~$100-500 each) followed by one big winner ($5k-$15k) that pays for all of them and adds profit. <em>Most days lose a little. A few days print huge. That's the trade.</em></li>
     </ul>
 
-    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Historical results (Champion + VVIX preset, 2022-06 → 2026-06, realistic fills)</h4>
+    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Historical results (Total Champion preset, 2022-06 → 2026-06, any-cross trigger, realistic fills)</h4>
     <ul>
-      <li><strong>67 trades</strong> over ~28 active months. 8 wins, 59 losses. Win rate <strong>11.9%</strong>.</li>
-      <li><strong>Total P/L: +$53,940</strong>. Max drawdown <strong>$4,170</strong>. <strong>MAR 12.94</strong>.</li>
-      <li>Biggest win: <strong>+$15,070</strong> (2025-10-10, SPX −3.05% intraday). Biggest loss: <strong>−$520</strong>.</li>
-      <li>Strategy was <strong>dormant 2022-06 → 2024-03</strong> — COR1M never dropped below 9.0 during the bear market. This is a low-correlation-regime hedge, not an always-on insurance policy.</li>
+      <li><strong>134 trades</strong> over ~28 active months. 15 wins, 119 losses. Win rate <strong>11.2%</strong>.</li>
+      <li><strong>Total P/L: +$57,190</strong>. Max drawdown <strong>$5,990</strong>. <strong>MAR 9.55</strong>.</li>
+      <li>Biggest win: <strong>+$15,070</strong> (2025-10-10, SPX −3.05% intraday). Biggest loss: <strong>−$1,880</strong>.</li>
+      <li><strong>Sweet Spot variant</strong> (thr 7.75, half the activity): <strong>59 trades, +$50,880, MAR 9.56, worst loss only −$520</strong>. Same edge with much cleaner risk profile.</li>
+      <li>Strategy was <strong>dormant 2022-06 → 2024-03</strong> — COR1M never dropped below 9.0 during the bear market. Low-correlation-regime hedge, not always-on insurance.</li>
     </ul>
 
     <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Why this hedges your other strategies</h4>

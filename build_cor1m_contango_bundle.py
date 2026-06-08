@@ -44,57 +44,58 @@ class A:
     def __init__(self, **kw): self.__dict__.update(kw)
 
 
-# ────────── presets — NO-LOOK-AHEAD + FIX C (rebuilt 2026-06-08) ──────────
-# Two fixes baked in:
-#  • NO LOOK-AHEAD: use 9:30 OPEN for trigger + regime classification
-#  • FIX C: require BS delta within ±0.05 of target (skip if no valid put);
-#    entry shifted to 09:45 where the chain is actually quoted (9:35 was
-#    too sparse — see methodology §14)
+# ─── presets — ANY-CROSS TRIGGER + FIX C + NO-LOOK-AHEAD (rebuilt 2026-06-08) ───
+# Trigger: any cross-down in COR1M hourly bars (intraday OR overnight)
+#   - Cross at 9:30 bar → trade SAME day at 9:45
+#   - Cross at 10:30 or later → trade NEXT trading day at 9:45
+# Fix C: require BS delta within ±0.10 of target; skip if no valid put
+# No look-ahead: regime uses 9:30 opens only
+# Conservative fills: entry mid rounded UP to $0.10, P/L floored to $10
 PRESETS = [
     {
         'id': 'total_champ',
         'name': 'Total Champion',
-        'desc': 'Most absolute return. thr 9.0, delta -0.20, no filter, 9:45. 71 trades, +$42.3k, MAR 6.9.',
-        'threshold': 9.0, 'delta': -0.20, 'time': '0945',
-        'regimes': [], 'vvix_max': None,
-        'recommended': True,
-    },
-    {
-        'id': 'total_champ_vvix',
-        'name': 'Champion + VVIX filter',
-        'desc': 'Total Champion but skip days when VVIX_open ≥ 110 (those days bleed). Cleaner risk.',
+        'desc': 'Most absolute return. thr 9.0, delta -0.20, VVIX<110. 134 trades, +$57.2k, MAR 9.55. Catches every cross.',
         'threshold': 9.0, 'delta': -0.20, 'time': '0945',
         'regimes': [], 'vvix_max': 110,
         'recommended': True,
     },
     {
-        'id': 'balanced',
-        'name': 'Balanced',
-        'desc': 'Sweet spot — high MAR + good return. thr 9.0, delta -0.10. 87 trades, +$35k, MAR 13.1.',
-        'threshold': 9.0, 'delta': -0.10, 'time': '0945',
-        'regimes': [],
+        'id': 'sweet_spot',
+        'name': 'Sweet Spot',
+        'desc': 'Cleanest profile. thr 7.75, delta -0.20, VVIX<110. 59 trades, +$50.9k, MAR 9.56. Worst trade only -$520. Half the activity of Total Champion.',
+        'threshold': 7.75, 'delta': -0.20, 'time': '0945',
+        'regimes': [], 'vvix_max': 110,
         'recommended': True,
     },
     {
         'id': 'mar_champ',
         'name': 'MAR Champion',
-        'desc': 'Best risk-adjusted (upgraded). thr 9.0, delta -0.075. 110 trades, +$33.6k, MAR 16.1. Walk-forward MAR ~9 both halves.',
-        'threshold': 9.0, 'delta': -0.075, 'time': '0945',
-        'regimes': [], 'vvix_max': None,
+        'desc': 'Best risk-adjusted. thr 7.75, delta -0.075, VVIX<110. 93 trades, +$30.5k, MAR 16.83. Worst trade only -$200.',
+        'threshold': 7.75, 'delta': -0.075, 'time': '0945',
+        'regimes': [], 'vvix_max': 110,
         'recommended': False,
     },
     {
-        'id': 'high_wr_champ',
-        'name': 'High-WR Champion',
-        'desc': 'Fewer trades, higher hit rate. thr 9.25, delta -0.30. 41 trades, 27% WR, +$42.8k, MAR 10.1.',
-        'threshold': 9.25, 'delta': -0.30, 'time': '0945',
-        'regimes': [], 'vvix_max': None,
+        'id': 'balanced',
+        'name': 'Balanced',
+        'desc': 'Middle ground. thr 7.75, delta -0.10, VVIX<110. 87 trades, +$30.6k, MAR 12.91. Worst trade -$280.',
+        'threshold': 7.75, 'delta': -0.10, 'time': '0945',
+        'regimes': [], 'vvix_max': 110,
+        'recommended': False,
+    },
+    {
+        'id': 'wide_champ',
+        'name': 'Wide Net',
+        'desc': 'Higher threshold catches more crosses. thr 9.5, delta -0.20, VVIX<110. 186 trades, +$47.8k, MAR 5.98.',
+        'threshold': 9.5, 'delta': -0.20, 'time': '0945',
+        'regimes': [], 'vvix_max': 110,
         'recommended': False,
     },
     {
         'id': 'baseline',
         'name': 'Baseline (article)',
-        'desc': 'Article\'s literal default. thr 8.25, delta -0.20, no filter. 67 trades, +$37.7k, MAR 5.2.',
+        'desc': 'Article\'s default settings. thr 8.25, delta -0.20, no VVIX filter. Validates the original concept.',
         'threshold': 8.25, 'delta': -0.20, 'time': '0945',
         'regimes': [], 'vvix_max': None,
         'recommended': False,
