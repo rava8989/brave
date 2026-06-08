@@ -96,15 +96,7 @@ PRESETS = [
         'name': 'Baseline (article)',
         'desc': 'Article\'s literal default. thr 8.25, delta -0.20, no filter. 67 trades, +$37.7k, MAR 5.2.',
         'threshold': 8.25, 'delta': -0.20, 'time': '0945',
-        'regimes': [],
-        'recommended': False,
-    },
-    {
-        'id': 'r3_r4_only',
-        'name': 'R3+R4 (cautionary)',
-        'desc': 'Fire only in R3/R4. Look-ahead version was +$50k — HONEST is around -$8k under Fix C. Kept as bias exhibit.',
-        'threshold': 9.5, 'delta': -0.30, 'time': '0945',
-        'regimes': ['R3', 'R4'],
+        'regimes': [], 'vvix_max': None,
         'recommended': False,
     },
 ]
