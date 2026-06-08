@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<title>SPX-BF // Tail Hedge</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
+<script src="https://cdn.plot.ly/plotly-2.27.0.min.js" charset="utf-8"></script>
+<style>
+:root{
+  --bg:#f1f5f9; --bg2:#ffffff; --bg3:#f8fafc; --border:#e2e8f0;
+  --text:#1e293b; --text2:#475569; --text3:#94a3b8;
+  --accent:#6366f1; --accent2:#818cf8;
+  --green:#22c55e; --red:#ef4444; --amber:#f59e0b; --violet:#8b5cf6;
+  --shadow:0 1px 3px rgba(0,0,0,.07),0 4px 16px rgba(0,0,0,.05);
+  --radius:12px; --radius-sm:8px;
+}
+[data-theme="dark"]{
+  --bg:#0f172a; --bg2:#1e293b; --bg3:#162032; --border:#2d3f55;
+  --text:#e2e8f0; --text2:#94a3b8; --text3:#475569;
+  --accent:#818cf8; --accent2:#6366f1;
+  --shadow:0 1px 3px rgba(0,0,0,.3),0 4px 16px rgba(0,0,0,.2);
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);font-size:13px;min-height:100vh;}
+/* header */
+.header{display:flex;align-items:center;gap:16px;padding:13px 24px;background:var(--bg2);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100;box-shadow:var(--shadow);}
+.logo{font-family:'JetBrains Mono',monospace;font-size:15px;font-weight:700;color:var(--accent);letter-spacing:-.01em;}
+.logo span{color:var(--text3);font-weight:400;}
+.sep{width:1px;height:20px;background:var(--border);}
+.meta{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text3);}
+.spacer{flex:1;}
+.nav{display:flex;gap:4px;}
+.nav a{font-size:12px;font-weight:500;padding:5px 12px;border-radius:6px;color:var(--text2);text-decoration:none;border:1px solid transparent;}
+.nav a:hover{background:var(--bg3);color:var(--text);}
+.nav a.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+.theme-btn{width:34px;height:18px;border-radius:9px;border:1px solid var(--border);background:var(--bg3);cursor:pointer;position:relative;}
+.theme-btn::after{content:'';position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:var(--accent);transition:transform .2s;}
+[data-theme="dark"] .theme-btn::after{transform:translateX(16px);}
+/* banner */
+.banner{padding:18px 24px;background:var(--bg2);border-bottom:1px solid var(--border);}
+.banner-title{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:var(--accent);margin-bottom:8px;}
+.banner-desc{font-size:12px;line-height:1.7;color:var(--text2);max-width:980px;}
+.banner-desc code{font-family:'JetBrains Mono',monospace;font-size:11px;background:var(--bg3);padding:1px 6px;border-radius:3px;color:var(--accent);}
+
+/* live signal */
+.signal-strip{display:flex;flex-wrap:wrap;gap:18px;padding:14px 24px;background:var(--bg3);border-bottom:1px solid var(--border);align-items:stretch;}
+.sig-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 14px;min-width:140px;}
+.sig-card .lbl{font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:var(--text3);margin-bottom:4px;}
+.sig-card .val{font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700;}
+.sig-card .sub{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text3);margin-top:2px;}
+.sig-card.regime{flex:1;min-width:260px;}
+.sig-card.regime .val{font-size:16px;}
+
+/* filters */
+.filters{display:flex;flex-wrap:wrap;gap:16px;padding:14px 24px;background:var(--bg2);border-bottom:1px solid var(--border);align-items:flex-end;}
+.fg{display:flex;flex-direction:column;gap:6px;}
+.fg-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);}
+.num-input{font-family:'JetBrains Mono',monospace;font-size:11px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text);width:80px;}
+.regime-toggles{display:flex;gap:6px;}
+.regime-pill{font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;padding:6px 10px;border-radius:6px;background:var(--bg3);color:var(--text2);cursor:pointer;border:1px solid var(--border);user-select:none;}
+.regime-pill.on{color:#fff;border-color:transparent;}
+.btn{font-size:11px;font-weight:600;padding:6px 14px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer;}
+.btn-outline{background:transparent;color:var(--accent);}
+
+/* layout */
+.wrap{padding:20px 24px;display:grid;grid-template-columns:1fr 1fr;gap:18px;}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:14px;box-shadow:var(--shadow);}
+.card-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);margin-bottom:8px;}
+.card.wide{grid-column:1 / -1;}
+.card .plot{width:100%;height:320px;}
+.card.tall .plot{height:380px;}
+
+/* tables */
+.tbl{width:100%;border-collapse:collapse;font-family:'JetBrains Mono',monospace;font-size:11px;}
+.tbl th{text-align:left;padding:6px 10px;color:var(--text3);font-weight:600;border-bottom:1px solid var(--border);}
+.tbl td{padding:5px 10px;border-bottom:1px solid var(--border);color:var(--text);}
+.tbl tr:last-child td{border-bottom:none;}
+.tbl .pos{color:var(--green);} .tbl .neg{color:var(--red);}
+.tbl .rg-cell{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:middle;}
+
+/* metric grid */
+.metric-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:10px;}
+.metric{background:var(--bg3);border-radius:var(--radius-sm);padding:10px 12px;border:1px solid var(--border);}
+.metric .lbl{font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:var(--text3);margin-bottom:4px;}
+.metric .val{font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700;color:var(--text);}
+.metric .val.pos{color:var(--green);} .metric .val.neg{color:var(--red);}
+
+/* presets */
+.preset-strip{display:flex;flex-wrap:wrap;gap:10px;padding:14px 24px;background:var(--bg3);border-bottom:1px solid var(--border);align-items:stretch;}
+.preset-strip-label{font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text3);align-self:center;margin-right:4px;}
+.preset-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 14px;cursor:pointer;flex:1;min-width:200px;max-width:280px;transition:all .15s;}
+.preset-card:hover{border-color:var(--accent);transform:translateY(-1px);}
+.preset-card.active{border:2px solid var(--accent);background:linear-gradient(135deg,var(--bg2),var(--bg3));box-shadow:0 0 0 3px rgba(129,140,248,.15);}
+.preset-card .pname{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:var(--text);display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;}
+.preset-card .ptag{font-size:9px;background:var(--accent);color:#fff;padding:1px 6px;border-radius:4px;font-weight:700;}
+.preset-card .ptotal{font-family:'JetBrains Mono',monospace;font-size:15px;font-weight:700;color:var(--green);}
+.preset-card .pdesc{font-size:10px;color:var(--text3);line-height:1.4;margin-top:4px;}
+.preset-card .pparams{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--text2);margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;}
+.preset-card .pparams span{background:var(--bg3);padding:1px 5px;border-radius:3px;}
+
+/* trade log emphasis */
+.card .trades-meta{display:flex;gap:14px;margin-bottom:8px;padding:8px 10px;background:var(--bg3);border-radius:var(--radius-sm);font-family:'JetBrains Mono',monospace;font-size:11px;}
+.card .trades-meta strong{color:var(--text);}
+.tbl tr.winner td{background:rgba(34,197,94,.08);}
+.tbl tr.big-winner td{background:rgba(34,197,94,.18);font-weight:600;}
+
+/* regime guide strip */
+.regime-guide{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;padding:12px 24px;background:var(--bg3);border-bottom:1px solid var(--border);}
+.rg-card{background:var(--bg2);border:1px solid var(--border);border-left:3px solid var(--rc);border-radius:var(--radius-sm);padding:8px 10px;}
+.rg-head{font-size:11px;color:var(--text);margin-bottom:4px;display:flex;align-items:center;gap:6px;}
+.rg-dot{display:inline-block;width:8px;height:8px;border-radius:50%;}
+.rg-body{font-size:10px;line-height:1.45;color:var(--text2);}
+.rg-body em{color:var(--accent);font-style:normal;font-weight:600;}
+.rg-body strong{color:var(--text);}
+@media (max-width:1100px){.regime-guide{grid-template-columns:repeat(2,1fr);}}
+
+/* control help */
+.fg-help{font-size:9px;color:var(--text3);max-width:170px;line-height:1.4;margin-top:3px;}
+.preset-strip-help{flex-basis:100%;font-size:11px;color:var(--text2);padding:8px 6px 0 6px;line-height:1.5;}
+.preset-strip-help strong{color:var(--text);}
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="logo">SPX-BF<span> // Tail Hedge</span></div>
+  <div class="sep"></div>
+  <div class="meta" id="hdr-meta">loading…</div>
+  <div class="spacer"></div>
+  <nav class="nav">
+    <a href="index.html">Dashboard</a>
+    <a href="history.html">History</a>
+    <a href="backtester.html">Backtester</a>
+    <a href="live.html">Today's Trades</a>
+    <a href="gex.html">GEX</a>
+    <a href="diagonal.html">Diagonal</a>
+    <a href="gxbf-backtester.html">GXBF BT</a>
+    <a href="cor1m_contango.html" class="active">Tail Hedge</a>
+    <a href="multi-strategy-tester.html">Multi Tester</a>
+  </nav>
+  <button class="theme-btn" id="theme-btn" aria-label="Toggle theme"></button>
+</div>
+
+<div class="banner">
+  <div class="banner-title">COR1M × VIX TERM STRUCTURE</div>
+  <div class="banner-desc">
+    <strong>The setup:</strong> Buy a cheap SPX put in the morning when correlation (COR1M) gets unusually low. Hold to close.
+    The thesis: when stocks stop moving together, a snap-back selloff often follows — and the put pays massively.
+    <br>
+    <strong>What the page does:</strong> Pick a <em>preset</em> (a tested setting) up top, see the trade log + equity curve below. Pills filter regimes inside that preset.
+  </div>
+</div>
+
+<!-- ─── Compact regime guide ─── -->
+<div class="regime-guide" id="regime-guide">
+  <div class="rg-card" style="--rc:#10b981;">
+    <div class="rg-head"><span class="rg-dot" style="background:#10b981;"></span><strong>R1 · Max Complacency</strong></div>
+    <div class="rg-body">Low correlation <em>+</em> steep contango. Sunny day — stocks doing their own thing, market expects future fear. Article says "buy umbrella now," but R1 days <strong>bled $-5k</strong> in our test.</div>
+  </div>
+  <div class="rg-card" style="--rc:#f59e0b;">
+    <div class="rg-head"><span class="rg-dot" style="background:#f59e0b;"></span><strong>R2 · Early Warning</strong></div>
+    <div class="rg-body">Low correlation <em>but</em> the front of the curve (9-day VIX vs 30-day VIX) is inverting. First crack appears. Very rare — only 1 day in 3 years.</div>
+  </div>
+  <div class="rg-card" style="--rc:#ef4444;">
+    <div class="rg-head"><span class="rg-dot" style="background:#ef4444;"></span><strong>R3 · Regime Turn</strong></div>
+    <div class="rg-body">Correlation is <em>rising</em> and contango is compressing toward flat. Storm forming. Risk-off ramping. ~40 days, mixed P/L in our test.</div>
+  </div>
+  <div class="rg-card" style="--rc:#8b5cf6;">
+    <div class="rg-head"><span class="rg-dot" style="background:#8b5cf6;"></span><strong>R4 · Post-Shock</strong></div>
+    <div class="rg-body">Correlation high <em>+</em> backwardation (today scarier than future). Storm hit. <strong>This is where the puts pay.</strong> 100% WR in our basic test, ~67% in the sweet-spot preset.</div>
+  </div>
+  <div class="rg-card" style="--rc:#6b7280;">
+    <div class="rg-head"><span class="rg-dot" style="background:#6b7280;"></span><strong>R0 · Neutral</strong></div>
+    <div class="rg-body">Anything not matching the above. Most days (~80%) live here. Boring market.</div>
+  </div>
+</div>
+
+<div class="signal-strip" id="signal-strip"><div class="sig-card"><div class="lbl">Loading…</div></div></div>
+
+<div class="preset-strip" id="preset-strip">
+  <div class="preset-strip-help">
+    <strong>Presets</strong> are tested configurations (entry time, COR1M threshold, put delta, allowed regimes).
+    Click one and the whole page recomputes — equity curve, trade log, and stats below all reflect that preset.
+    Picking a preset also lights up the matching <strong>regime pills</strong> below — but you can still toggle individual regimes off/on for what-if exploration.
+  </div>
+  <div class="preset-strip-label">Preset</div>
+</div>
+
+<div class="filters">
+  <div class="fg">
+    <div class="fg-label">COR1M Threshold</div>
+    <input type="number" class="num-input" id="f-threshold" step="0.25" value="8.25">
+    <div class="fg-help">Fire only when COR1M drops below this level. Lower = rarer = more "shock-like" setups.</div>
+  </div>
+  <div class="fg">
+    <div class="fg-label">Put Delta Target</div>
+    <input type="number" class="num-input" id="f-delta" step="0.01" value="-0.20">
+    <div class="fg-help">How far OTM. −0.10 = very cheap far-OTM ($1-3). −0.30 = closer ATM ($8-15) — bigger gamma payoff.</div>
+  </div>
+  <div class="fg">
+    <div class="fg-label">Entry Time</div>
+    <select class="num-input" id="f-time" style="width:80px;">
+      <option value="0935">09:35</option>
+      <option value="0945">09:45</option>
+      <option value="1000">10:00</option>
+    </select>
+    <div class="fg-help">Morning entry. 9:35 matches the live bot; we fall back to 9:45 where 9:35 isn't cached yet.</div>
+  </div>
+  <div class="fg">
+    <div class="fg-label">Allowed Regimes</div>
+    <div class="regime-toggles" id="regime-toggles"></div>
+    <div class="fg-help">Click pills to allow/block trading in each market regime (see guide above). Auto-set by preset.</div>
+  </div>
+  <div class="fg">
+    <div class="fg-label">&nbsp;</div>
+    <button class="btn" id="btn-recompute">Recompute</button>
+    <div class="fg-help">Recompute uses the CLI — see the popup for instructions.</div>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <div class="card wide">
+    <div class="card-title">Equity Curve (cumulative P/L of all trades, filtered by allowed regimes)</div>
+    <div class="metric-grid" id="metric-grid"></div>
+    <div id="equity-plot" class="plot"></div>
+  </div>
+
+  <div class="card wide tall">
+    <div class="card-title">COR1M Daily Close with Threshold + Regime Coloring</div>
+    <div id="cor1m-plot" class="plot"></div>
+  </div>
+
+  <div class="card tall">
+    <div class="card-title">VIX Term Structure (latest day vs. 30-day median)</div>
+    <div id="term-plot" class="plot"></div>
+  </div>
+
+  <div class="card tall">
+    <div class="card-title">VIX/VIX3M Ratio (contango↔backwardation)</div>
+    <div id="ratio-plot" class="plot"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Per-Regime P/L</div>
+    <table class="tbl" id="regime-tbl"><thead>
+      <tr><th>Regime</th><th>Days</th><th>Trades</th><th>WR</th><th>Avg</th><th>Total</th></tr>
+    </thead><tbody></tbody></table>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Triggers</div>
+    <table class="tbl" id="trigger-tbl"><thead>
+      <tr><th>Trigger Date</th><th>COR1M</th><th>Days</th><th>Total P/L</th><th>Exit</th></tr>
+    </thead><tbody></tbody></table>
+  </div>
+
+  <div class="card wide">
+    <div class="card-title">Trade Log (every entry from this preset, sorted by date)</div>
+    <div class="trades-meta" id="trades-meta"></div>
+    <div style="max-height:560px;overflow:auto;">
+      <table class="tbl" id="trades-tbl"><thead>
+        <tr><th>#</th><th>Date</th><th>Regime</th><th>COR1M</th><th>VIX</th><th>Spot</th><th>Strike</th><th>OTM%</th><th>Δ</th><th>Mid</th><th>SPX Cls</th><th>Move%</th><th>Intrinsic</th><th>P/L</th><th>Cum</th></tr>
+      </thead><tbody></tbody></table>
+    </div>
+  </div>
+
+  <div class="card wide">
+    <div class="card-title">⭐ Winning Trades Only — concentrate of where the alpha lives</div>
+    <div style="max-height:380px;overflow:auto;">
+      <table class="tbl" id="winners-tbl"><thead>
+        <tr><th>#</th><th>Date</th><th>Regime</th><th>VIX</th><th>SPX Entry → Close</th><th>Strike</th><th>Move</th><th>Mid Paid</th><th>Intrinsic</th><th>P/L</th><th>Multiple</th></tr>
+      </thead><tbody></tbody></table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ───────── theme toggle ─────────
+const themeBtn = document.getElementById('theme-btn');
+themeBtn.addEventListener('click', () => {
+  const cur = document.documentElement.dataset.theme;
+  document.documentElement.dataset.theme = cur === 'dark' ? 'light' : 'dark';
+  localStorage.setItem('theme', document.documentElement.dataset.theme);
+  if (window._bundle) render();
+});
+const saved = localStorage.getItem('theme');
+if (saved) document.documentElement.dataset.theme = saved;
+
+// ───────── state ─────────
+const REGIME_ORDER = ['R1','R2','R3','R4','R0'];
+let bundle = null;
+let activePresetId = 'champion';
+let allowed = new Set(REGIME_ORDER);  // regime filter (within selected preset)
+
+// ───────── regime toggle pills ─────────
+const togglesEl = document.getElementById('regime-toggles');
+function buildToggles() {
+  togglesEl.innerHTML = '';
+  REGIME_ORDER.forEach(r => {
+    const info = bundle.regimes[r];
+    const pill = document.createElement('div');
+    const isOn = allowed.has(r);
+    pill.className = 'regime-pill' + (isOn ? ' on' : '');
+    pill.textContent = r;
+    pill.title = `${info.label}: ${info.detail}`;
+    pill.style.background = isOn ? info.color : '';
+    pill.onclick = () => {
+      if (allowed.has(r)) { allowed.delete(r); pill.classList.remove('on'); pill.style.background = ''; }
+      else { allowed.add(r); pill.classList.add('on'); pill.style.background = info.color; }
+      render();
+    };
+    togglesEl.appendChild(pill);
+  });
+}
+
+// ───────── helpers ─────────
+const fmt$  = v => (v == null ? '—' : (v >= 0 ? '+$' : '-$') + Math.abs(Math.round(v)).toLocaleString());
+const fmt$1 = v => (v == null ? '—' : (v >= 0 ? '+$' : '-$') + Math.abs(v).toFixed(0));
+const fmt2 = v => v == null ? '—' : v.toFixed(2);
+const fmt3 = v => v == null ? '—' : v.toFixed(3);
+function colorFor(r) { return bundle.regimes[r]?.color || '#6b7280'; }
+
+function plotlyLayout(extra={}) {
+  const dark = document.documentElement.dataset.theme === 'dark';
+  return Object.assign({
+    paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+    font: { family: 'JetBrains Mono', size: 10, color: dark?'#94a3b8':'#475569' },
+    margin: { t: 20, r: 18, b: 40, l: 50 },
+    xaxis: { gridcolor: dark?'#2d3f55':'#e2e8f0', linecolor: dark?'#2d3f55':'#e2e8f0' },
+    yaxis: { gridcolor: dark?'#2d3f55':'#e2e8f0', linecolor: dark?'#2d3f55':'#e2e8f0' },
+    showlegend: true,
+    legend: { font: { size: 10 }, orientation: 'h', y: 1.1, x: 0 },
+  }, extra);
+}
+
+// ───────── presets ─────────
+function buildPresetCards() {
+  const strip = document.getElementById('preset-strip');
+  // Keep the label
+  strip.innerHTML = '<div class="preset-strip-label">Preset</div>';
+  bundle.presets.forEach(p => {
+    const r = bundle.preset_results[p.id];
+    if (!r) return;
+    const card = document.createElement('div');
+    card.className = 'preset-card' + (p.id === activePresetId ? ' active' : '');
+    card.dataset.id = p.id;
+    const total = r.summary?.total || 0;
+    const mar = r.summary?.mar;
+    const n = r.summary?.n || 0;
+    const wr = r.summary?.wr;
+    card.innerHTML = `
+      <div class="pname">${p.name}${p.recommended ? '<span class="ptag">REC</span>' : ''}</div>
+      <div class="ptotal">${total >= 0 ? '+$' : '-$'}${Math.abs(Math.round(total)).toLocaleString()}</div>
+      <div class="pdesc">${p.desc}</div>
+      <div class="pparams">
+        <span>thr ${p.threshold}</span>
+        <span>Δ ${p.delta}</span>
+        <span>${p.time.slice(0,2)}:${p.time.slice(2)}</span>
+        <span>n=${n}</span>
+        <span>WR ${wr}%</span>
+        <span>MAR ${mar ?? 'n/a'}</span>
+        <span>regimes ${p.regimes.length ? p.regimes.join('+') : 'all'}</span>
+      </div>
+    `;
+    card.onclick = () => selectPreset(p.id);
+    strip.appendChild(card);
+  });
+}
+
+function selectPreset(id) {
+  activePresetId = id;
+  const preset = bundle.presets.find(p => p.id === id);
+  if (!preset) return;
+  // Sync filter inputs
+  document.getElementById('f-threshold').value = preset.threshold;
+  document.getElementById('f-delta').value = preset.delta;
+  document.getElementById('f-time').value = preset.time;
+  // Sync regime pills — empty array means all regimes allowed
+  if (preset.regimes.length === 0) {
+    allowed = new Set(REGIME_ORDER);
+  } else {
+    allowed = new Set(preset.regimes);
+  }
+  buildPresetCards();
+  buildToggles();
+  render();
+}
+
+// ───────── filter + summarize ─────────
+function statForTrades(rows) {
+  if (!rows.length) return { n: 0 };
+  const pls = rows.map(t => t.pnl);
+  const w = pls.filter(p => p > 0).length;
+  const tot = pls.reduce((s,p)=>s+p, 0);
+  return {
+    n: rows.length,
+    wr: +(w / rows.length * 100).toFixed(1),
+    avg: +(tot / rows.length).toFixed(2),
+    total: +tot.toFixed(2),
+    best: Math.max(...pls),
+    worst: Math.min(...pls),
+  };
+}
+
+function computeMaxDD(trades) {
+  if (!trades.length) return 0;
+  let peak = trades[0]._cum, mx = 0;
+  trades.forEach(t => {
+    peak = Math.max(peak, t._cum);
+    mx = Math.max(mx, peak - t._cum);
+  });
+  return mx;
+}
+
+// ───────── render ─────────
+function render() {
+  const preset = bundle.presets.find(p => p.id === activePresetId);
+  const result = bundle.preset_results[activePresetId];
+  if (!result) return;
+  // Pull trades from the active preset, then apply REGIME pill filter on top
+  const trades = result.trades.filter(t => allowed.has(t.regime));
+  // Recompute cumulative for filtered trades
+  let cum = 0;
+  trades.forEach(t => { t._cum = (cum += t.pnl); });
+
+  const s = statForTrades(trades);
+  s.max_dd = computeMaxDD(trades);
+  s.mar = s.max_dd > 0 ? (s.total / s.max_dd) : null;
+  renderMetricGrid(s);
+  renderEquity(trades);
+  renderCor1mPlot();
+  renderTermPlot();
+  renderRatioPlot();
+  renderRegimeTbl(trades);
+  renderTriggerTbl(result.triggers);
+  renderTradesTbl(trades, preset);
+  renderWinnersTbl(trades);
+}
+
+function renderMetricGrid(s) {
+  const g = document.getElementById('metric-grid');
+  g.innerHTML = '';
+  const items = [
+    ['Trades', s.n || 0, ''],
+    ['Win Rate', s.wr != null ? s.wr + '%' : '—', ''],
+    ['Avg / Trade', fmt$(s.avg), (s.avg||0) >= 0 ? 'pos' : 'neg'],
+    ['Total P/L', fmt$(s.total), (s.total||0) >= 0 ? 'pos' : 'neg'],
+    ['Max Drawdown', s.max_dd ? '$' + Math.round(s.max_dd).toLocaleString() : '—', ''],
+    ['MAR (R/DD)', s.mar != null ? s.mar.toFixed(2) : '—', (s.mar||0) >= 5 ? 'pos' : ''],
+  ];
+  items.forEach(([lbl, val, cls]) => {
+    const d = document.createElement('div');
+    d.className = 'metric';
+    d.innerHTML = `<div class="lbl">${lbl}</div><div class="val ${cls}">${val}</div>`;
+    g.appendChild(d);
+  });
+}
+
+function renderEquity(trades) {
+  const x = trades.map(t => t.date);
+  const y = trades.map(t => t._cum);
+  const color = trades.map(t => colorFor(t.regime));
+  const traces = [
+    {
+      type: 'scatter', mode: 'lines+markers', x, y,
+      line: { color: '#818cf8', width: 2 },
+      marker: { size: 8, color, line: { width: 1, color: '#1e293b' } },
+      name: 'Cumulative P/L',
+      hovertemplate: '%{x}<br>Cum: %{y:$,.0f}<extra></extra>',
+    },
+  ];
+  // Per-trade colored bars by regime — disabled (cluttered); keep markers on equity.
+  Plotly.newPlot('equity-plot', traces, plotlyLayout({
+    yaxis: { gridcolor: getComputedStyle(document.body).getPropertyValue('--border'),
+             tickprefix: '$', tickformat: ',.0f' },
+  }), { displayModeBar: false, responsive: true });
+}
+
+function renderCor1mPlot() {
+  const daily = bundle.daily;
+  const x = daily.map(d => d.date);
+  const y = daily.map(d => d.cor1m);
+  // Color markers by regime
+  const color = daily.map(d => colorFor(d.regime));
+  const traces = [
+    {
+      type: 'scatter', mode: 'lines', x, y,
+      line: { color: '#475569', width: 1 },
+      name: 'COR1M (daily close)',
+      hovertemplate: '%{x}<br>COR1M %{y:.2f}<extra></extra>',
+      showlegend: false,
+    },
+    {
+      type: 'scatter', mode: 'markers', x, y,
+      marker: { size: 5, color, opacity: 0.85 },
+      name: 'Regime',
+      hovertemplate: '%{x}<br>COR1M %{y:.2f}<br>%{text}<extra></extra>',
+      text: daily.map(d => d.regime + ' ' + (d.regime_label||'')),
+      showlegend: false,
+    },
+    {
+      type: 'scatter', mode: 'lines', x,
+      y: x.map(_ => +document.getElementById('f-threshold').value),
+      line: { color: '#ef4444', width: 1.5, dash: 'dot' },
+      name: `Trigger threshold (${(+document.getElementById('f-threshold').value).toFixed(2)})`,
+      hoverinfo: 'skip',
+    },
+  ];
+  Plotly.newPlot('cor1m-plot', traces, plotlyLayout({
+    margin: { t: 30, r: 18, b: 40, l: 50 },
+  }), { displayModeBar: false, responsive: true });
+}
+
+function renderTermPlot() {
+  const daily = bundle.daily.filter(d => d.vix9d && d.vix && d.vix3m && d.vix6m);
+  if (!daily.length) { return; }
+  const last = daily[daily.length - 1];
+  const recent = daily.slice(-30);
+  const sortedV9 = [...recent.map(d => d.vix9d)].sort((a,b)=>a-b);
+  const sortedV  = [...recent.map(d => d.vix  )].sort((a,b)=>a-b);
+  const sortedV3 = [...recent.map(d => d.vix3m)].sort((a,b)=>a-b);
+  const sortedV6 = [...recent.map(d => d.vix6m)].sort((a,b)=>a-b);
+  const median = arr => arr[Math.floor(arr.length/2)];
+  const tenors = ['VIX9D (9d)','VIX (30d)','VIX3M (3mo)','VIX6M (6mo)'];
+  const tracesTerm = [
+    { x: tenors, y: [last.vix9d, last.vix, last.vix3m, last.vix6m],
+      mode: 'lines+markers', name: `Today (${last.date})`,
+      line: { color: '#818cf8', width: 3 }, marker: { size: 9 },
+      hovertemplate: '%{x}<br>%{y:.2f}<extra></extra>' },
+    { x: tenors, y: [median(sortedV9), median(sortedV), median(sortedV3), median(sortedV6)],
+      mode: 'lines+markers', name: 'Last 30d median',
+      line: { color: '#94a3b8', width: 2, dash: 'dash' }, marker: { size: 7 },
+      hovertemplate: '%{x}<br>%{y:.2f}<extra></extra>' },
+  ];
+  Plotly.newPlot('term-plot', tracesTerm, plotlyLayout({
+    yaxis: { title: 'Implied Vol', gridcolor: '#2d3f55' },
+  }), { displayModeBar: false, responsive: true });
+}
+
+function renderRatioPlot() {
+  const d = bundle.daily.filter(x => x.vix_vix3m_ratio != null);
+  const x = d.map(r => r.date);
+  const y = d.map(r => r.vix_vix3m_ratio);
+  const color = d.map(r => colorFor(r.regime));
+  const traces = [
+    { type: 'scatter', mode: 'lines', x, y,
+      line: { color: '#475569', width: 1 },
+      name: 'VIX/VIX3M', showlegend: false,
+      hovertemplate: '%{x}<br>Ratio %{y:.3f}<extra></extra>' },
+    { type: 'scatter', mode: 'markers', x, y,
+      marker: { size: 4, color, opacity: 0.85 }, name: 'Regime',
+      showlegend: false, text: d.map(r => r.regime + ' ' + (r.regime_label||'')),
+      hovertemplate: '%{x}<br>Ratio %{y:.3f}<br>%{text}<extra></extra>' },
+    { type: 'scatter', mode: 'lines', x, y: x.map(_ => 1.0),
+      line: { color: '#ef4444', width: 1.5, dash: 'dot' },
+      name: 'Flat (1.0)', hoverinfo: 'skip' },
+    { type: 'scatter', mode: 'lines', x,
+      y: x.map(_ => bundle.thresholds.contango_steep),
+      line: { color: '#22c55e', width: 1, dash: 'dot' },
+      name: `Steep-contango (${bundle.thresholds.contango_steep.toFixed(3)})`,
+      hoverinfo: 'skip' },
+  ];
+  Plotly.newPlot('ratio-plot', traces, plotlyLayout({
+    margin: { t: 30 }, yaxis: { title: 'VIX / VIX3M' },
+  }), { displayModeBar: false, responsive: true });
+}
+
+function renderRegimeTbl(trades) {
+  const tb = document.querySelector('#regime-tbl tbody');
+  tb.innerHTML = '';
+  REGIME_ORDER.forEach(r => {
+    const info = bundle.regimes[r];
+    const days = bundle.regime_distribution[r] || 0;
+    const stat = statForTrades(trades.filter(t => t.regime === r));
+    const row = document.createElement('tr');
+    const total = stat.total || 0;
+    const cls = total >= 0 ? 'pos' : 'neg';
+    row.innerHTML = `
+      <td><span class="rg-cell" style="background:${info.color}"></span>${r} ${info.label}</td>
+      <td>${days}</td>
+      <td>${stat.n||0}</td>
+      <td>${stat.wr!=null?stat.wr+'%':'—'}</td>
+      <td>${fmt$(stat.avg)}</td>
+      <td class="${cls}">${fmt$(stat.total)}</td>
+    `;
+    tb.appendChild(row);
+  });
+}
+
+function renderTriggerTbl(triggers) {
+  const tb = document.querySelector('#trigger-tbl tbody');
+  tb.innerHTML = '';
+  (triggers || []).forEach(t => {
+    const days = t.days_to_profit || t.trades.length;
+    const row = document.createElement('tr');
+    const cls = (t.total_pnl||0) >= 0 ? 'pos' : 'neg';
+    row.innerHTML = `
+      <td>${t.trigger_date}</td>
+      <td>${(t.cor1m_at_trigger||0).toFixed(2)}</td>
+      <td>${days}</td>
+      <td class="${cls}">${fmt$(t.total_pnl)}</td>
+      <td>${t.exit_reason || 'open'}</td>
+    `;
+    tb.appendChild(row);
+  });
+}
+
+function renderTradesTbl(trades, preset) {
+  // Meta strip
+  const meta = document.getElementById('trades-meta');
+  if (preset) {
+    meta.innerHTML = `
+      <span><strong>Preset:</strong> ${preset.name}</span>
+      <span><strong>Entry:</strong> ${preset.time.slice(0,2)}:${preset.time.slice(2)}</span>
+      <span><strong>Threshold:</strong> COR1M ≤ ${preset.threshold}</span>
+      <span><strong>Delta:</strong> ${preset.delta}</span>
+      <span><strong>Regimes:</strong> ${preset.regimes.length ? preset.regimes.join(', ') : 'ALL'}</span>
+      <span><strong>Shown:</strong> ${trades.length} trades</span>
+    `;
+  }
+  const tb = document.querySelector('#trades-tbl tbody');
+  tb.innerHTML = '';
+  trades.forEach((t, i) => {
+    const row = document.createElement('tr');
+    const cls = t.pnl >= 0 ? 'pos' : 'neg';
+    const otmPct = t.spot ? ((t.spot - t.strike) / t.spot * 100) : null;
+    const movePct = t.spot && t.spx_close ? ((t.spx_close - t.spot) / t.spot * 100) : null;
+    if (t.pnl >= 5000) row.className = 'big-winner';
+    else if (t.pnl > 0) row.className = 'winner';
+    row.innerHTML = `
+      <td>${i+1}</td>
+      <td>${t.date}</td>
+      <td><span class="rg-cell" style="background:${colorFor(t.regime)}"></span>${t.regime}</td>
+      <td>${fmt2(t.cor1m)}</td>
+      <td>${fmt2(t.vix_open)}</td>
+      <td>${fmt2(t.spot)}</td>
+      <td>${t.strike}</td>
+      <td>${otmPct != null ? otmPct.toFixed(2) + '%' : '—'}</td>
+      <td>${fmt3(t.delta)}</td>
+      <td>${fmt2(t.mid)}</td>
+      <td>${fmt2(t.spx_close)}</td>
+      <td>${movePct != null ? (movePct >= 0 ? '+' : '') + movePct.toFixed(2) + '%' : '—'}</td>
+      <td>${fmt2(t.intrinsic)}</td>
+      <td class="${cls}">${fmt$(t.pnl)}</td>
+      <td>${fmt$(t._cum)}</td>
+    `;
+    tb.appendChild(row);
+  });
+}
+
+function renderWinnersTbl(trades) {
+  const winners = trades.filter(t => t.pnl > 0).sort((a, b) => b.pnl - a.pnl);
+  const tb = document.querySelector('#winners-tbl tbody');
+  tb.innerHTML = '';
+  if (winners.length === 0) {
+    tb.innerHTML = '<tr><td colspan="11" style="text-align:center;color:var(--text3);padding:20px;">No winning trades in this filter — try a wider preset or fewer regime filters.</td></tr>';
+    return;
+  }
+  winners.forEach((t, i) => {
+    const movePct = t.spot && t.spx_close ? ((t.spx_close - t.spot) / t.spot * 100) : 0;
+    const mult = t.mid > 0 ? (t.intrinsic / t.mid).toFixed(1) + '×' : '—';
+    const row = document.createElement('tr');
+    if (t.pnl >= 5000) row.className = 'big-winner';
+    else row.className = 'winner';
+    row.innerHTML = `
+      <td>${i+1}</td>
+      <td>${t.date}</td>
+      <td><span class="rg-cell" style="background:${colorFor(t.regime)}"></span>${t.regime}</td>
+      <td>${fmt2(t.vix_open)}</td>
+      <td>${fmt2(t.spot)} → ${fmt2(t.spx_close)}</td>
+      <td>${t.strike}</td>
+      <td>${(movePct >= 0 ? '+' : '') + movePct.toFixed(2)}%</td>
+      <td>$${fmt2(t.mid)}</td>
+      <td>$${fmt2(t.intrinsic)}</td>
+      <td class="pos">${fmt$(t.pnl)}</td>
+      <td>${mult}</td>
+    `;
+    tb.appendChild(row);
+  });
+}
+
+// ───────── signal strip (today's row) ─────────
+function renderSignalStrip() {
+  const last = bundle.daily[bundle.daily.length - 1];
+  if (!last) return;
+  const regimeInfo = bundle.regimes[last.regime];
+  document.getElementById('hdr-meta').textContent =
+    `Bundle ${bundle.generated_at}  •  ${bundle.daily.length} days`;
+
+  const strip = document.getElementById('signal-strip');
+  const ratio = last.vix_vix3m_ratio;
+  const slope = ratio == null ? '—' :
+    (ratio < bundle.thresholds.contango_steep ? 'STEEP CONTANGO' :
+     ratio < bundle.thresholds.contango_flat_lo ? 'CONTANGO' :
+     ratio <= bundle.thresholds.contango_flat_hi ? 'FLAT' :
+     ratio < bundle.thresholds.backwardation ? 'MILD BACKWARDATION' :
+     'BACKWARDATION');
+  strip.innerHTML = `
+    <div class="sig-card"><div class="lbl">Today</div><div class="val">${last.date}</div></div>
+    <div class="sig-card"><div class="lbl">COR1M</div><div class="val">${fmt2(last.cor1m)}</div>
+      <div class="sub">5d avg ${fmt2(last.cor1m_5d_avg)}</div></div>
+    <div class="sig-card"><div class="lbl">VIX9D / VIX / 3M / 6M</div>
+      <div class="val" style="font-size:13px;">${fmt2(last.vix9d)} / ${fmt2(last.vix)} / ${fmt2(last.vix3m)} / ${fmt2(last.vix6m)}</div>
+      <div class="sub">VVIX ${fmt2(last.vvix)}</div></div>
+    <div class="sig-card"><div class="lbl">VIX/VIX3M Ratio</div>
+      <div class="val">${fmt3(ratio)}</div><div class="sub">${slope}</div></div>
+    <div class="sig-card regime" style="border-left:4px solid ${regimeInfo.color};">
+      <div class="lbl">Today's Regime</div>
+      <div class="val" style="color:${regimeInfo.color};">${last.regime} ${regimeInfo.label}</div>
+      <div class="sub">${regimeInfo.detail}</div></div>
+  `;
+}
+
+// ───────── recompute button — points to CLI ─────────
+document.getElementById('btn-recompute').addEventListener('click', async () => {
+  alert('The presets above are pre-baked. To explore arbitrary settings,\n' +
+        'add them to PRESETS in build_cor1m_contango_bundle.py and rerun:\n\n' +
+        'python3 build_cor1m_contango_bundle.py\n\n' +
+        'Then refresh this page.');
+});
+
+// ───────── boot ─────────
+fetch('cor1m_contango_bundle.json', { cache: 'no-store' })
+  .then(r => r.json())
+  .then(b => {
+    bundle = b; window._bundle = b;
+    activePresetId = b.default_preset || (b.presets && b.presets[0]?.id) || 'champion';
+    buildPresetCards();
+    renderSignalStrip();
+    selectPreset(activePresetId);  // also builds toggles + renders
+  })
+  .catch(err => {
+    document.body.insertAdjacentHTML('beforeend',
+      `<div style="padding:24px;color:var(--red);font-family:monospace;">Failed to load bundle: ${err}</div>`);
+  });
+</script>
+</body>
+</html>

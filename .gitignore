@@ -57,6 +57,13 @@ polygon.env
 !fetch_polygon_spx.py
 !build_earnings_universe.py
 !build_earnings_uoa_data.py
+# Tail Hedge (COR1M × Contango) scripts
+!fetch_thetadata_vix_term.py
+!regime_classifier.py
+!backtest_cor1m_regime.py
+!build_cor1m_contango_bundle.py
+!sweep_cor1m_regime.py
+!backtest_cor1m_put.py
 # Allow shared signal engine module (loaded by browser + worker)
 !signal-engine.js
 .eslint-tmp/
