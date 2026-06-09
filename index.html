@@ -2886,6 +2886,15 @@
     if (diag && notCalc(diag)) {
       inner += `${sigColor(diag)}Diagonal │ ${diag}${RST}\n`;
     }
+    // Tail Hedge (Sweet Spot — thr 7.75, delta -0.20, VVIX<110). Reads cached
+    // state populated by updateTailHedgeStatus() on page load.
+    if (_tailHedgeState?.text) {
+      const tl = `Tail Hedge │ ${_tailHedgeState.text}`;
+      const tc = _tailHedgeState.state === 'TRADE' ? GRN
+               : _tailHedgeState.state === 'SKIP'  ? RED
+               : DIM;
+      inner += `${tc}${tl}${RST}\n`;
+    }
 
     // Pattern notes
     const patternEl = document.getElementById('m8bfPatternNote');
@@ -3342,8 +3351,11 @@
     }
   }
 
-  // ── Tail Hedge daily signal — reads cor1m_contango_bundle.json and decides
-  // BINARY: trade today, skip today (VVIX too high), or no trade (no trigger).
+  // ── Tail Hedge daily signal — reads cor1m_contango_bundle.json once and
+  //    caches the binary state. Used by BOTH the card UI AND the Discord
+  //    message builder (so the Test Post button shows the same line).
+  let _tailHedgeState = null;  // { state: 'TRADE'|'SKIP'|'WAIT', text, cor1m, vvix }
+
   async function updateTailHedgeStatus() {
     const rec   = document.getElementById('tailRec');
     const pill  = document.getElementById('pillTail');
@@ -3366,10 +3378,14 @@
           rec.innerHTML = `<span style="color:var(--amber);">SKIP today</span> — VVIX <b>${vvixOpen.toFixed(2)}</b> ≥ 110 (puts too expensive). Stay TRIGGERED.`;
           if (pill)  pill.style.display = 'none';
           if (badge) badge.textContent = 'SKIP';
+          _tailHedgeState = { state: 'SKIP', cor1m: cor1mOpen, vvix: vvixOpen,
+                              text: `SKIP today (VVIX ${vvixOpen.toFixed(2)} ≥ 110)` };
         } else {
           rec.innerHTML = `<span style="color:var(--accent);">TRADE today @ 9:45 ET</span> — buy 0DTE SPXW put delta −0.20, hold to 4 PM. <span style="color:var(--text3);font-weight:400">VVIX ${vvixOpen?.toFixed(2) ?? '—'} &lt; 110 ✓</span>`;
           if (pill)  pill.style.display = '';
           if (badge) badge.textContent = 'TRADE';
+          _tailHedgeState = { state: 'TRADE', cor1m: cor1mOpen, vvix: vvixOpen,
+                              text: `▶ TRADE @ 9:45 — buy 0DTE SPXW put Δ-0.20  (VVIX ${vvixOpen?.toFixed(2) ?? '—'})` };
         }
       } else {
         // WAITING — no active trigger.
@@ -3377,11 +3393,23 @@
         rec.innerHTML = `<span style="color:var(--text3);">No Tail Hedge today</span> — COR1M open <b>${corS}</b> (need cross below <b>7.75</b>). Waiting for next trigger.`;
         if (pill)  pill.style.display = 'none';
         if (badge) badge.textContent = 'WAIT';
+        _tailHedgeState = { state: 'WAIT', cor1m: cor1mOpen, vvix: vvixOpen,
+                            text: `No trade today (COR1M ${corS}, need < 7.75)` };
       }
     } catch(e) {
       rec.textContent = 'Tail Hedge: bundle unavailable. See cor1m_contango.html.';
       if (badge) badge.textContent = '—';
+      _tailHedgeState = { state: 'WAIT', text: 'status unavailable' };
     }
+  }
+
+  // Read the cached tail hedge state (or trigger a fresh fetch if missing).
+  // Used by discordBuildMessage so Test Post + scheduled morning post agree.
+  async function getTailHedgeLineForDiscord() {
+    if (!_tailHedgeState) {
+      await updateTailHedgeStatus().catch(() => {});
+    }
+    return _tailHedgeState?.text ? `Tail Hedge │ ${_tailHedgeState.text}` : null;
   }
 
   document.addEventListener('DOMContentLoaded',()=>{
