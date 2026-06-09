@@ -6,7 +6,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<!-- v2026-06-02: 1/25 DTE, 12:30-15:00 ET window (24h hold, entry=exit time), +30 ITM, -40 below (long 10 OTM), OPEX-1 + EOM + EOM-1 + NM + VIX 50-90% (no earnings filters; band re-optimized 2026-06-02 from 40-90 to 50-90: +$12.4k, lower MaxDD, MAR 14.94) -->
+<!-- v2026-06-09: 1/25 DTE, 12:30-15:00 ET window (24h hold, entry=exit time), +10 ITM, -20 below (long 10 OTM, width 20 — safer-tail), OPEX-1 + EOM + EOM-1 + NM + VIX 50-80% + COR1M≥10 (2026-06-09 retune: 30/40 → 10/20 + VIX 50-90 → 50-80 after COR1M-aware sweep) -->
 <title>SPX-BF // Diagonal Backtester</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -596,19 +596,20 @@ body {
     </span>
     <br><br>
     <span style="color:var(--accent);font-size:11px;font-weight:600">
-      ★ Canonical default config (loaded below, updated 2026-06-02):
-      <code>entry/exit anywhere in 12:30–15:00 ET (same clock time), sDTE=1, +30 ITM, lDTE=25, −40 below (long 10 OTM)</code>,
-      filtered with <code>OPEX-1 + EOM + EOM-1 + NM + VIX 50–90%</code> in EXCLUDE mode (band re-optimized 2026-06-02 from 40–90 to 50–90 on corrected VIX data: +$12.4k, lower MaxDD, MAR 14.94).
-      Sizing (30 ITM / 40 wide) caps overnight-gap tail risk at ≈ debit + width ≈ ~$9K/contract.
-      Earnings filters (AAPL/MSFT/TSLA/META) dropped at this strike depth — they were costing more edge than they preserved. EOM/EOM-1 added — month-end rebalancing chop hurts deeper-ITM short structures.
+      ★ Canonical default config (loaded below, updated 2026-06-09 — safer-tail re-tune):
+      <code>entry/exit anywhere in 12:30–15:00 ET (same clock time), sDTE=1, +10 ITM, lDTE=25, −20 below (long 10 OTM, width 20)</code>,
+      filtered with <code>OPEX-1 + EOM + EOM-1 + NM + VIX 50–80% + COR1M≥10</code> in EXCLUDE mode (2026-06-09: strikes 30/40 → 10/20 and VIX 50-90 → 50-80 after COR1M-aware sweep of 54 strike combos × 6 regime ranges).
+      Sizing (10 ITM / 20 wide) caps overnight-gap tail risk at ≈ debit + width ≈ ~$6.6K/contract on a typical day, ~$14.5K on a worst-entry-day tail (1987/2020 class).
+      Earnings filters (AAPL/MSFT/TSLA/META) dropped 2026-04-29. COR1M_LOW added 2026-06-09 — below correlation 10 the strategy bled $9.7k @ 50% WR.
     </span>
     <br><br>
     <span style="color:#fcd34d;font-size:11px">
       🧪 <strong>Filter stack</strong> — <code>OPEX-1</code> (day before monthly OPEX — weakest-edge day of the cycle),
       <code>EOM / EOM-1</code> (last and second-to-last trading days of the month — rebalancing flow noise),
-      <code>NM</code> (first trading day of month — gap risk, NM Straddle day), and
-      <code>VIX 50–90%</code> (uncomfortable-middle regime; band re-optimized 2026-06-02 from 40–90).
-      All seven active by default in <strong>EXCLUDE</strong> mode. <code>EOM</code> and <code>ALL EARNINGS</code> are intentionally OFF — the per-ticker subset is tighter.
+      <code>NM</code> (first trading day of month — gap risk, NM Straddle day),
+      <code>VIX 50–80%</code> (uncomfortable-middle regime; band re-optimized 2026-06-09 from 50–90 to 50–80 — the 80-90 percentile band was net-negative under COR1M filter), and
+      <code>COR1M_LOW</code> (CBOE 1-Month Implied Correlation below 10 — added 2026-06-09).
+      All six active by default in <strong>EXCLUDE</strong> mode.
     </span>
     <br><br>
     <span style="color:var(--text3);font-size:11px">
@@ -817,7 +818,7 @@ body {
         <span style="opacity:0.7">&lt;</span>
         <input type="number" id="cor1mMin" value="10" min="0" max="60" step="0.5" style="width:46px;padding:1px 3px;font-family:'JetBrains Mono',monospace;font-size:11px;text-align:center;" title="COR1M floor at 9:30 ET. Days with cor1m below this value are skipped. Default 10 (empirically derived from 3-yr backtest).">
       </span>
-      <button class="tpill" data-sd="VIX_DEAD" title="Tighter version of VIX 50–90%: only flag the day if VIX is in the 50–90% band AND yesterday's SPX moved less than 0.5%. This catches the purest 'no-edge' regime — elevated-but-not-spiky VIX plus a sleepy prior session with no directional follow-through. Skipping these days cuts MaxDD by ~26% in the backtest.">VIX DEAD</button>
+      <button class="tpill" data-sd="VIX_DEAD" title="Tighter version of VIX 50–80%: only flag the day if VIX is in the 50–80% band AND yesterday's SPX moved less than 0.5%. This catches the purest 'no-edge' regime — elevated-but-not-spiky VIX plus a sleepy prior session with no directional follow-through. Skipping these days cuts MaxDD further.">VIX DEAD</button>
       <button class="tpill" data-sd="AAPL">AAPL</button>
       <button class="tpill" data-sd="GOOGL">GOOGL</button>
       <button class="tpill" data-sd="MSFT">MSFT</button>
@@ -853,9 +854,9 @@ body {
             <strong>VIX MID-band</strong> (default 40–90%) — the <em>"VIX 20-day percentile"</em> filter.
             Each day, we take today's first VIX print at-or-after 9:30 ET and rank it against the last 20 trading days' first-post-9:30 prints (0% = lowest in 20 days, 100% = highest).
             This pill flags days where that rank lands inside the band defined by the <code>lo</code> / <code>hi</code> inputs to its right.
-            Default 40–90 — the <strong>"uncomfortable middle"</strong>. Not cheap enough to be complacent, not elevated enough to be panic.
-            The diagonal has no edge here: at 30/40 strikes the 40–90 band averages <span style="color:#ef4444">−$31/trade</span>
-            while the rest of the distribution averages <span style="color:#22c55e">+$337/trade</span>.
+            Default 50–80 — the <strong>"uncomfortable middle"</strong>. Not cheap enough to be complacent, not elevated enough to be panic.
+            The diagonal has no edge here: at 10/20 strikes the 50–80 band is filtered (cuts losing days);
+            the 80–90 tail was also net-negative under the COR1M filter (dropped 2026-06-09).
             <strong>Same recipe as the live signal banner</strong> — backtest and live banner can never disagree on borderline days.
           </li>
           <li style="margin-top:5px">
@@ -1179,7 +1180,7 @@ fetch('cor1m_contango_bundle.json', { cache: 'no-store' })
 //   EOM        — last trading day of month (rebalance chop)
 //   EOM-1      — second-to-last trading day of month
 //   NM         — first trading day of month (gap risk, reprice)
-//   VIX_MID    — VIX 50-90% uncomfortable-middle regime (re-opt 2026-06-02)
+//   VIX_MID    — VIX 50-80% uncomfortable-middle regime (re-opt 2026-06-09 from 50-90)
 //   COR1M_LOW  — COR1M < 10 (2026-06-09: bleeds -$284/trade below 10)
 // Earnings filters (AAPL/MSFT/TSLA/META) DROPPED 2026-04-29.
 specialState.mode = 'exclude';
@@ -1767,7 +1768,7 @@ function buildSpecialDateSets(tradingDays, byDate = null) {
   // check-vix-pct-canonical.sh blocks that. See lessons.md P5.
   if (byDate) {
     const lo = (typeof window.VIX_BAND_LO === 'number') ? window.VIX_BAND_LO : 50;
-    const hi = (typeof window.VIX_BAND_HI === 'number') ? window.VIX_BAND_HI : 90;
+    const hi = (typeof window.VIX_BAND_HI === 'number') ? window.VIX_BAND_HI : 80;
     const SE = (typeof globalThis !== 'undefined' && globalThis.SignalEngine) || null;
     if (!SE || typeof SE.computeVixPct20d !== 'function') {
       console.error('[diagonal] SignalEngine.computeVixPct20d not loaded — VIX_MID set will be empty (filter disabled). Refresh the page; if it persists, check the <script type="module"> tag for signal-engine.js.');
@@ -1977,7 +1978,7 @@ function runBacktestBS(data, params) {
     const ivEntry = vixEntryN / 100;   // VIX is annualized % → decimal
     const ivExit  = vixExitN  / 100;
 
-    // Strikes: short = spot + shortOffset ITM (30 ITM), long = short - longOffset (10 OTM)
+    // Strikes: short = spot + shortOffset ITM (10 ITM default), long = short - longOffset (10 OTM)
     // e.g. spot=6830, shortOffset=10 → short=6840; longOffset=20 → long=6820 (10 pts OTM)
     const shortStrike = Math.round((spotEntry + params.shortOffset) / 5) * 5;
     const longStrike  = shortStrike - params.longOffset;

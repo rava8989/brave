@@ -488,7 +488,7 @@
       <span class="ml" style="cursor:help" onclick="document.getElementById('vixPctExplain').hidden=!document.getElementById('vixPctExplain').hidden">VIX 20d %ile</span><span class="mv" id="vixPct20Display">—</span>
     </div>
     <span class="msep" id="regimeSep" style="display:none;">|</span>
-    <div class="mi" id="regimeWrap" style="display:none;" title="Diagonal-strategy regime check (ready by 9:30 AM ET — well before the 12:30 ET entry). DEAD = VIX ranks 50–90% vs last 20 days AND yesterday's SPX moved less than 0.5%. EDGE = any other combo. DEAD days historically cost the strategy ~$26K in P/L and ~26% of max drawdown across the backtest — this is the sharpest skip filter we have. (Band re-optimized 2026-06-02 from 40–90 to 50–90.)">
+    <div class="mi" id="regimeWrap" style="display:none;" title="Diagonal-strategy regime check (ready by 9:30 AM ET — well before the 12:30 ET entry). DEAD = VIX ranks 50–80% vs last 20 days AND yesterday's SPX moved less than 0.5%. EDGE = any other combo. DEAD days historically cost the strategy meaningful P/L and add ~26% of max drawdown across the backtest — this is the sharpest skip filter we have. (Band re-optimized 2026-06-09 from 50–90 to 50–80 after COR1M-aware sweep.)">
       <span class="ml" style="cursor:help" onclick="document.getElementById('regimeExplain').hidden=!document.getElementById('regimeExplain').hidden">Diagonal Regime</span>
       <span class="mv" id="regimeDisplay">—</span>
     </div>
@@ -522,9 +522,9 @@
     <strong>What the bands mean (from diagonal backtest, 800+ trades):</strong>
     <ul style="margin:4px 0 0 16px;padding:0">
       <li><strong style="color:#22c55e">0–50% (calm edge)</strong> — VIX cheap vs recent norm. Premium sellers get paid.</li>
-      <li><strong style="color:#fcd34d">50–90% (dead zone)</strong> — elevated but not spiky. Ambiguous regime, no edge.
-          <em>(Lower bound moved from 40 to 50 on 2026-06-02 after re-optimizing on corrected VIX data — pct=41–50 turned out to be profitable, not dead.)</em></li>
-      <li><strong style="color:#22c55e">90–100% (panic edge)</strong> — VIX near recent highs. Mean-reversion + skew crush pay you.</li>
+      <li><strong style="color:#fcd34d">50–80% (dead zone)</strong> — elevated but not spiky. Ambiguous regime, no edge.
+          <em>(Band tightened from 50-90 to 50-80 on 2026-06-09 after COR1M-aware sweep — the 80–90 tail was net-negative once COR1M ≥ 10 filter was applied.)</em></li>
+      <li><strong style="color:#22c55e">80–100% (panic edge)</strong> — VIX near recent highs. Mean-reversion + skew crush pay you.</li>
     </ul>
     <br>
     <strong>Reading the dashboard number:</strong>
@@ -552,7 +552,7 @@
       <li style="margin-top:5px">
         <strong style="color:#fcd34d">⚠ DEAD</strong> — both conditions true at the same time:
         <ol style="margin:2px 0 0 18px;padding:0">
-          <li>Today's VIX ranks <strong>50–90%</strong> of its last-20-day range (the "uncomfortable middle"), <strong>AND</strong></li>
+          <li>Today's VIX ranks <strong>50–80%</strong> of its last-20-day range (the "uncomfortable middle"), <strong>AND</strong></li>
           <li>Yesterday's SPX closed within <strong>±0.5%</strong> of the day before (a "flat / sleepy" prior session).</li>
         </ol>
         Historically these days have <em>no edge</em> — skipping them in backtest added ~$26K P/L and cut max drawdown
@@ -818,13 +818,13 @@
       <a href="./diagonal.html" style="color:var(--accent);text-decoration:underline">diagonal.html</a>.
     </p>
 
-    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Structure (default — updated 2026-04-29)</h4>
+    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Structure (default — updated 2026-06-09 safer-tail config)</h4>
     <ul>
-      <li><strong>Short leg</strong> — sell a <strong>1 DTE SPX put</strong> at a strike <strong>+30 pts above spot</strong>
-          (deep in the money — collects significant extrinsic on top of intrinsic, fast theta burn into expiry). Strike tolerance ±5 pts.</li>
-      <li><strong>Long leg</strong> — buy a <strong>25 DTE SPX put</strong> at a strike <strong>−40 pts below the short</strong>
-          (roughly 10 pts OTM from spot). Strike tolerance ±5 pts. Expiration tolerance ±5 DTE.</li>
-      <li><strong>Bullish-skewed net</strong> — deltas partially offset, but the deep-ITM short put dominates so the structure
+      <li><strong>Short leg</strong> — sell a <strong>1 DTE SPX put</strong> at a strike <strong>+10 pts above spot</strong>
+          (shallow ITM — collects modest extrinsic plus small intrinsic, fast theta burn into expiry). Strike tolerance ±5 pts.</li>
+      <li><strong>Long leg</strong> — buy a <strong>25 DTE SPX put</strong> at a strike <strong>−20 pts below the short</strong>
+          (roughly 10 pts OTM from spot, width 20). Strike tolerance ±5 pts. Expiration tolerance ±5 DTE.</li>
+      <li><strong>Bullish-skewed net</strong> — deltas partially offset, but the shallow-ITM short put still dominates so the structure
           is mildly long delta. Profit comes from the <strong>short leg decaying faster than the long leg</strong>
           (different DTE = different theta rates), not from direction.</li>
       <li><strong>Sizing — 10 ITM / 20 wide (long 10 OTM)</strong> — theoretical max loss ≈ debit + width = debit + <strong>$2,000/contract</strong>. With typical $4,624 avg debit, planning number is <strong>~$6.6K/contract</strong> on a normal-day catastrophe, up to <strong>~$14.5K</strong> on a worst-entry-day tail event.
@@ -848,9 +848,9 @@
       <li><strong>EOM</strong> — skip the last trading day of the month. Month-end rebalancing flow creates noisy reprice that hurts deeper-ITM short structures.</li>
       <li><strong>EOM-1</strong> — skip the second-to-last trading day too. Rebalancing pressure starts the day before EOM and leaks into pricing.</li>
       <li><strong>NM</strong> — skip the first trading day of the month. NM overlaps the Straddle/auto-flow day and the overnight gap risk dominates theta burn.</li>
-      <li><strong>VIX 50-90% (dead zone)</strong> — skip days where today's VIX 20-day rolling percentile lands in the 50–90% band
+      <li><strong>VIX 50-80% (dead zone)</strong> — skip days where today's VIX 20-day rolling percentile lands in the 50–80% band
           (the "uncomfortable middle" — elevated but not spiky). Historically the strategy has <em>no edge</em> there;
-          trade normally in 0–50% (calm → cheap vol sellers get paid) or 90–100% (panic → mean-reversion + skew crush pay).
+          trade normally in 0–50% (calm → cheap vol sellers get paid) or 80–100% (panic → mean-reversion + skew crush pay).
           Percentile is ready by 9:30 AM ET (uses today's first VIX print at-or-after 9:30 vs the prior 20 days' <strong>closes</strong> — canonical per <code>signal-engine.js::computeVixPct20d</code>; same value the live signal banner reads).
           <em>Re-optimized 2026-06-02 from 40–90 to 50–90 on corrected VIX data: +$12.4k, lower MaxDD, MAR 14.94 vs 12.16.</em></li>
       <li><strong>Earnings filters dropped (2026-04-29)</strong> — at the new 30/40 strikes, the per-ticker earnings gates (AAPL/MSFT/TSLA/META) were costing more edge than they preserved. The deeper-ITM short collects enough extrinsic that a single mega-cap report doesn't break it. EOM/EOM-1 added in their place because month-end flow hurts deeper structures more.</li>
@@ -1526,7 +1526,7 @@
         diagBadgeCpi.textContent = _diagSig.diagBadge;
         if (_diagSig.diagGo) {
           cardDiagCpi.className = 'scard active-ok';
-          diagReasonCpi.textContent = 'Short 1 DTE SPX put +30 pts ITM · long 25 DTE SPX put −40 pts below short. Entry 12:30–15:00 ET; exit same clock time next trading day. Diagonal is NOT CPI-blocked.';
+          diagReasonCpi.textContent = 'Short 1 DTE SPX put +10 pts ITM · long 25 DTE SPX put −20 pts below short (width 20). Entry 12:30–15:00 ET; exit same clock time next trading day. Diagonal is NOT CPI-blocked.';
           if (pillDiagCpi) pillDiagCpi.style.display = '';
         } else if (_diagSig.diagSkipCode) {
           cardDiagCpi.className = 'scard active-block';
@@ -1609,7 +1609,7 @@
       spxSepEl.style.display   = 'none';
     }
 
-    // VIX 20-day percentile (50–90% band = diagonal dead zone; re-opt 2026-06-02)
+    // VIX 20-day percentile (50–80% band = diagonal dead zone; re-opt 2026-06-09 from 50-90)
     const vixPctWrap = document.getElementById('vixPct20Wrap');
     const vixPctSep  = document.getElementById('vixPctSep');
     const vixPctEl   = document.getElementById('vixPct20Display');
@@ -1620,10 +1620,10 @@
       vixPctWrap.style.display = 'flex';
       vixPctSep.style.display  = 'inline';
       vixPctEl.textContent = _vixPctToday + '%';
-      vixPctEl.className   = (_vixPctToday > 50 && _vixPctToday <= 90) ? 'mv vix-dead' : 'mv vix-edge';
-      vixPctWrap.title = (_vixPctToday > 50 && _vixPctToday <= 90)
-        ? `VIX today ${vToday} ranks ${_vixPctToday}% in last 20 daily closes — DEAD ZONE (50–90%): Diagonal loses edge here.`
-        : `VIX today ${vToday} ranks ${_vixPctToday}% in last 20 daily closes — EDGE: outside the 50–90% dead zone.`;
+      vixPctEl.className   = (_vixPctToday > 50 && _vixPctToday <= 80) ? 'mv vix-dead' : 'mv vix-edge';
+      vixPctWrap.title = (_vixPctToday > 50 && _vixPctToday <= 80)
+        ? `VIX today ${vToday} ranks ${_vixPctToday}% in last 20 daily closes — DEAD ZONE (50–80%): Diagonal loses edge here.`
+        : `VIX today ${vToday} ranks ${_vixPctToday}% in last 20 daily closes — EDGE: outside the 50–80% dead zone.`;
     } else {
       vixPctWrap.style.display = 'none';
       vixPctSep.style.display  = 'none';
@@ -1634,7 +1634,7 @@
     const regimeSep  = document.getElementById('regimeSep');
     const regimeEl   = document.getElementById('regimeDisplay');
     if (_vixPctToday !== null && _spxPriorDayChgPct !== null) {
-      const inDeadBand = (_vixPctToday > 50 && _vixPctToday <= 90);
+      const inDeadBand = (_vixPctToday > 50 && _vixPctToday <= 80);
       const priorFlat  = Math.abs(_spxPriorDayChgPct) < 0.5;
       const isDead     = inDeadBand && priorFlat;
       regimeWrap.style.display = 'flex';
@@ -1643,12 +1643,12 @@
       if (isDead) {
         regimeEl.textContent = '⚠ DEAD';
         regimeEl.className   = 'mv regime-dead';
-        regimeWrap.title = `DEAD ZONE: VIX 20d percentile = ${_vixPctToday}% (in 50–90% band) AND yesterday's SPX moved ${priorDir}${_spxPriorDayChgPct.toFixed(2)}% (< 0.5% = flat). Historically this combo has no edge for the diagonal — consider skipping.`;
+        regimeWrap.title = `DEAD ZONE: VIX 20d percentile = ${_vixPctToday}% (in 50–80% band) AND yesterday's SPX moved ${priorDir}${_spxPriorDayChgPct.toFixed(2)}% (< 0.5% = flat). Historically this combo has no edge for the diagonal — consider skipping.`;
       } else {
         regimeEl.textContent = '✓ EDGE';
         regimeEl.className   = 'mv regime-edge';
         const reasons = [];
-        if (!inDeadBand) reasons.push(`VIX 20d percentile = ${_vixPctToday}% (outside 50–90% dead band)`);
+        if (!inDeadBand) reasons.push(`VIX 20d percentile = ${_vixPctToday}% (outside 50–80% dead band)`);
         if (!priorFlat)  reasons.push(`yesterday's SPX moved ${priorDir}${_spxPriorDayChgPct.toFixed(2)}% (≥ 0.5% = directional)`);
         regimeWrap.title = `EDGE present — ${reasons.join(' · ')}. Diagonal trade has its normal edge today.`;
       }
@@ -1903,7 +1903,7 @@
       'EOM':    'Last trading day of month — month-end rebalancing flow creates noisy reprice. Default filter skips.',
       'EOM-1':  'Second-to-last trading day of month — early rebalance flow. Default filter skips.',
       'NM':     'First trading day of month — gap risk dominates theta burn. Default filter skips.',
-      'VIX_MID':`VIX 20-day percentile = ${_vixPctToday}% — inside the 50–90% "no-edge" band. Default filter skips.`,
+      'VIX_MID':`VIX 20-day percentile = ${_vixPctToday}% — inside the 50–80% "no-edge" band. Default filter skips.`,
     };
 
     if (diagGo) {

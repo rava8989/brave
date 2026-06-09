@@ -285,7 +285,7 @@ function buildDiscordMessage(signal, vixValues, tailLine) {
   inner += `${sigColor(signal.stradText)}Straddle │ ${signal.stradText}${RST}\n`;
   inner += `${sigColor(signal.gxbfText)}GXBF     │ ${signal.gxbfText}${RST}\n`;
   inner += `${sigColor(signal.bobfRec)}BOBF     │ ${signal.bobfRec}${RST}\n`;
-  // Diagonal (companion — 30 ITM / 40 wide, 5-filter stack: OPEX-1+EOM+EOM-1+NM+VIX_MID 50-90, 12:30–15:00 ET window; band re-opt 2026-06-02)
+  // Diagonal (companion — 10 ITM / 20 wide, 6-filter stack: OPEX-1+EOM+EOM-1+NM+VIX_MID 50-80+COR1M_LOW, 12:30–15:00 ET window; 2026-06-09 safer-tail retune)
   if (signal.diagText) {
     inner += `${sigColor(signal.diagText)}Diagonal │ ${signal.diagText}${RST}\n`;
   }

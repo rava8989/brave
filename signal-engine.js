@@ -323,8 +323,8 @@ export function computeVixPct20d(vixToday, prior20VixCloses, opts = {}) {
 // DIAGONAL SIGNAL (companion strategy, single source of truth)
 // Consumed by: schwab-proxy.js (via calculateSignal), index.html (direct)
 // ────────────────────────────────────────────────────────────────────
-// Canonical 5-filter stack — priority:
-//   OPEX-1 > EOM > EOM-1 > NM > VIX_MID (50–90%)
+// Canonical 6-filter stack — priority:
+//   OPEX-1 > EOM > EOM-1 > NM > COR1M_LOW (<10) > VIX_MID (50–80%)
 // Mirrors compute_diagonal_pnl.py DEFAULT_PARAMS.special_active exactly.
 // FED / CPI / VIX-EXP / OPEX / OPEX+1 / per-ticker earnings intentionally NOT
 // in the stack. Earnings filters dropped 2026-04-29 (per backtest sweep —
@@ -369,7 +369,7 @@ export function computeDiagonalSignal(etDate, vixPct20d = null, cor1m = null, co
     diagSkipCode = 'COR1M_LOW';
     diagText = `No Diagonal (COR1M ${cor1m.toFixed(2)} < ${cor1mMin})`;
     diagBadge = 'SKIP';
-  } else if (vixPct20d !== null && vixPct20d !== undefined && vixPct20d > 50 && vixPct20d <= 90) {
+  } else if (vixPct20d !== null && vixPct20d !== undefined && vixPct20d > 50 && vixPct20d <= 80) {
     diagSkipCode = 'VIX_MID';
     diagText = `No Diagonal (VIX 20d ${vixPct20d}% — dead zone)`;
     diagBadge = 'SKIP';
@@ -384,7 +384,7 @@ export function computeDiagonalSignal(etDate, vixPct20d = null, cor1m = null, co
   } else {
     // All filters cleared → GO.
     diagGo = true;
-    const band = vixPct20d <= 50 ? 'calm' : 'panic';
+    const band = vixPct20d <= 50 ? 'calm' : 'panic';  // > 80 since 50-80 is filtered above
     diagText = `Diagonal 12:30–15:00 ET window (VIX 20d ${vixPct20d}% · COR1M ${cor1m.toFixed(2)} — ${band} edge)`;
     diagBadge = '⏰ 12:30–15:00 ET';
   }
