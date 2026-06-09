@@ -631,7 +631,7 @@
     </div>
 
     <!-- CARD 5: Diagonal (companion — not part of Sigma 3) -->
-    <div class="scard" id="cardDiag" title="1/25 Put Diagonal — default config (short 30 ITM, long 40 below = 10 OTM) with OPEX-1, EOM, EOM-1, NM, VIX 50–90% dead zone, AND COR1M < 10 excluded (no earnings filter — dropped 2026-04-29; VIX band re-optimized 2026-06-02 from 40–90 to 50–90; COR1M floor added 2026-06-09 after 3yr review: under 10 the strategy bled $9.7k @ 50% WR). Entry anywhere in the 12:30–15:00 ET window, exit at the same clock time next day (24-hour hold; Entry Time === Exit Time; one diagonal in the book at a time). See the '1/25 Put Diagonal' section below the calculator for full strategy details.">
+    <div class="scard" id="cardDiag" title="1/25 Put Diagonal — default config (short 10 ITM, long 20 below = 10 OTM, width 20) with OPEX-1, EOM, EOM-1, NM, VIX 50–80% dead zone, AND COR1M < 10 excluded. 2026-06-09 re-tune: strikes 30/40 → 10/20 (safer-tail config: lower max risk per contract — debit + width = debit + $2,000 vs old debit + $4,000); VIX band tightened 50–90 → 50–80 (drops the 80–90 percentile band that was net-negative). Entry anywhere in the 12:30–15:00 ET window, exit at the same clock time next day (24-hour hold; Entry Time === Exit Time; one diagonal in the book at a time). See the '1/25 Put Diagonal' section below the calculator for full strategy details.">
       <div class="scard-header">
         <span class="scard-label">Diagonal <span style="font-weight:400;font-size:10px;opacity:.7;letter-spacing:normal;text-transform:none">· companion</span></span>
         <span class="today-trade-pill" id="pillDiag" style="display:none;">▶ TODAY'S TRADE</span>
@@ -806,7 +806,7 @@
     </ul>
 
     <hr class="divider">
-    <h3>1/25 Put Diagonal — Companion Strategy <span style="font-weight:400;font-size:12px;color:var(--text3)">(separate from Sigma 3; OPEX-1 + EOM + EOM-1 + NM + VIX 50–90% + COR1M&lt;10 filtered default, 30 ITM / 40 below)</span></h3>
+    <h3>1/25 Put Diagonal — Companion Strategy <span style="font-weight:400;font-size:12px;color:var(--text3)">(separate from Sigma 3; OPEX-1 + EOM + EOM-1 + NM + VIX 50–80% + COR1M&lt;10 filtered default, 10 ITM / 20 below — safer-tail config)</span></h3>
     <p>
       A <strong>SPX put-diagonal spread</strong> that runs alongside the Sigma 3 bundle. Different instrument,
       different DTE, and different trade windows — so it's largely <strong>uncorrelated</strong> with M8BF / Straddle /
@@ -827,9 +827,9 @@
       <li><strong>Bullish-skewed net</strong> — deltas partially offset, but the deep-ITM short put dominates so the structure
           is mildly long delta. Profit comes from the <strong>short leg decaying faster than the long leg</strong>
           (different DTE = different theta rates), not from direction.</li>
-      <li><strong>Sizing — 30 ITM / 40 wide (long 10 OTM)</strong> — theoretical max loss ≈ debit + width ≈ <strong>~$9K/contract</strong> on a true tail event (1987/2020 class).
-          Empirical worst trade in the 2023-2026 backtest is around <strong>−$5K</strong> per contract.</li>
-      <li><strong>Example</strong> — SPX 6300 → sell the 1 DTE 6330 put (30 ITM), buy the ~25 DTE 6290 put (10 OTM).</li>
+      <li><strong>Sizing — 10 ITM / 20 wide (long 10 OTM)</strong> — theoretical max loss ≈ debit + width = debit + <strong>$2,000/contract</strong>. With typical $4,624 avg debit, planning number is <strong>~$6.6K/contract</strong> on a normal-day catastrophe, up to <strong>~$14.5K</strong> on a worst-entry-day tail event.
+          Empirical worst trade in the 2023-2026 backtest at this setup is <strong>−$3,510</strong> per contract (vs −$4,375 on the old 30/40 setup).</li>
+      <li><strong>Example</strong> — SPX 6300 → sell the 1 DTE 6310 put (10 ITM), buy the ~25 DTE 6290 put (10 OTM).</li>
     </ul>
 
     <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Timing</h4>
@@ -1908,7 +1908,7 @@
 
     if (diagGo) {
       diagRec.textContent    = diagText;
-      diagReason.textContent = 'Short 1 DTE SPX put +30 pts ITM · long 25 DTE SPX put −40 pts below short (long is 10 OTM) · ±5 pt tol. Entry anywhere in the 12:30–15:00 ET window; exit at the same clock time on the next trading day (24-hour hold, entry time = exit time). All 5 default filters (OPEX-1, EOM, EOM-1, NM, VIX 50-90%) clear today.';
+      diagReason.textContent = 'Short 1 DTE SPX put +10 pts ITM · long 25 DTE SPX put −20 pts below short (long is 10 OTM, width 20) · ±5 pt tol. Entry anywhere in the 12:30–15:00 ET window; exit at the same clock time on the next trading day (24-hour hold, entry time = exit time). All 6 default filters (OPEX-1, EOM, EOM-1, NM, VIX 50-80%, COR1M≥10) clear today.';
       diagBadge.textContent  = diagBadgeCanon;
       cardDiag.className     = 'scard active-ok';
       if (pillDiag) pillDiag.style.display = '';
@@ -2873,7 +2873,7 @@
     inner += `${sigColor(strad)}Straddle │ ${strad}${RST}\n`;
     inner += `${sigColor(gxbf)}GXBF     │ ${gxbf}${RST}\n`;
     inner += `${sigColor(bobf)}BOBF     │ ${bobf}${RST}\n`;
-    // Diagonal (companion — 30 ITM / 40 wide, 5-filter stack: OPEX-1+EOM+EOM-1+NM+VIX_MID)
+    // Diagonal (companion — 10 ITM / 20 wide, 6-filter stack: OPEX-1+EOM+EOM-1+NM+VIX_MID+COR1M_LOW)
     if (diag && notCalc(diag)) {
       inner += `${sigColor(diag)}Diagonal │ ${diag}${RST}\n`;
     }

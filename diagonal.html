@@ -726,7 +726,7 @@ body {
 
   <div class="fg">
     <div class="fg-label">Short ITM Offset (pts)</div>
-    <input type="number" class="num-input" id="shortOffset" value="30" min="0" step="5">
+    <input type="number" class="num-input" id="shortOffset" value="10" min="0" step="5">
   </div>
 
   <div class="fg">
@@ -761,7 +761,7 @@ body {
 
   <div class="fg">
     <div class="fg-label">Long Below Short (pts)</div>
-    <input type="number" class="num-input" id="longOffset" value="40" min="0" step="5">
+    <input type="number" class="num-input" id="longOffset" value="20" min="0" step="5">
   </div>
 
   <div class="fg">
@@ -806,7 +806,7 @@ body {
       <span style="display:inline-flex;align-items:center;gap:3px;font-size:11px;color:var(--text2);margin-left:2px;">
         <input type="number" id="vixBandLo" value="50" min="0" max="99" step="5" style="width:38px;padding:1px 3px;font-family:'JetBrains Mono',monospace;font-size:11px;text-align:center;" title="Band lower bound (exclusive). Trades whose VIX percentile is &gt; this value AND ≤ hi are filtered out.">
         <span>–</span>
-        <input type="number" id="vixBandHi" value="90" min="1" max="100" step="5" style="width:38px;padding:1px 3px;font-family:'JetBrains Mono',monospace;font-size:11px;text-align:center;" title="Band upper bound (inclusive). Trades whose VIX percentile is &gt; lo AND ≤ this value are filtered out.">
+        <input type="number" id="vixBandHi" value="80" min="1" max="100" step="5" style="width:38px;padding:1px 3px;font-family:'JetBrains Mono',monospace;font-size:11px;text-align:center;" title="Band upper bound (inclusive). Trades whose VIX percentile is &gt; lo AND ≤ this value are filtered out.">
         <span style="opacity:0.7">%</span>
       </span>
       <!-- 2026-06-09: COR1M floor toggle. Default ACTIVE — Diagonal loses

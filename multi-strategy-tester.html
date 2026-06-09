@@ -1553,13 +1553,13 @@ function renderCorrelationMoved() {
     if (row.gxbfPL != null) dailyPL.gxbf[row.date] = row.gxbfPL;
     if (s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) dailyPL.bobf[row.date] = row.bobfPL;
     // Diagonal: diagPL is null on filtered days (OPEX-1, EOM, EOM-1, NM,
-    // VIX 50-90% dead-zone, OR COR1M < 10 per the canonical 6-filter stack;
-    // COR1M_LOW added 2026-06-09; VIX band re-opt 2026-06-02) or no-data days.
+    // VIX 50-80% dead-zone, OR COR1M < 10 per the canonical 6-filter stack;
+    // COR1M_LOW added 2026-06-09; VIX band tightened 50-90 → 50-80 on 2026-06-09).
     // A non-null value means the strategy actually traded — matches convention
     // used by allocation optimizer and equity chart. Computed by
     // compute_diagonal_pnl.py with DEFAULT_PARAMS (entry anywhere in 12:30–15:00
-    // ET window, exit at same clock time next day, 1/25 DTE, +30 ITM, -40 below
-    // (long 10 OTM); 2026-04-29 default update).
+    // ET window, exit at same clock time next day, 1/25 DTE, +10 ITM, -20 below
+    // (long 10 OTM, width 20 — safer-tail config from 2026-06-09 re-tune).
     if (row.diagPL != null) dailyPL.diagonal[row.date] = row.diagPL;
   }
 

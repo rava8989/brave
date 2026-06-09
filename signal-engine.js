@@ -331,7 +331,7 @@ export function computeVixPct20d(vixToday, prior20VixCloses, opts = {}) {
 // removing earnings gates while widening to 30/40 + EOM/EOM-1 captured more
 // edge).
 // Entry 12:30–15:00 ET (window; pick any clock time, must equal Exit Time).
-// Exit 12:30–15:00 ET next trading day · 1/25 DTE · short +30 ITM · long −40 below · ±5 pt tol.
+// Exit 12:30–15:00 ET next trading day · 1/25 DTE · short +10 ITM · long −20 below · ±5 pt tol.
 // Entry and exit must use the SAME wall-clock time so only one diagonal is live at a time.
 // ════════════════════════════════════════════════════════════════════
 // Diagonal COR1M floor — added 2026-06-09 after empirical review showed

@@ -1393,8 +1393,8 @@ async function pollDiscordSignals(env) {
 // Expiries: short = next trading day, long = ~25 trading days out.
 // ════════════════════════════════════════════════════════════════════
 
-const DIAG_SHORT_OFFSET = 30;     // pts ITM (matches compute_diagonal_pnl.py)
-const DIAG_LONG_OFFSET  = 40;     // pts BELOW short (so 10 OTM relative to spot)
+const DIAG_SHORT_OFFSET = 10;     // pts ITM (10 ITM — safer-tail config, 2026-06-09)
+const DIAG_LONG_OFFSET  = 20;     // pts BELOW short (so 10 OTM relative to spot; width=20)
 const DIAG_LONG_DTE     = 25;     // CALENDAR days target (matches Python long_dte=25)
 const DIAG_LONG_DTE_TOL = 5;      // ±5 calendar days → 20-30 DTE acceptable range
 
