@@ -2687,11 +2687,22 @@ const GXBF_WING_MIN  = 5;
 const GXBF_WING_MAX  = 100;   // cap → max risk = W/2 = 50pt = $5,000/contract
 const GXBF_WING_STEP = 5;
 
-// GXBF entry window: ~9:33–9:45 ET (signal posts ~09:34:59 ET). Outside the
-// window we don't compute; past it we mark done with no trade.
+// GXBF entry window — opens at 09:35 ET (NOT earlier).
+//
+// 2026-06-09 FIX: window used to start at 09:33 ET, which dated back to the
+// pre-2026-05 Discord-scrape era where the worker watched for the "Major
+// Positive by Volume" Discord post that landed ~09:34:59 ET. With the
+// in-house live-gamma replacement (computeGxbfCenterLive), there is NO
+// reason to attempt entry before 09:35 — the SPX 0DTE call chain quotes
+// settle in the first ~5 minutes of regular session, and firing at 09:33
+// reads stale/transient quotes for the gamma center.
+//
+// User feedback (2026-06-09): "GXBF should not trade before 9:35 — at 9:35
+// you check the KX (gamma) levels, then fire ~9:36." Window aligned with
+// signal-engine.js `rec = "GXBF @ 9:36 AM"`.
 function gxbfInWindow(etNow) {
   const h = etNow.getHours(), m = etNow.getMinutes();
-  return h === 9 && m >= 33 && m <= 45;
+  return h === 9 && m >= 35 && m <= 45;
 }
 function gxbfPastWindow(etNow) {
   const h = etNow.getHours(), m = etNow.getMinutes();
@@ -2810,6 +2821,21 @@ async function handleGxbfEntry(env, etNow, signal, preChain = null) {
 
   const done = await env.SIGNAL_KV.get(doneKey);
   if (done) return { ...out, status: 'already-done', why: done };
+
+  // 2026-06-09 belt-and-suspenders: even if the caller's window gate is
+  // wrong or removed, refuse to fire before 09:35 ET. This guarantees the
+  // SPX 0DTE chain quotes have had a few minutes to settle so the live
+  // gamma center is real, not a transient post-open value. User reported
+  // an early 09:33 fire today — gxbfInWindow was the root cause, but if
+  // any other entry-point ever calls this directly, it stays protected.
+  {
+    const h = etNow.getHours(), m = etNow.getMinutes();
+    const beforeFireTime = (h < 9) || (h === 9 && m < 35);
+    if (beforeFireTime) {
+      console.warn(`[gxbf] entry refused — too early (${h}:${String(m).padStart(2,'0')} ET, need ≥ 09:35)`);
+      return { ...out, status: 'too-early', etTime: `${h}:${String(m).padStart(2,'0')}` };
+    }
+  }
 
   if (gxbfPastWindow(etNow)) {
     await env.SIGNAL_KV.put(doneKey, 'window-passed', { expirationTtl: 86400 });
@@ -3250,11 +3276,12 @@ async function handleScheduled(env) {
     }
   }
 
-  // ── GXBF entry: retry every market tick during the 9:33-9:45 ET window ──
-  // The GXBF Discord signal posts ~09:34:59 ET — usually AFTER the morning
-  // signal block runs (~9:30-9:32 ET), so that block's first attempt finds
-  // no scrape. Retry here every tick (mirrors how BOBF retries every tick)
-  // until the table is scraped or the window passes. STRATEGY INDEPENDENCE:
+  // ── GXBF entry: retry every market tick during the 9:35-9:45 ET window ──
+  // 2026-06-09 FIX: window updated from 9:33 → 9:35 ET (see gxbfInWindow doc).
+  // The chain quotes settle in the first ~5 minutes of regular session, so
+  // 09:33 fires were reading transient post-open quotes for the gamma center.
+  // Retry every tick (mirrors how BOBF retries every tick) until the entry
+  // completes or the window passes. STRATEGY INDEPENDENCE:
   // gated solely on GXBF's OWN theme, read from the persisted morning signal
   // (morning_signal_data_<date>). Never consults M8BF/Straddle/BOBF state.
   let gxbfResult = {};
@@ -6770,7 +6797,7 @@ export default {
           doneState,
           skip,                 // {theme, rec} when signal said no-GXBF today
           serverTimeET: `${String(etNowG.getHours()).padStart(2,'0')}:${String(etNowG.getMinutes()).padStart(2,'0')}`,
-          windowET: '09:33 - 09:45',
+          windowET: '09:35 - 09:45',
         }, 200, publicCors);
       } catch (e) {
         return jsonResp({ error: e.message }, 500, publicCors);
