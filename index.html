@@ -1062,18 +1062,23 @@
   const isOpex = () => SignalEngine.opexSch.includes(todayLong());
   const isVixExp=() => SignalEngine.vixSch.includes(todayLong());
 
-  const isWkend = SignalEngine.isWkend;
-  const isHol   = SignalEngine.isHol;
-  const isTrade = SignalEngine.isTrade;
-  const nextTrade = SignalEngine.nextTrade;
-  const prevTrade = SignalEngine.prevTrade;
+  // CRITICAL: must use wrapper functions, NOT `const X = SignalEngine.X`.
+  // SignalEngine is module-loaded (deferred); this inline classic script
+  // parses BEFORE the module. `const X = SignalEngine.X` evaluates at parse
+  // time → SignalEngine is undefined → TypeError → entire dashboard hangs.
+  // Wrappers defer the lookup until CALL time (after DOMContentLoaded).
+  const isWkend = d => SignalEngine.isWkend(d);
+  const isHol   = d => SignalEngine.isHol(d);
+  const isTrade = d => SignalEngine.isTrade(d);
+  const nextTrade = d => SignalEngine.nextTrade(d);
+  const prevTrade = d => SignalEngine.prevTrade(d);
 
   // SignalEngine's isTodayAfter/Before take (ds, etDate) — provide defaults
   // for callers that omit etDate.
   function isTodayAfter(ds, etDate=new Date()) { return SignalEngine.isTodayAfter(ds, etDate); }
   function isTodayBefore(ds, etDate=new Date()) { return SignalEngine.isTodayBefore(ds, etDate); }
-  const parseLong = SignalEngine.parseLong;
-  const schedInMonth = SignalEngine.schedInMonth;
+  const parseLong = s => SignalEngine.parseLong(s);
+  const schedInMonth = (list, ref) => SignalEngine.schedInMonth(list, ref);
 
   const isPostHol     = () => SignalEngine.holidays.some(d => isTodayAfter(d));
   const isPostOpexMon = () => SignalEngine.isPostOpexMon(new Date());
@@ -1099,9 +1104,9 @@
   const m8Sched = (dow, d=new Date()) => SignalEngine.m8Sched(dow, d);
   const m8Msg   = (d=new Date()) => SignalEngine.m8Msg(d);
 
-  /* Display helpers */
-  const ordinal = SignalEngine.ordinal;
-  const wdName  = SignalEngine.wdName;
+  /* Display helpers — wrappers, not bare references (see comment above). */
+  const ordinal = n => SignalEngine.ordinal(n);
+  const wdName  = n => SignalEngine.wdName(n);
   const tradeWdLabel = (d=new Date()) => SignalEngine.tradeWdLabel(d);
   function updateHeader(){
     document.getElementById('todayDate').textContent = SignalEngine.dateLong(new Date());
