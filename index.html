@@ -1073,10 +1073,20 @@
   const nextTrade = d => SignalEngine.nextTrade(d);
   const prevTrade = d => SignalEngine.prevTrade(d);
 
-  // SignalEngine's isTodayAfter/Before take (ds, etDate) — provide defaults
-  // for callers that omit etDate.
-  function isTodayAfter(ds, etDate=new Date()) { return SignalEngine.isTodayAfter(ds, etDate); }
-  function isTodayBefore(ds, etDate=new Date()) { return SignalEngine.isTodayBefore(ds, etDate); }
+  // SignalEngine's isTodayAfter/Before take (ds, etDate). Use Date-validation,
+  // NOT default-arg pattern: the legacy inline version was passed directly to
+  // Array.some(...) in multiple places, which calls back with (value, index,
+  // array). With `etDate=new Date()` default, the index (a number) gets used
+  // as etDate → `number.getFullYear()` TypeError → DOMContentLoaded handler
+  // dies → no dashboard, no Schwab connect. Validate instanceof Date instead.
+  function isTodayAfter(ds, etDate) {
+    if (!(etDate instanceof Date)) etDate = new Date();
+    return SignalEngine.isTodayAfter(ds, etDate);
+  }
+  function isTodayBefore(ds, etDate) {
+    if (!(etDate instanceof Date)) etDate = new Date();
+    return SignalEngine.isTodayBefore(ds, etDate);
+  }
   const parseLong = s => SignalEngine.parseLong(s);
   const schedInMonth = (list, ref) => SignalEngine.schedInMonth(list, ref);
 
