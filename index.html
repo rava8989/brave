@@ -651,15 +651,8 @@
         <span class="scard-badge" id="tailBadge">—</span>
       </div>
       <div class="scard-body">
-        <div class="scard-main" id="tailRec">Watch COR1M hourly for the next cross-down below 7.75</div>
+        <div class="scard-main" id="tailRec">Loading…</div>
         <div class="scard-reason" id="tailReason"></div>
-        <div style="font-size:10px;color:var(--text3);margin-top:6px;line-height:1.5;">
-          <strong>Trigger fires on ANY cross</strong> of <code style="background:var(--bg3);padding:0 4px;border-radius:3px;">$COR1M</code> from above to at-or-below <strong>7.75</strong>:<br>
-          • Cross at 9:30 bar (overnight) → trade <strong>today</strong> at 9:45<br>
-          • Cross at 10:30+ (intraday) → trade <strong>tomorrow</strong> at 9:45<br>
-          • Gate: <code style="background:var(--bg3);padding:0 4px;border-radius:3px;">$VVIX</code> open must be &lt; <strong>110</strong><br>
-          Buy 0DTE SPXW put delta −0.20 at 9:45, hold to 4 PM. Keep buying daily until profit.
-        </div>
       </div>
     </div>
 
@@ -3349,6 +3342,48 @@
     }
   }
 
+  // ── Tail Hedge daily signal — reads cor1m_contango_bundle.json and decides
+  // BINARY: trade today, skip today (VVIX too high), or no trade (no trigger).
+  async function updateTailHedgeStatus() {
+    const rec   = document.getElementById('tailRec');
+    const pill  = document.getElementById('pillTail');
+    const badge = document.getElementById('tailBadge');
+    if (!rec) return;
+    try {
+      const r = await fetch('cor1m_contango_bundle.json', {cache:'no-store'});
+      const b = await r.json();
+      const todayISO = new Date().toISOString().slice(0,10);
+      const dailyToday = b.daily?.find(d => d.date === todayISO);
+      const cor1mOpen = dailyToday?.cor1m;
+      const vvixOpen  = dailyToday?.vvix;
+      // State machine from Sweet Spot triggers — TRIGGERED if last trigger has no profitable exit.
+      const triggers = b.preset_results?.sweet_spot?.triggers || [];
+      const last = triggers[triggers.length - 1];
+      const isTriggered = last && last.exit_reason !== 'profitable';
+      if (isTriggered) {
+        // Within an active trigger window — VVIX gate decides.
+        if (vvixOpen != null && vvixOpen >= 110) {
+          rec.innerHTML = `<span style="color:var(--amber);">SKIP today</span> — VVIX <b>${vvixOpen.toFixed(2)}</b> ≥ 110 (puts too expensive). Stay TRIGGERED.`;
+          if (pill)  pill.style.display = 'none';
+          if (badge) badge.textContent = 'SKIP';
+        } else {
+          rec.innerHTML = `<span style="color:var(--accent);">TRADE today @ 9:45 ET</span> — buy 0DTE SPXW put delta −0.20, hold to 4 PM. <span style="color:var(--text3);font-weight:400">VVIX ${vvixOpen?.toFixed(2) ?? '—'} &lt; 110 ✓</span>`;
+          if (pill)  pill.style.display = '';
+          if (badge) badge.textContent = 'TRADE';
+        }
+      } else {
+        // WAITING — no active trigger.
+        const corS = cor1mOpen != null ? cor1mOpen.toFixed(2) : '—';
+        rec.innerHTML = `<span style="color:var(--text3);">No Tail Hedge today</span> — COR1M open <b>${corS}</b> (need cross below <b>7.75</b>). Waiting for next trigger.`;
+        if (pill)  pill.style.display = 'none';
+        if (badge) badge.textContent = 'WAIT';
+      }
+    } catch(e) {
+      rec.textContent = 'Tail Hedge: bundle unavailable. See cor1m_contango.html.';
+      if (badge) badge.textContent = '—';
+    }
+  }
+
   document.addEventListener('DOMContentLoaded',()=>{
     initTheme();
     renderSched(SignalEngine.cpiSch,  'cpiSchedule');
@@ -3358,6 +3393,7 @@
     renderSched(SignalEngine.vixSch,  'vixExpirySchedule');
     renderEarnings();
     refreshCross(); buildStatus(); buildNextEvents(); updateHeader();
+    updateTailHedgeStatus();
     // On CPI days only Diagonal trades, and Diagonal only needs today's VIX
     // open. Disable both yesterday fields so the user knows they're not needed.
     document.getElementById('yesterdayOpen').disabled=isCpi();
