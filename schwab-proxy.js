@@ -63,7 +63,10 @@ async function recordRefreshHealth(env, ok, msg = null) {
 async function sendDiscordDM(env, userId, message, proxyUrl = null) {
   if (!userId || !message) return { ok: false, error: 'missing userId/message' };
 
-  // Path 1: native — DM via DISCORD_TOKEN directly
+  // Detect whether message is an embed object (Option E format) or a string.
+  const isEmbed = typeof message === 'object' && message !== null && !Array.isArray(message);
+
+  // Path 1: native — DM via DISCORD_TOKEN directly (supports embeds)
   if (env.DISCORD_TOKEN) {
     try {
       const dmResp = await fetch('https://discord.com/api/v10/users/@me/channels', {
@@ -76,10 +79,13 @@ async function sendDiscordDM(env, userId, message, proxyUrl = null) {
         return { ok: false, status: dmResp.status, error: `DM channel ${dmResp.status}: ${txt.slice(0, 200)}` };
       }
       const dm = await dmResp.json();
+      const payload = isEmbed
+        ? { embeds: [message] }
+        : { content: String(message).slice(0, 2000) };
       const msgResp = await fetch(`https://discord.com/api/v10/channels/${dm.id}/messages`, {
         method: 'POST',
         headers: { 'Authorization': `Bot ${env.DISCORD_TOKEN}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: String(message).slice(0, 2000) }),
+        body: JSON.stringify(payload),
       });
       let data;
       try { data = await msgResp.json(); } catch { data = { raw: 'non-json' }; }
@@ -90,6 +96,9 @@ async function sendDiscordDM(env, userId, message, proxyUrl = null) {
     }
   }
 
+  // Path 2/3 (legacy proxies): downgrade embed → plain text since they don't pass embeds through.
+  const textMessage = isEmbed ? embedToText(message) : String(message);
+
   // Path 2: service binding (legacy discord-proxy worker)
   if (env.DISCORD_PROXY) {
     try {
@@ -97,7 +106,7 @@ async function sendDiscordDM(env, userId, message, proxyUrl = null) {
       if (env.PROXY_SECRET) hdrs['Authorization'] = `Bearer ${env.PROXY_SECRET}`;
       const r = await env.DISCORD_PROXY.fetch(new Request('https://dummy/', {
         method: 'POST', headers: hdrs,
-        body: JSON.stringify({ userId, message: String(message).slice(0, 2000) }),
+        body: JSON.stringify({ userId, message: textMessage.slice(0, 2000) }),
       }));
       let data; try { data = await r.json(); } catch { data = { raw: 'non-json' }; }
       return { ok: r.ok, status: r.status, data, source: 'service-binding',
@@ -114,7 +123,7 @@ async function sendDiscordDM(env, userId, message, proxyUrl = null) {
       if (env.PROXY_SECRET) hdrs['Authorization'] = `Bearer ${env.PROXY_SECRET}`;
       const r = await fetch(proxyUrl, {
         method: 'POST', headers: hdrs,
-        body: JSON.stringify({ userId, message: String(message).slice(0, 2000) }),
+        body: JSON.stringify({ userId, message: textMessage.slice(0, 2000) }),
       });
       let data; try { data = await r.json(); } catch { data = { raw: 'non-json' }; }
       return { ok: r.ok, status: r.status, data, source: 'http-url',
@@ -201,10 +210,56 @@ import {
 
 
 // ════════════════════════════════════════════════════════════════════
+// TAIL HEDGE — fetch today's signal from the Sweet Spot bundle.
+// Bundle is auto-refreshed daily by scripts/refresh_tail_hedge.sh.
+// Returns a short status string for the Discord message.
+//
+// 3 possible states:
+//   TRADE today @ 9:45 — buy 0DTE SPXW put delta -0.20, hold to 4 PM
+//   SKIP today (VVIX X.XX ≥ 110, puts too expensive). Stay TRIGGERED.
+//   No Tail Hedge today (COR1M X.XX, need cross below 7.75)
+let _tailHedgeCache = { value: null, fetchedAt: 0 };
+async function getTailHedgeStatusLine() {
+  // 5-minute in-worker cache — bundle changes daily so this is plenty fresh.
+  const now = Date.now();
+  if (_tailHedgeCache.value && (now - _tailHedgeCache.fetchedAt) < 5*60*1000) {
+    return _tailHedgeCache.value;
+  }
+  try {
+    const r = await fetch('https://raw.githubusercontent.com/rava8989/brave/main/cor1m_contango_bundle.json',
+      { cf: { cacheTtl: 300, cacheEverything: true } });
+    if (!r.ok) return 'Tail Hedge │ bundle unavailable';
+    const b = await r.json();
+    const todayISO = new Date().toISOString().slice(0,10);
+    const dailyToday = (b.daily || []).find(d => d.date === todayISO);
+    const cor1m = dailyToday?.cor1m;
+    const vvix  = dailyToday?.vvix;
+    const triggers = b.preset_results?.sweet_spot?.triggers || [];
+    const last = triggers[triggers.length - 1];
+    const isTriggered = last && last.exit_reason !== 'profitable';
+    let line;
+    if (isTriggered) {
+      if (vvix != null && vvix >= 110) {
+        line = `Tail Hedge │ SKIP today (VVIX ${vvix.toFixed(2)} ≥ 110)`;
+      } else {
+        line = `Tail Hedge │ ▶ TRADE @ 9:45 — buy 0DTE SPXW put Δ-0.20  (VVIX ${vvix?.toFixed(2) ?? '—'})`;
+      }
+    } else {
+      const c = cor1m != null ? cor1m.toFixed(2) : '—';
+      line = `Tail Hedge │ No trade today (COR1M ${c}, need < 7.75)`;
+    }
+    _tailHedgeCache = { value: line, fetchedAt: now };
+    return line;
+  } catch (e) {
+    return `Tail Hedge │ status unavailable (${e.message})`;
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════
 // DISCORD MESSAGE BUILDER (ported from index.html discordBuildMessage)
 // ════════════════════════════════════════════════════════════════════
 
-function buildDiscordMessage(signal, vixValues) {
+function buildDiscordMessage(signal, vixValues, tailLine) {
   const GRN = '\x1b[32m', RED = '\x1b[31m', DIM = '\x1b[2m', RST = '\x1b[0m';
 
   const isActive  = text => text && !text.startsWith('No ');
@@ -235,6 +290,12 @@ function buildDiscordMessage(signal, vixValues) {
     inner += `${sigColor(signal.diagText)}Diagonal │ ${signal.diagText}${RST}\n`;
   }
 
+  // Tail Hedge (companion — Sweet Spot preset, thr 7.75 / delta -0.20 / VVIX<110)
+  if (tailLine) {
+    const tc = tailLine.includes('TRADE') ? GRN : tailLine.includes('SKIP') ? RED : DIM;
+    inner += `${tc}${tailLine}${RST}\n`;
+  }
+
   // VIX values
   inner += `${DIM}${'─'.repeat(34)}${RST}\n`;
   inner += `${DIM}VIX Prev Close  │ ${vixValues.yClose ?? '—'}${RST}\n`;
@@ -251,6 +312,122 @@ function buildDiscordMessage(signal, vixValues) {
   }
 
   return `\`\`\`ansi\n${inner}\`\`\`\n*Not financial advice. For informational purposes only.*`;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// EMBED BUILDER — Option E (Discord rich embed)
+// Returns a single embed object suitable for { embeds: [obj] } payload.
+// ════════════════════════════════════════════════════════════════════
+function buildSigma3Embed(signal, vixValues, vixSource) {
+  const { todayOpen, yClose, yOpen } = vixValues;
+  const oNight = (yClose != null && todayOpen != null) ? (yClose - todayOpen) : null;
+  const o2o    = (yOpen != null && todayOpen != null)  ? (yOpen - todayOpen) : null;
+
+  const stripPrefix = (s, p) => s ? s.replace(new RegExp(`^${p}\\s*[—-]?\\s*`), '').replace(/^No\s+\w+\s*\(?/, '').replace(/\)\s*$/, '') : '';
+
+  const fires = [], blocked = [];
+
+  // M8BF
+  const m8bfActive = signal.m8bfText && signal.m8bfText.startsWith('M8BF');
+  if (m8bfActive) {
+    const sc = signal.m8bfStrikeInfo;
+    fires.push(`• **M8BF** — window ${sc?.window || signal.entryT || ''}`);
+  } else if (signal.m8bfText) {
+    blocked.push(`• **M8BF** — ${stripPrefix(signal.m8bfText, 'No M8BF')}`);
+  }
+
+  // Straddle
+  const stradActive = signal.theme === 'strad';
+  if (stradActive) {
+    fires.push(`• **Straddle** — ${signal.entryT || '9:32 AM'}${signal.rec?.includes('NM') ? ' (NM)' : signal.rec?.includes('EOM') ? ' (EOM)' : ''}`);
+  } else if (signal.stradText) {
+    blocked.push(`• **Straddle** — ${stripPrefix(signal.stradText, 'No Straddle')}`);
+  }
+
+  // GXBF
+  const gxbfActive = signal.theme === 'gxbf';
+  if (gxbfActive) {
+    const srcTag = signal.centerSource === 'oi' ? ' · OI center' : ' · Vol center';
+    fires.push(`• **GXBF** — ${signal.entryT || '9:36 AM'}${srcTag}`);
+  } else if (signal.gxbfText) {
+    blocked.push(`• **GXBF** — ${stripPrefix(signal.gxbfText, 'No GXBF')}`);
+  }
+
+  // BOBF
+  if (signal.bobfBadge !== 'BLOCKED') {
+    fires.push(`• **BOBF** — ${signal.bobfRec?.replace(/^BOBF\s*[—-]?\s*/, '') || 'fires'}`);
+  } else if (signal.bobfRec) {
+    blocked.push(`• **BOBF** — ${stripPrefix(signal.bobfRec, 'No BOBF')}`);
+  }
+
+  // Diagonal
+  if (signal.diagGo) {
+    const pctStr = signal.vixPct20d != null ? ` (VIX 20d ${signal.vixPct20d}%)` : '';
+    fires.push(`• **Diagonal** — 12:30–15:00 ET${pctStr}`);
+  } else if (signal.diagText) {
+    blocked.push(`• **Diagonal** — ${stripPrefix(signal.diagText, 'No Diagonal')}`);
+  }
+
+  // Tail Hedge (Sweet Spot) — passed in via tailLine (already a formatted string).
+  // Detect which bucket to put it in based on the keyword.
+  if (signal._tailLine) {
+    const tl = signal._tailLine;
+    if (tl.includes('TRADE')) {
+      fires.push(`• **Tail Hedge** — buy 0DTE SPXW put Δ-0.20 @ 9:45 ET`);
+    } else if (tl.includes('SKIP')) {
+      blocked.push(`• **Tail Hedge** — ${tl.split('│')[1]?.trim() || 'skip today'}`);
+    } else {
+      blocked.push(`• **Tail Hedge** — no trigger active`);
+    }
+  }
+
+  // Color: green if ANY fires, red if all blocked
+  const color = fires.length > 0 ? 0x22c55e : 0xef4444;
+
+  // SPX gap
+  const gapStr = (signal.spxGapPct != null)
+    ? `${signal.spxGapPct > 0 ? '▲' : '▼'}${Math.abs(signal.spxGapPct).toFixed(2)}%`
+    : '—';
+
+  // VIX data block (monospace via code fence)
+  const fmt = (v) => v != null ? v.toFixed(2) : '—';
+  const marketData = '```\n' +
+    `VIX  ${fmt(yClose)} → ${fmt(todayOpen)}   o/n ${fmt(oNight)}   o2o ${fmt(o2o)}\n` +
+    `SPX  gap ${gapStr}\n` +
+    '```';
+
+  const fields = [];
+  if (fires.length)   fields.push({ name: '✅ Today\'s plan', value: fires.join('\n'),   inline: false });
+  if (blocked.length) fields.push({ name: '❌ Skipping',      value: blocked.join('\n'), inline: false });
+  fields.push({ name: '📊 Market data', value: marketData, inline: false });
+
+  // M8BF avoid centers (only when M8BF actually fires)
+  if (m8bfActive && signal.m8bfStrikeInfo?.blocked?.length) {
+    const sc = signal.m8bfStrikeInfo;
+    const combos = Object.entries(sc.comboBans || {}).map(([k,v]) => `${k}→${v}`).join(', ');
+    let val = `Skip centers: \`${sc.blocked.join(' · ')}\``;
+    if (combos) val += `\nCombo bans: \`${combos}\``;
+    fields.push({ name: '🚫 M8BF strike map', value: val, inline: false });
+  }
+
+  return {
+    title: `Sigma 3 — ${signal.dateStr}`,
+    description: `_${signal.dayLabel}_`,
+    color,
+    fields,
+    footer: { text: `${vixSource === 'schwab' ? '📡 Schwab' : '📡 Tastytrade'} · Not financial advice` },
+    timestamp: new Date().toISOString(),
+  };
+}
+
+// Render embed → plain text (fallback for proxy paths that don't support embeds)
+function embedToText(embed) {
+  let out = `**${embed.title}**\n${embed.description || ''}\n\n`;
+  for (const f of (embed.fields || [])) {
+    out += `**${f.name}**\n${f.value}\n\n`;
+  }
+  if (embed.footer?.text) out += `_${embed.footer.text}_`;
+  return out.trim();
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -517,13 +694,23 @@ async function tastyGetVix(env) {
   }
   const body = await resp.json();
   const d = body?.data || body;  // payload may be wrapped
-  // Prefer last (real-time), fall back to mid/mark/bid
-  const price = d?.last ?? d?.['last-price'] ?? d?.mid ?? d?.mark ?? d?.bid;
+  // Tasty exposes today's open as a stable field (mirrors how /Index/SPX does
+  // it). Use this for the morning signal — matches Schwab pricehistory 9:30
+  // candle.open. The `last`/`mid` fields are CURRENT tick (drifts after open).
+  const open = d?.open ?? d?.['open-price'] ?? null;
+  // `last`/`mid` kept for callers that want current price (e.g. vixClose path).
+  // Fall back to `open` as last resort for backward compat with existing callers
+  // that rely on `.price` always being a number.
+  const priceRaw = d?.last ?? d?.['last-price'] ?? d?.mid ?? d?.mark ?? d?.bid ?? open;
   const asOf  = d?.['updated-at'] || d?.['quote-time'] || d?.timestamp;
-  if (price == null) {
+  if (priceRaw == null) {
     throw new Error(`Tastytrade VIX: no usable price field in payload: ${JSON.stringify(d).slice(0, 250)}`);
   }
-  return { price: parseFloat(price), asOf, source: 'tastytrade', endpoint: '/market-data/Index/VIX', raw: d };
+  return {
+    price: parseFloat(priceRaw),
+    open:  open != null ? parseFloat(open) : null,
+    asOf, source: 'tastytrade', endpoint: '/market-data/Index/VIX', raw: d,
+  };
 }
 
 // Get SPX index quote via Tastytrade (same Index market-data endpoint as VIX).
@@ -3291,81 +3478,94 @@ async function handleScheduled(env) {
     const state = { vixToday: null, source: null };
 
     async function pollSchwab() {
-      let baselinePrice = null, baselineTT = null, attempt = 0;
-      const quoteUrl = `https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`;
+      // CANONICAL VIX OPEN — matches dashboard's schwabFetchHistorical() exactly:
+      // fetch pricehistory 1-min VIX bars, find first candle with ET hour=9 min>=30,
+      // use its `.open` field (the actual first 9:30 tick value).
+      //
+      // Previously this used /quotes lastPrice which drifts from the 9:30
+      // candle.open by 0.05-0.10 because quote.lastPrice is the CURRENT tick,
+      // not the first 9:30 tick. Caused the 2026-06-08 Discord vs Dashboard
+      // signal divergence (Discord said 90% dead-zone, Dashboard said 95% edge).
+      // See user feedback 2026-06-08.
+      let attempt = 0;
       while (Date.now() < deadlineMs && state.vixToday === null) {
         attempt++;
         try {
-          const q = await fetchSchwabJSON(quoteUrl, token, env);
-          const vQ = q?.['$VIX']?.quote;
-          if (vQ?.lastPrice != null && vQ?.tradeTime != null) {
-            const price = parseFloat(vQ.lastPrice.toFixed(2));
-            const tt = vQ.tradeTime;
-            if (baselinePrice === null) {
-              baselinePrice = price; baselineTT = tt;
-              console.log(`[proxy] SCHWAB baseline: ${price} @ ${toET(new Date(tt)).toTimeString().slice(0,8)} ET`);
-            } else if ((price !== baselinePrice || tt !== baselineTT) && state.vixToday === null) {
-              // Defense: only accept if tick is from today's regular session
-              // (>= 9:30 ET). Without this, a pre-open rolling timestamp can be
-              // mistaken for a real 9:30 print.
-              const tET = toET(new Date(tt));
-              const fresh = tET.toDateString() === etNow.toDateString()
-                         && (tET.getHours() * 60 + tET.getMinutes()) >= 570;
-              if (fresh) {
-                state.vixToday = price; state.source = 'schwab';
-                console.log(`[proxy] SCHWAB caught FIRST PRINT (FRESH): ${price} @ ${tET.toTimeString().slice(0,8)} ET (attempt ${attempt}, ${Math.round((Date.now()-startedAt)/1000)}s)`);
-                return;
-              }
-              // Tick advanced but still pre-9:30 — rebaseline & keep polling.
-              baselinePrice = price; baselineTT = tt;
-              console.log(`[proxy] SCHWAB tick advanced but pre-9:30 (${tET.toTimeString().slice(0,8)} ET) — rebaselining`);
+          // 5-day window matches dashboard for cache parity
+          const end = Date.now();
+          const start = end - 5 * 24 * 60 * 60 * 1000;
+          const histUrl = `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24VIX&periodType=day&period=5&frequencyType=minute&frequency=1&startDate=${start}&endDate=${end}&needExtendedHoursData=true`;
+          const hist = await fetchSchwabJSON(histUrl, token, env);
+          if (hist?.candles?.length) {
+            // Find first candle in today's session at-or-after 9:30 ET (matches
+            // dashboard filter: hour > 9 OR (hour === 9 && min >= 30)).
+            const todayStr = etNow.toDateString();
+            const open930 = hist.candles
+              .filter(c => {
+                const d = toET(new Date(c.datetime));
+                return d.toDateString() === todayStr &&
+                       (d.getHours() > 9 || (d.getHours() === 9 && d.getMinutes() >= 30));
+              })
+              .sort((a, b) => a.datetime - b.datetime)[0];
+            if (open930 && open930.open != null) {
+              const price = parseFloat(open930.open.toFixed(2));
+              const tET = toET(new Date(open930.datetime));
+              state.vixToday = price;
+              state.source = 'schwab';
+              console.log(`[proxy] SCHWAB 9:30 candle.open captured: ${price} @ ${tET.toTimeString().slice(0,8)} ET (attempt ${attempt}, ${Math.round((Date.now()-startedAt)/1000)}s)`);
+              return;
             }
           }
-        } catch (e) { /* keep trying */ }
+        } catch (e) { /* keep trying — candle may not exist yet at 9:30:00 */ }
         if (state.vixToday !== null) return;  // other source won
         await new Promise(r => setTimeout(r, pollIntervalMs));
       }
     }
 
     async function pollTasty() {
-      let baselinePrice = null, baselineTS = null, attempt = 0;
+      // CANONICAL TASTY OPEN — uses /market-data/Index/VIX `open` field
+      // (today's session open). Matches dashboard's Schwab pricehistory 9:30
+      // candle.open methodology in spirit. Tasty's `open` field appears
+      // once Cboe publishes the day's first regular-session print (~9:30:01).
+      //
+      // Previously this polled `last`/`mid` (current tick — drifts 0.05-0.10
+      // from the actual 9:30 open). Updated 2026-06-08.
+      let attempt = 0;
       while (Date.now() < deadlineMs && state.vixToday === null) {
         attempt++;
         try {
-          const result = await tastyGetVix(env);  // returns { price, asOf, raw }
-          const price = parseFloat(result.price.toFixed(2));
-          const ts = result.raw?.['updated-at'] || result.asOf;
-          if (baselinePrice === null) {
-            baselinePrice = price; baselineTS = ts;
-            console.log(`[proxy] TASTY baseline:  ${price} @ ${ts}`);
-          } else if ((price !== baselinePrice || ts !== baselineTS) && state.vixToday === null) {
-            // Defense: only accept if tick is from today's regular session
-            // (>= 9:30 ET). Without this, Tasty's pre-open rolling timestamps
-            // can be mistaken for a real 9:30 print (the user-reported bug).
+          const result = await tastyGetVix(env);  // { open, price, asOf, raw }
+          if (result.open != null && state.vixToday === null) {
+            // Sanity: only accept if updated-at timestamp is from today's
+            // session (defense against stale prior-session cache).
+            const ts = result.raw?.['updated-at'] || result.asOf;
             const dt = ts ? new Date(String(ts)) : null;
             let fresh = false;
             if (dt && isFinite(dt.getTime())) {
               const tET = toET(dt);
-              fresh = tET.toDateString() === etNow.toDateString()
-                   && (tET.getHours() * 60 + tET.getMinutes()) >= 570;
+              fresh = tET.toDateString() === etNow.toDateString();
             }
             if (fresh) {
-              state.vixToday = price; state.source = 'tastytrade';
-              console.log(`[proxy] TASTY caught FIRST PRINT (FRESH): ${price} @ ${ts} (attempt ${attempt}, ${Math.round((Date.now()-startedAt)/1000)}s)`);
+              state.vixToday = parseFloat(result.open.toFixed(2));
+              state.source = 'tastytrade';
+              console.log(`[proxy] TASTY captured 9:30 open from /Index/VIX.open: ${state.vixToday} @ ${ts} (attempt ${attempt}, ${Math.round((Date.now()-startedAt)/1000)}s)`);
               return;
             }
-            // Tick advanced but still pre-9:30 — rebaseline & keep polling.
-            baselinePrice = price; baselineTS = ts;
-            console.log(`[proxy] TASTY tick advanced but pre-9:30 (${ts}) — rebaselining`);
+            // open present but stale — keep polling until today's session.
           }
-        } catch (e) { /* keep trying — Tasty may not have token cached yet */ }
+        } catch (e) { /* keep trying — Tasty may not have today's open yet */ }
         if (state.vixToday !== null) return;
         await new Promise(r => setTimeout(r, pollIntervalMs));
       }
     }
 
-    // Race both. Whichever resolves first wins (the other exits via the
-    // state.vixToday check at top of loop).
+    // DUAL-SOURCE RACE — both vendors now read TODAY'S OPEN (not current tick):
+    //   Schwab: pricehistory 1-min, first candle @ hour=9 min>=30, use `.open`
+    //   Tasty:  /market-data/Index/VIX, use `open` field
+    // Whichever vendor publishes the 9:30 open first wins. The dual-source
+    // 2nd Discord message still posts the OTHER vendor's data for cross-check.
+    // Both methodologies match the dashboard's schwabFetchHistorical() now.
+    // CLAUDE.md rule 11 satisfied: worker + dashboard agree on vix_today_open.
     await Promise.all([pollSchwab(), pollTasty()]);
     vixToday = state.vixToday;
     vixSource = state.source;
@@ -3561,13 +3761,12 @@ async function handleScheduled(env) {
   // 5b/5c: Straddle entry + BOBF prefilter are DEFERRED until after the Discord
   // post (they take ~500ms+ each and would block the message). Run after section 9.
 
-  // 6. Build Discord message
+  // 6. Build Discord message — include Tail Hedge today's signal
   const vixValues = { yOpen: vixYOpen, yClose: vixYClose, todayOpen: vixToday };
-  // Source banner — so the user can see at-a-glance which data feed this
-  // signal was built from. Dual-source second message (below) repeats the
-  // same signal calc with the OTHER feed's data for cross-check.
   const canonBanner = vixSource === 'schwab' ? '📡 **SCHWAB DATA**\n\n' : '📡 **TASTYTRADE DATA**\n\n';
-  const message = canonBanner + buildDiscordMessage(signal, vixValues);
+  const tailLineCanon = await getTailHedgeStatusLine();
+  signal._tailLine = tailLineCanon;  // for embed builder
+  const message = canonBanner + buildDiscordMessage(signal, vixValues, tailLineCanon);
 
   // 7. Slot already claimed at the top of the morning block. Reuse the same key.
   const msDoneKey = morningDoneKey;
@@ -3707,7 +3906,7 @@ async function handleScheduled(env) {
         etDate: etNow, prevWR, vixPct20d, rsi14,
       });
       const otherBanner = otherSource === 'schwab' ? '📡 **SCHWAB DATA**\n\n' : '📡 **TASTYTRADE DATA**\n\n';
-      const msgOther = otherBanner + buildDiscordMessage(signalOther, { yOpen: vixYOpen, yClose: vixYClose, todayOpen: vixOther });
+      const msgOther = otherBanner + buildDiscordMessage(signalOther, { yOpen: vixYOpen, yClose: vixYClose, todayOpen: vixOther }, tailLineCanon);
       await new Promise(r => setTimeout(r, 1500));   // Discord rate-limit safety
       const r2 = await sendDiscordDM(env, dc.channelId, msgOther.slice(0, 2000), dc.proxyUrl);
       if (r2.ok) {
@@ -5807,7 +6006,9 @@ export default {
       }
       try {
         const body = await request.json();
-        const result = await sendDiscordDM(env, body.userId, body.message);
+        // Accept either body.embed (Option E rich card) or body.message (legacy text)
+        const payload = body.embed || body.message;
+        const result = await sendDiscordDM(env, body.userId, payload);
         return jsonResp(result, result.ok ? 200 : 500, cors);
       } catch (e) {
         return jsonResp({ ok: false, error: e.message }, 400, cors);
@@ -7095,11 +7296,13 @@ export default {
         }
         const sigSchwab = makeSignal(vixSchwab, spxSchwab);
         const sigTasty  = makeSignal(vixTasty,  spxTasty);
+        // Tail Hedge today (fetched once, cached). Shared between both renders.
+        const tailLine = await getTailHedgeStatusLine();
 
         function renderMsg(sig, vixVal, source) {
           if (!sig) return null;
           const banner = source === 'schwab' ? '📡 **SCHWAB DATA**\n\n' : '📡 **TASTYTRADE DATA**\n\n';
-          return (banner + buildDiscordMessage(sig, { yOpen: vixYOpen, yClose: vixYClose, todayOpen: vixVal })).slice(0, 2000);
+          return (banner + buildDiscordMessage(sig, { yOpen: vixYOpen, yClose: vixYClose, todayOpen: vixVal }, tailLine)).slice(0, 2000);
         }
         out.schwab = sigSchwab ? {
           rec: sigSchwab.rec, theme: sigSchwab.theme, badge: sigSchwab.badge,
