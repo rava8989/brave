@@ -3587,8 +3587,12 @@ async function handleScheduled(env) {
       // candle.open methodology in spirit. Tasty's `open` field appears
       // once Cboe publishes the day's first regular-session print (~9:30:01).
       //
-      // Previously this polled `last`/`mid` (current tick — drifts 0.05-0.10
-      // from the actual 9:30 open). Updated 2026-06-08.
+      // FIX (2026-06-09): freshness check must require timestamp >= 9:30 ET,
+      // not just today's date. Without the time check, a cron tick firing at
+      // exactly 9:30:00 ET would accept Tasty's pre-market cached `open`
+      // value (today's date, but pre-9:30 timestamp) and post a message with
+      // STALE VIX BEFORE Cboe's first regular-session publication.
+      // Matches Schwab's candle filter at line ~3568 and _isFreshTick below.
       let attempt = 0;
       while (Date.now() < deadlineMs && state.vixToday === null) {
         attempt++;
@@ -3596,13 +3600,16 @@ async function handleScheduled(env) {
           const result = await tastyGetVix(env);  // { open, price, asOf, raw }
           if (result.open != null && state.vixToday === null) {
             // Sanity: only accept if updated-at timestamp is from today's
-            // session (defense against stale prior-session cache).
+            // REGULAR-SESSION (date matches AND time >= 9:30 ET) — defends
+            // against stale prior-session cache AND pre-market cache.
             const ts = result.raw?.['updated-at'] || result.asOf;
             const dt = ts ? new Date(String(ts)) : null;
             let fresh = false;
             if (dt && isFinite(dt.getTime())) {
               const tET = toET(dt);
-              fresh = tET.toDateString() === etNow.toDateString();
+              const sameDay = tET.toDateString() === etNow.toDateString();
+              const postOpen = (tET.getHours() * 60 + tET.getMinutes()) >= 570; // 9:30 ET
+              fresh = sameDay && postOpen;
             }
             if (fresh) {
               state.vixToday = parseFloat(result.open.toFixed(2));
@@ -3610,7 +3617,7 @@ async function handleScheduled(env) {
               console.log(`[proxy] TASTY captured 9:30 open from /Index/VIX.open: ${state.vixToday} @ ${ts} (attempt ${attempt}, ${Math.round((Date.now()-startedAt)/1000)}s)`);
               return;
             }
-            // open present but stale — keep polling until today's session.
+            // open present but stale (pre-market or yesterday) — keep polling.
           }
         } catch (e) { /* keep trying — Tasty may not have today's open yet */ }
         if (state.vixToday !== null) return;
@@ -3719,21 +3726,61 @@ async function handleScheduled(env) {
 
     // Get SPX today open — Tasty PRIMARY (refresh_token never expires, so a
     // dead Schwab token can't null this and break the signal), Schwab FALLBACK.
-    // Mirrors how VIX is already dual-sourced (Schwab/Tasty race) above.
+    // FIX (2026-06-09): Tasty's `open` field must pass freshness check (today's
+    // date AND timestamp >= 9:30 ET). Previously a cron tick firing at 9:30:00
+    // accepted Tasty's pre-market cached `open` (yesterday's value with a
+    // today-dated timestamp), producing a stale SPX open in the morning signal.
+    // Also no longer falls back to `last`/`price` — those are CURRENT ticks
+    // and drift after open; `open` is the only reliable session-open marker.
     try {
       const ts = await tastyGetSpx(env);
-      const v = ts.open ?? ts.last ?? ts.price;
-      if (v != null && isFinite(v) && v > 0) {
-        spxTodayOpen = parseFloat(v.toFixed(2));
-        console.log(`[proxy] SPX open ${spxTodayOpen} via tastytrade (primary)`);
+      const dt = ts.asOf ? new Date(String(ts.asOf)) : null;
+      let freshSpx = false;
+      if (dt && isFinite(dt.getTime())) {
+        const tET = toET(dt);
+        const sameDay = tET.toDateString() === etNow.toDateString();
+        const postOpen = (tET.getHours() * 60 + tET.getMinutes()) >= 570;
+        freshSpx = sameDay && postOpen;
+      }
+      if (ts.open != null && isFinite(ts.open) && ts.open > 0 && freshSpx) {
+        spxTodayOpen = parseFloat(ts.open.toFixed(2));
+        console.log(`[proxy] SPX open ${spxTodayOpen} via tastytrade (primary, fresh @ ${ts.asOf})`);
+      } else if (ts.open != null) {
+        console.log(`[proxy] SPX Tasty open ${ts.open} REJECTED — stale (asOf=${ts.asOf}). Falling back to Schwab.`);
       }
     } catch (e) { console.warn('[proxy] Tasty SPX failed, trying Schwab:', e.message || e); }
     if (spxTodayOpen == null) {
-      const spxQuoteUrl = `https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24SPX&fields=quote`;
-      const spxQuote = await fetchSchwabJSON(spxQuoteUrl, token, env);
-      const spxQ = spxQuote?.['$SPX']?.quote;
-      spxTodayOpen = spxQ ? parseFloat((spxQ.openPrice || spxQ.lastPrice).toFixed(2)) : null;
-      if (spxTodayOpen != null) console.log(`[proxy] SPX open ${spxTodayOpen} via schwab (fallback)`);
+      // Schwab fallback — prefer pricehistory 9:30 candle (matches dashboard);
+      // quote.openPrice is unreliable for indices pre/at open.
+      try {
+        const spxHistUrl = `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24SPX&periodType=day&period=2&frequencyType=minute&frequency=1&needExtendedHoursData=false`;
+        const spxHist = await fetchSchwabJSON(spxHistUrl, token, env);
+        const todayStr = etNow.toDateString();
+        const open930 = (spxHist.candles || [])
+          .filter(c => {
+            const d = toET(new Date(c.datetime));
+            return d.toDateString() === todayStr &&
+                   (d.getHours() > 9 || (d.getHours() === 9 && d.getMinutes() >= 30));
+          })
+          .sort((a, b) => a.datetime - b.datetime)[0];
+        if (open930 && open930.open != null) {
+          spxTodayOpen = parseFloat(open930.open.toFixed(2));
+          console.log(`[proxy] SPX open ${spxTodayOpen} via Schwab pricehistory 9:30 candle (fallback)`);
+        }
+      } catch (e) { console.warn('[proxy] Schwab SPX pricehistory failed:', e.message); }
+      // Last resort: quote endpoint (kept for emergency, but openPrice
+      // can be 0/null at exactly 9:30 — only use if pricehistory failed).
+      if (spxTodayOpen == null) {
+        try {
+          const spxQuoteUrl = `https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24SPX&fields=quote`;
+          const spxQuote = await fetchSchwabJSON(spxQuoteUrl, token, env);
+          const spxQ = spxQuote?.['$SPX']?.quote;
+          if (spxQ?.openPrice != null && spxQ.openPrice > 0) {
+            spxTodayOpen = parseFloat(spxQ.openPrice.toFixed(2));
+            console.log(`[proxy] SPX open ${spxTodayOpen} via Schwab quote.openPrice (last resort)`);
+          }
+        } catch (e) { console.warn('[proxy] Schwab quote.openPrice failed:', e.message); }
+      }
     }
 
     if (spxYClose && spxTodayOpen) {
@@ -3886,11 +3933,20 @@ async function handleScheduled(env) {
       if (et.toDateString() !== etNow.toDateString()) return false;
       return (et.getHours() * 60 + et.getMinutes()) >= 570;  // 9*60+30
     }
-    // Budget for the 2nd source to publish a fresh post-9:30 tick. 60s gives
-    // Schwab's quote endpoint time to propagate the new print (it lags faster
-    // sources by 5-30s in practice). User reported missing Schwab 2nd message
-    // 2026-05-21 + previous day — 15s was too tight.
-    const dualDeadline = Date.now() + 60_000;
+    // Budget for the 2nd source — reduced from 60s to 22s (2026-06-09 fix).
+    // Cloudflare scheduled handlers have a ~30s wall-clock limit. The canonical
+    // post takes ~5-8s; 60s here was being killed mid-poll, dropping the 2nd
+    // message entirely. 22s + 8s canonical leaves headroom.
+    //
+    // 2026-06-09 FIX: 2nd-source Schwab now uses pricehistory 9:30 candle
+    // (same methodology as pollSchwab in the main race) instead of the quote
+    // endpoint. The quote endpoint's tradeTime can lag 10-30s at market open,
+    // making _isFreshTick fail repeatedly within the budget. pricehistory
+    // publishes the 9:30 candle within 1-2 seconds of Cboe's first print.
+    // SPX 2nd-source Tasty branch: use s.open ONLY (no fallback to last/
+    // price — those are CURRENT ticks, not 9:30 OPEN, so the cross-check
+    // would compare apples to oranges).
+    const dualDeadline = Date.now() + 22_000;
     let dualAttempts = 0;
     let lastVixTs = null, lastSpxTs = null, lastVixVal = null, lastSpxVal = null;
     while (Date.now() < dualDeadline && (vixOther == null || spxOther == null)) {
@@ -3900,44 +3956,71 @@ async function handleScheduled(env) {
         if (vixOther == null) {
           try {
             const r = await tastyGetVix(env);
+            // Prefer the `open` field (today's session open, matches Schwab
+            // pricehistory 9:30 candle.open). Falls back to `price` only if
+            // open is absent. _isFreshTick gates regardless of which we use.
+            const v = r.open ?? r.price;
             const ts = r.raw?.['updated-at'] || r.asOf;
-            lastVixVal = parseFloat(r.price.toFixed(2));
-            lastVixTs = ts;
-            if (_isFreshTick(ts)) { vixOther = lastVixVal; vixOtherTs = ts; }
+            if (v != null) { lastVixVal = parseFloat(v.toFixed(2)); lastVixTs = ts; }
+            if (v != null && _isFreshTick(ts)) { vixOther = lastVixVal; vixOtherTs = ts; }
           } catch (e) { lastFetchErr = `tasty-vix:${e.message}`; }
         }
         if (spxOther == null) {
           try {
             const s = await tastyGetSpx(env);
             const ts = s.asOf || s.raw?.['updated-at'];
-            const v = s.open ?? s.last ?? s.price;
-            if (v != null) { lastSpxVal = parseFloat(v.toFixed(2)); lastSpxTs = ts; }
-            if (v != null && _isFreshTick(ts)) { spxOther = lastSpxVal; spxOtherTs = ts; }
+            // Only use s.open (today's session open). s.last is the current
+            // tick which drifts from open; including it would make the 2nd
+            // message compare current price vs canonical open — misleading.
+            if (s.open != null) { lastSpxVal = parseFloat(s.open.toFixed(2)); lastSpxTs = ts; }
+            if (s.open != null && _isFreshTick(ts)) { spxOther = lastSpxVal; spxOtherTs = ts; }
           } catch (e) { lastFetchErr = `tasty-spx:${e.message}`; }
         }
       } else if (token) {
+        // SCHWAB 2nd-source via pricehistory — NOT quote endpoint. pricehistory
+        // publishes the 9:30 candle within 1-2 seconds of Cboe's first print;
+        // quote.tradeTime can lag 10-30 seconds at market open.
         if (vixOther == null) {
           try {
-            const q = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`, token, env);
-            const vQ = q?.['$VIX']?.quote;
-            if (vQ?.lastPrice != null) {
-              lastVixVal = parseFloat(parseFloat(vQ.lastPrice).toFixed(2));
-              lastVixTs = vQ.tradeTime;
-              if (_isFreshTick(vQ.tradeTime)) { vixOther = lastVixVal; vixOtherTs = vQ.tradeTime; }
+            const end = Date.now(); const start = end - 5 * 24 * 60 * 60 * 1000;
+            const histUrl = `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24VIX&periodType=day&period=5&frequencyType=minute&frequency=1&startDate=${start}&endDate=${end}&needExtendedHoursData=true`;
+            const hist = await fetchSchwabJSON(histUrl, token, env);
+            if (hist?.candles?.length) {
+              const todayStr2 = etNow.toDateString();
+              const open930 = hist.candles
+                .filter(c => {
+                  const d = toET(new Date(c.datetime));
+                  return d.toDateString() === todayStr2 &&
+                         (d.getHours() > 9 || (d.getHours() === 9 && d.getMinutes() >= 30));
+                })
+                .sort((a, b) => a.datetime - b.datetime)[0];
+              if (open930 && open930.open != null) {
+                lastVixVal = parseFloat(open930.open.toFixed(2));
+                lastVixTs = open930.datetime;
+                if (_isFreshTick(open930.datetime)) { vixOther = lastVixVal; vixOtherTs = open930.datetime; }
+              }
             }
           } catch (e) { lastFetchErr = `schwab-vix:${e.message}`; }
         }
         if (spxOther == null) {
           try {
-            const q = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24SPX&fields=quote`, token, env);
-            const sQ = q?.['$SPX']?.quote;
-            // Use openPrice (set only after market open). lastPrice pre-open
-            // is yesterday's close — would post a stale signal. Reject unless
-            // openPrice is set AND tradeTime is post-9:30 today.
-            if (sQ?.openPrice != null) { lastSpxVal = parseFloat(sQ.openPrice.toFixed(2)); lastSpxTs = sQ.tradeTime; }
-            if (sQ?.openPrice != null && sQ.openPrice > 0 && _isFreshTick(sQ.tradeTime)) {
-              spxOther = lastSpxVal;
-              spxOtherTs = sQ.tradeTime;
+            const end = Date.now(); const start = end - 2 * 24 * 60 * 60 * 1000;
+            const histUrl = `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24SPX&periodType=day&period=2&frequencyType=minute&frequency=1&startDate=${start}&endDate=${end}&needExtendedHoursData=false`;
+            const hist = await fetchSchwabJSON(histUrl, token, env);
+            if (hist?.candles?.length) {
+              const todayStr2 = etNow.toDateString();
+              const open930 = hist.candles
+                .filter(c => {
+                  const d = toET(new Date(c.datetime));
+                  return d.toDateString() === todayStr2 &&
+                         (d.getHours() > 9 || (d.getHours() === 9 && d.getMinutes() >= 30));
+                })
+                .sort((a, b) => a.datetime - b.datetime)[0];
+              if (open930 && open930.open != null) {
+                lastSpxVal = parseFloat(open930.open.toFixed(2));
+                lastSpxTs = open930.datetime;
+                if (_isFreshTick(open930.datetime)) { spxOther = lastSpxVal; spxOtherTs = open930.datetime; }
+              }
             }
           } catch (e) { lastFetchErr = `schwab-spx:${e.message}`; }
         }
@@ -3952,7 +4035,7 @@ async function handleScheduled(env) {
     }
     if (vixOther == null) {
       // Log to KV so /debug-morning-log shows WHY the 2nd message didn't post.
-      await logEvent(env, 'warn', 'morning', `2nd-source dropped — no fresh VIX after ${Math.round((Date.now()-(dualDeadline-60000))/1000)}s`, {
+      await logEvent(env, 'warn', 'morning', `2nd-source dropped — no fresh VIX after ${Math.round((Date.now()-(dualDeadline-22000))/1000)}s`, {
         otherSource, canonicalSource: vixSource, attempts: dualAttempts,
         lastVixVal, lastVixTs, lastSpxVal, lastSpxTs,
       });
