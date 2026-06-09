@@ -811,6 +811,7 @@ async function init() {
         spxGapPct: spxGapPct !== null ? parseFloat(spxGapPct.toFixed(2)) : null,
         spxOpen: cur.spxOpen != null ? cur.spxOpen : null,
         spxClose: cur.spxClose != null ? cur.spxClose : null,
+        cor1m: cur.cor1m != null ? cur.cor1m : null,   // 2026-06-09: COR1M for Diagonal gating
         m8bfWR: cur.m8bfWR != null ? cur.m8bfWR : null,
         m8bfPL: cur.m8bfPL != null ? cur.m8bfPL : null,
         stradPL: cur.stradPL != null ? cur.stradPL : null,
@@ -853,6 +854,9 @@ const cols = [
   { key:'overnightDrop',label:'O/N Drop',  type:'number' },
   { key:'o2o',         label:'O2O',        type:'number' },
   { key:'spxGapPct',   label:'SPX Gap',    type:'number' },
+  // 2026-06-09: COR1M column added. Diagonal gates on COR1M ≥ 10 — values
+  // below 10 set diagPL = null (the trade would have been skipped live).
+  { key:'cor1m',       label:'COR1M',      type:'number' },
   { key:'m8bfWR',     label:'M8BF WR%',   type:'number' },
   { key:'m8bfPL',      label:'M8BF',       type:'stratPL' },
   { key:'stradPL',     label:'Straddle',   type:'stratPL' },

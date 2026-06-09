@@ -631,7 +631,7 @@
     </div>
 
     <!-- CARD 5: Diagonal (companion — not part of Sigma 3) -->
-    <div class="scard" id="cardDiag" title="1/25 Put Diagonal — default config (short 30 ITM, long 40 below = 10 OTM) with OPEX-1, EOM, EOM-1, NM, and VIX 50–90% dead zone excluded (no earnings filter — dropped 2026-04-29; band re-optimized 2026-06-02 from 40–90 to 50–90). Entry anywhere in the 12:30–15:00 ET window, exit at the same clock time next day (24-hour hold; Entry Time === Exit Time; one diagonal in the book at a time). See the '1/25 Put Diagonal' section below the calculator for full strategy details.">
+    <div class="scard" id="cardDiag" title="1/25 Put Diagonal — default config (short 30 ITM, long 40 below = 10 OTM) with OPEX-1, EOM, EOM-1, NM, VIX 50–90% dead zone, AND COR1M < 10 excluded (no earnings filter — dropped 2026-04-29; VIX band re-optimized 2026-06-02 from 40–90 to 50–90; COR1M floor added 2026-06-09 after 3yr review: under 10 the strategy bled $9.7k @ 50% WR). Entry anywhere in the 12:30–15:00 ET window, exit at the same clock time next day (24-hour hold; Entry Time === Exit Time; one diagonal in the book at a time). See the '1/25 Put Diagonal' section below the calculator for full strategy details.">
       <div class="scard-header">
         <span class="scard-label">Diagonal <span style="font-weight:400;font-size:10px;opacity:.7;letter-spacing:normal;text-transform:none">· companion</span></span>
         <span class="today-trade-pill" id="pillDiag" style="display:none;">▶ TODAY'S TRADE</span>
@@ -806,7 +806,7 @@
     </ul>
 
     <hr class="divider">
-    <h3>1/25 Put Diagonal — Companion Strategy <span style="font-weight:400;font-size:12px;color:var(--text3)">(separate from Sigma 3; OPEX-1 + EOM + EOM-1 + NM + VIX 50–90% filtered default, 30 ITM / 40 below)</span></h3>
+    <h3>1/25 Put Diagonal — Companion Strategy <span style="font-weight:400;font-size:12px;color:var(--text3)">(separate from Sigma 3; OPEX-1 + EOM + EOM-1 + NM + VIX 50–90% + COR1M&lt;10 filtered default, 30 ITM / 40 below)</span></h3>
     <p>
       A <strong>SPX put-diagonal spread</strong> that runs alongside the Sigma 3 bundle. Different instrument,
       different DTE, and different trade windows — so it's largely <strong>uncorrelated</strong> with M8BF / Straddle /

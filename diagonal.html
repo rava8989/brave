@@ -809,6 +809,14 @@ body {
         <input type="number" id="vixBandHi" value="90" min="1" max="100" step="5" style="width:38px;padding:1px 3px;font-family:'JetBrains Mono',monospace;font-size:11px;text-align:center;" title="Band upper bound (inclusive). Trades whose VIX percentile is &gt; lo AND ≤ this value are filtered out.">
         <span style="opacity:0.7">%</span>
       </span>
+      <!-- 2026-06-09: COR1M floor toggle. Default ACTIVE — Diagonal loses
+           money below COR1M 10 (3yr: 34 trades, 50% WR, -$9.7k). Adjustable
+           threshold to the right. -->
+      <button class="tpill active" data-sd="COR1M_LOW" title="Skip Diagonal when COR1M (CBOE 1-Month Implied Correlation Index, 9:30 ET open) is below the threshold. Below ~10 the constituents are doing their own thing and the 24h-hold whipsaws. 3yr backtest: 34 trades, 50% WR, -$9.7k. Default cutoff 10.">COR1M LOW</button>
+      <span style="display:inline-flex;align-items:center;gap:3px;font-size:11px;color:var(--text2);margin-left:2px;">
+        <span style="opacity:0.7">&lt;</span>
+        <input type="number" id="cor1mMin" value="10" min="0" max="60" step="0.5" style="width:46px;padding:1px 3px;font-family:'JetBrains Mono',monospace;font-size:11px;text-align:center;" title="COR1M floor at 9:30 ET. Days with cor1m below this value are skipped. Default 10 (empirically derived from 3-yr backtest).">
+      </span>
       <button class="tpill" data-sd="VIX_DEAD" title="Tighter version of VIX 50–90%: only flag the day if VIX is in the 50–90% band AND yesterday's SPX moved less than 0.5%. This catches the purest 'no-edge' regime — elevated-but-not-spiky VIX plus a sleepy prior session with no directional follow-through. Skipping these days cuts MaxDD by ~26% in the backtest.">VIX DEAD</button>
       <button class="tpill" data-sd="AAPL">AAPL</button>
       <button class="tpill" data-sd="GOOGL">GOOGL</button>
@@ -1139,25 +1147,48 @@ function syncVixBand() {
   document.getElementById('vixBandLo').addEventListener(ev, syncVixBand);
   document.getElementById('vixBandHi').addEventListener(ev, syncVixBand);
 });
-// Seed globals on load
 syncVixBand();
 
-// Preselect the canonical 5-filter stack in EXCLUDE mode (2026-04-29 update):
-//   OPEX-1   — weakest-edge day of the OPEX cycle
-//   EOM      — last trading day of month (rebalance chop)
-//   EOM-1    — second-to-last trading day of month
-//   NM       — first trading day of month (gap risk, reprice)
-//   VIX_MID  — VIX 50-90% uncomfortable-middle regime (no-edge band; re-opt 2026-06-02 from 40-90)
-// Earnings filters (AAPL/MSFT/TSLA/META) DROPPED — at the new 30/40 strikes
-// the per-ticker earnings gates were costing more edge than they preserved.
-// EOM/EOM-1 added — month-end rebalancing chop hurts deeper-ITM short
-// structures more than it does shallow ones.
+// COR1M floor input (2026-06-09) — same wiring as VIX band.
+function syncCor1mMin() {
+  const v = parseFloat(document.getElementById('cor1mMin').value);
+  if (!isNaN(v)) window.COR1M_MIN = v;
+}
+['change','input'].forEach(ev => {
+  document.getElementById('cor1mMin').addEventListener(ev, syncCor1mMin);
+});
+syncCor1mMin();
+
+// Load COR1M daily values from the Tail Hedge bundle so the backtester can
+// gate Diagonal on cor1m < 10 (default). Same source as the live worker.
+fetch('cor1m_contango_bundle.json', { cache: 'no-store' })
+  .then(r => r.ok ? r.json() : null)
+  .then(b => {
+    if (!b?.daily) return;
+    const map = {};
+    for (const row of b.daily) {
+      if (row?.date && row.cor1m != null) map[row.date] = parseFloat(row.cor1m);
+    }
+    window.COR1M_BY_DATE = map;
+    console.log(`[diagonal] COR1M loaded: ${Object.keys(map).length} days`);
+  })
+  .catch(e => console.warn('[diagonal] COR1M bundle load failed (COR1M_LOW filter inactive):', e.message));
+
+// Preselect the canonical filter stack in EXCLUDE mode:
+//   OPEX-1     — weakest-edge day of the OPEX cycle
+//   EOM        — last trading day of month (rebalance chop)
+//   EOM-1      — second-to-last trading day of month
+//   NM         — first trading day of month (gap risk, reprice)
+//   VIX_MID    — VIX 50-90% uncomfortable-middle regime (re-opt 2026-06-02)
+//   COR1M_LOW  — COR1M < 10 (2026-06-09: bleeds -$284/trade below 10)
+// Earnings filters (AAPL/MSFT/TSLA/META) DROPPED 2026-04-29.
 specialState.mode = 'exclude';
 specialState.active.add('OPEX-1');
 specialState.active.add('EOM');
 specialState.active.add('EOM-1');
 specialState.active.add('NM');
 specialState.active.add('VIX_MID');
+specialState.active.add('COR1M_LOW');
 syncSpecialUI();
 
 // ══════════════════════════════════════════════════════════════════════
@@ -1628,7 +1659,7 @@ function buildSpecialDateSets(tradingDays, byDate = null) {
   // Port of backtester.html special-date builder.
   const sets = {};
   ['OPEX','OPEX-1','OPEX+1','EOM','EOM-1','NM','FED','CPI','VIX',
-   'VIX_MID','VIX_DEAD',
+   'VIX_MID','VIX_DEAD','COR1M_LOW',
    'AAPL','GOOGL','MSFT','TSLA','META','NVDA','AMZN','ALL_EARNINGS'].forEach(k => sets[k] = new Set());
 
   const OPEX_OVERRIDES = { '2025-04-18': '2025-04-17' };  // Good Friday
@@ -1773,6 +1804,19 @@ function buildSpecialDateSets(tradingDays, byDate = null) {
       }   // close for-i
     }     // close else (SignalEngine present)
   }       // close if (byDate)
+
+  // ── COR1M_LOW: skip days where COR1M < threshold ─────────────────────
+  // 2026-06-09: Diagonal needs at least moderate stock correlation. Below
+  // ~10 the constituents are uncorrelated and the 24h-hold whipsaws (3yr
+  // backtest: 34 trades, 50% WR, -$9.7k). Default threshold 10.
+  {
+    const corMin = (typeof window.COR1M_MIN === 'number') ? window.COR1M_MIN : 10;
+    const corMap = (typeof window.COR1M_BY_DATE === 'object' && window.COR1M_BY_DATE) ? window.COR1M_BY_DATE : {};
+    for (const d of tradingDays) {
+      const c = corMap[d];
+      if (typeof c === 'number' && c < corMin) sets['COR1M_LOW'].add(d);
+    }
+  }
 
   return sets;
 }

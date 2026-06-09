@@ -1742,8 +1742,22 @@ async function handleDiagonalTrade(env, etNow, preChain = null) {
     }
   } catch (e) { /* signal will be 'pending' if no vixPct20d */ }
 
-  // 3. Compute diagonal signal
-  const sig = computeDiagonalSignal(etNow, vixPct20d);
+  // 3a. Fetch today's COR1M from the Tail Hedge bundle (same path as
+  //     getTailHedgeStatusLine — bundle has authoritative 9:30 ET open).
+  //     Used to gate Diagonal: COR1M < 10 → no trade.
+  let cor1mToday = null;
+  try {
+    const r = await fetch('https://raw.githubusercontent.com/rava8989/brave/main/cor1m_contango_bundle.json',
+      { headers: { 'User-Agent': 'schwab-proxy-worker/1.0' } });
+    if (r.ok) {
+      const bundle = await r.json();
+      const todayRow = (bundle?.daily || []).find(d => d?.date === todayISO);
+      if (todayRow?.cor1m != null) cor1mToday = parseFloat(todayRow.cor1m);
+    }
+  } catch (_) { /* leave null — signal-engine will defer with "pending COR1M data" */ }
+
+  // 3b. Compute diagonal signal (now COR1M-gated).
+  const sig = computeDiagonalSignal(etNow, vixPct20d, cor1mToday);
   if (!sig.diagGo) {
     out.skipped = sig.diagSkipCode || 'no-data';
     out.signalText = sig.diagText;

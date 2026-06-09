@@ -334,7 +334,14 @@ export function computeVixPct20d(vixToday, prior20VixCloses, opts = {}) {
 // Exit 12:30–15:00 ET next trading day · 1/25 DTE · short +30 ITM · long −40 below · ±5 pt tol.
 // Entry and exit must use the SAME wall-clock time so only one diagonal is live at a time.
 // ════════════════════════════════════════════════════════════════════
-export function computeDiagonalSignal(etDate, vixPct20d = null) {
+// Diagonal COR1M floor — added 2026-06-09 after empirical review showed
+// Diagonal loses money below COR1M 10 (3-yr backtest: 34 trades, 50% WR,
+// -$9,667 total, -$284 avg; worst -$4,510). Below ~10 the constituents
+// are doing their own thing; the 24h-hold diagonal whipsaws. Default 10
+// — backtester/dashboard can override via the optional `cor1mMin` param.
+export const DIAGONAL_COR1M_MIN_DEFAULT = 10;
+
+export function computeDiagonalSignal(etDate, vixPct20d = null, cor1m = null, cor1mMin = DIAGONAL_COR1M_MIN_DEFAULT) {
   const opex1 = opexSch.some(ds => isTodayBefore(ds, etDate));
   const eomDay = isLastTradeMo(etDate);
   const eom1Day = isEomN(1, etDate);
@@ -357,6 +364,11 @@ export function computeDiagonalSignal(etDate, vixPct20d = null) {
     diagSkipCode = 'NM';
     diagText = 'No Diagonal (NM)';
     diagBadge = 'SKIP';
+  } else if (cor1m !== null && cor1m !== undefined && cor1m < cor1mMin) {
+    // COR1M floor — Diagonal needs at least moderate stock correlation to work.
+    diagSkipCode = 'COR1M_LOW';
+    diagText = `No Diagonal (COR1M ${cor1m.toFixed(2)} < ${cor1mMin})`;
+    diagBadge = 'SKIP';
   } else if (vixPct20d !== null && vixPct20d !== undefined && vixPct20d > 50 && vixPct20d <= 90) {
     diagSkipCode = 'VIX_MID';
     diagText = `No Diagonal (VIX 20d ${vixPct20d}% — dead zone)`;
@@ -365,15 +377,19 @@ export function computeDiagonalSignal(etDate, vixPct20d = null) {
     // All calendar filters cleared but no VIX percentile yet — waiting state.
     diagText = 'Diagonal pending VIX 20d data';
     diagBadge = '…';
+  } else if (cor1m === null || cor1m === undefined) {
+    // VIX OK but COR1M data missing — defer with waiting state.
+    diagText = 'Diagonal pending COR1M data';
+    diagBadge = '…';
   } else {
     // All filters cleared → GO.
     diagGo = true;
     const band = vixPct20d <= 50 ? 'calm' : 'panic';
-    diagText = `Diagonal 12:30–15:00 ET window (VIX 20d ${vixPct20d}% — ${band} edge)`;
+    diagText = `Diagonal 12:30–15:00 ET window (VIX 20d ${vixPct20d}% · COR1M ${cor1m.toFixed(2)} — ${band} edge)`;
     diagBadge = '⏰ 12:30–15:00 ET';
   }
 
-  return { diagText, diagBadge, diagGo, diagSkipCode, vixPct20d };
+  return { diagText, diagBadge, diagGo, diagSkipCode, vixPct20d, cor1m, cor1mMin };
 }
 
 // ════════════════════════════════════════════════════════════════════
