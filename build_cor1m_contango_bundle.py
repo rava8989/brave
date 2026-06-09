@@ -253,7 +253,12 @@ def main():
                     'spot': put['spot'],
                 }
                 any_valid = True
-        per_day[d] = {'spx_close': spx_cls, 'picks': picks}
+        # 2026-06-09 audit fix (P1 #12): also bake the 9:45 VIX so the JS
+        # sandbox can display the SAME VIX value the Python baked presets show
+        # in their trade records. Previously JS used dayObj.vix (9:30 open),
+        # creating a confusing "same trade, different VIX" reproducibility gap
+        # between baked-preset view and Custom-recompute view.
+        per_day[d] = {'spx_close': spx_cls, 'vix_945': vix, 'picks': picks}
         if any_valid:
             n_with_picks += 1
     print(f'  Sandbox done: {len(per_day)} days in per_day, '

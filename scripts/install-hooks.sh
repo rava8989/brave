@@ -20,6 +20,7 @@ set -e
 ./scripts/check-no-discord-scrape.sh
 ./scripts/check-vix-pct-canonical.sh
 ./scripts/check-html-js.sh
+./scripts/check-no-conflict-markers.sh
 EOF
 chmod +x "$HOOK"
 
@@ -28,6 +29,7 @@ echo "  → runs scripts/check-strategy-independence.sh"
 echo "  → runs scripts/check-history-kv-match.sh"
 echo "  → runs scripts/check-no-discord-scrape.sh"
 echo "  → runs scripts/check-vix-pct-canonical.sh"
-echo "  → runs scripts/check-html-js.sh   (NEW: ESLint on inline HTML JS)"
+echo "  → runs scripts/check-html-js.sh"
+echo "  → runs scripts/check-no-conflict-markers.sh   (added after 2026-06-02 broken-dashboard incident)"
 echo ""
 echo "Bypass for one-off commits: git commit --no-verify"

@@ -396,7 +396,10 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
   const earningsDay = isEarningsDay(etDate);
 
   const o2o = (vixYOpen != null) ? vixYOpen - vixToday : NaN;
-  const oNight = vixYClose - vixToday;
+  // FIX (2026-06-09 audit): guard null vixYClose — without this, null - vixToday
+  // = -vixToday, triggering "No Straddle (overnight VIX up)" misattribution
+  // instead of a "waiting for prior VIX close" diagnosis.
+  const oNight = (vixYClose != null) ? (vixYClose - vixToday) : NaN;
 
   const spxGapCancelsStrad = (spxGapPct !== null && spxGapPct !== undefined && Math.abs(spxGapPct) >= T.SPX_GAP_THRESHOLD);
   const vixExpAfterOpex = isVixAfterOpexDay(etDate);
@@ -419,9 +422,11 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
   const gxbfTrigger = (oNight > T.DROP_GXBF) || postOpDay;
   let gxbfFires = false, gxbfBlockedReason = null;
   if (gxbfTrigger) {
-    if (cpiDay) {
-      gxbfBlockedReason = `CPI day`;
-    } else if (vixToday >= T.VIX_MAX_GXBF) {
+    // CPI day is ALLOWED for GXBF (matches docblock above and gxbf-backtester.html
+    // gating). Previously a `if (cpiDay) gxbfBlockedReason = 'CPI day'` line
+    // suppressed GXBF on CPI days — that was code-vs-doc drift (2026-06-09
+    // audit). gxbf-backtester historical P/L always included CPI day trades.
+    if (vixToday >= T.VIX_MAX_GXBF) {
       gxbfBlockedReason = `VIX ${vixToday} ≥ ${T.VIX_MAX_GXBF}`;
     } else if (postOpDay && gxbfVixOvernightPct >= 2) {
       gxbfBlockedReason = `VIX gapped up ${gxbfVixOvernightPct.toFixed(1)}% overnight`;
@@ -432,15 +437,15 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
     }
   }
 
-  if (cpiDay) {
-    // CPI day hard-blocks Sigma 3 strategies (M8BF, Straddle, GXBF, BOBF).
-    // Only the Diagonal companion can still trade on CPI days (it has its
-    // own gating in computeDiagonalSignal).
+  if (cpiDay && !gxbfFires) {
+    // CPI day hard-blocks M8BF / Straddle / BOBF. GXBF is EXEMPT (matches
+    // docblock above and gxbf-backtester.html — CPI day is allowed for GXBF
+    // as of the 2026-06-09 audit fix). Diagonal companion has its own gating.
     rec = "No trades (CPI day)";
     theme = "block";
     crossed = true;
     blockT = "cpi-day";
-    blockD = "CPI day — all Sigma 3 strategies blocked";
+    blockD = "CPI day — M8BF/Straddle/BOBF blocked (GXBF exempt)";
     badge = "BLOCKED";
     strikeInfo = null;
   } else if (gxbfFires) {
@@ -452,7 +457,12 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
     // drop must be between 0 (exclusive) and T.DROP_GXBF (inclusive, =0.65).
     // No reference to GXBF — Straddle stands on its own.
     // M8BF is also independent — its status lives in m8bfText only.
-    if (oNight > 0 && oNight <= T.DROP_GXBF) {
+    if (!Number.isFinite(oNight)) {
+      // FIX (2026-06-09 audit): vixYClose missing → can't compute overnight delta.
+      // Don't silently emit "VIX up overnight" — surface the data gap.
+      rec = "No Straddle (waiting for prior VIX close)"; theme = "block"; crossed = true;
+      blockT = "data"; blockD = "vixYClose missing"; badge = "BLOCKED"; strikeInfo = null;
+    } else if (oNight > 0 && oNight <= T.DROP_GXBF) {
       rec = "Straddle @ 9:32 AM"; theme = "strad"; entryT = "9:32 AM"; badge = "STRADDLE";
     } else if (oNight > T.DROP_GXBF) {
       rec = `No Straddle (overnight VIX drop > ${T.DROP_GXBF})`; theme = "block"; crossed = true; blockT = "vix-down-big"; blockD = `Drop > ${T.DROP_GXBF}`; badge = "BLOCKED"; strikeInfo = null;
@@ -490,13 +500,16 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
 
   // WR=0% and WR>=90% overrides
   if (prevWR != null) {
-    if (prevWR === 0 && !cpiDay) {
+    if (prevWR === 0 && !cpiDay && !rec.includes("GXBF")) {
       // 0% WR forces Straddle the next day — Fed day is NOT a special case
       // (canonical rule per user: WR rules treat Fed days like any other day).
       // CPI stays in the gate because CPI hard-blocks ALL strategies upstream;
-      // the 0% rule cannot override a CPI block. 2026-05-28: removed an
-      // erroneous `!fedDay` clause that had been falsely documented as
-      // "Fed day takes priority" — it never was a real rule.
+      // the 0% rule cannot override a CPI block.
+      // GXBF is also EXCLUDED — like the 90% override, the 0% rule cannot
+      // cancel GXBF because GXBF is strategy-independent (overnight VIX drop).
+      // 2026-06-09 audit: added `!rec.includes("GXBF")` guard to match the
+      // 90% rule's GXBF exclusion at the next branch.
+      // 2026-05-28: removed an erroneous `!fedDay` clause.
       rec = "Straddle @ 9:32 AM"; theme = "strad"; crossed = false;
       blockT = "0%rule"; entryT = "9:32 AM"; badge = "STRADDLE"; strikeInfo = null;
     } else if (prevWR >= 90 && !cpiDay && !rec.includes("GXBF")) {

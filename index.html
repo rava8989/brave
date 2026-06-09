@@ -1041,9 +1041,20 @@
    * (Feb 2026 CPI), affecting backtester output. Same fix pattern as
    * earningsSchedule. */
 
-  /* ====== DATE HELPERS ====== */
+  /* ====== DATE HELPERS — SignalEngine-backed ======
+   *
+   * 2026-06-09 audit fix (P0 #5): the inline copies below were re-introducing
+   * `toLocaleDateString` in date loops (nextTrade/prevTrade/tradeDaysUntil/
+   * tradeWdLabel). That's the 100-1000× slowdown + iPhone Safari crash pattern
+   * that the 2026-04-27 cleanup specifically deleted by routing to
+   * signal-engine.js's manual `dateLong` formatter. This file is the dashboard
+   * users open daily — fixing it again.
+   *
+   * Aliases below delegate to SignalEngine (single source per CLAUDE.md rule
+   * #2). All previous call sites work unchanged.
+   */
   let _todayStr = null;
-  function todayLong() { if(!_todayStr) _todayStr=new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}); return _todayStr; }
+  function todayLong() { if(!_todayStr) _todayStr = SignalEngine.dateLong(new Date()); return _todayStr; }
   function resetCache() { _todayStr=null; }
 
   const isCpi  = () => SignalEngine.cpiSch.includes(todayLong());
@@ -1051,86 +1062,51 @@
   const isOpex = () => SignalEngine.opexSch.includes(todayLong());
   const isVixExp=() => SignalEngine.vixSch.includes(todayLong());
 
-  const isWkend= d => { const w=d.getDay(); return w===0||w===6; };
-  const isHol  = d => SignalEngine.holidays.includes(d.toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}));
-  const isTrade= d => !isWkend(d)&&!isHol(d);
+  const isWkend = SignalEngine.isWkend;
+  const isHol   = SignalEngine.isHol;
+  const isTrade = SignalEngine.isTrade;
+  const nextTrade = SignalEngine.nextTrade;
+  const prevTrade = SignalEngine.prevTrade;
 
-  function nextTrade(d){ const n=new Date(d); do{n.setDate(n.getDate()+1);}while(isWkend(n)||isHol(n)); return n; }
-  function prevTrade(d){ const p=new Date(d); do{p.setDate(p.getDate()-1);}while(isWkend(p)||isHol(p)); return p; }
+  // SignalEngine's isTodayAfter/Before take (ds, etDate) — provide defaults
+  // for callers that omit etDate.
+  function isTodayAfter(ds, etDate=new Date()) { return SignalEngine.isTodayAfter(ds, etDate); }
+  function isTodayBefore(ds, etDate=new Date()) { return SignalEngine.isTodayBefore(ds, etDate); }
+  const parseLong = SignalEngine.parseLong;
+  const schedInMonth = SignalEngine.schedInMonth;
 
-  function isTodayAfter(ds){
-    const d=new Date(ds); if(isNaN(d)) return false;
-    const a=nextTrade(d), t=new Date();
-    return a.getFullYear()===t.getFullYear()&&a.getMonth()===t.getMonth()&&a.getDate()===t.getDate();
-  }
-  function isTodayBefore(ds){
-    const d=new Date(ds); if(isNaN(d)) return false;
-    const b=prevTrade(d), t=new Date();
-    return b.getFullYear()===t.getFullYear()&&b.getMonth()===t.getMonth()&&b.getDate()===t.getDate();
-  }
-  function parseLong(s){ const d=new Date(s); return isNaN(d)?null:new Date(d.getFullYear(),d.getMonth(),d.getDate(),12); }
-  function schedInMonth(list,ref){ const y=ref.getFullYear(),m=ref.getMonth(); for(const s of list){const d=parseLong(s);if(d&&d.getFullYear()===y&&d.getMonth()===m)return d;} return null; }
+  const isPostHol     = () => SignalEngine.holidays.some(d => isTodayAfter(d));
+  const isPostOpexMon = () => SignalEngine.isPostOpexMon(new Date());
+  const isLastTradeMo = (d=new Date()) => SignalEngine.isLastTradeMo(d);
+  function isEomN(n, d=new Date()) { return SignalEngine.isEomN(n, d); }
+  const isFirstTradeMo = (d=new Date()) => SignalEngine.isFirstTradeMo(d);
+  const isFirstTradeMon = (d=new Date()) => SignalEngine.isFirstTradeMon(d);
 
-  // isPostVixBeforeOpex removed — unused dead code
-  const isPostHol     = () => SignalEngine.holidays.some(isTodayAfter);
-  const isPostOpexMon = () => SignalEngine.opexSch.some(isTodayAfter) && new Date().getDay()===1;
-  const isLastTradeMo = (d=new Date()) => nextTrade(d).getMonth()!==d.getMonth();
-  function isEomN(n,d=new Date()){ const f=new Date(d.getFullYear(),d.getMonth()+1,1); let t=prevTrade(f); for(let i=0;i<n;i++)t=prevTrade(t); return t.getFullYear()===d.getFullYear()&&t.getMonth()===d.getMonth()&&t.getDate()===d.getDate(); }
-  const isFirstTradeMo=(d=new Date())=>prevTrade(d).getMonth()!==d.getMonth();
-  function isFirstTradeMon(d=new Date()){
-    return isFirstTradeMo(d)&&d.getDay()===1;
-  }
-
-  /* Trading days countdown */
+  /* Trading days countdown — uses SignalEngine.isTrade (manual dateLong formatter,
+     no toLocaleDateString — iPhone-safe). */
   function tradeDaysUntil(ds){
-    const target=parseLong(ds); if(!target) return null;
-    const tn=new Date(); const t0=new Date(tn.getFullYear(),tn.getMonth(),tn.getDate(),12);
-    if(target<t0) return null;
-    if(target.getTime()===t0.getTime()) return 0;
-    let c=0,d=new Date(t0);
-    while(d<target){d.setDate(d.getDate()+1);if(isTrade(d))c++;}
+    const target = SignalEngine.parseLong(ds); if (!target) return null;
+    const tn = new Date(); const t0 = new Date(tn.getFullYear(), tn.getMonth(), tn.getDate(), 12);
+    if (target < t0) return null;
+    if (target.getTime() === t0.getTime()) return 0;
+    let c=0, d=new Date(t0);
+    while (d < target) { d.setDate(d.getDate()+1); if (SignalEngine.isTrade(d)) c++; }
     return c;
   }
 
-  /* ====== M8BF SCHEDULE ====== */
-  // Updated from Strike Model — M8BF Edition image
-  // Window = start of entry window; everyWeek = can trade even on non-M8BF days
-  function isSecondTradingThursday(d=new Date()){
-    if(d.getDay()!==4)return false;
-    let thuCount=0;
-    for(let day=1;day<=d.getDate();day++){
-      if(new Date(d.getFullYear(),d.getMonth(),day).getDay()===4)thuCount++;
-    }
-    return thuCount===2;
-  }
-  function m8Sched(dow,d=new Date()){
-    const blocked=["10","25","35","40","65","80"];
-    const comboBans={0:95,20:15,55:50,65:60,85:90};
-    switch(dow){
-      case 1:return{t:"11:00",window:"11:00–11:30",blocked:blocked,comboBans:comboBans};
-      case 2:return{t:"13:30",window:"13:30–14:00",blocked:blocked,comboBans:comboBans};
-      case 3:return{t:"12:00",window:"12:00–12:30",blocked:blocked,comboBans:comboBans};
-      case 4:
-        if(isSecondTradingThursday(d))return{t:"13:30",window:"13:30–14:00 (2nd Thu)",blocked:blocked,comboBans:comboBans};
-        return{t:"11:00",window:"11:00–11:30",blocked:blocked,comboBans:comboBans};
-      case 5:return{t:"13:00",window:"13:00–13:30",blocked:blocked,comboBans:comboBans};
-      default:return null;
-    }
-  }
-  function m8Msg(d=new Date()){ const sc=m8Sched(d.getDay(),d); return sc?`M8BF — Window ${sc.window}`:"M8BF"; }
+  /* M8BF schedule — SignalEngine-backed (single source per CLAUDE.md rule #2). */
+  const isSecondTradingThursday = (d=new Date()) => SignalEngine.isSecondTradingThursday(d);
+  const m8Sched = (dow, d=new Date()) => SignalEngine.m8Sched(dow, d);
+  const m8Msg   = (d=new Date()) => SignalEngine.m8Msg(d);
 
-  /* ====== DISPLAY HELPERS ====== */
-  function ordinal(n){const s=["th","st","nd","rd"],v=n%100;return n+(s[(v-20)%10]||s[v]||s[0]);}
-  function wdName(d){return["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][d]||"";}
-  function tradeWdLabel(d=new Date()){
-    const t=new Date(d.getFullYear(),d.getMonth(),d.getDate());
-    const dow=t.getDay(), ms=new Date(t.getFullYear(),t.getMonth(),1);
-    let c=0;
-    for(let x=new Date(ms);x<=t;x.setDate(x.getDate()+1)){if(!isTrade(x))continue;if(x.getDay()===dow)c++;}
-    if(!isTrade(t)) return `${wdName(dow)} (market closed)`;
-    return `${ordinal(c)} ${wdName(dow)}`;
+  /* Display helpers */
+  const ordinal = SignalEngine.ordinal;
+  const wdName  = SignalEngine.wdName;
+  const tradeWdLabel = (d=new Date()) => SignalEngine.tradeWdLabel(d);
+  function updateHeader(){
+    document.getElementById('todayDate').textContent = SignalEngine.dateLong(new Date());
+    document.getElementById('dayLabel').textContent = tradeWdLabel();
   }
-  function updateHeader(){ document.getElementById('todayDate').textContent=new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}); document.getElementById('dayLabel').textContent=tradeWdLabel(); }
 
   /* ====== PAST DATES ====== */
   function hasPast(ds,now){ const d=new Date(ds); return !isNaN(d)&&now>new Date(d.getFullYear(),d.getMonth(),d.getDate(),23,59,59,999); }

@@ -34,6 +34,23 @@ if [ "$DOW" -ge 6 ]; then
   exit 0
 fi
 
+# ── 0a. Skip US market holidays ─────────────────────────────────────────────
+# Added 2026-06-09 audit fix (P0 #6). Previously only weekends were filtered,
+# but the header comment claimed "weekend / holiday" handling. On a US holiday
+# weekday (Juneteenth, Thanksgiving, Christmas, etc.) the script would run
+# and ThetaData would either error or return off-session prints — which the
+# CLAUDE.md rule #3 explicitly says are NOT valid trading-day data.
+# Keep this list synced with US_MARKET_HOLIDAYS in signal-engine.js.
+US_HOLIDAYS_2026="2026-01-01 2026-01-19 2026-02-16 2026-04-03 2026-05-25 2026-06-19 2026-07-03 2026-09-07 2026-11-26 2026-12-25"
+US_HOLIDAYS_2027="2027-01-01 2027-01-18 2027-02-15 2027-03-26 2027-05-31 2027-06-18 2027-07-05 2027-09-06 2027-11-25 2027-12-24"
+ALL_HOLIDAYS="$US_HOLIDAYS_2026 $US_HOLIDAYS_2027"
+for HOL in $ALL_HOLIDAYS; do
+  if [ "$TODAY" = "$HOL" ]; then
+    log "US market holiday ($TODAY), skipping."
+    exit 0
+  fi
+done
+
 # ── 1. ThetaData reachable? ─────────────────────────────────────────────────
 if ! curl -s -m 3 "$THETA/index/history/ohlc?symbol=VIX&start_date=$TODAY_NODASH&end_date=$TODAY_NODASH&interval=1h&format=csv" | head -1 | grep -q timestamp; then
   log "ThetaData unreachable at $THETA. Make sure ThetaTerminal is running. Skipping."

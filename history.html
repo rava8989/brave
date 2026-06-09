@@ -1018,8 +1018,12 @@ function renderTable() {
     if (isFuture) {
       h += dash + dash + dash + dash + dash + dash + dash;
     } else {
-      h += stratCell(s.m8bfRan, row.m8bfPL);
-      h += stratCell(s.stradRan && row.stradPL != null, row.stradPL);
+      // 2026-06-09 audit fix (P1 #9): M8BF + Straddle cells now respect their
+      // activeStrats toggle pills, matching GXBF/BOBF/Diagonal/Tail. Previously
+      // the cells rendered regardless of pill state while totals + dayTotal
+      // dropped them — cells and totals contradicted on screen.
+      h += stratCell(activeStrats.m8bf && s.m8bfRan, row.m8bfPL);
+      h += stratCell(activeStrats.strad && s.stradRan && row.stradPL != null, row.stradPL);
       h += stratCell(activeStrats.gxbf && row.gxbfPL != null, row.gxbfPL);
       h += stratCell(activeStrats.bobf && s.bobfBadge !== 'BLOCKED', row.bobfPL);
       h += stratCell(activeStrats.diagonal && row.diagPL != null, row.diagPL);

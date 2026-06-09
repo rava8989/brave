@@ -1752,7 +1752,13 @@ function buildSpecialDateSets(tradingDays, byDate = null) {
           if (typeof c === 'number' && c > 0) priors.unshift(c);
         }
         const { inDeadZone } = SE.computeVixPct20d(vToday, priors, { lo, hi });
-        if (inDeadZone && i >= 20) {
+        // 2026-06-09 audit fix (P1 #11): dropped the `&& i >= 20` warm-up gate.
+        // The canonical helper already returns inDeadZone=true when prior data
+        // is insufficient — gating again on `i >= 20` caused the backtester to
+        // SKIP the dead-zone for the first 10-20 days while the live worker
+        // BLOCKED them, replaying the 2026-05-15/18/19/20 drift bug that the
+        // canonical helper was created to fix.
+        if (inDeadZone) {
           sets['VIX_MID'].add(today);
           // VIX_DEAD: also requires prior-day SPX |change| < 0.5%
           const dPrev  = tradingDays[i - 1];

@@ -1014,12 +1014,17 @@ async function handleEOD(env, etNow) {
   // so we set m8bfPL = 0 and add the date to M8BF_SKIP after appending trades.
   let m8bfBlockedByLive = false;
 
-  // STEP 1 — calendar-only bans (purely date-driven, don't need vix/spx inputs).
-  // These must fire even if the morning signal didn't populate vixOpen yet.
-  // Mirrors signal-engine.js m8bfBanned = eomDay || eom1 || opex1 || vixExpAfterOpex || nonAmznTslaEarn
-  // plus cpiDay AND NM-not-Monday (NM Straddle override at signal-engine.js:336
-  // replaces M8BF on first trading day of month unless that day is a Monday;
-  // observed 2026-05-01 NM day where m8bfPL was incorrectly written as -$101).
+  // FIX (2026-06-09 audit P0 #3): both STEP 1 and STEP 2 used to ignore the
+  // 90%-WR override in signal-engine.js. On a day where prevWR≥90 falls on
+  // EOM/EOM-1/OPEX-1/NM-non-Mon, the live bot DID fire M8BF — but EOD silently
+  // wrote m8bfPL=0 and added the date to M8BF_SKIP, corrupting the ledger.
+  //
+  // STEP 1 now DEFERS to STEP 2 when the 90% override is possible. STEP 2
+  // calls calculateSignal with prevWR and trusts sig.theme === "m8bf"
+  // (which incorporates the 90% override AND the GXBF exclusion).
+  let calendarWouldBlock = false;
+  let ninetyOverridePossible = false;
+  let calendarBlockReason = '';
   {
     const eomDay = isEomN(0, etNow);
     const eom1 = isEomN(1, etNow);
@@ -1029,20 +1034,40 @@ async function handleEOD(env, etNow) {
     const cpiDay = cpiSch.includes(todayLong(etNow));
     const nmDay = isFirstTradeMo(etNow);
     const nmMon = isFirstTradeMon(etNow);
-    const nmNonMon = nmDay && !nmMon;  // NM that triggers Straddle override
-    if (eomDay || eom1 || opex1 || vixExpAfterOpex || nonAmznTslaEarn || cpiDay || nmNonMon) {
-      m8bfBlockedByLive = true;
-      console.log(`[eod] M8BF blocked by calendar (eom=${eomDay}, eom-1=${eom1}, opex-1=${opex1}, vixAfterOpex=${vixExpAfterOpex}, earn=${nonAmznTslaEarn}, cpi=${cpiDay}, nm-non-mon=${nmNonMon})`);
+    const nmNonMon = nmDay && !nmMon;
+    calendarWouldBlock = eomDay || eom1 || opex1 || vixExpAfterOpex || nonAmznTslaEarn || cpiDay || nmNonMon;
+    calendarBlockReason = `eom=${eomDay}, eom-1=${eom1}, opex-1=${opex1}, vixAfterOpex=${vixExpAfterOpex}, earn=${nonAmznTslaEarn}, cpi=${cpiDay}, nm-non-mon=${nmNonMon}`;
+
+    if (calendarWouldBlock) {
+      // Look up prior m8bfWR. If ≥ 90 and not CPI day, the 90% override may
+      // force M8BF (GXBF firing would suppress this — STEP 2 has VIX to check).
+      try {
+        const hist_q = await getHistory(env);
+        const prevWREntry = (Array.isArray(hist_q) ? hist_q : [])
+          .filter(e => e.date < todayISO && e.m8bfWR != null)
+          .sort((a, b) => b.date.localeCompare(a.date))[0];
+        const prevWR_q = prevWREntry ? parseFloat(prevWREntry.m8bfWR) : null;
+        if (prevWR_q != null && prevWR_q >= 90 && !cpiDay) {
+          ninetyOverridePossible = true;
+        }
+      } catch (e) { console.warn('[eod] prevWR lookup for 90% override:', e.message); }
+
+      if (!ninetyOverridePossible) {
+        m8bfBlockedByLive = true;
+        console.log(`[eod] M8BF blocked by calendar (${calendarBlockReason})`);
+      } else {
+        console.log(`[eod] Calendar would block M8BF (${calendarBlockReason}) — 90% override possible, deferring to STEP 2`);
+      }
     }
   }
 
   // STEP 2 — gap/o2o/signal-based bans (need vixOpen/spxOpen, only run if morning wrote them).
+  // Also resolves the 90% override deferred from STEP 1.
   if (!m8bfBlockedByLive) {
     try {
       const hist0 = await getHistory(env);
       if (Array.isArray(hist0) && hist0.length) {
         const todayE = hist0.find(e => e.date === todayISO);
-        // Find prior trading day for vixYClose / vixYOpen
         const prior = hist0
           .filter(e => e.date < todayISO && e.vixClose != null && e.vixOpen != null)
           .sort((a, b) => b.date.localeCompare(a.date))[0];
@@ -1053,20 +1078,35 @@ async function handleEOD(env, etNow) {
           const spxGapPct = (todayE.spxOpen != null && prior.spxClose != null)
             ? ((todayE.spxOpen - prior.spxClose) / prior.spxClose) * 100
             : null;
+          const prevWR_s2 = prevWREntry ? parseFloat(prevWREntry.m8bfWR) : null;
           const sig = calculateSignal({
             vixToday: todayE.vixOpen,
             vixYOpen: prior.vixOpen,
             vixYClose: prior.vixClose,
             spxGapPct,
             etDate: etNow,
-            prevWR: prevWREntry ? parseFloat(prevWREntry.m8bfWR) : null,
+            prevWR: prevWR_s2,
           });
-          // M8BF independence: only block if M8BF's OWN conditions block it.
-          // GXBF/Straddle firing does NOT block M8BF. Ever.
-          if (sig.m8bfBanned || sig.cpiDay) {
+          // FIX (2026-06-09 audit P0 #3): m8bfBanned alone misses the 90%-WR
+          // override. The override applies when prevWR >= 90, not CPI, and
+          // GXBF didn't take precedence (sig.theme !== 'gxbf' — equivalent to
+          // signal-engine.js's !rec.includes("GXBF") check). When override
+          // applies, M8BF fires even on a calendar-banned day.
+          const gxbfTookPrecedence = (sig.theme === 'gxbf');
+          const ninetyOverrideFires = (prevWR_s2 != null && prevWR_s2 >= 90 && !sig.cpiDay && !gxbfTookPrecedence);
+          const m8bfWouldNotFire = (sig.m8bfBanned || sig.cpiDay) && !ninetyOverrideFires;
+          if (m8bfWouldNotFire) {
             m8bfBlockedByLive = true;
-            console.log(`[eod] M8BF blocked by own conditions (m8bfBanned=${sig.m8bfBanned}, cpiDay=${sig.cpiDay})`);
+            console.log(`[eod] M8BF blocked: m8bfBanned=${sig.m8bfBanned}, cpiDay=${sig.cpiDay}, 90%override=${ninetyOverrideFires}, gxbfTook=${gxbfTookPrecedence}`);
+          } else if (ninetyOverrideFires && calendarWouldBlock) {
+            console.log(`[eod] 90% override CONFIRMED — calendar block (${calendarBlockReason}) overridden (prevWR=${prevWR_s2})`);
           }
+        } else if (ninetyOverridePossible && calendarWouldBlock) {
+          // No VIX data yet. 90% override was POSSIBLE but unverifiable.
+          // Be conservative: leave m8bfBlockedByLive=false (the qualifying-
+          // signal-in-window check below only fires if a real signal was
+          // scraped, so we won't fabricate an M8BF P/L on a quiet day).
+          console.log(`[eod] No VIX data, 90% override possible — leaving m8bfBlockedByLive=false`);
         }
       }
     } catch (e) { console.warn('[eod] live signal check:', e.message); }
@@ -1204,15 +1244,27 @@ async function handleEOD(env, etNow) {
 
 function parseDiscordSignal(content) {
   // Format: BUY +1 Butterfly SPX 100 ... 6455/6405/6355 CALL @14.25 LMT
+  // Strikes are typically posted high→low for CALLs and low→high for PUTs.
+  // FIX (2026-06-09 audit P0 #8): NORMALIZE strike ordering so that
+  // lower < center < upper regardless of CALL/PUT post format. Without this,
+  // PUT butterflies posted low→high (e.g. 6355/6405/6455 PUT) produced
+  // upper=6355 < lower=6455, and the P/L formula
+  //   max(0, min(spxClose - lower, upper - spxClose))
+  // returned 0 intrinsic for ANY spxClose between strikes → silent
+  // m8bfPL = -premium*100 regardless of actual outcome.
   const strikeMatch = content.match(/BUY \+1 Butterfly SPX[^/]*(\d{4,5})\/(\d{4,5})\/(\d{4,5})\s*(CALL|PUT)\s*@([\d.]+)/i);
   if (!strikeMatch) return null;
-  const upper = parseInt(strikeMatch[1]);
-  const center = parseInt(strikeMatch[2]);
-  const lower = parseInt(strikeMatch[3]);
+  const s1 = parseInt(strikeMatch[1]);
+  const s2 = parseInt(strikeMatch[2]);
+  const s3 = parseInt(strikeMatch[3]);
   const cpStr = (strikeMatch[4] || 'CALL').toUpperCase();
   const cp = cpStr === 'PUT' ? 1 : 0; // 0=CALL, 1=PUT
   const premium = parseFloat(strikeMatch[5]);
-  if (isNaN(center) || isNaN(premium)) return null;
+  if (isNaN(s1) || isNaN(s2) || isNaN(s3) || isNaN(premium)) return null;
+  // Sort to canonical order: lower < center < upper. Wing structure is
+  // symmetric around center for a standard butterfly, but defensive sort
+  // handles edge cases (asymmetric flies, mis-typed posts) too.
+  const [lower, center, upper] = [s1, s2, s3].sort((a, b) => a - b);
   // T1 from "Target 1: XXXX"
   const t1Match = content.match(/Target\s*1[:\s]+(\d{4,5})/i);
   const t1 = t1Match ? parseInt(t1Match[1]) : center + 5;
@@ -1482,13 +1534,20 @@ async function openDiagonalTrade(env, token, etNow, vixPct20d, preChain = null) 
   const debit   = longLeg.mid - shortLeg.mid;
   const askFill = longLeg.ask - shortLeg.bid;
   const bidExit = longLeg.bid - shortLeg.ask;
+  // FIX (2026-06-09 audit P0 #7): record ACTUAL filled long strike, not the
+  // pre-fuzz target. pickPutFromChain() tolerates ±5-10 strike fuzz; if the
+  // chain didn't have the exact target 7250P but had 7245P, longLeg.strike is
+  // 7245 while kLong is still 7250. Storing kLong made the closer at line
+  // ~1620 look up the wrong leg if the target strike came back into the chain
+  // by close time. shortStrike already uses kShort = shortLeg.strike (line 1490)
+  // — apply the same pattern to longStrike.
   const trade = {
     openDate: todayISO,
     openTimeET: `${String(etNow.getHours()).padStart(2,'0')}:${String(etNow.getMinutes()).padStart(2,'0')}`,
     spotEntry: parseFloat(spot.toFixed(2)),
     vixPct20d,
     shortStrike: kShort,
-    longStrike: kLong,
+    longStrike: longLeg.strike,
     shortExp,
     longExp: longExpUsed,
     // shortDte was hard-coded to 1 — wrong on long weekends (Fri Memorial Day
@@ -5272,17 +5331,36 @@ async function backfillMissingPL(env, targetDates = null) {
       const dow = etDate.getDay(); // 0=Sun,1=Mon...6=Sat
 
       // Calendar-only M8BF bans (earnings, EOM, OPEX-1, VIX-after-OPEX, CPI).
-      // Skip these dates — m8bfPL = 0, like signal-engine.js m8bfBanned + cpiDay.
+      // FIX (2026-06-09 audit P0 #3): now respects the 90%-WR override. On a
+      // calendar-banned day where the prior trading day's m8bfWR ≥ 90 AND
+      // it's not a CPI day, the override forces M8BF to fire (matches
+      // signal-engine.js:502). Previously this branch wrote m8bfPL=0 even
+      // when the live bot actually executed an M8BF trade — silent loss.
       const eomDay = isEomN(0, etDate);
       const eom1 = isEomN(1, etDate);
       const opex1 = opexSch.some(ds => isTodayBefore(ds, etDate));
       const vixExpAfterOpex = isVixAfterOpexDay(etDate);
       const nonAmznTslaEarn = isNonAmznTslaEarningsDay(etDate);
       const cpiDay = cpiSch.includes(todayLong(etDate));
-      if (eomDay || eom1 || opex1 || vixExpAfterOpex || nonAmznTslaEarn || cpiDay) {
-        row.m8bfPL = 0;
-        filled.push({ date: row.date, pl: 0, blocked: { eom: eomDay, 'eom-1': eom1, 'opex-1': opex1, vixAfterOpex: vixExpAfterOpex, earn: nonAmznTslaEarn, cpi: cpiDay } });
-        continue;
+      const calendarBlocked = eomDay || eom1 || opex1 || vixExpAfterOpex || nonAmznTslaEarn || cpiDay;
+      if (calendarBlocked) {
+        // Check 90% override: look for the most recent prior m8bfWR in the
+        // content array we already loaded.
+        const priorWREntry = content
+          .filter(r => r.date < row.date && r.m8bfWR != null)
+          .sort((a, b) => b.date.localeCompare(a.date))[0];
+        const priorWR = priorWREntry ? parseFloat(priorWREntry.m8bfWR) : null;
+        const ninetyOverride = (priorWR != null && priorWR >= 90 && !cpiDay);
+        // GXBF check: if GXBF fired today (gxbfPL non-null and non-zero),
+        // the 90% override doesn't apply per signal-engine.js:502.
+        const gxbfFired = (row.gxbfPL != null && row.gxbfPL !== 0);
+        if (!ninetyOverride || gxbfFired) {
+          row.m8bfPL = 0;
+          filled.push({ date: row.date, pl: 0, blocked: { eom: eomDay, 'eom-1': eom1, 'opex-1': opex1, vixAfterOpex: vixExpAfterOpex, earn: nonAmznTslaEarn, cpi: cpiDay }, ninetyOverride: false });
+          continue;
+        }
+        // Otherwise fall through — calendar block overridden by 90% rule.
+        console.log(`[backfill] 90% override at ${row.date}: priorWR=${priorWR}, allowing M8BF P/L computation`);
       }
 
       const win = getM8BFWindow(dow, row.date);

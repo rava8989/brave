@@ -847,7 +847,11 @@ function runSandbox({ threshold, delta_target, vvix_max, regimes_allowed }) {
       regime_label: dayObj.regime_label,
       cor1m: dayObj.cor1m,
       cor1m_eod_close: dayObj.cor1m_eod_close,
-      vix_open: dayObj.vix,
+      // 2026-06-09 audit fix (P1 #12): show 9:45 VIX (matches Python baked
+      // presets) when available; fall back to 9:30 (dayObj.vix) for older
+      // bundles that don't have vix_945. Without this, same trade showed
+      // different VIX between preset view and Custom view.
+      vix_open: (perDay.vix_945 != null) ? perDay.vix_945 : dayObj.vix,
       spot: pick.spot,
       strike: pick.strike,
       bid: pick.bid,
@@ -908,7 +912,7 @@ function runRecompute() {
   const deltaInput = parseFloat(document.getElementById('f-delta').value);
   const time = document.getElementById('f-time').value;
   const vvixRaw = document.getElementById('f-vvix-max').value.trim();
-  const vvixMax = vvixRaw === '' ? null : parseFloat(vvixRaw);
+  let vvixMax = vvixRaw === '' ? null : parseFloat(vvixRaw);
 
   if (!Number.isFinite(threshold) || !Number.isFinite(deltaInput)) {
     alert('Threshold and Delta must be numbers.');
@@ -918,13 +922,26 @@ function runRecompute() {
     alert('Only 09:45 entry is baked in this bundle.');
     return;
   }
+  // 2026-06-09 audit fix (P2): VVIX <= 0 silently killed every trade. Treat
+  // non-positive values as "no filter" with a friendly note.
+  if (vvixMax != null && vvixMax <= 0) {
+    alert(`VVIX Max = ${vvixMax} would block every trade (VVIX is always > 0). Treating as "no filter".`);
+    vvixMax = null;
+  }
+  // 2026-06-09 audit fix (P2): empty regime allowlist diverges from Python
+  // (which treats empty as "all allowed"). Match Python semantics + warn.
+  let regimesForBacktest = allowed;
+  if (allowed instanceof Set && allowed.size === 0) {
+    alert('No regimes selected — toggle at least one regime ON. Running with all regimes for now.');
+    regimesForBacktest = null;  // null = no filter (matches Python's `if allowed` check)
+  }
 
   const snapped = _nearestDelta(deltaInput, bundle.sandbox.delta_grid);
   const result = runSandbox({
     threshold,
     delta_target: snapped,
     vvix_max: vvixMax,
-    regimes_allowed: allowed,
+    regimes_allowed: regimesForBacktest,
   });
 
   // Build/replace a synthetic "Custom" preset in-place.
