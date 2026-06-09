@@ -32,12 +32,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
-from backtest_cor1m_put import load_cor1m_daily, trading_dates
+from backtest_cor1m_put import load_cor1m_daily, trading_dates, load_spx_close, HALF_DAYS
 from regime_classifier import (
     load_vix_term, classify_series, RegimeThresholds, REGIMES,
-    load_cor1m_open_and_close,
+    load_cor1m_open_and_close, load_cor1m_hourly_bars,
 )
-from backtest_cor1m_regime import run as run_backtest
+from backtest_cor1m_regime import (
+    run as run_backtest,
+    load_snapshot, load_vix_intraday_at, pick_put_by_delta,
+    put_delta, time_to_close,
+)
 
 
 class A:
@@ -199,6 +203,69 @@ def main():
     for d, v in cls.items():
         distribution[v['regime']] = distribution.get(v['regime'], 0) + 1
 
+    # ─── Sandbox: bake hourly COR1M + per-day picks at multiple deltas ───
+    # Lets the static HTML page run arbitrary (threshold, delta, vvix_max,
+    # regimes) backtests in JS without re-running Python.
+    print('\nBuilding sandbox (hourly COR1M + per-day put picks at delta grid)...')
+    delta_grid = [-0.05, -0.075, -0.10, -0.125, -0.15, -0.175, -0.20, -0.225, -0.25]
+    hourly_bars = load_cor1m_hourly_bars()
+    hourly_cor1m = [[ts, c] for (ts, c) in hourly_bars]
+    print(f'  Hourly COR1M bars: {len(hourly_cor1m)}')
+
+    per_day = {}
+    n_with_picks = 0
+    n_missing_snap = 0
+    n_missing_vix = 0
+    for i, d in enumerate(dates):
+        if i % 100 == 0:
+            print(f'  Sandbox progress: {i}/{len(dates)}  ({d})  '
+                  f'days_done={len(per_day)}  with_picks={n_with_picks}')
+        spx_cls = load_spx_close(d)
+        snap = load_snapshot(d, '0945')
+        if snap is None:
+            n_missing_snap += 1
+            if spx_cls is not None:
+                per_day[d] = {'spx_close': spx_cls, 'picks': {}}
+            continue
+        vix = load_vix_intraday_at(d, '09:45')
+        if vix is None or vix <= 0:
+            n_missing_vix += 1
+            if spx_cls is not None:
+                per_day[d] = {'spx_close': spx_cls, 'picks': {}}
+            continue
+        sigma = vix / 100.0
+        T = time_to_close('09:45', d in HALF_DAYS)
+        picks = {}
+        any_valid = False
+        for delta in delta_grid:
+            put = pick_put_by_delta(snap, target_exp=d, target_delta=delta,
+                                     sigma=sigma, T=T)
+            if put is None:
+                picks[str(delta)] = None
+            else:
+                picks[str(delta)] = {
+                    'strike': put['strike'],
+                    'bid': put['bid'],
+                    'ask': put['ask'],
+                    'mid': put['mid'],
+                    'mid_raw': put.get('mid_raw', put['mid']),
+                    'delta': put['delta'],
+                    'spot': put['spot'],
+                }
+                any_valid = True
+        per_day[d] = {'spx_close': spx_cls, 'picks': picks}
+        if any_valid:
+            n_with_picks += 1
+    print(f'  Sandbox done: {len(per_day)} days in per_day, '
+          f'{n_with_picks} with ≥1 valid pick, '
+          f'{n_missing_snap} missing snapshot, {n_missing_vix} missing VIX.')
+
+    sandbox = {
+        'delta_grid': delta_grid,
+        'hourly_cor1m': hourly_cor1m,
+        'per_day': per_day,
+    }
+
     bundle = {
         'generated_at': date.today().isoformat(),
         'thresholds': {
@@ -216,6 +283,7 @@ def main():
         'presets': PRESETS,
         'preset_results': preset_results,
         'default_preset': 'sweet_spot',
+        'sandbox': sandbox,
     }
 
     out_path = ROOT / args.out
