@@ -3428,9 +3428,18 @@
     refreshCross(); buildStatus(); buildNextEvents(); updateHeader();
     updateTailHedgeStatus();
     // On CPI days only Diagonal trades, and Diagonal only needs today's VIX
-    // open. Disable both yesterday fields so the user knows they're not needed.
-    document.getElementById('yesterdayOpen').disabled=isCpi();
-    document.getElementById('yesterdayClose').disabled=isCpi();
+    // open. 2026-06-10 (user request): do NOT disable the yesterday fields —
+    // auto-filled values must ALWAYS stay manually editable so the user can
+    // override a wrong system value and recalculate. CPI hint = dim + tooltip.
+    if (isCpi()) {
+      for (const id of ['yesterdayOpen', 'yesterdayClose']) {
+        const f = document.getElementById(id);
+        if (f) {
+          f.style.opacity = '0.55';
+          f.title = 'CPI day — not used by any strategy today (only Diagonal trades, and it only needs today’s VIX open). Still editable if you want to override.';
+        }
+      }
+    }
     loadInputs(); // #7: restore today's inputs if available
     schwabInit(); // Schwab integration
     loadVix20dFromHistory(); // VIX 20-day from history_data.json (no Schwab — works for all visitors)
