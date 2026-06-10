@@ -343,6 +343,75 @@ async function captureGxbfChainSnap(env, etNow, masterChain) {
     { expirationTtl: 90 * 86400 });
 }
 
+// CycleLab daily feed (2026-06-10): append today\'s (and any recent missing)
+// SPX session to cyclicality_data.json from Schwab 1-min pricehistory —
+// 5-min slot net moves, the format build_cyclicality_data.py produces.
+// ThetaData-free; the page self-updates daily. Runs at EOD + manual route.
+async function appendCyclicalityDays(env) {
+  const token = await getAccessToken(env);
+  const slots = [];
+  for (let h = 9, m = 30; h < 16; m += 5) { if (m >= 60) { m = 0; h++; if (h >= 16) break; }
+    slots.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`); }
+  const slotIdx = Object.fromEntries(slots.map((s, i) => [s, i]));
+
+  // current file (raw — cheaper than contents API for a 450KB read)
+  const cur = await (await fetch('https://raw.githubusercontent.com/rava8989/brave/main/cyclicality_data.json',
+    { headers: { 'User-Agent': 'schwab-proxy-worker/1.0' } })).json();
+  const have = new Set(cur.days.map(x => x.d));
+
+  // candidate days: last 12 calendar days, weekdays, non-holiday, missing
+  const etNow = toET(new Date());
+  const todo = [];
+  for (let back = 0; back <= 12; back++) {
+    const d = new Date(etNow); d.setDate(d.getDate() - back);
+    if (d.getDay() === 0 || d.getDay() === 6 || isHol(d)) continue;
+    const iso = isoDateET(d);
+    if (have.has(iso)) continue;
+    // skip today before the close — only completed sessions
+    if (iso === isoDateET(etNow) && (etNow.getHours() < 16)) continue;
+    todo.push(iso);
+  }
+  if (!todo.length) return { ok: true, appended: [] };
+
+  const appended = [];
+  for (const iso of todo.sort()) {
+    const start = Date.parse(`${iso}T08:00:00Z`), end = Date.parse(`${iso}T23:00:00Z`);
+    let hist;
+    try {
+      hist = await fetchSchwabJSON(
+        `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24SPX&periodType=day&frequencyType=minute&frequency=1&startDate=${start}&endDate=${end}&needExtendedHoursData=false`,
+        token, env);
+    } catch (e) { console.warn('[cyclelab] pricehistory failed', iso, e.message); continue; }
+    const candles = (hist.candles || []).filter(c => c.open > 0 && c.close > 0);
+    const oc = {};   // slot idx -> [firstOpen, lastClose]
+    for (const c of candles) {
+      const t = toET(new Date(c.datetime));
+      if (isoDateET(t) !== iso) continue;
+      const h = t.getHours(), m = t.getMinutes();
+      if (h < 9 || (h === 9 && m < 30) || h >= 16) continue;
+      const idx = slotIdx[`${String(h).padStart(2, '0')}:${String(m - (m % 5)).padStart(2, '0')}`];
+      if (idx == null) continue;
+      if (oc[idx]) oc[idx][1] = c.close; else oc[idx] = [c.open, c.close];
+    }
+    if (Object.keys(oc).length < 30) { console.warn('[cyclelab] too few slots', iso); continue; }
+    const moves = new Array(slots.length).fill(null);
+    for (const [idx, [o, c]] of Object.entries(oc)) moves[idx] = parseFloat((c - o).toFixed(2));
+    const wd = new Date(`${iso}T12:00:00Z`).getUTCDay() - 1;   // 0=Mon
+    appended.push({ d: iso, w: wd, m: moves });
+  }
+  if (!appended.length) return { ok: true, appended: [] };
+
+  await githubUpsertResearchFile(env, 'cyclicality_data.json', curObj => {
+    const haveNow = new Set(curObj.days.map(x => x.d));
+    for (const rec of appended) if (!haveNow.has(rec.d)) curObj.days.push(rec);
+    curObj.days.sort((a, b) => a.d.localeCompare(b.d));
+    curObj.built = isoDateET(toET(new Date()));
+    return curObj;
+  }, `auto: cyclicality ${appended.map(a => a.d).join(', ')}`);
+  try { await logEvent(env, 'info', 'research', `cyclicality appended ${appended.length} day(s)`, { days: appended.map(a => a.d) }); } catch (_) {}
+  return { ok: true, appended: appended.map(a => a.d) };
+}
+
 // Generic GitHub research-file upsert — same auth pattern as
 // mirrorHistoryToGitHub but path-parameterized and merge-based.
 // mutate(currentObj) → newObj. 404 (no file yet) starts from {}.
@@ -3752,6 +3821,8 @@ async function handleScheduled(env) {
     try { scrapeAppend = await appendScrapedSignals(env, etNow); } catch(e) { scrapeAppend = { error: e.message }; }
     // Fold today\'s research captures (fly marks, put snap) into monthly GitHub files
     try { await persistResearchArtifacts(env, etNow); } catch (e) { console.warn('[research-persist]', e.message); }
+    // CycleLab: append today's SPX session (+ backfill recent gaps) from Schwab
+    try { await appendCyclicalityDays(env); } catch (e) { console.warn('[cyclelab]', e.message); }
     return { ...eodResult, discord: discordResult, backfill_wr: backfillWR, backfill_pl: backfillPL, scrape_append: scrapeAppend };
   }
 
@@ -8001,6 +8072,13 @@ export default {
     //   ?force_no_schwab=1  — simulate Schwab failure (skip Schwab fetch)
     //   ?force_no_tasty=1   — simulate Tasty failure (skip Tasty fetch)
     //   ?force_no_token=1   — simulate Schwab token unavailable
+    if (url.pathname === '/cyclicality-append-now' && request.method === 'GET') {
+      let result;
+      try { result = await appendCyclicalityDays(env); } catch (e) { result = { error: e.message }; }
+      return new Response(JSON.stringify(result, null, 2),
+        { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
+    }
+
     if (url.pathname === '/research-persist-now' && request.method === 'GET') {
       // Manual trigger for the EOD research persist (idempotent upserts).
       const etNowR = toET(new Date());
