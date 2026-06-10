@@ -199,6 +199,192 @@ async function getCor1mOpenToday(env, todayISO) {
   } catch (_) { return null; }
 }
 
+// ════════════════════════════════════════════════════════════════════
+// RESEARCH DATA CAPTURE (2026-06-10) — intraday fly marks + 9:45 put snap
+// Cloud-side data collection so future research (TP/stop rules for the
+// flies, Tail Hedge backtest extension without ThetaData) has raw material.
+// KV keys (90-day TTL), persisted to GitHub monthly files at EOD:
+//   fly_marks_<date>      {strat: [["HH:MM", mid], ...]}
+//   tail_put_snap_<date>  {at, spot, puts: [{e,k,d,b,a}, ...]}
+// ════════════════════════════════════════════════════════════════════
+
+async function archiveFlyMarks(env, etNow) {
+  const h = etNow.getHours(), m = etNow.getMinutes();
+  if (m % 5 !== 0) return;                              // 5-min cadence
+  if (h < 9 || (h === 9 && m < 35) || h >= 16) return;  // RTH after entry window
+  const todayISO = isoDateET(etNow);
+  const hhmm = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  const marks = {};
+  const sources = [
+    ['strad', 'straddle_open_trade'],
+    ['bobf',  'bobf_open_trade'],
+    ['gxbf',  'gxbf_open_trade'],
+    ['diag',  'diagonal_open_trade'],
+  ];
+  for (const [strat, key] of sources) {
+    try {
+      const raw = await env.SIGNAL_KV.get(key);
+      if (!raw) continue;
+      const t = JSON.parse(raw);
+      if (!t || t.currentValue == null || !isFinite(t.currentValue)) continue;
+      // 0DTE strategies: only today\'s trade. Diagonal: any still-open trade
+      // (it holds overnight; exit is next session).
+      const isToday = t.openDate === todayISO;
+      const stillOpen = !t.closeDate && t.status !== 'closed' && t.status !== 'expired';
+      if (strat === 'diag' ? (stillOpen || isToday) : isToday) marks[strat] = t.currentValue;
+    } catch (_) { /* per-strategy best-effort */ }
+  }
+  try {  // M8BF live mark (separate key shape — keyed by 0DTE expiry = today)
+    const raw = await env.SIGNAL_KV.get(`m8bf_live_${todayISO}`);
+    if (raw) {
+      const r = JSON.parse(raw);
+      const v = [r.currentValue, r.netDebitNow, r.debit].find(x => x != null && isFinite(x));
+      if (v != null) marks.m8bf = v;
+    }
+  } catch (_) {}
+  if (!Object.keys(marks).length) return;
+  const k = `fly_marks_${todayISO}`;
+  let day = {};
+  try { const raw = await env.SIGNAL_KV.get(k); day = raw ? JSON.parse(raw) : {}; } catch (_) {}
+  for (const [strat, v] of Object.entries(marks)) {
+    (day[strat] = day[strat] || []).push([hhmm, parseFloat(Number(v).toFixed(2))]);
+    if (day[strat].length > 100) day[strat] = day[strat].slice(-100);
+  }
+  await env.SIGNAL_KV.put(k, JSON.stringify(day), { expirationTtl: 90 * 86400 });
+}
+
+async function captureTailPutSnap(env, etNow, masterChain) {
+  const h = etNow.getHours(), m = etNow.getMinutes();
+  if (!(h === 9 && m >= 40 && m <= 59)) return;   // shortly after the 9:45 tail entry time
+  if (!masterChain || !masterChain.putExpDateMap) return;
+  const todayISO = isoDateET(etNow);
+  const k = `tail_put_snap_${todayISO}`;
+  if (await env.SIGNAL_KV.get(k)) return;          // once per day
+  const exps = Object.keys(masterChain.putExpDateMap).sort().slice(0, 2);  // 0-1 DTE
+  const puts = [];
+  for (const exp of exps) {
+    const strikes = masterChain.putExpDateMap[exp] || {};
+    for (const [strike, arr] of Object.entries(strikes)) {
+      const c = Array.isArray(arr) ? arr[0] : arr;
+      if (!c || c.delta == null) continue;
+      const d = Number(c.delta);
+      if (!(d <= -0.08 && d >= -0.35)) continue;
+      puts.push({ e: exp.split(':')[0], k: parseFloat(strike), d: parseFloat(d.toFixed(3)),
+                  b: c.bid ?? null, a: c.ask ?? null });
+    }
+  }
+  if (!puts.length) return;
+  puts.sort((x, y) => x.e.localeCompare(y.e) || x.k - y.k);
+  const hhmm = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  await env.SIGNAL_KV.put(k, JSON.stringify({ at: hhmm, spot: masterChain.spot ?? null, puts: puts.slice(0, 60) }),
+    { expirationTtl: 90 * 86400 });
+}
+
+// Generic GitHub research-file upsert — same auth pattern as
+// mirrorHistoryToGitHub but path-parameterized and merge-based.
+// mutate(currentObj) → newObj. 404 (no file yet) starts from {}.
+async function githubUpsertResearchFile(env, path, mutate, message) {
+  if (!env.GITHUB_TOKEN) return { skipped: 'no GITHUB_TOKEN' };
+  const apiUrl = `https://api.github.com/repos/rava8989/brave/contents/${path}`;
+  const ghHeaders = {
+    'Authorization': `Bearer ${env.GITHUB_TOKEN}`,
+    'Accept': 'application/vnd.github+json',
+    'User-Agent': 'schwab-proxy-worker/1.0',
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
+  const getResp = await fetch(apiUrl, { headers: ghHeaders });
+  let sha = null, cur = {};
+  if (getResp.ok) {
+    const meta = await getResp.json();
+    sha = meta.sha;
+    try { cur = JSON.parse(atob((meta.content || '').replace(/\n/g, ''))); } catch (_) { cur = {}; }
+  } else if (getResp.status !== 404) {
+    throw new Error(`GH GET ${path} ${getResp.status}`);
+  }
+  const next = mutate(cur) || cur;
+  const body = { message: message || `auto: update ${path}`, content: btoa(JSON.stringify(next, null, 0)) };
+  if (sha) body.sha = sha;
+  const putResp = await fetch(apiUrl, {
+    method: 'PUT', headers: { ...ghHeaders, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!putResp.ok) throw new Error(`GH PUT ${path} ${putResp.status}: ${(await putResp.text()).slice(0, 150)}`);
+  return { ok: true };
+}
+
+// EOD: fold today\'s KV research captures into monthly GitHub files so they
+// survive the 90-day KV TTL. Best-effort — never blocks the EOD settle.
+async function persistResearchArtifacts(env, etNow) {
+  const todayISO = isoDateET(etNow);
+  const ym = todayISO.slice(0, 7);
+  const jobs = [
+    [`fly_marks_${todayISO}`,     `data/fly_marks/${ym}.json`,  'fly marks'],
+    [`tail_put_snap_${todayISO}`, `data/tail_puts/${ym}.json`,  'tail put snap'],
+  ];
+  for (const [kvKey, ghPath, label] of jobs) {
+    try {
+      const raw = await env.SIGNAL_KV.get(kvKey);
+      if (!raw) continue;
+      const payload = JSON.parse(raw);
+      await githubUpsertResearchFile(env, ghPath,
+        cur => { cur[todayISO] = payload; return cur; },
+        `auto: ${label} ${todayISO}`);
+    } catch (e) { console.warn(`[research-persist] ${label} failed:`, e.message); }
+  }
+}
+
+// ── Auto-Tilt advisory (2026-06-10) — ADVISORY ONLY, no sizing automation ──
+// Ports multi-strategy-tester.html _tiltWindowMAR/_tiltWeightsForDay with the
+// tester defaults (win 60, floor 0.25x, cap 2.0x, minTrades 5, marCap 99).
+// Reads KV history_data (rows strictly BEFORE today — no look-ahead) and
+// renders one line for the Discord messages: "Tilt 60d: M8BF 1.2x ...".
+const TILT_P = { win: 60, floorM: 0.25, capM: 2, minTrades: 5, marCap: 99 };
+const TILT_FIELDS = [['M8BF', 'm8bfPL'], ['Strad', 'stradPL'], ['BOBF', 'bobfPL'], ['GXBF', 'gxbfPL'], ['Diag', 'diagPL']];
+
+function tiltWindowMAR(rows, i, fld, p) {
+  const lo = Math.max(0, i - p.win);
+  let n = 0, sum = 0, cum = 0, peak = 0, mdd = 0;
+  for (let j = lo; j < i; j++) {
+    const v = rows[j][fld];
+    if (v == null || v === 0) continue;
+    n++; sum += v; cum += v;
+    if (cum > peak) peak = cum;
+    const dd = peak - cum;
+    if (dd > mdd) mdd = dd;
+  }
+  if (n < p.minTrades) return { neutral: true, mar: 0 };
+  return { neutral: false, mar: mdd > 0 ? sum / mdd : (sum > 0 ? p.marCap : 0) };
+}
+
+async function computeTiltLine(env, todayISO) {
+  const raw = await env.SIGNAL_KV.get('history_data');
+  if (!raw) return null;
+  let rows;
+  try { rows = JSON.parse(raw); } catch (_) { return null; }
+  if (!Array.isArray(rows) || rows.length < 20) return null;
+  rows = rows.filter(r => r.date && r.date < todayISO).sort((a, b) => a.date.localeCompare(b.date));
+  const i = rows.length, p = TILT_P, nAct = TILT_FIELDS.length, eq = 1 / nAct;
+  const raw_ = {}, isNeutral = {};
+  let rawSum = 0, nNeutral = 0;
+  for (const [, fld] of TILT_FIELDS) {
+    const mres = tiltWindowMAR(rows, i, fld, p);
+    if (mres.neutral) { isNeutral[fld] = true; nNeutral++; }
+    else { raw_[fld] = Math.min(Math.max(mres.mar, 0), p.marCap); rawSum += raw_[fld]; }
+  }
+  const nNon = nAct - nNeutral;
+  const nonNeutralMass = 1 - nNeutral * eq;
+  const parts = [];
+  for (const [name, fld] of TILT_FIELDS) {
+    let wi;
+    if (isNeutral[fld])  wi = eq;
+    else if (rawSum > 0) wi = nonNeutralMass * (raw_[fld] / rawSum);
+    else                 wi = nonNeutralMass / nNon;
+    wi = Math.min(Math.max(wi, p.floorM * eq), p.capM * eq);
+    parts.push(`${name} ${(wi * nAct).toFixed(1)}x`);
+  }
+  return `Tilt 60d   │ ${parts.join(' · ')}`;
+}
+
 // ── Daily total-risk cap (2026-06-09) ──────────────────────────────────
 // On multi-strategy days, Straddle + BOBF + GXBF + Diagonal can all be live
 // at once and nothing checked COMBINED max-loss against the account. Each
@@ -572,6 +758,9 @@ function buildDiscordMessage(signal, vixValues, tailLine) {
     const tc = tailLine.includes('TRADE') ? GRN : tailLine.includes('SKIP') ? RED : DIM;
     inner += `${tc}${tailLine}${RST}\n`;
   }
+
+  // Auto-Tilt advisory (60d MAR weights — informational, user sizes manually)
+  if (signal._tiltLine) inner += `${DIM}${signal._tiltLine}${RST}\n`;
 
   // VIX values
   inner += `${DIM}${'─'.repeat(34)}${RST}\n`;
@@ -3488,6 +3677,8 @@ async function handleScheduled(env) {
     // Append today's raw signals to scraped_signals.csv on GitHub
     let scrapeAppend = {};
     try { scrapeAppend = await appendScrapedSignals(env, etNow); } catch(e) { scrapeAppend = { error: e.message }; }
+    // Fold today\'s research captures (fly marks, put snap) into monthly GitHub files
+    try { await persistResearchArtifacts(env, etNow); } catch (e) { console.warn('[research-persist]', e.message); }
     return { ...eodResult, discord: discordResult, backfill_wr: backfillWR, backfill_pl: backfillPL, scrape_append: scrapeAppend };
   }
 
@@ -3531,6 +3722,8 @@ async function handleScheduled(env) {
   if (isMarket && schwabToken) {
     try { await captureCor1mVvix(env, etNow, schwabToken); }
     catch (e) { console.warn('[cor1m] capture failed:', e.message || e); }
+    // Research capture: 9:45-ish SPX put snapshot (Tail Hedge dataset, ThetaData-free)
+    try { await captureTailPutSnap(env, etNow, masterChain); } catch (e) { console.warn('[tail-snap]', e.message); }
   }
 
   // ── Diagonal trade: open/close at 12:30 ET. Idempotent via diag_done_<date>.
@@ -3614,6 +3807,8 @@ async function handleScheduled(env) {
     } catch (e) {
       console.warn('[live] refresh failed:', e.message);
     }
+    // Research capture: archive each open fly\'s mid every 5 min (TP/stop research)
+    try { await archiveFlyMarks(env, etNow); } catch (e) { console.warn('[fly-marks]', e.message); }
   }
 
   // ── BOBF entry: check every market tick during 10:29-12:15 ET window ──
@@ -4259,6 +4454,7 @@ async function handleScheduled(env) {
   const canonBanner = vixSource === 'schwab' ? '📡 **SCHWAB DATA**\n\n' : '📡 **TASTYTRADE DATA**\n\n';
   const tailLineCanon = await getTailHedgeStatusLine(env);
   signal._tailLine = tailLineCanon;  // for embed builder
+  try { signal._tiltLine = await computeTiltLine(env, isoDateET(etNow)); } catch (_) { /* advisory only */ }
   const message = canonBanner + buildDiscordMessage(signal, vixValues, tailLineCanon);
 
   // 7. Slot already claimed at the top of the morning block. Reuse the same key.
@@ -4449,6 +4645,7 @@ async function handleScheduled(env) {
         etDate: etNow, prevWR, vixPct20d, rsi14,
         cor1m: cor1mOpenToday,
       });
+      signalOther._tiltLine = signal._tiltLine;   // same advisory on the 2nd copy
       const otherBanner = otherSource === 'schwab' ? '📡 **SCHWAB DATA**\n\n' : '📡 **TASTYTRADE DATA**\n\n';
       const msgOther = otherBanner + buildDiscordMessage(signalOther, { yOpen: vixYOpen, yClose: vixYClose, todayOpen: vixOther }, tailLineCanon);
       await new Promise(r => setTimeout(r, 1500));   // Discord rate-limit safety
@@ -8809,6 +9006,56 @@ export default {
     } catch (mirrorWatchdogErr) {
       console.error('[cron] Mirror watchdog failed:', mirrorWatchdogErr.message);
     }
+
+    // ── Evening preview (2026-06-10): tomorrow\'s special days + health ──
+    // Once per weekday 18:00-18:20 ET. Tells the user TONIGHT what tomorrow
+    // is (CPI/FED/OPEX+-1/VIX-exp/EOM/NM/earnings), which strategies that
+    // gates, plus a one-line system health check and the tilt advisory.
+    try {
+      const etP = toET(new Date());
+      const inWinP = etP.getDay() >= 1 && etP.getDay() <= 5 && etP.getHours() === 18 && etP.getMinutes() < 20;
+      if (inWinP) {
+        const todayP = isoDateET(etP);
+        const prevKey = `evening_preview_${todayP}`;
+        if (!(await env.SIGNAL_KV.get(prevKey))) {
+          await env.SIGNAL_KV.put(prevKey, 'sent', { expirationTtl: 86400 });
+          const tm = nextTrade(etP);
+          const tags = [];
+          if (cpiSch.includes(todayLong(tm)))  tags.push('CPI → M8BF/Straddle/BOBF blocked (GXBF + Diagonal exempt)');
+          if (fedSch.includes(todayLong(tm)))  tags.push('FED day');
+          if (opexSch.includes(todayLong(tm))) tags.push('OPEX');
+          if (opexSch.some(ds => isTodayBefore(ds, tm))) tags.push('OPEX-1 → Diagonal blocked');
+          if (opexSch.some(ds => isTodayAfter(ds, tm)))  tags.push('OPEX+1 → GXBF auto-trigger (unless VIX gaps ≥2% up)');
+          if (vixSch.includes(todayLong(tm)))  tags.push('VIX expiry');
+          if (isLastTradeMo(tm))               tags.push('EOM → GXBF + Diagonal blocked, EOM Straddle day');
+          if (isEomN(1, tm))                   tags.push('EOM-1 → Diagonal blocked');
+          if (isFirstTradeMo(tm))              tags.push(`NM → ${tm.getDay() === 1 ? 'Monday (M8BF stands)' : 'non-Monday → NM Straddle'}; Diagonal blocked`);
+          if (isEarningsDay(tm))               tags.push('big-tech earnings day');
+          let health = [];
+          try {
+            const ms = await env.SIGNAL_KV.get('history_mirror_state');
+            health.push(ms && JSON.parse(ms).ok === false ? 'mirror ⚠️' : 'mirror ✓');
+          } catch (_) {}
+          try {
+            const co = await env.SIGNAL_KV.get(`cor1m_open_${todayP}`);
+            health.push(co ? `COR1M ✓ (${JSON.parse(co).cor1m})` : 'COR1M ⚠️ not captured');
+          } catch (_) {}
+          let tiltP = null;
+          try { tiltP = await computeTiltLine(env, isoDateET(nextTrade(etP))); } catch (_) {}
+          const dcRaw = await env.SIGNAL_KV.get('discord_config');
+          if (dcRaw) {
+            const dc = JSON.parse(dcRaw);
+            if (dc.channelId) {
+              const msg = `🌙 **Tomorrow — ${todayLong(tm)} (${tradeWdLabel(tm)})**\n` +
+                (tags.length ? tags.map(t => `• ${t}`).join('\n') : '• No special days — all strategies on their own merits') +
+                `\n${health.join(' · ')}` +
+                (tiltP ? `\n${tiltP.replace('   │', ':')}` : '');
+              await sendDiscordDM(env, dc.channelId, msg, dc.proxyUrl);
+            }
+          }
+        }
+      }
+    } catch (e) { console.warn('[evening-preview]', e.message); }
 
     // ── Tail-bundle staleness watchdog (2026-06-09) ──
     // The Tail Hedge LaunchAgent (5 PM ET) can fail silently — observed today:
