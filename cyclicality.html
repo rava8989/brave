@@ -93,7 +93,7 @@ td:first-child,th:first-child{text-align:left}
 
 <script>
 let DATA = null, lookback = 4, weekKey = null, method = 'sum';
-const METHODS = [['sum','Sum (orig)'],['avg','Average'],['med','Median'],['wavg','Weighted']];
+const METHODS = [['sum','Sum'],['avg','Average'],['med','Median'],['wavg','Weighted']];
 function buildSlots(priMoves) {
   const n = priMoves.length, ns = DATA.slots.length, out = new Array(ns);
   for (let s = 0; s < ns; s++) {
