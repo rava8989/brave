@@ -80,6 +80,97 @@ async function recordMirrorHealth(env, ok, msg = null) {
   }
 }
 
+// ── Daily total-risk cap (2026-06-09) ──────────────────────────────────
+// On multi-strategy days, Straddle + BOBF + GXBF + Diagonal can all be live
+// at once and nothing checked COMBINED max-loss against the account. Each
+// automated open now calls enforceRiskCap() with its own max theoretical
+// loss; if existing open exposure + the new trade would exceed the cap,
+// the open is refused (fail-closed: a blocked good trade costs opportunity,
+// an unblocked stack can cost the account).
+//
+// Config: KV key 'risk_config' = { "enabled": true, "maxOpenRiskUsd": 8000 }
+//   — change the cap WITHOUT redeploying:
+//   npx wrangler kv key put --namespace-id=<NS> risk_config '{"enabled":true,"maxOpenRiskUsd":10000}' --remote
+// Default: enabled, $8,000 (≈25% of a $31k account).
+// M8BF is signal-only (user trades manually) — not gated here.
+const RISK_CAP_DEFAULTS = { enabled: true, maxOpenRiskUsd: 8000 };
+
+// Max theoretical loss per open position, in dollars:
+//   Straddle / BOBF / GXBF (debit verticals/flies): debit × 100 × contracts
+//   Diagonal: (debit + width) × 100 × contracts — spread can go inverted in
+//   a crash through both strikes (see index.html sizing notes).
+async function computeOpenRiskExposureUsd(env, todayISO) {
+  const [stradRaw, bobfRaw, gxbfRaw, diagRaw] = await Promise.all([
+    env.SIGNAL_KV.get('straddle_open_trade'),
+    env.SIGNAL_KV.get('bobf_open_trade'),
+    env.SIGNAL_KV.get('gxbf_open_trade'),
+    env.SIGNAL_KV.get('diagonal_open_trade'),
+  ]);
+  const parts = {};
+  const safe = raw => { try { return raw ? JSON.parse(raw) : null; } catch { return null; } };
+
+  const strad = safe(stradRaw);
+  if (strad && strad.openDate === todayISO && strad.status !== 'closed') {
+    const debit = strad.fillDebit ?? strad.entryDebit;
+    if (debit > 0) parts.straddle = Math.round(debit * 100 * (strad.contracts || 1));
+  }
+  const bobf = safe(bobfRaw);
+  if (bobf && bobf.openDate === todayISO && bobf.status !== 'closed') {
+    const debit = bobf.fillDebit ?? bobf.entryDebit;
+    if (debit > 0) parts.bobf = Math.round(debit * 100 * (bobf.contracts || 1));
+  }
+  const gxbf = safe(gxbfRaw);
+  if (gxbf && gxbf.openDate === todayISO && gxbf.status !== 'closed') {
+    if (gxbf.netDebit > 0) parts.gxbf = Math.round(gxbf.netDebit * 100 * (gxbf.contracts || 1));
+  }
+  const diag = safe(diagRaw);
+  if (diag && !diag.closeDate && diag.status !== 'closed' && diag.entryDebit != null) {
+    const width = (diag.shortStrike && diag.longStrike) ? (diag.shortStrike - diag.longStrike) : 0;
+    parts.diagonal = Math.round((diag.entryDebit + width) * 100 * (diag.contracts || 1));
+  }
+  const totalUsd = Object.values(parts).reduce((s, v) => s + v, 0);
+  return { totalUsd, parts };
+}
+
+// Returns { ok: true } or { ok: false, reason } — and on a block, fires a
+// once-per-strategy-per-day Discord note so refused trades are never silent.
+async function enforceRiskCap(env, etNow, strategy, newTradeMaxLossUsd) {
+  try {
+    const cfgRaw = await env.SIGNAL_KV.get('risk_config');
+    const cfg = { ...RISK_CAP_DEFAULTS, ...(cfgRaw ? JSON.parse(cfgRaw) : {}) };
+    if (!cfg.enabled) return { ok: true };
+    const todayISO = isoDateET(etNow);
+    const { totalUsd, parts } = await computeOpenRiskExposureUsd(env, todayISO);
+    const projected = totalUsd + Math.max(0, Math.round(newTradeMaxLossUsd || 0));
+    if (projected <= cfg.maxOpenRiskUsd) return { ok: true };
+
+    const reason = `open risk $${totalUsd.toLocaleString()} (${JSON.stringify(parts)}) + new ${strategy} $${Math.round(newTradeMaxLossUsd).toLocaleString()} = $${projected.toLocaleString()} > cap $${cfg.maxOpenRiskUsd.toLocaleString()}`;
+    await logEvent(env, 'warn', 'risk-cap', `${strategy} open BLOCKED`, { strategy, totalUsd, parts, newTradeMaxLossUsd, cap: cfg.maxOpenRiskUsd });
+    // Discord note, once per strategy per day
+    const alertKey = `risk_cap_alert_${strategy}_${todayISO}`;
+    if (!(await env.SIGNAL_KV.get(alertKey))) {
+      try {
+        const dcRaw = await env.SIGNAL_KV.get('discord_config');
+        if (dcRaw) {
+          const dc = JSON.parse(dcRaw);
+          if (dc.channelId) {
+            await sendDiscordDM(env, dc.channelId,
+              `🛑 **Risk cap blocked ${strategy.toUpperCase()}** — ${reason}.\nRaise via KV \`risk_config\` if intentional.`, dc.proxyUrl);
+            await env.SIGNAL_KV.put(alertKey, 'sent', { expirationTtl: 86400 });
+          }
+        }
+      } catch (_) { /* notify is best-effort */ }
+    }
+    return { ok: false, reason };
+  } catch (e) {
+    // Fail-OPEN on infrastructure errors: a broken risk check must not
+    // silently halt all trading. The error is logged for follow-up.
+    console.warn('[risk-cap] check failed (allowing trade):', e.message || e);
+    try { await logEvent(env, 'error', 'risk-cap', 'check failed — trade allowed', { msg: e.message }); } catch (_) {}
+    return { ok: true, degraded: true };
+  }
+}
+
 // ── Discord DM send (consolidates the standalone discord-proxy worker) ──
 // Priority order, first available wins:
 //   1. env.DISCORD_TOKEN (direct in-worker send — preferred, one less worker)
@@ -1560,6 +1651,13 @@ async function openDiagonalTrade(env, token, etNow, vixPct20d, preChain = null) 
   const debit   = longLeg.mid - shortLeg.mid;
   const askFill = longLeg.ask - shortLeg.bid;
   const bidExit = longLeg.bid - shortLeg.ask;
+
+  // Daily total-risk cap (2026-06-09): diagonal max loss = debit + width
+  // (crash through both strikes inverts the spread — see index.html sizing).
+  const diagWidth = kShort - longLeg.strike;
+  const diagGate = await enforceRiskCap(env, etNow, 'diagonal', (debit + diagWidth) * 100);
+  if (!diagGate.ok) throw new Error(`risk-cap blocked diagonal open: ${diagGate.reason}`);
+
   // FIX (2026-06-09 audit P0 #7): record ACTUAL filled long strike, not the
   // pre-fuzz target. pickPutFromChain() tolerates ±5-10 strike fuzz; if the
   // chain didn't have the exact target 7250P but had 7245P, longLeg.strike is
@@ -2012,6 +2110,10 @@ async function openStraddleTrade(env, token, etNow, signal, preChain = null) {
   const askFill = callLeg.ask + putLeg.ask;
   const bidExit = callLeg.bid + putLeg.bid;
   const maxDebit = straddleMaxDebit(signal.badge || 'STRADDLE');
+
+  // Daily total-risk cap (2026-06-09): debit × 100 = this trade's max loss.
+  const riskGate = await enforceRiskCap(env, etNow, 'straddle', debit * 100);
+  if (!riskGate.ok) throw new Error(`risk-cap blocked straddle open: ${riskGate.reason}`);
 
   const trade = {
     openDate: todayISO,
@@ -2514,6 +2616,16 @@ async function handleBobfEntry(env, etNow, preChain = null) {
 
   const debit = lowerLeg.mid - 2 * bodyLeg.mid + upperLeg.mid;
 
+  // Daily total-risk cap (2026-06-09): butterfly max loss = debit × 100.
+  // Status-return (not throw): next 2-min tick re-checks; if exposure clears
+  // (e.g. straddle settled), BOBF can still fire inside its window.
+  {
+    const bobfGate = await enforceRiskCap(env, etNow, 'bobf', debit * 100);
+    if (!bobfGate.ok) {
+      return { ...out, status: 'risk-cap-blocked', detail: bobfGate.reason };
+    }
+  }
+
   // ── Item 9: live VIX validator (defense-in-depth) ──
   // vixToday above is the cached morning 9:30 print. By trade-fire time
   // (10:29-12:15 ET) VIX may have spiked above the BOBF gate. Re-pull live
@@ -2963,6 +3075,16 @@ async function handleGxbfEntry(env, etNow, signal, preChain = null) {
   const netDebit = pick.netDebit;
   const maxRisk = netDebit;
   const maxReward = W - netDebit;
+
+  // Daily total-risk cap (2026-06-09): fly max loss = netDebit × 100.
+  // Status-return: stays un-done so later ticks in the 9:35-9:45 window
+  // retry if exposure clears.
+  {
+    const gxbfGate = await enforceRiskCap(env, etNow, 'gxbf', netDebit * 100);
+    if (!gxbfGate.ok) {
+      return { ...out, status: 'risk-cap-blocked', detail: gxbfGate.reason };
+    }
+  }
 
   const trade = {
     openDate: todayISO,
@@ -7810,6 +7932,18 @@ export default {
           alerts.push('history_mirror_degraded');
         }
 
+        // ── Open risk exposure (2026-06-09 — daily total-risk cap) ──
+        let openRisk = null;
+        try {
+          const cfgRaw2 = await env.SIGNAL_KV.get('risk_config');
+          const cfg2 = { ...RISK_CAP_DEFAULTS, ...(cfgRaw2 ? JSON.parse(cfgRaw2) : {}) };
+          const exp = await computeOpenRiskExposureUsd(env, todayISO);
+          openRisk = { ...exp, capUsd: cfg2.maxOpenRiskUsd, enabled: cfg2.enabled };
+          if (cfg2.enabled && exp.totalUsd > cfg2.maxOpenRiskUsd) {
+            alerts.push('open_risk_over_cap');
+          }
+        } catch (_) { /* informational only */ }
+
         // ── Cron liveness via last_run ──
         const lastRun = lastRunRaw ? JSON.parse(lastRunRaw) : null;
         const lastRunMs = lastRun?.date ? Date.parse(lastRun.date) : 0;
@@ -7864,6 +7998,7 @@ export default {
             minutesSinceSuccess: mirrorMinutesSinceSuccess,
             msg: mirror.msg,
           } : { state: 'never_recorded' },
+          open_risk: openRisk,
           last_run: lastRun ? {
             status: lastRun.status,
             date: lastRun.date,
@@ -8440,6 +8575,48 @@ export default {
       }
     } catch (mirrorWatchdogErr) {
       console.error('[cron] Mirror watchdog failed:', mirrorWatchdogErr.message);
+    }
+
+    // ── Tail-bundle staleness watchdog (2026-06-09) ──
+    // The Tail Hedge LaunchAgent (5 PM ET) can fail silently — observed today:
+    // macOS TCC blocks launchd from reading ~/Desktop ("Operation not
+    // permitted", exit 126), so the bundle (and the cor1m history column)
+    // silently stops refreshing. Once per weekday evening (18:00-18:20 ET),
+    // fetch the bundle's last daily date; if it isn't today, alert Discord
+    // with the manual-run command. One fetch/day (~1.8MB) — negligible.
+    try {
+      const etW = toET(new Date());
+      const isWkdayW = etW.getDay() >= 1 && etW.getDay() <= 5;
+      const inWindow = etW.getHours() === 18 && etW.getMinutes() < 20;
+      if (isWkdayW && inWindow) {
+        const todayW = isoDateET(etW);
+        const checkedKey = `tail_bundle_check_${todayW}`;
+        if (!(await env.SIGNAL_KV.get(checkedKey))) {
+          await env.SIGNAL_KV.put(checkedKey, 'checked', { expirationTtl: 86400 });
+          const r = await fetch('https://raw.githubusercontent.com/rava8989/brave/main/cor1m_contango_bundle.json',
+            { headers: { 'User-Agent': 'schwab-proxy-worker/1.0' } });
+          if (r.ok) {
+            const bundle = await r.json();
+            const daily = bundle?.daily || [];
+            const lastDate = daily.length ? daily[daily.length - 1].date : null;
+            if (lastDate && lastDate < todayW) {
+              const dcRaw = await env.SIGNAL_KV.get('discord_config');
+              if (dcRaw) {
+                const dc = JSON.parse(dcRaw);
+                if (dc.channelId) {
+                  await sendDiscordDM(env, dc.channelId,
+                    `⚠️ **Tail Hedge bundle is STALE** — last day ${lastDate}, expected ${todayW}.\nThe 5 PM LaunchAgent likely failed (macOS blocks launchd from Desktop).\n→ Run manually: \`bash scripts/refresh_tail_hedge.sh\`\n→ Permanent fix: System Settings → Privacy & Security → Full Disk Access → add /bin/bash`,
+                    dc.proxyUrl);
+                  await logEvent(env, 'warn', 'tail-bundle-stale',
+                    `bundle last=${lastDate}, expected ${todayW} — Discord alert sent`, { lastDate });
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (tailWatchdogErr) {
+      console.warn('[cron] Tail-bundle watchdog failed:', tailWatchdogErr.message);
     }
 
     let result;
