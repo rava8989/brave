@@ -197,17 +197,20 @@ function compute() {
     days.push({ w, iso, pred: p.slots, priors: p.priors,
                 act: byDate[iso] ? byDate[iso].m : null });
   }
-  // continuous cumulative across the shown days
-  let cp = 0, ca = 0, actEnded = false;
+  // continuous cumulative across the shown days. The ACTUAL series is
+  // gap-tolerant (2026-06-10 fix): a missing slot or whole missing day
+  // renders as a break in the orange line and then RESUMES — it must never
+  // truncate the rest of the week (a single partial day used to make every
+  // later day look "missing").
+  let cp = 0, ca = 0;
   const predCum = [], actCum = [], marks = [];
   days.forEach((d, di) => {
     marks.push({ x: di * ns, label: `${WD[d.w]} ${d.iso.slice(5)}` });
     for (let s = 0; s < ns; s++) {
       cp += d.pred[s] || 0; predCum.push(+cp.toFixed(2));
-      if (d.act && !actEnded && d.act[s] != null) { ca += d.act[s]; actCum.push(+ca.toFixed(2)); }
-      else if (actCum.length) actEnded = true;
+      if (d.act && d.act[s] != null) { ca += d.act[s]; actCum.push(+ca.toFixed(2)); }
+      else actCum.push(null);
     }
-    if (!d.act) actEnded = true;
   });
   return { days, predCum, actCum, marks, ns };
 }
@@ -221,12 +224,14 @@ function render() {
   $('cPredN').textContent = `${r.days.length} day(s) · each from last ${lookback} same-weekdays before ${fmtWeek(weekKey).replace('Week of ', '')}`;
   const above = r.predCum.filter(v => v > 0).length;
   $('cAbove').textContent = (100 * above / r.predCum.length).toFixed(1) + '%';
-  if (r.actCum.length) {
-    const ae = r.actCum[r.actCum.length - 1];
+  const lastIdx = (() => { for (let i = r.actCum.length - 1; i >= 0; i--) if (r.actCum[i] != null) return i; return -1; })();
+  if (lastIdx >= 0) {
+    const ae = r.actCum[lastIdx];
     $('cAct').textContent = (ae >= 0 ? '+' : '') + ae.toFixed(1) + ' pts';
     $('cAct').className = 'v ' + (ae >= 0 ? 'pos' : 'neg');
-    const predAt = r.predCum[r.actCum.length - 1];
-    $('cActN').textContent = `${r.actCum.length} of ${r.predCum.length} slots elapsed · ` +
+    const filled = r.actCum.filter(v => v != null).length;
+    const predAt = r.predCum[lastIdx];
+    $('cActN').textContent = `${filled} of ${r.predCum.length} slots elapsed · ` +
       ((predAt >= 0) === (ae >= 0) ? 'direction HIT ✓' : 'direction MISS ✗');
   } else { $('cAct').textContent = '—'; $('cAct').className = 'v'; $('cActN').textContent = 'no sessions from this week in the data yet'; }
   draw(r);
@@ -240,7 +245,7 @@ function draw(r) {
   x.clearRect(0, 0, W, H);
   const N = r.predCum.length;
   let lo = 0, hi = 0;
-  [r.predCum, r.actCum].forEach(s => s.forEach(v => { lo = Math.min(lo, v); hi = Math.max(hi, v); }));
+  [r.predCum, r.actCum].forEach(s => s.forEach(v => { if (v == null) return; lo = Math.min(lo, v); hi = Math.max(hi, v); }));
   const pad = Math.max(2, (hi - lo) * 0.08); lo -= pad; hi += pad;
   const L = 50, R = 10, T = 10, B = 36;
   const px = i => L + (W - L - R) * i / Math.max(1, N - 1);
@@ -258,10 +263,15 @@ function draw(r) {
   });
   x.strokeStyle = '#475569'; x.setLineDash([4, 4]);
   x.beginPath(); x.moveTo(L, py(0)); x.lineTo(W - R, py(0)); x.stroke(); x.setLineDash([]);
-  const line = (s, color, w) => {
+  const line = (s, color, w) => {   // gap-aware: null breaks the stroke, resumes after
     if (!s.length) return;
     x.strokeStyle = color; x.lineWidth = w; x.beginPath();
-    s.forEach((v, i) => i ? x.lineTo(px(i), py(v)) : x.moveTo(px(i), py(v)));
+    let pen = false;
+    s.forEach((v, i) => {
+      if (v == null) { pen = false; return; }
+      if (!pen) { x.moveTo(px(i), py(v)); pen = true; }
+      else x.lineTo(px(i), py(v));
+    });
     x.stroke();
   };
   // prediction — color-split at zero: indigo above, red below (clip passes)
