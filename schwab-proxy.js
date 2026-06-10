@@ -178,7 +178,9 @@ async function captureCor1mVvix(env, etNow, token) {
 //   npx wrangler kv key put --namespace-id=<NS> risk_config '{"enabled":true,"maxOpenRiskUsd":10000}' --remote
 // Default: enabled, $8,000 (≈25% of a $31k account).
 // M8BF is signal-only (user trades manually) — not gated here.
-const RISK_CAP_DEFAULTS = { enabled: true, maxOpenRiskUsd: 8000 };
+// mode: 'warn' = trade still fires, Discord warning only (user choice
+// 2026-06-10); 'block' = refuse the trade. Both KV-tunable, no redeploy.
+const RISK_CAP_DEFAULTS = { enabled: true, maxOpenRiskUsd: 8000, mode: 'warn' };
 
 // Max theoretical loss per open position, in dollars:
 //   Straddle / BOBF / GXBF (debit verticals/flies): debit × 100 × contracts
@@ -229,8 +231,9 @@ async function enforceRiskCap(env, etNow, strategy, newTradeMaxLossUsd) {
     const projected = totalUsd + Math.max(0, Math.round(newTradeMaxLossUsd || 0));
     if (projected <= cfg.maxOpenRiskUsd) return { ok: true };
 
+    const warnOnly = cfg.mode !== 'block';   // default 'warn' — trade proceeds
     const reason = `open risk $${totalUsd.toLocaleString()} (${JSON.stringify(parts)}) + new ${strategy} $${Math.round(newTradeMaxLossUsd).toLocaleString()} = $${projected.toLocaleString()} > cap $${cfg.maxOpenRiskUsd.toLocaleString()}`;
-    await logEvent(env, 'warn', 'risk-cap', `${strategy} open BLOCKED`, { strategy, totalUsd, parts, newTradeMaxLossUsd, cap: cfg.maxOpenRiskUsd });
+    await logEvent(env, 'warn', 'risk-cap', `${strategy} ${warnOnly ? 'WARNING (trade proceeds)' : 'open BLOCKED'}`, { strategy, totalUsd, parts, newTradeMaxLossUsd, cap: cfg.maxOpenRiskUsd, mode: cfg.mode });
     // Discord note, once per strategy per day
     const alertKey = `risk_cap_alert_${strategy}_${todayISO}`;
     if (!(await env.SIGNAL_KV.get(alertKey))) {
@@ -240,12 +243,16 @@ async function enforceRiskCap(env, etNow, strategy, newTradeMaxLossUsd) {
           const dc = JSON.parse(dcRaw);
           if (dc.channelId) {
             await sendDiscordDM(env, dc.channelId,
-              `🛑 **Risk cap blocked ${strategy.toUpperCase()}** — ${reason}.\nRaise via KV \`risk_config\` if intentional.`, dc.proxyUrl);
+              warnOnly
+                ? `⚠️ **Risk warning — ${strategy.toUpperCase()} still traded** — ${reason}.\nCombined open max-loss is past your comfort line. Consider trimming. (Switch to hard blocking: KV \`risk_config\` → \`{"mode":"block"}\`.)`
+                : `🛑 **Risk cap blocked ${strategy.toUpperCase()}** — ${reason}.\nRaise the cap or set \`{"mode":"warn"}\` via KV \`risk_config\` if intentional.`,
+              dc.proxyUrl);
             await env.SIGNAL_KV.put(alertKey, 'sent', { expirationTtl: 86400 });
           }
         }
       } catch (_) { /* notify is best-effort */ }
     }
+    if (warnOnly) return { ok: true, warned: true, reason };
     return { ok: false, reason };
   } catch (e) {
     // Fail-OPEN on infrastructure errors: a broken risk check must not
@@ -8090,7 +8097,7 @@ export default {
           const cfgRaw2 = await env.SIGNAL_KV.get('risk_config');
           const cfg2 = { ...RISK_CAP_DEFAULTS, ...(cfgRaw2 ? JSON.parse(cfgRaw2) : {}) };
           const exp = await computeOpenRiskExposureUsd(env, todayISO);
-          openRisk = { ...exp, capUsd: cfg2.maxOpenRiskUsd, enabled: cfg2.enabled };
+          openRisk = { ...exp, capUsd: cfg2.maxOpenRiskUsd, enabled: cfg2.enabled, mode: cfg2.mode || 'warn' };
           if (cfg2.enabled && exp.totalUsd > cfg2.maxOpenRiskUsd) {
             alerts.push('open_risk_over_cap');
           }
