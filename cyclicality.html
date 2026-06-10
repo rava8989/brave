@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CycleLab — SPX Intraday Cyclicality</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
+<style>
+:root{
+  --bg:#0f172a; --bg2:#1e293b; --bg3:#162032; --border:#2d3f55;
+  --text:#e2e8f0; --text2:#94a3b8; --text3:#64748b;
+  --accent:#818cf8; --accent2:#6366f1;
+  --green:#22c55e; --red:#ef4444; --amber:#f59e0b; --violet:#8b5cf6;
+  --shadow:0 1px 3px rgba(0,0,0,.3),0 4px 16px rgba(0,0,0,.2);
+  --radius:12px; --radius-sm:8px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font:14px/1.5 Inter,system-ui,sans-serif;padding:18px}
+h1{font-size:20px;margin-bottom:2px}
+.sub{color:var(--text2);font-size:12.5px;margin-bottom:16px}
+.panel{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;margin-bottom:14px}
+.controls{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end}
+.ctl label{display:block;font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px}
+.seg{display:flex;border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden}
+.seg button{background:var(--bg3);border:0;color:var(--text2);padding:7px 13px;cursor:pointer;font:600 13px Inter;border-right:1px solid var(--border)}
+.seg button:last-child{border-right:0}
+.seg button.on{background:var(--accent2);color:#fff}
+input[type=date]{background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);padding:7px 10px;font:600 13px 'JetBrains Mono'}
+.cards{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:14px}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:12px 16px;min-width:160px;flex:1}
+.card .k{font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.4px}
+.card .v{font:700 22px 'JetBrains Mono';margin-top:2px}
+.card .n{font-size:11.5px;color:var(--text3);margin-top:2px}
+canvas{width:100%;height:430px;display:block}
+.legend{display:flex;flex-wrap:wrap;gap:16px;margin-top:10px;font-size:12.5px;color:var(--text2)}
+.legend span::before{content:'━ ';font-weight:700}
+.lg-pred::before{color:var(--accent)} .lg-act::before{color:var(--amber)}
+.lg-prior::before{color:#3b4d68} .lg-zero::before{color:var(--text3)}
+.verdict{border-left:3px solid var(--amber);background:var(--bg3);border-radius:6px;padding:10px 14px;font-size:13px;color:var(--text2);margin-top:12px}
+.verdict b{color:var(--text)}
+table{border-collapse:collapse;width:100%;font-size:13px;margin-top:8px}
+th,td{padding:6px 10px;text-align:right;border-bottom:1px solid var(--border)}
+th{color:var(--text2);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.3px}
+td:first-child,th:first-child{text-align:left}
+.pos{color:var(--green)} .neg{color:var(--red)}
+.note{font-size:12px;color:var(--text3);margin-top:8px}
+</style>
+</head>
+<body>
+<h1>CycleLab <span style="color:var(--text3);font-weight:400">· SPX intraday cyclicality</span></h1>
+<div class="sub" id="subTitle">Loading…</div>
+
+<div class="panel">
+  <div class="controls">
+    <div class="ctl"><label>Weekday</label><div class="seg" id="segDow"></div></div>
+    <div class="ctl"><label>Lookback (same weekdays)</label><div class="seg" id="segLb"></div></div>
+    <div class="ctl"><label>Predict for date (optional — compare vs actual)</label>
+      <input type="date" id="asOf"></div>
+    <div class="ctl"><label>&nbsp;</label>
+      <div class="seg"><button id="btnLatest" class="on">Latest</button></div></div>
+  </div>
+</div>
+
+<div class="cards">
+  <div class="card"><div class="k">Predicted close move</div><div class="v" id="cPred">—</div><div class="n" id="cPredN"></div></div>
+  <div class="card"><div class="k">% of day above zero</div><div class="v" id="cAbove">—</div><div class="n">share of 5-min slots with cumulative &gt; 0</div></div>
+  <div class="card"><div class="k">Actual (if date in past)</div><div class="v" id="cAct">—</div><div class="n" id="cActN"></div></div>
+  <div class="card"><div class="k">Method hit-rate (this weekday)</div><div class="v" id="cHit">—</div><div class="n" id="cHitN"></div></div>
+</div>
+
+<div class="panel">
+  <canvas id="chart"></canvas>
+  <div class="legend">
+    <span class="lg-pred">Prediction (sum of lookback weekdays)</span>
+    <span class="lg-prior">Each lookback day (faded)</span>
+    <span class="lg-act">Actual day</span>
+    <span class="lg-zero">Zero</span>
+  </div>
+  <div class="verdict" id="verdict"></div>
+</div>
+
+<div class="panel">
+  <b style="font-size:14px">Honest validation — does this method predict?</b>
+  <div class="note">For every historical day: build the prediction from the prior N same-weekdays, check whether
+  its end-of-day direction matched what actually happened. Compared against the lazy baseline of always
+  predicting "up" (the market drifts up — any method must beat that to mean anything).</div>
+  <table id="valTable"><thead><tr>
+    <th>Lookback</th><th>n</th><th>Direction hit</th><th>Always-up baseline</th><th>Edge vs baseline</th><th>Curve correlation</th>
+  </tr></thead><tbody></tbody></table>
+  <div class="note" id="valNote"></div>
+</div>
+
+<script>
+let DATA = null, dow = 0, lookback = 4, asOfDate = null;
+const LBS = [4, 8, 13, 26, 52];
+const WD = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+
+const $ = id => document.getElementById(id);
+
+fetch('cyclicality_data.json?v=' + Date.now()).then(r => r.json()).then(j => {
+  DATA = j;
+  $('subTitle').textContent =
+    `${j.days.length} SPX sessions · ${j.days[0].d} → ${j.days[j.days.length-1].d} · 5-minute candles · built ${j.built}`;
+  // default weekday = next trading day's weekday
+  const t = new Date(); let g = (t.getDay() % 7);             // 0=Sun
+  let nd = (g >= 5 || g === 0) ? 0 : Math.min(g, 4);          // crude: Mon if weekend
+  dow = nd;
+  buildSegs(); render(); buildValidation();
+});
+
+function buildSegs() {
+  $('segDow').innerHTML = WD.map((w, i) =>
+    `<button data-w="${i}" class="${i === dow ? 'on' : ''}">${w}</button>`).join('');
+  $('segDow').querySelectorAll('button').forEach(b => b.onclick = () => {
+    dow = +b.dataset.w; buildSegs(); render(); buildValidation();
+  });
+  $('segLb').innerHTML = LBS.map(n =>
+    `<button data-n="${n}" class="${n === lookback ? 'on' : ''}">${n}</button>`).join('');
+  $('segLb').querySelectorAll('button').forEach(b => b.onclick = () => {
+    lookback = +b.dataset.n; buildSegs(); render(); buildValidation();
+  });
+  $('asOf').onchange = () => {
+    asOfDate = $('asOf').value || null;
+    if (asOfDate) {
+      const d = new Date(asOfDate + 'T12:00:00');
+      const w = (d.getDay() + 6) % 7;
+      if (w <= 4) { dow = w; buildSegs(); }
+      $('btnLatest').classList.remove('on');
+    }
+    render();
+  };
+  $('btnLatest').onclick = () => { asOfDate = null; $('asOf').value = ''; $('btnLatest').classList.add('on'); render(); };
+}
+
+function cum(moves) { let c = 0; return moves.map(m => (c += (m || 0), +c.toFixed(2))); }
+
+function compute() {
+  const idxs = DATA.days.map((d, i) => i).filter(i => DATA.days[i].w === dow);
+  // anchor: if asOfDate set → use days strictly BEFORE it; else use all (predict next)
+  let pool = idxs, actualIdx = null;
+  if (asOfDate) {
+    pool = idxs.filter(i => DATA.days[i].d < asOfDate);
+    const exact = idxs.find(i => DATA.days[i].d === asOfDate);
+    if (exact !== undefined) actualIdx = exact;
+  }
+  const priors = pool.slice(-lookback);
+  if (!priors.length) return null;
+  const ns = DATA.slots.length;
+  const pred = Array.from({length: ns}, (_, s) =>
+    +priors.reduce((a, i) => a + (DATA.days[i].m[s] || 0), 0).toFixed(2));
+  return { priors, pred, predCum: cum(pred),
+           actual: actualIdx != null ? cum(DATA.days[actualIdx].m) : null,
+           actualDate: actualIdx != null ? DATA.days[actualIdx].d : null };
+}
+
+function render() {
+  const r = compute();
+  if (!r) return;
+  const ns = DATA.slots.length, pc = r.predCum;
+  const end = pc[ns - 1];
+  $('cPred').textContent = (end >= 0 ? '+' : '') + end.toFixed(1) + ' pts';
+  $('cPred').className = 'v ' + (end >= 0 ? 'pos' : 'neg');
+  $('cPredN').textContent = `${WD[dow]} · sum of last ${r.priors.length} ${WD[dow]}s (${DATA.days[r.priors[0]].d} → ${DATA.days[r.priors[r.priors.length-1]].d})`;
+  const above = pc.filter(v => v > 0).length;
+  $('cAbove').textContent = (100 * above / ns).toFixed(1) + '%';
+  if (r.actual) {
+    const ae = r.actual[ns - 1];
+    $('cAct').textContent = (ae >= 0 ? '+' : '') + ae.toFixed(1) + ' pts';
+    $('cAct').className = 'v ' + (ae >= 0 ? 'pos' : 'neg');
+    $('cActN').textContent = r.actualDate + ((end >= 0) === (ae >= 0) ? ' · direction HIT ✓' : ' · direction MISS ✗');
+  } else { $('cAct').textContent = '—'; $('cAct').className = 'v'; $('cActN').textContent = asOfDate ? 'date not in data' : 'pick a past date to compare'; }
+  draw(r);
+}
+
+function draw(r) {
+  const cv = $('chart'), dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth, H = 430;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const x = cv.getContext('2d'); x.scale(dpr, dpr);
+  x.clearRect(0, 0, W, H);
+  const ns = DATA.slots.length;
+  const series = [r.predCum, ...(r.actual ? [r.actual] : []),
+                  ...r.priors.map(i => cum(DATA.days[i].m))];
+  let lo = 0, hi = 0;
+  series.forEach(s => s.forEach(v => { lo = Math.min(lo, v); hi = Math.max(hi, v); }));
+  const pad = Math.max(2, (hi - lo) * 0.08); lo -= pad; hi += pad;
+  const L = 46, R = 10, T = 10, B = 34;
+  const px = i => L + (W - L - R) * i / (ns - 1);
+  const py = v => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
+  // grid + axes
+  x.font = '11px JetBrains Mono'; x.fillStyle = '#64748b'; x.strokeStyle = '#22324a'; x.lineWidth = 1;
+  const step = Math.max(1, Math.round((hi - lo) / 7 / 5) * 5) || 5;
+  for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) {
+    x.beginPath(); x.moveTo(L, py(v)); x.lineTo(W - R, py(v)); x.stroke();
+    x.fillText(String(v), 6, py(v) + 4);
+  }
+  for (let i = 0; i < ns; i += 12) {
+    x.fillText(DATA.slots[i], px(i) - 14, H - 14);
+    x.beginPath(); x.moveTo(px(i), T); x.lineTo(px(i), H - B); x.strokeStyle = '#1b283c'; x.stroke();
+  }
+  // zero line
+  x.strokeStyle = '#475569'; x.setLineDash([4, 4]);
+  x.beginPath(); x.moveTo(L, py(0)); x.lineTo(W - R, py(0)); x.stroke(); x.setLineDash([]);
+  const line = (s, color, w, alpha) => {
+    x.globalAlpha = alpha; x.strokeStyle = color; x.lineWidth = w; x.beginPath();
+    s.forEach((v, i) => i ? x.lineTo(px(i), py(v)) : x.moveTo(px(i), py(v)));
+    x.stroke(); x.globalAlpha = 1;
+  };
+  r.priors.forEach(i => line(cum(DATA.days[i].m), '#3b4d68', 1, 0.55));
+  if (r.actual) line(r.actual, '#f59e0b', 2, 1);
+  // prediction fill + line
+  const pc = r.predCum;
+  x.globalAlpha = 0.13; x.fillStyle = '#818cf8'; x.beginPath();
+  x.moveTo(px(0), py(0));
+  pc.forEach((v, i) => x.lineTo(px(i), py(v)));
+  x.lineTo(px(ns - 1), py(0)); x.closePath(); x.fill(); x.globalAlpha = 1;
+  line(pc, '#818cf8', 2.4, 1);
+}
+
+// ── validation: per-weekday hit-rate vs always-up, all lookbacks ──
+function buildValidation() {
+  const tb = $('valTable').querySelector('tbody');
+  const idxs = DATA.days.map((d, i) => i).filter(i => DATA.days[i].w === dow);
+  const dayNet = i => DATA.days[i].m.reduce((a, m) => a + (m || 0), 0);
+  const baseUp = idxs.filter(i => dayNet(i) > 0).length / idxs.length;
+  let rows = '', currentHit = null;
+  for (const lb of LBS) {
+    let hit = 0, tot = 0, csum = 0;
+    for (let j = lb; j < idxs.length; j++) {
+      const target = idxs[j], priors = idxs.slice(j - lb, j);
+      const ns = DATA.slots.length;
+      let pe = 0; const pred = new Array(ns), act = new Array(ns);
+      for (let s = 0; s < ns; s++) {
+        let p = 0; for (const i of priors) p += (DATA.days[i].m[s] || 0);
+        pred[s] = p; pe += p; act[s] = (DATA.days[target].m[s] || 0);
+      }
+      const ae = act.reduce((a, b) => a + b, 0);
+      if (!pe || !ae) continue;
+      tot++; if ((pe > 0) === (ae > 0)) hit++;
+      csum += corr(cum(pred), cum(act));
+    }
+    const hr = 100 * hit / tot, ed = hr - 100 * baseUp;
+    if (lb === lookback) currentHit = { hr, tot, ed };
+    rows += `<tr><td>${lb} ${WD[dow]}s</td><td>${tot}</td><td>${hr.toFixed(1)}%</td>` +
+      `<td>${(100 * baseUp).toFixed(1)}%</td>` +
+      `<td class="${ed >= 1 ? 'pos' : ed <= -1 ? 'neg' : ''}">${ed >= 0 ? '+' : ''}${ed.toFixed(1)}pp</td>` +
+      `<td>${(csum / tot).toFixed(3)}</td></tr>`;
+  }
+  tb.innerHTML = rows;
+  if (currentHit) {
+    $('cHit').textContent = currentHit.hr.toFixed(0) + '%';
+    $('cHitN').textContent = `${WD[dow]} · lookback ${lookback} · vs ${ (100*baseUp).toFixed(0)}% always-up`;
+    const v = $('verdict');
+    if (currentHit.ed >= 3) v.innerHTML = `<b>${WD[dow]} @ lookback ${lookback}: ${currentHit.ed >= 0 ? '+' : ''}${currentHit.ed.toFixed(1)}pp over the drift baseline.</b> Possibly something here — but check it holds in both halves of history before trusting it.`;
+    else v.innerHTML = `<b>Reality check:</b> on ${WD[dow]}s this method hits ${currentHit.hr.toFixed(1)}% vs ${(100*baseUp).toFixed(1)}% for blindly guessing "up" (${currentHit.ed >= 0 ? '+' : ''}${currentHit.ed.toFixed(1)}pp). The pretty curve is mostly the market's upward drift, not a repeating intraday cycle. Use this page to SEE the seasonality — not to trade it blind.`;
+  }
+  $('valNote').textContent = 'Curve correlation = average correlation between the predicted intraday path and the actual path (1 = same shape, 0 = unrelated). Values near zero mean the intraday shape does not repeat.';
+}
+
+function corr(a, b) {
+  const n = a.length, ma = a.reduce((x, y) => x + y) / n, mb = b.reduce((x, y) => x + y) / n;
+  let num = 0, da = 0, db = 0;
+  for (let i = 0; i < n; i++) { const u = a[i] - ma, v = b[i] - mb; num += u * v; da += u * u; db += v * v; }
+  return da > 0 && db > 0 ? num / Math.sqrt(da * db) : 0;
+}
+window.addEventListener('resize', () => { if (DATA) render(); });
+</script>
+</body>
+</html>
