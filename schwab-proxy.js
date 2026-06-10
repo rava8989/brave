@@ -80,6 +80,91 @@ async function recordMirrorHealth(env, ok, msg = null) {
   }
 }
 
+// ── COR1M + VVIX cloud capture (2026-06-09 — machine-independence) ─────
+// Schwab quotes $COR1M / $VVIX live (validated vs ThetaData: exact match;
+// no minute pricehistory exists for $COR1M, so the worker builds its own
+// intraday series from quote samples). Replaces the Mac-bound ThetaData
+// LaunchAgent as the LIVE data source; the local pipeline remains for the
+// backtester bundle (research) only.
+//
+// KV keys (7-day TTL):
+//   cor1m_open_<date>   {cor1m, vvix, at}         — first sample ≥ 9:30 ET
+//   cor1m_series_<date> [["HH:MM", value], ...]   — ~5-min samples, cap 120
+//   tail_trigger_state  {state:'TRIGGERED', since, value, detectedAt}
+const COR1M_TRIGGER_THRESHOLD = 7.75;   // Sweet Spot preset (cor1m_contango.html)
+
+async function captureCor1mVvix(env, etNow, token) {
+  const h = etNow.getHours(), m = etNow.getMinutes();
+  const todayISO = isoDateET(etNow);
+  const openKey = `cor1m_open_${todayISO}`;
+  const haveOpen = await env.SIGNAL_KV.get(openKey);
+  const inOpenWindow = h === 9 && m >= 30 && m <= 36;
+  const isSampleTick = m % 5 === 0;
+  if (!(inOpenWindow && !haveOpen) && !isSampleTick) return;   // throttle
+
+  const q = await fetchSchwabJSON(
+    'https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24COR1M,%24VVIX&fields=quote',
+    token, env);
+  const corRaw = q?.['$COR1M']?.quote?.lastPrice;
+  const vvixRaw = q?.['$VVIX']?.quote?.lastPrice;
+  if (corRaw == null || !(corRaw > 0)) return;
+  const cor = parseFloat(corRaw.toFixed(2));
+  const vvix = (vvixRaw != null && vvixRaw > 0) ? parseFloat(vvixRaw.toFixed(2)) : null;
+  const hhmm = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+
+  // Read today's series (also yields prev sample for cross detection)
+  const serKey = `cor1m_series_${todayISO}`;
+  let series = [];
+  try { const sRaw = await env.SIGNAL_KV.get(serKey); series = sRaw ? JSON.parse(sRaw) : []; } catch (_) {}
+  let prev = series.length ? series[series.length - 1][1] : null;
+
+  // First sample of the day: capture open + use the PRIOR session's last
+  // sample as `prev` so overnight crosses are caught (any-cross semantics).
+  if (!haveOpen) {
+    await env.SIGNAL_KV.put(openKey, JSON.stringify({ cor1m: cor, vvix, at: hhmm }),
+      { expirationTtl: 7 * 86400 });
+    if (prev == null) {
+      for (let back = 1; back <= 4 && prev == null; back++) {
+        const d = new Date(etNow); d.setDate(d.getDate() - back);
+        try {
+          const pRaw = await env.SIGNAL_KV.get(`cor1m_series_${isoDateET(d)}`);
+          if (pRaw) { const ps = JSON.parse(pRaw); if (ps.length) prev = ps[ps.length - 1][1]; }
+        } catch (_) {}
+      }
+    }
+  }
+
+  series.push([hhmm, cor]);
+  if (series.length > 120) series = series.slice(-120);
+  await env.SIGNAL_KV.put(serKey, JSON.stringify(series), { expirationTtl: 7 * 86400 });
+
+  // Cross-DOWN detection — boundary semantics match detect_cross_entries
+  // (≥ on the "above" side, ≤ on the "below" side, not both exactly equal).
+  if (prev != null
+      && prev >= COR1M_TRIGGER_THRESHOLD && cor <= COR1M_TRIGGER_THRESHOLD
+      && !(prev === COR1M_TRIGGER_THRESHOLD && cor === COR1M_TRIGGER_THRESHOLD)) {
+    const stRaw = await env.SIGNAL_KV.get('tail_trigger_state');
+    const st = stRaw ? JSON.parse(stRaw) : null;
+    if (!st || st.state !== 'TRIGGERED') {
+      await env.SIGNAL_KV.put('tail_trigger_state', JSON.stringify({
+        state: 'TRIGGERED', since: todayISO, value: cor,
+        detectedAt: new Date().toISOString(), source: 'cloud-quote',
+      }));
+      try {
+        const dcRaw = await env.SIGNAL_KV.get('discord_config');
+        if (dcRaw) {
+          const dc = JSON.parse(dcRaw);
+          if (dc.channelId) {
+            await sendDiscordDM(env, dc.channelId,
+              `📉 **COR1M crossed below ${COR1M_TRIGGER_THRESHOLD}** (now ${cor}, ${hhmm} ET).\nTail Hedge trigger ACTIVE — buy the 9:45 ET put daily until first profit (skip days with VVIX ≥ 110${vvix != null ? `; VVIX now ${vvix}` : ''}).`,
+              dc.proxyUrl);
+          }
+        }
+      } catch (_) { /* notify best-effort */ }
+    }
+  }
+}
+
 // ── Daily total-risk cap (2026-06-09) ──────────────────────────────────
 // On multi-strategy days, Straddle + BOBF + GXBF + Diagonal can all be live
 // at once and nothing checked COMBINED max-loss against the account. Each
@@ -336,24 +421,58 @@ import {
 //   SKIP today (VVIX X.XX ≥ 110, puts too expensive). Stay TRIGGERED.
 //   No Tail Hedge today (COR1M X.XX, need cross below 7.75)
 let _tailHedgeCache = { value: null, fetchedAt: 0 };
-async function getTailHedgeStatusLine() {
-  // 5-minute in-worker cache — bundle changes daily so this is plenty fresh.
+async function getTailHedgeStatusLine(env = null) {
+  // 5-minute in-worker cache — values change slowly so this is plenty fresh.
   const now = Date.now();
   if (_tailHedgeCache.value && (now - _tailHedgeCache.fetchedAt) < 5*60*1000) {
     return _tailHedgeCache.value;
   }
   try {
+    // ET date (2026-06-09 fix: was UTC toISOString — wrong date in evenings).
+    const etNow = toET(new Date());
+    const todayISO = isoDateET(etNow);
+
+    // CLOUD-FIRST today's values (worker's own Schwab capture); bundle is
+    // the fallback + the authority for trigger RESOLUTION (profit exits are
+    // only known to the backtest, rebuilt whenever the user's Mac is on).
+    let cor1m = null, vvix = null;
+    if (env) {
+      try {
+        const kvOpen = await env.SIGNAL_KV.get(`cor1m_open_${todayISO}`);
+        if (kvOpen) { const o = JSON.parse(kvOpen); cor1m = o.cor1m ?? null; vvix = o.vvix ?? null; }
+      } catch (_) {}
+    }
+
     const r = await fetch('https://raw.githubusercontent.com/rava8989/brave/main/cor1m_contango_bundle.json',
       { cf: { cacheTtl: 300, cacheEverything: true } });
-    if (!r.ok) return 'Tail Hedge │ bundle unavailable';
-    const b = await r.json();
-    const todayISO = new Date().toISOString().slice(0,10);
-    const dailyToday = (b.daily || []).find(d => d.date === todayISO);
-    const cor1m = dailyToday?.cor1m;
-    const vvix  = dailyToday?.vvix;
-    const triggers = b.preset_results?.sweet_spot?.triggers || [];
-    const last = triggers[triggers.length - 1];
-    const isTriggered = last && last.exit_reason !== 'profitable';
+    let bundleTriggered = false, bundleLastDay = null;
+    if (r.ok) {
+      const b = await r.json();
+      const dailyToday = (b.daily || []).find(d => d.date === todayISO);
+      if (cor1m == null) cor1m = dailyToday?.cor1m ?? null;
+      if (vvix == null)  vvix  = dailyToday?.vvix ?? null;
+      const daily = b.daily || [];
+      bundleLastDay = daily.length ? daily[daily.length - 1].date : null;
+      const triggers = b.preset_results?.sweet_spot?.triggers || [];
+      const last = triggers[triggers.length - 1];
+      bundleTriggered = !!(last && last.exit_reason !== 'profitable');
+    }
+
+    // Cloud-detected cross SINCE the bundle's last day also counts as
+    // triggered (covers PC-off stretches where the bundle goes stale).
+    let cloudTriggered = false;
+    if (env) {
+      try {
+        const stRaw = await env.SIGNAL_KV.get('tail_trigger_state');
+        if (stRaw) {
+          const st = JSON.parse(stRaw);
+          cloudTriggered = st.state === 'TRIGGERED'
+            && (!bundleLastDay || st.since > bundleLastDay);
+        }
+      } catch (_) {}
+    }
+
+    const isTriggered = bundleTriggered || cloudTriggered;
     let line;
     if (isTriggered) {
       if (vvix != null && vvix >= 110) {
@@ -1314,6 +1433,17 @@ async function handleEOD(env, etNow) {
   if (vixOpen != null) fields.vixOpen = vixOpen;
   if (spxOpen != null) fields.spxOpen = spxOpen;
 
+  // cor1m from the worker's own cloud capture (2026-06-09) — fills the
+  // history column with zero dependence on the user's Mac. Upsert merge
+  // only fills when null, so a LaunchAgent-written value is never clobbered.
+  try {
+    const kvCor = await env.SIGNAL_KV.get(`cor1m_open_${todayISO}`);
+    if (kvCor) {
+      const o = JSON.parse(kvCor);
+      if (o.cor1m != null) fields.cor1m = o.cor1m;
+    }
+  } catch (_) { /* non-critical */ }
+
   // wroteFields tells callers whether history_data.json was actually updated.
   // Callers use this to decide if they should set `eod_done_<date>` — we only
   // want to set it after a real write, otherwise a failed EOD (expired Schwab
@@ -1866,19 +1996,29 @@ async function handleDiagonalTrade(env, etNow, preChain = null) {
     }
   } catch (e) { /* signal will be 'pending' if no vixPct20d */ }
 
-  // 3a. Fetch today's COR1M from the Tail Hedge bundle (same path as
-  //     getTailHedgeStatusLine — bundle has authoritative 9:30 ET open).
-  //     Used to gate Diagonal: COR1M < 10 → no trade.
+  // 3a. Today's COR1M for the Diagonal gate (COR1M < 10 → no trade).
+  //     CLOUD-FIRST (2026-06-09): the worker's own Schwab capture
+  //     (cor1m_open_<date>, written ~9:30 ET) — machine-independent.
+  //     Bundle fallback only if the capture is missing.
   let cor1mToday = null;
   try {
-    const r = await fetch('https://raw.githubusercontent.com/rava8989/brave/main/cor1m_contango_bundle.json',
-      { headers: { 'User-Agent': 'schwab-proxy-worker/1.0' } });
-    if (r.ok) {
-      const bundle = await r.json();
-      const todayRow = (bundle?.daily || []).find(d => d?.date === todayISO);
-      if (todayRow?.cor1m != null) cor1mToday = parseFloat(todayRow.cor1m);
+    const kvOpen = await env.SIGNAL_KV.get(`cor1m_open_${todayISO}`);
+    if (kvOpen) {
+      const o = JSON.parse(kvOpen);
+      if (o.cor1m != null) cor1mToday = parseFloat(o.cor1m);
     }
-  } catch (_) { /* leave null — signal-engine will defer with "pending COR1M data" */ }
+  } catch (_) {}
+  if (cor1mToday == null) {
+    try {
+      const r = await fetch('https://raw.githubusercontent.com/rava8989/brave/main/cor1m_contango_bundle.json',
+        { headers: { 'User-Agent': 'schwab-proxy-worker/1.0' } });
+      if (r.ok) {
+        const bundle = await r.json();
+        const todayRow = (bundle?.daily || []).find(d => d?.date === todayISO);
+        if (todayRow?.cor1m != null) cor1mToday = parseFloat(todayRow.cor1m);
+      }
+    } catch (_) { /* leave null — signal-engine will defer with "pending COR1M data" */ }
+  }
 
   // 3b. Compute diagonal signal (now COR1M-gated).
   const sig = computeDiagonalSignal(etNow, vixPct20d, cor1mToday);
@@ -3340,6 +3480,18 @@ async function handleScheduled(env) {
     }
   }
 
+  // ── COR1M + VVIX cloud capture (2026-06-09 — machine-independence) ──
+  // Schwab quotes $COR1M and $VVIX live (validated against ThetaData:
+  // exact match). The worker samples them itself so the Tail Hedge status,
+  // Diagonal COR1M gate, and the history cor1m column no longer depend on
+  // the user's Mac being on (ThetaData/LaunchAgent = research-only now).
+  //  • 9:30-9:36: every tick until the day's open is captured
+  //  • after: every 5th minute → intraday series for cross detection
+  if (isMarket && schwabToken) {
+    try { await captureCor1mVvix(env, etNow, schwabToken); }
+    catch (e) { console.warn('[cor1m] capture failed:', e.message || e); }
+  }
+
   // ── Diagonal trade: open/close at 12:30 ET. Idempotent via diag_done_<date>.
   // Window 12:30–12:40 ET gives up to 5 retry attempts (cron is */2). We only
   // mark `diag_done` after a clean run — if the chain fetch / GitHub commit
@@ -4059,7 +4211,7 @@ async function handleScheduled(env) {
   // 6. Build Discord message — include Tail Hedge today's signal
   const vixValues = { yOpen: vixYOpen, yClose: vixYClose, todayOpen: vixToday };
   const canonBanner = vixSource === 'schwab' ? '📡 **SCHWAB DATA**\n\n' : '📡 **TASTYTRADE DATA**\n\n';
-  const tailLineCanon = await getTailHedgeStatusLine();
+  const tailLineCanon = await getTailHedgeStatusLine(env);
   signal._tailLine = tailLineCanon;  // for embed builder
   const message = canonBanner + buildDiscordMessage(signal, vixValues, tailLineCanon);
 
@@ -7649,7 +7801,7 @@ export default {
         const sigSchwab = makeSignal(vixSchwab, spxSchwab);
         const sigTasty  = makeSignal(vixTasty,  spxTasty);
         // Tail Hedge today (fetched once, cached). Shared between both renders.
-        const tailLine = await getTailHedgeStatusLine();
+        const tailLine = await getTailHedgeStatusLine(env);
 
         function renderMsg(sig, vixVal, source) {
           if (!sig) return null;
@@ -7944,6 +8096,17 @@ export default {
           }
         } catch (_) { /* informational only */ }
 
+        // ── COR1M cloud capture (2026-06-09 — machine-independence) ──
+        let cor1mCloud = null;
+        try {
+          const c = await env.SIGNAL_KV.get(`cor1m_open_${todayISO}`);
+          if (c) cor1mCloud = JSON.parse(c);
+          // Capture missing after 9:40 ET on a weekday = capture path broken
+          if (!cor1mCloud && isWeekday && (etH > 9 || (etH === 9 && etM >= 40)) && etH < 16) {
+            alerts.push('cor1m_capture_missing');
+          }
+        } catch (_) {}
+
         // ── Cron liveness via last_run ──
         const lastRun = lastRunRaw ? JSON.parse(lastRunRaw) : null;
         const lastRunMs = lastRun?.date ? Date.parse(lastRun.date) : 0;
@@ -7999,6 +8162,7 @@ export default {
             msg: mirror.msg,
           } : { state: 'never_recorded' },
           open_risk: openRisk,
+          cor1m_cloud: cor1mCloud || { state: 'not_captured_today' },
           last_run: lastRun ? {
             status: lastRun.status,
             date: lastRun.date,
@@ -8605,7 +8769,7 @@ export default {
                 const dc = JSON.parse(dcRaw);
                 if (dc.channelId) {
                   await sendDiscordDM(env, dc.channelId,
-                    `⚠️ **Tail Hedge bundle is STALE** — last day ${lastDate}, expected ${todayW}.\nThe 5 PM LaunchAgent likely failed (macOS blocks launchd from Desktop).\n→ Run manually: \`bash scripts/refresh_tail_hedge.sh\`\n→ Permanent fix: System Settings → Privacy & Security → Full Disk Access → add /bin/bash`,
+                    `ℹ️ **Backtester bundle is stale** — last day ${lastDate}, expected ${todayW}.\nLIVE is unaffected (COR1M/VVIX are cloud-captured from Schwab). Only the Tail Hedge backtester page lags.\n→ Refresh when the Mac is on: \`bash scripts/refresh_tail_hedge.sh\``,
                     dc.proxyUrl);
                   await logEvent(env, 'warn', 'tail-bundle-stale',
                     `bundle last=${lastDate}, expected ${todayW} — Discord alert sent`, { lastDate });
