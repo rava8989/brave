@@ -22,6 +22,7 @@ set -e
 ./scripts/check-html-js.sh
 ./scripts/check-no-conflict-markers.sh
 ./scripts/check-html-smoke.sh
+./scripts/check-pnl-tests.sh
 EOF
 chmod +x "$HOOK"
 
@@ -33,5 +34,6 @@ echo "  → runs scripts/check-vix-pct-canonical.sh"
 echo "  → runs scripts/check-html-js.sh"
 echo "  → runs scripts/check-no-conflict-markers.sh   (added after 2026-06-02 broken-dashboard incident)"
 echo "  → runs scripts/check-html-smoke.sh             (added 2026-06-09 — headless-Chrome JS-error catcher)"
+echo "  → runs scripts/check-pnl-tests.sh              (added 2026-06-09 — money-math unit tests)"
 echo ""
 echo "Bypass for one-off commits: git commit --no-verify"
