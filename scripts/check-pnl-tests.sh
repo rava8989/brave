@@ -30,4 +30,14 @@ fi
 if [ "$RUN_PY" = "1" ]; then
   python3 test_pnl.py || { echo "✗ [pnl-tests] test_pnl.py failed"; exit 1; }
 fi
-echo "✓ [pnl-tests] money-math tests green"
+
+# signal-engine.js staged → also run the full signal test suites. These
+# suites rotted unnoticed for months (test_vix_pct still asserted the
+# pre-2026-06-02 band; test_fail_safe asserted a pre-independence field)
+# because nothing executed them. Now every engine change runs them.
+if echo "$STAGED" | grep -qE '^(signal-engine\.js|test_signal\.js|test_vix_pct\.mjs|test_fail_safe\.mjs)$'; then
+  node test_signal.js > /dev/null || { echo "✗ [pnl-tests] test_signal.js failed"; node test_signal.js | tail -5; exit 1; }
+  node --test test_vix_pct.mjs > /dev/null 2>&1 || { echo "✗ [pnl-tests] test_vix_pct.mjs failed"; node --test test_vix_pct.mjs 2>&1 | tail -8; exit 1; }
+  node --test test_fail_safe.mjs > /dev/null 2>&1 || { echo "✗ [pnl-tests] test_fail_safe.mjs failed"; node --test test_fail_safe.mjs 2>&1 | tail -8; exit 1; }
+fi
+echo "✓ [pnl-tests] money-math + signal tests green"

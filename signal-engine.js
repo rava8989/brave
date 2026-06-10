@@ -300,8 +300,13 @@ export function isDayAfterAnyEarnings(etDate) { return earningsSchedule.some(e =
 //                    we can't compute is not one we trust.
 //   • reason       — short human string for logs / Discord output
 export function computeVixPct20d(vixToday, prior20VixCloses, opts = {}) {
+  // Default band matches the canonical Diagonal dead zone: (50, 80].
+  // hi re-tuned 90 → 80 on 2026-06-09 (COR1M-aware sweep); default updated
+  // 2026-06-09 for coherence — live callers pass explicit opts or use .pct
+  // only, so this default has no behavioral consumers, but a stale default
+  // is a drift trap for future callers.
   const lo = opts.lo ?? 50;
-  const hi = opts.hi ?? 90;
+  const hi = opts.hi ?? 80;
   if (vixToday == null || !isFinite(vixToday) || vixToday <= 0) {
     return { pct: null, inDeadZone: true, reason: 'no-vix-today' };
   }
