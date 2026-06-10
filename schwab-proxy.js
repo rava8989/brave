@@ -54,6 +54,32 @@ async function recordRefreshHealth(env, ok, msg = null) {
   }
 }
 
+// ── GitHub-mirror health (2026-06-09) ──
+// Same pattern as recordRefreshHealth, KV key 'history_mirror_state'.
+// Added after the expired-PAT incident: mirror failures were fully silent
+// (console.warn only), so KV drifted ahead of GitHub for DAYS before the
+// user noticed empty dashboard rows. /health now surfaces this state and
+// the cron watchdog alerts Discord after repeated failures.
+async function recordMirrorHealth(env, ok, msg = null) {
+  try {
+    const prevRaw = await env.SIGNAL_KV.get('history_mirror_state');
+    const prev = prevRaw ? JSON.parse(prevRaw) : {};
+    const now = Date.now();
+    const state = ok
+      ? { ok: true, lastSuccess: now, consecutiveErrors: 0 }
+      : {
+          ok: false,
+          lastSuccess: prev.lastSuccess || null,
+          lastError: now,
+          msg: String(msg || '').slice(0, 300),
+          consecutiveErrors: (prev.consecutiveErrors || 0) + 1,
+        };
+    await env.SIGNAL_KV.put('history_mirror_state', JSON.stringify(state));
+  } catch (e) {
+    console.warn('[proxy] recordMirrorHealth failed:', e.message || e);
+  }
+}
+
 // ── Discord DM send (consolidates the standalone discord-proxy worker) ──
 // Priority order, first available wins:
 //   1. env.DISCORD_TOKEN (direct in-worker send — preferred, one less worker)
@@ -4849,9 +4875,11 @@ async function mirrorHistoryToGitHub(env, contentArray, message) {
       const err = await putResp.text();
       throw new Error(`GH PUT ${putResp.status}: ${err.slice(0, 200)}`);
     }
+    await recordMirrorHealth(env, true);
     return { ok: true };
   } catch (e) {
     console.warn('[history-mirror] failed (KV state still good):', e.message);
+    await recordMirrorHealth(env, false, e.message);
     return { ok: false, error: e.message };
   }
 }
@@ -7729,12 +7757,13 @@ export default {
         const inMarketHours = isWeekday && ((etH === 9 && etM >= 30) || (etH >= 10 && etH < 16));
 
         // Fetch all KV keys in parallel
-        const [morningRaw, eodRaw, schwabRaw, lastRunRaw, gexRaw] = await Promise.all([
+        const [morningRaw, eodRaw, schwabRaw, lastRunRaw, gexRaw, mirrorRaw] = await Promise.all([
           env.SIGNAL_KV.get(`morning_signal_${todayISO}`),
           env.SIGNAL_KV.get(`eod_done_${todayISO}`),
           env.SIGNAL_KV.get('schwab_refresh_state'),
           env.SIGNAL_KV.get('last_run'),
           env.SIGNAL_KV.get('gex_current'),
+          env.SIGNAL_KV.get('history_mirror_state'),
         ]);
 
         const alerts = [];
@@ -7769,6 +7798,16 @@ export default {
         const schwabMinutesSinceSuccess = schwabSuccessMs ? Math.round((now - schwabSuccessMs) / 60000) : null;
         if (schwab && schwab.ok === false && (schwab.consecutiveErrors || 0) >= 3) {
           alerts.push('schwab_refresh_degraded');
+        }
+
+        // ── GitHub mirror (2026-06-09 — expired-PAT class of failure) ──
+        // Mirror writes happen only a few times/day, so even 2 consecutive
+        // failures means KV has been drifting ahead of GitHub for hours.
+        const mirror = mirrorRaw ? JSON.parse(mirrorRaw) : null;
+        const mirrorSuccessMs = mirror?.lastSuccess || 0;
+        const mirrorMinutesSinceSuccess = mirrorSuccessMs ? Math.round((now - mirrorSuccessMs) / 60000) : null;
+        if (mirror && mirror.ok === false && (mirror.consecutiveErrors || 0) >= 2) {
+          alerts.push('history_mirror_degraded');
         }
 
         // ── Cron liveness via last_run ──
@@ -7818,6 +7857,12 @@ export default {
             consecutiveErrors: schwab.consecutiveErrors || 0,
             minutesSinceSuccess: schwabMinutesSinceSuccess,
             msg: schwab.msg,
+          } : { state: 'never_recorded' },
+          history_mirror: mirror ? {
+            ok: mirror.ok,
+            consecutiveErrors: mirror.consecutiveErrors || 0,
+            minutesSinceSuccess: mirrorMinutesSinceSuccess,
+            msg: mirror.msg,
           } : { state: 'never_recorded' },
           last_run: lastRun ? {
             status: lastRun.status,
@@ -8360,6 +8405,41 @@ export default {
       }
     } catch (watchdogErr) {
       console.error('[cron] Watchdog failed:', watchdogErr.message);
+    }
+
+    // ── GitHub-mirror watchdog (2026-06-09) ──
+    // Mirror writes fire only a few times a day (morning open, EOD settle,
+    // strategy settles), so 2 consecutive failures ≈ half a day of KV→GitHub
+    // drift. Alert once per 6h. The expired-PAT incident sat silent for 2
+    // days because nothing surfaced these failures.
+    try {
+      const mirrorRaw = await env.SIGNAL_KV.get('history_mirror_state');
+      if (mirrorRaw) {
+        const mst = JSON.parse(mirrorRaw);
+        const merrs = mst.consecutiveErrors || 0;
+        const lastMirrorAlert = parseInt(await env.SIGNAL_KV.get('mirror_alert_last_ms') || '0');
+        const MIRROR_COOLDOWN_MS = 6 * 60 * 60 * 1000;  // 6 hours
+        if (!mst.ok && merrs >= 2 && (Date.now() - lastMirrorAlert) > MIRROR_COOLDOWN_MS) {
+          const dcRaw = await env.SIGNAL_KV.get('discord_config');
+          if (dcRaw) {
+            const dc = JSON.parse(dcRaw);
+            if (dc.channelId) {
+              const minsSinceOK = mst.lastSuccess ? Math.round((Date.now() - mst.lastSuccess) / 60000) : null;
+              const alertResult = await sendDiscordDM(env, dc.channelId,
+                `🚨 **GitHub history mirror failing** — ${merrs} consecutive errors${minsSinceOK ? ` (${Math.round(minsSinceOK/60)}h since last success)` : ''}.\nError: \`${(mst.msg || '').slice(0, 150)}\`\n→ KV is fine but the dashboard's history_data.json is going stale. Likely an expired GITHUB_TOKEN — rotate it:\n\`echo NEW_PAT | npx wrangler secret put GITHUB_TOKEN --name schwab-proxy\``,
+                dc.proxyUrl);
+              if (alertResult.ok) {
+                await env.SIGNAL_KV.put('mirror_alert_last_ms', String(Date.now()), { expirationTtl: 86400 });
+                await logEvent(env, 'error', 'mirror-degraded',
+                  `${merrs} consecutive GitHub mirror failures — Discord alert sent`,
+                  { merrs, minsSinceOK, msg: (mst.msg || '').slice(0, 150) });
+              }
+            }
+          }
+        }
+      }
+    } catch (mirrorWatchdogErr) {
+      console.error('[cron] Mirror watchdog failed:', mirrorWatchdogErr.message);
     }
 
     let result;

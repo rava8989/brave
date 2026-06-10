@@ -2714,9 +2714,17 @@
     try {
       const proxy = (localStorage.getItem('sc_proxyUrl') || '').trim();
       if (!proxy) return;
-      const res = await fetch(proxy.replace(/\/$/, '') + '/schwab-health', { cache: 'no-store' });
+      const base = proxy.replace(/\/$/, '');
+      // Fetch both health surfaces in parallel: token refresh + unified /health
+      // (the latter carries history_mirror state — 2026-06-09, expired-PAT class).
+      const [res, resH] = await Promise.all([
+        fetch(base + '/schwab-health', { cache: 'no-store' }),
+        fetch(base + '/health', { cache: 'no-store' }).catch(() => null),
+      ]);
       if (!res.ok) return;
       const h = await res.json();
+      let mirror = null;
+      try { if (resH && resH.ok) { const hh = await resH.json(); mirror = hh.history_mirror || null; } } catch (_) {}
       const banner = document.getElementById('schwabHealthBanner');
       const txt = document.getElementById('schwabHealthBannerText');
       if (!banner || !txt) return;
@@ -2726,6 +2734,12 @@
         const lastOk = mins == null ? 'never (KV untouched)' : `${mins} min ago`;
         const msg = h.msg ? ` — last error: "${h.msg}"` : '';
         txt.textContent = `Worker cannot refresh Schwab token (${errs} consecutive failures, last success ${lastOk})${msg}. Re-authenticate NOW or the next cron will fail silently.`;
+        banner.style.display = 'block';
+      } else if (mirror && mirror.ok === false && (mirror.consecutiveErrors || 0) >= 2) {
+        const merrs = mirror.consecutiveErrors || 0;
+        const mmins = mirror.minutesSinceSuccess;
+        const lastOk = mmins == null ? 'unknown' : `${Math.round(mmins/60)}h ago`;
+        txt.textContent = `GitHub history mirror failing (${merrs} consecutive errors, last success ${lastOk}) — ${mirror.msg || 'unknown error'}. KV is fine but this page's history data is going STALE. Likely expired GITHUB_TOKEN — rotate the worker secret.`;
         banner.style.display = 'block';
       } else {
         banner.style.display = 'none';
