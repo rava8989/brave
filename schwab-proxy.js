@@ -280,6 +280,69 @@ async function captureTailPutSnap(env, etNow, masterChain) {
     { expirationTtl: 90 * 86400 });
 }
 
+// Diagonal chain snapshot (2026-06-10, user: "capture diagonal like tail
+// hedge so we can drop ThetaData"). At ~12:30 ET (the live entry time) store
+// the SPX PUT chain slice the Diagonal pipeline needs: expiries 0-2 DTE
+// (short leg + next-day exit) and 15-40 DTE (long leg band), strikes within
+// spot±150 (covers +10 ITM short, -20 long, and next-day drift for exits —
+// generous enough to re-test other offsets/widths later).
+async function captureDiagChainSnap(env, etNow, masterChain) {
+  const h = etNow.getHours(), m = etNow.getMinutes();
+  if (!(h === 12 && m >= 25 && m <= 40)) return;
+  if (!masterChain || !masterChain.putExpDateMap || !masterChain.spot) return;
+  const todayISO = isoDateET(etNow);
+  const k = `diag_chain_snap_${todayISO}`;
+  if (await env.SIGNAL_KV.get(k)) return;
+  const spot = masterChain.spot;
+  const out = {};
+  for (const [expKey, strikes] of Object.entries(masterChain.putExpDateMap)) {
+    const dte = parseInt(expKey.split(':')[1] || '0', 10);
+    if (!((dte >= 0 && dte <= 2) || (dte >= 15 && dte <= 40))) continue;
+    const exp = expKey.split(':')[0];
+    const rows = [];
+    for (const [strike, arr] of Object.entries(strikes)) {
+      const kk = parseFloat(strike);
+      if (Math.abs(kk - spot) > 150) continue;
+      const c = Array.isArray(arr) ? arr[0] : arr;
+      if (!c) continue;
+      rows.push([kk, c.bid ?? null, c.ask ?? null]);
+    }
+    if (rows.length) { rows.sort((a, b) => a[0] - b[0]); out[`${exp}:${dte}`] = rows; }
+  }
+  if (!Object.keys(out).length) return;
+  const hhmm = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  await env.SIGNAL_KV.put(k, JSON.stringify({ at: hhmm, spot, puts: out }), { expirationTtl: 90 * 86400 });
+}
+
+// GXBF chain snapshot — at ~9:35 ET store the 0DTE SPX CALL chain within
+// ±5% of spot incl. per-strike bid/ask/IV/volume/OI: everything build_day
+// (fetch_thetadata_gxbf.py) derives centers + mids grids from. With this,
+// gxbf_bt_data can be extended Schwab-only.
+async function captureGxbfChainSnap(env, etNow, masterChain) {
+  const h = etNow.getHours(), m = etNow.getMinutes();
+  if (!(h === 9 && m >= 35 && m <= 50)) return;
+  if (!masterChain || !masterChain.callExpDateMap || !masterChain.spot) return;
+  const todayISO = isoDateET(etNow);
+  const k = `gxbf_chain_snap_${todayISO}`;
+  if (await env.SIGNAL_KV.get(k)) return;
+  const spot = masterChain.spot;
+  const expKey = Object.keys(masterChain.callExpDateMap).find(e => (e.split(':')[1] || '') === '0');
+  if (!expKey) return;
+  const rows = [];
+  for (const [strike, arr] of Object.entries(masterChain.callExpDateMap[expKey])) {
+    const kk = parseFloat(strike);
+    if (kk < spot * 0.95 || kk > spot * 1.05) continue;
+    const c = Array.isArray(arr) ? arr[0] : arr;
+    if (!c) continue;
+    rows.push([kk, c.bid ?? null, c.ask ?? null, c.volatility ?? null, c.totalVolume ?? 0, c.openInterest ?? 0]);
+  }
+  if (!rows.length) return;
+  rows.sort((a, b) => a[0] - b[0]);
+  const hhmm = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  await env.SIGNAL_KV.put(k, JSON.stringify({ at: hhmm, spot, exp: expKey.split(':')[0], calls: rows }),
+    { expirationTtl: 90 * 86400 });
+}
+
 // Generic GitHub research-file upsert — same auth pattern as
 // mirrorHistoryToGitHub but path-parameterized and merge-based.
 // mutate(currentObj) → newObj. 404 (no file yet) starts from {}.
@@ -318,19 +381,29 @@ async function persistResearchArtifacts(env, etNow) {
   const todayISO = isoDateET(etNow);
   const ym = todayISO.slice(0, 7);
   const jobs = [
-    [`fly_marks_${todayISO}`,     `data/fly_marks/${ym}.json`,  'fly marks'],
-    [`tail_put_snap_${todayISO}`, `data/tail_puts/${ym}.json`,  'tail put snap'],
+    [`fly_marks_${todayISO}`,      `data/fly_marks/${ym}.json`,   'fly marks'],
+    [`tail_put_snap_${todayISO}`,  `data/tail_puts/${ym}.json`,   'tail put snap'],
+    [`diag_chain_snap_${todayISO}`,`data/diag_chains/${ym}.json`, 'diag chain snap'],
+    [`gxbf_chain_snap_${todayISO}`,`data/gxbf_chains/${ym}.json`, 'gxbf chain snap'],
   ];
+  const results = [];
   for (const [kvKey, ghPath, label] of jobs) {
     try {
       const raw = await env.SIGNAL_KV.get(kvKey);
-      if (!raw) continue;
+      if (!raw) { results.push({ label, skipped: 'no KV data' }); continue; }
       const payload = JSON.parse(raw);
-      await githubUpsertResearchFile(env, ghPath,
+      const r = await githubUpsertResearchFile(env, ghPath,
         cur => { cur[todayISO] = payload; return cur; },
         `auto: ${label} ${todayISO}`);
-    } catch (e) { console.warn(`[research-persist] ${label} failed:`, e.message); }
+      results.push({ label, ...r });
+      try { await logEvent(env, 'info', 'research', `${label} persisted to ${ghPath}`, {}); } catch (_) {}
+    } catch (e) {
+      results.push({ label, error: e.message });
+      console.warn(`[research-persist] ${label} failed:`, e.message);
+      try { await logEvent(env, 'error', 'research', `${label} persist FAILED`, { msg: e.message }); } catch (_) {}
+    }
   }
+  return results;
 }
 
 // ── Auto-Tilt advisory (2026-06-10) — ADVISORY ONLY, no sizing automation ──
@@ -3724,6 +3797,10 @@ async function handleScheduled(env) {
     catch (e) { console.warn('[cor1m] capture failed:', e.message || e); }
     // Research capture: 9:45-ish SPX put snapshot (Tail Hedge dataset, ThetaData-free)
     try { await captureTailPutSnap(env, etNow, masterChain); } catch (e) { console.warn('[tail-snap]', e.message); }
+    // Research capture: Diagonal 12:30 put chain + GXBF 9:35 call chain
+    // (with these all three bt datasets grow Schwab-only — ThetaData optional)
+    try { await captureDiagChainSnap(env, etNow, masterChain); } catch (e) { console.warn('[diag-snap]', e.message); }
+    try { await captureGxbfChainSnap(env, etNow, masterChain); } catch (e) { console.warn('[gxbf-snap]', e.message); }
   }
 
   // ── Diagonal trade: open/close at 12:30 ET. Idempotent via diag_done_<date>.
@@ -7924,6 +8001,16 @@ export default {
     //   ?force_no_schwab=1  — simulate Schwab failure (skip Schwab fetch)
     //   ?force_no_tasty=1   — simulate Tasty failure (skip Tasty fetch)
     //   ?force_no_token=1   — simulate Schwab token unavailable
+    if (url.pathname === '/research-persist-now' && request.method === 'GET') {
+      // Manual trigger for the EOD research persist (idempotent upserts).
+      const etNowR = toET(new Date());
+      let result;
+      try { result = await persistResearchArtifacts(env, etNowR); }
+      catch (e) { result = { error: e.message }; }
+      return new Response(JSON.stringify({ date: isoDateET(etNowR), result }, null, 2),
+        { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
+    }
+
     if (url.pathname === '/debug-morning-dual' && request.method === 'GET') {
       const cors = { 'Access-Control-Allow-Origin': '*' };
       const forceNoSchwab = url.searchParams.get('force_no_schwab') === '1';
@@ -9042,6 +9129,8 @@ export default {
           } catch (_) {}
           let tiltP = null;
           try { tiltP = await computeTiltLine(env, isoDateET(nextTrade(etP))); } catch (_) {}
+          // Retry research persistence (idempotent) — catches EOD-time failures
+          try { await persistResearchArtifacts(env, etP); } catch (_) {}
           const dcRaw = await env.SIGNAL_KV.get('discord_config');
           if (dcRaw) {
             const dc = JSON.parse(dcRaw);
