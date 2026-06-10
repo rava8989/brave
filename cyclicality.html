@@ -56,6 +56,7 @@ td:first-child,th:first-child{text-align:left}
   <div class="controls">
     <div class="ctl"><label>Week</label><select id="selWeek"></select></div>
     <div class="ctl"><label>Days shown (toggle any)</label><div class="seg" id="segDow"></div></div>
+    <div class="ctl"><label>Method</label><div class="seg" id="segMethod"></div></div>
     <div class="ctl"><label>Lookback — N prior same-weekdays each (holidays auto-skipped)</label><div class="seg" id="segLb"></div></div>
   </div>
 </div>
@@ -70,7 +71,8 @@ td:first-child,th:first-child{text-align:left}
 <div class="panel">
   <canvas id="chart"></canvas>
   <div class="legend">
-    <span class="lg-pred">Prediction (sum of N prior same-weekdays, cumulative across the week)</span>
+    <span class="lg-pred">Prediction above zero</span>
+    <span style="color:var(--text2)"><span style="color:var(--red);font-weight:700">━</span> Prediction below zero</span>
     <span class="lg-act">Actual</span>
     <span class="lg-zero">Zero</span>
   </div>
@@ -83,13 +85,25 @@ td:first-child,th:first-child{text-align:left}
   end-of-day direction matched reality. Compared against blindly predicting "up" every day (the market drifts up —
   a method must beat that to mean anything). Curve corr = does the intraday shape repeat (1 = yes, 0 = no).</div>
   <table id="valTable"><thead><tr>
-    <th>Weekday</th><th>n</th><th>Direction hit</th><th>Always-up baseline</th><th>Edge</th><th>Curve corr</th>
+    <th>Weekday</th><th>n</th><th>Direction hit</th><th>Always-up baseline</th><th>Edge</th><th>Avg Δ error (pts)</th><th>Curve corr</th>
   </tr></thead><tbody></tbody></table>
   <div class="note" id="valNote"></div>
 </div>
 
 <script>
-let DATA = null, lookback = 4, weekKey = null;
+let DATA = null, lookback = 4, weekKey = null, method = 'avg';
+const METHODS = [['avg','Average'],['med','Median'],['wavg','Weighted'],['sum','Sum (orig)']];
+function buildSlots(priMoves) {
+  const n = priMoves.length, ns = DATA.slots.length, out = new Array(ns);
+  for (let s = 0; s < ns; s++) {
+    const vals = priMoves.map(m => m[s] || 0);
+    if (method === 'sum') out[s] = vals.reduce((a, b) => a + b, 0);
+    else if (method === 'avg') out[s] = vals.reduce((a, b) => a + b, 0) / n;
+    else if (method === 'med') { const v = [...vals].sort((a, b) => a - b); out[s] = n % 2 ? v[(n-1)/2] : (v[n/2-1] + v[n/2]) / 2; }
+    else { let num = 0, den = 0; vals.forEach((v, k) => { num += v * (k + 1); den += k + 1; }); out[s] = num / den; }
+  }
+  return out;
+}
 let activeDows = new Set([0, 1, 2, 3, 4]);
 const LBS = [4, 5, 6, 7, 8, 9, 10, 13, 26, 52];
 const WD = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
@@ -148,6 +162,11 @@ function buildSegs() {
     else activeDows.add(w);
     buildSegs(); render();
   });
+  $('segMethod').innerHTML = METHODS.map(([k, lab]) =>
+    `<button data-m="${k}" class="${k === method ? 'on' : ''}">${lab}</button>`).join('');
+  $('segMethod').querySelectorAll('button').forEach(b => b.onclick = () => {
+    method = b.dataset.m; buildSegs(); render(); buildValidation();
+  });
   $('segLb').innerHTML = LBS.map(n =>
     `<button data-n="${n}" class="${n === lookback ? 'on' : ''}">${n}</button>`).join('');
   $('segLb').querySelectorAll('button').forEach(b => b.onclick = () => {
@@ -161,10 +180,7 @@ function buildSegs() {
 function predFor(dowW, beforeISO) {
   const pri = DATA.days.filter(x => x.w === dowW && x.d < beforeISO).slice(-lookback);
   if (pri.length < Math.min(4, lookback)) return null;
-  const ns = DATA.slots.length;
-  return { priors: pri.map(p => p.d),
-           slots: Array.from({ length: ns }, (_, s) =>
-             pri.reduce((a, p) => a + (p.m[s] || 0), 0)) };
+  return { priors: pri.map(p => p.d), slots: buildSlots(pri.map(p => p.m)) };
 }
 
 function compute() {
@@ -247,11 +263,18 @@ function draw(r) {
     s.forEach((v, i) => i ? x.lineTo(px(i), py(v)) : x.moveTo(px(i), py(v)));
     x.stroke();
   };
-  // prediction fill
-  x.globalAlpha = 0.12; x.fillStyle = '#818cf8'; x.beginPath(); x.moveTo(px(0), py(0));
-  r.predCum.forEach((v, i) => x.lineTo(px(i), py(v)));
-  x.lineTo(px(N - 1), py(0)); x.closePath(); x.fill(); x.globalAlpha = 1;
-  line(r.predCum, '#818cf8', 2.4);
+  // prediction — color-split at zero: indigo above, red below (clip passes)
+  const y0 = py(0);
+  const clipDraw = (top, bottom, color) => {
+    x.save(); x.beginPath(); x.rect(L, top, W - L - R, bottom - top); x.clip();
+    x.globalAlpha = 0.13; x.fillStyle = color; x.beginPath(); x.moveTo(px(0), y0);
+    r.predCum.forEach((v, i) => x.lineTo(px(i), py(v)));
+    x.lineTo(px(N - 1), y0); x.closePath(); x.fill(); x.globalAlpha = 1;
+    line(r.predCum, color, 2.4);
+    x.restore();
+  };
+  clipDraw(T, y0, '#818cf8');        // above zero
+  clipDraw(y0, H - B, '#ef4444');    // below zero
   line(r.actCum, '#f59e0b', 2);
 }
 
@@ -259,40 +282,45 @@ function draw(r) {
 function buildValidation() {
   const tb = $('valTable').querySelector('tbody');
   const ns = DATA.slots.length;
-  let rows = '', totHit = 0, totN = 0, totBaseUp = 0, totDays = 0;
+  let rows = '', totHit = 0, totN = 0, totBaseUp = 0, totDays = 0, totErr = 0, zeroErr = 0, zeroN = 0;
   for (let w = 0; w < 5; w++) {
     const idxs = DATA.days.map((d, i) => i).filter(i => DATA.days[i].w === w);
     const net = i => DATA.days[i].m.reduce((a, m) => a + (m || 0), 0);
     const baseUp = idxs.filter(i => net(i) > 0).length / idxs.length;
-    let hit = 0, tot = 0, csum = 0;
+    let hit = 0, tot = 0, csum = 0, esum = 0;
     for (let j = lookback; j < idxs.length; j++) {
       const pri = idxs.slice(j - lookback, j), tgt = idxs[j];
-      let pe = 0; const pred = new Array(ns), act = new Array(ns);
-      for (let s = 0; s < ns; s++) {
-        let p = 0; for (const i of pri) p += (DATA.days[i].m[s] || 0);
-        pred[s] = p; pe += p; act[s] = DATA.days[tgt].m[s] || 0;
-      }
-      const ae = act.reduce((a, b) => a + b, 0);
+      const pred = buildSlots(pri.map(i => DATA.days[i].m));
+      const act = Array.from({ length: ns }, (_, s) => DATA.days[tgt].m[s] || 0);
+      const pe = pred.reduce((a, b) => a + b, 0), ae = act.reduce((a, b) => a + b, 0);
       if (!pe || !ae) continue;
       tot++; if ((pe > 0) === (ae > 0)) hit++;
+      esum += Math.abs(pe - ae);
       csum += corr(cumArr(pred), cumArr(act));
     }
     const hr = 100 * hit / tot, ed = hr - 100 * baseUp;
     totHit += hit; totN += tot; totBaseUp += baseUp * tot; totDays += tot;
+    totErr += esum; zeroErr += idxs.reduce((a, i) => a + Math.abs(net(i)), 0); zeroN += idxs.length;
     rows += `<tr><td>${WD[w]}</td><td>${tot}</td><td>${hr.toFixed(1)}%</td>` +
       `<td>${(100 * baseUp).toFixed(1)}%</td>` +
       `<td class="${ed >= 1 ? 'pos' : ed <= -1 ? 'neg' : ''}">${ed >= 0 ? '+' : ''}${ed.toFixed(1)}pp</td>` +
+      `<td>${(esum / tot).toFixed(1)}</td>` +
       `<td>${(csum / tot).toFixed(3)}</td></tr>`;
   }
   const thr = 100 * totHit / totN, tbase = 100 * totBaseUp / totDays, ted = thr - tbase;
+  const avgErr = totErr / totN, zBase = zeroErr / zeroN;
   rows += `<tr style="font-weight:700"><td>ALL</td><td>${totN}</td><td>${thr.toFixed(1)}%</td>` +
-    `<td>${tbase.toFixed(1)}%</td><td class="${ted >= 1 ? 'pos' : ted <= -1 ? 'neg' : ''}">${ted >= 0 ? '+' : ''}${ted.toFixed(1)}pp</td><td></td></tr>`;
+    `<td>${tbase.toFixed(1)}%</td><td class="${ted >= 1 ? 'pos' : ted <= -1 ? 'neg' : ''}">${ted >= 0 ? '+' : ''}${ted.toFixed(1)}pp</td>` +
+    `<td>${avgErr.toFixed(1)} vs ${zBase.toFixed(1)} flat</td><td></td></tr>`;
   tb.innerHTML = rows;
   $('cHit').textContent = thr.toFixed(0) + '%';
   $('cHitN').textContent = `all weekdays · lookback ${lookback} · vs ${tbase.toFixed(0)}% always-up`;
-  $('verdict').innerHTML = ted >= 3
-    ? `<b>Lookback ${lookback}: +${ted.toFixed(1)}pp over the drift baseline overall.</b> Possibly something here — verify it holds in both halves of history before trusting it.`
-    : `<b>Reality check:</b> at lookback ${lookback} this method calls direction ${thr.toFixed(1)}% vs ${tbase.toFixed(1)}% for blindly guessing "up" (${ted >= 0 ? '+' : ''}${ted.toFixed(1)}pp). The pretty curve is mostly upward drift, not a repeating cycle. Use the page to SEE the seasonality — don't trade it blind.`;
+  const mLab = (METHODS.find(m => m[0] === method) || ['', method])[1];
+  $('verdict').innerHTML = (method === 'sum'
+    ? `<b>Note on Sum:</b> summing ${lookback} days draws a curve ~${lookback}× the size of any real day — average Δ error ${avgErr.toFixed(0)} pts vs ${zBase.toFixed(0)} pts if you predicted nothing at all. Use Average for a realistically-scaled curve. `
+    : `<b>${mLab}, lookback ${lookback}:</b> average end-of-day miss ${avgErr.toFixed(1)} pts vs ${zBase.toFixed(1)} pts for predicting zero. `) + (ted >= 3
+    ? `Direction edge +${ted.toFixed(1)}pp over drift — possibly something, verify in both halves before trusting.`
+    : `Direction: ${thr.toFixed(1)}% vs ${tbase.toFixed(1)}% always-up (${ted >= 0 ? '+' : ''}${ted.toFixed(1)}pp). The curve shows seasonality — it does not predict. (2026-06-10 research: no method/lookback beat the flat-zero baseline on Δ by more than 1%.)`);
   $('valNote').textContent = 'Per-weekday, at the selected lookback. Lookback always uses N real sessions — holidays are skipped automatically (a missing Monday pulls the 5th week back).';
 }
 function cumArr(a) { let c = 0; return a.map(v => (c += v, c)); }
