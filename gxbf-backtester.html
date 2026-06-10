@@ -1408,15 +1408,6 @@ function resolveDTE(availableDTEs, targetDTE, tolerance, policy) {
 // ══════════════════════════════════════════════════════════════════════
 // Special day filter — computes sets from the data calendar
 // ══════════════════════════════════════════════════════════════════════
-function _thirdFriday(y, m) {
-  let d = new Date(Date.UTC(y, m, 1));
-  let count = 0;
-  while (true) {
-    if (d.getUTCDay() === 5 && ++count === 3) return d.toISOString().slice(0, 10);
-    d.setUTCDate(d.getUTCDate() + 1);
-  }
-}
-
 function buildSpecialDateSets(tradingDays, byDate = null) {
   // Port of backtester.html special-date builder.
   const sets = {};
@@ -1424,21 +1415,26 @@ function buildSpecialDateSets(tradingDays, byDate = null) {
    'VIX_MID','VIX_DEAD',
    'AAPL','GOOGL','MSFT','TSLA','META','NVDA','AMZN','ALL_EARNINGS'].forEach(k => sets[k] = new Set());
 
-  const OPEX_OVERRIDES = { '2025-04-18': '2025-04-17' };  // Good Friday
-
-  // OPEX + VIX expiry (Wednesday 2 days before 3rd Friday)
+  // OPEX / OPEX-1 / OPEX+1 / VIX-expiry / FED / CPI come from SignalEngine —
+  // the SAME calendars live trading uses (CLAUDE.md rule 2: single source).
+  // The old inline derivation drifted three ways (2026-06-10 audit findings
+  // 2-4): June-2026 OPEX is Thu 06-18 (3rd Friday = Juneteenth) so live
+  // auto-triggers OPEX+1 on Mon 06-22; real VIX expirations wander up to a
+  // week from "OPEX-2"; and the hand-typed FED list had 2026-06-10/2026-11-04
+  // (not FOMC days) instead of 2026-06-17/2026-10-28.
   const tdSet = new Set(tradingDays);
-  for (let y = 2023; y <= 2027; y++) {
-    for (let m = 0; m < 12; m++) {
-      const raw = _thirdFriday(y, m);
-      const opexDate = OPEX_OVERRIDES[raw] || raw;
-      if (tdSet.has(opexDate)) sets['OPEX'].add(opexDate);
-      const opexD = new Date(opexDate + 'T12:00Z');
-      const opex1D = new Date(opexD); opex1D.setUTCDate(opexD.getUTCDate() - 1);
-      const vixD   = new Date(opexD); vixD.setUTCDate(opexD.getUTCDate() - 2);
-      sets['OPEX-1'].add(opex1D.toISOString().slice(0, 10));
-      sets['VIX'].add(vixD.toISOString().slice(0, 10));
-    }
+  const SEcal = globalThis.SignalEngine;
+  const _MN = {January:1,February:2,March:3,April:4,May:5,June:6,July:7,August:8,September:9,October:10,November:11,December:12};
+  const _li = s => { const p = s.replace(',', '').split(' '); return `${p[2]}-${String(_MN[p[0]]).padStart(2,'0')}-${String(p[1]).padStart(2,'0')}`; };
+  if (!SEcal || !SEcal.opexSch) {
+    console.error('[gxbf-bt] SignalEngine schedules not loaded — special-day sets will be empty.');
+  } else {
+    SEcal.opexSch.map(_li).forEach(o => {
+      if (tdSet.has(o)) sets['OPEX'].add(o);
+      const i = tradingDays.indexOf(o);
+      if (i > 0) sets['OPEX-1'].add(tradingDays[i - 1]);
+    });
+    SEcal.vixSch.map(_li).forEach(d => sets['VIX'].add(d));
   }
   // OPEX+1: next actual trading day after OPEX
   sets['OPEX'].forEach(o => {
@@ -1452,35 +1448,31 @@ function buildSpecialDateSets(tradingDays, byDate = null) {
     const ym = d.slice(0, 7);
     (byMonth[ym] = byMonth[ym] || []).push(d);
   });
-  Object.values(byMonth).forEach(ds => {
+  const _mkD = s => new Date(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10), 12);
+  const _months = Object.keys(byMonth).sort();
+  _months.forEach(ym => {
+    const ds = byMonth[ym];
     sets['NM'].add(ds[0]);
-    sets['EOM'].add(ds[ds.length - 1]);
-    if (ds.length >= 2) sets['EOM-1'].add(ds[ds.length - 2]);
+    // Trailing-month guard (audit finding 5): for the newest, incomplete
+    // month the last date PRESENT IN THE DATA is not the real EOM — verify
+    // against the actual calendar before tagging (else the newest day is
+    // silently gated out / rebuild forces gxbfPL=null on it).
+    const isLastMonth = ym === _months[_months.length - 1];
+    const realEom = !isLastMonth || (SEcal && SEcal.isLastTradeMo && SEcal.isLastTradeMo(_mkD(ds[ds.length - 1])));
+    if (realEom) {
+      sets['EOM'].add(ds[ds.length - 1]);
+      if (ds.length >= 2) sets['EOM-1'].add(ds[ds.length - 2]);
+    } else if (SEcal && SEcal.isEomN && SEcal.isEomN(1, _mkD(ds[ds.length - 1]))) {
+      sets['EOM-1'].add(ds[ds.length - 1]);
+    }
   });
 
-  // FED (FOMC announcement days) — verified calendar
-  ['2023-02-01','2023-03-22','2023-05-03','2023-06-14','2023-07-26',
-   '2023-09-20','2023-11-01','2023-12-13',
-   '2024-01-31','2024-03-20','2024-05-01','2024-06-12','2024-07-31',
-   '2024-09-18','2024-11-07','2024-12-18',
-   '2025-01-29','2025-03-19','2025-05-07','2025-06-18','2025-07-30',
-   '2025-09-17','2025-10-29','2025-12-10',
-   '2026-01-28','2026-03-18','2026-04-29','2026-06-10','2026-07-29',
-   '2026-09-16','2026-11-04','2026-12-09'
-  ].forEach(d => sets['FED'].add(d));
+  // FED (FOMC announcement days) — from SignalEngine (canonical, used live)
+  if (SEcal && SEcal.fedSch) SEcal.fedSch.map(_li).forEach(d => sets['FED'].add(d));
 
-  // CPI (BLS release dates — verified against bls.gov archive)
-  ['2023-01-12','2023-02-14','2023-03-14','2023-04-12','2023-05-10',
-   '2023-06-13','2023-07-12','2023-08-10','2023-09-13','2023-10-12',
-   '2023-11-14','2023-12-12',
-   '2024-01-11','2024-02-13','2024-03-12','2024-04-10','2024-05-15',
-   '2024-06-12','2024-07-11','2024-08-14','2024-09-11','2024-10-10',
-   '2024-11-13','2024-12-11',
-   '2025-01-15','2025-02-12','2025-03-12','2025-04-10','2025-05-13',
-   '2025-06-11','2025-07-15','2025-08-12','2025-09-11','2025-10-24',
-   '2025-12-18',
-   '2026-01-13','2026-02-13','2026-03-11'
-  ].forEach(d => sets['CPI'].add(d));
+  // CPI — from SignalEngine (canonical; the old inline list ended 2026-03-11
+  // so e.g. 2026-06-10 was silently not CPI-tagged in the backtester)
+  if (SEcal && SEcal.cpiSch) SEcal.cpiSch.map(_li).forEach(d => sets['CPI'].add(d));
 
   // Earnings — big-tech AMC announcement days (IV crush day for 0DTE/short-DTE).
   // 2024-2026 dates verified via company IR pages, SEC 8-K filings, CNBC/Bloomberg

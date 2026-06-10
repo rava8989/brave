@@ -183,8 +183,15 @@ def read_spx_bars(date_iso: str) -> tuple[float, float, dict[str, float]]:
     if not path.exists():
         raise FileNotFoundError(f'SPX bars missing: {path}')
     rows = _read_csv_rows(path)
+    # ThetaData pads some sessions with all-zero placeholder bars (e.g. an
+    # empty 09:30 row and empty 16:13-16:15 rows). Taking rows[0]/rows[-1]
+    # blindly poisoned 2026-05-26..06-04 with vixOpen=0/spxClose=0 — the
+    # backtester then fabricated max-loss trades (2026-06-10 audit, P15).
+    rows = [r for r in rows
+            if float(r.get('open') or r.get('Open') or 0) > 0
+            and float(r.get('close') or r.get('Close') or 0) > 0]
     if not rows:
-        raise ValueError(f'No SPX bars in {path}')
+        raise ValueError(f'No non-zero SPX bars in {path}')
     spxOpen  = float(rows[0].get('open')  or rows[0].get('Open')  or rows[0].get('close'))
     spxClose = float(rows[-1].get('close') or rows[-1].get('Close'))
     spot_by_hhmm: dict[str, float] = {}
@@ -209,8 +216,11 @@ def read_vix_bars(date_iso: str) -> tuple[float, float]:
     if not path.exists():
         raise FileNotFoundError(f'VIX bars missing: {path}')
     rows = _read_csv_rows(path)
+    rows = [r for r in rows   # drop zero placeholder bars — see read_spx_bars
+            if float(r.get('open') or r.get('Open') or 0) > 0
+            and float(r.get('close') or r.get('Close') or 0) > 0]
     if not rows:
-        raise ValueError(f'No VIX bars in {path}')
+        raise ValueError(f'No non-zero VIX bars in {path}')
     vixOpen  = float(rows[0].get('open')  or rows[0].get('Open')  or rows[0].get('close'))
     vixClose = float(rows[-1].get('close') or rows[-1].get('Close'))
     return vixOpen, vixClose
