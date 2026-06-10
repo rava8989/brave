@@ -456,6 +456,26 @@ body {
       <div class="sz-field"><label class="sz-label" for="szA_diagonal">Diagonal</label><div class="sz-wrap sz-p"><input id="szA_diagonal" class="sz-input" type="number" value="5" min="0" max="100" step="1"></div></div>
     </div>
 
+    <!-- Allocation mode: Fixed weights (existing default) vs Auto-Tilt (rolling MAR).
+         Auto-Tilt re-splits the SAME total allocation % across the active strategies
+         every simulated day by trailing-window MAR — strictly prior days (no look-ahead). -->
+    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px;font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.05em;margin:14px 0 8px;">
+      Allocation mode
+      <span style="font-weight:500;color:var(--text3);text-transform:none;letter-spacing:0;">Auto-Tilt re-splits the same total allocation % daily by trailing rolling-MAR (prior days only — no look-ahead)</span>
+    </div>
+    <div class="scale-toggle" style="padding:0 4px 6px">
+      <label><input type="radio" name="allocMode" value="fixed" checked> Fixed weights</label>
+      <label><input type="radio" name="allocMode" value="tilt"> Auto-Tilt <span id="tiltWinEcho">60</span>d</label>
+    </div>
+    <div class="sz-grid" id="tiltParams" style="display:none;grid-template-columns:repeat(auto-fit,minmax(180px,1fr))">
+      <div class="sz-field"><label class="sz-label" for="szTiltWin">Window (trading days) <span class="sz-dot" data-tip="Trailing window per simulated day: each strategy's MAR = sum(1-lot P/L) ÷ max drawdown inside the prior N trading days — strictly before the day (no look-ahead). A strategy with fewer than 5 trades in the window gets the neutral (equal) weight.">ⓘ</span></label>
+        <div class="sz-wrap"><input id="szTiltWin" class="sz-input" type="number" value="60" min="5" step="5"></div></div>
+      <div class="sz-field"><label class="sz-label" for="szTiltFloor">Floor × equal-weight <span class="sz-dot" data-tip="Lower bound per strategy as a multiple of equal-weight (1/N of active strategies). 0.25 = even a negative-MAR strategy keeps 25% of its equal-weight share — never fully abandoned.">ⓘ</span></label>
+        <div class="sz-wrap"><input id="szTiltFloor" class="sz-input" type="number" value="0.25" min="0" max="1" step="0.05"></div></div>
+      <div class="sz-field"><label class="sz-label" for="szTiltCap">Cap × equal-weight <span class="sz-dot" data-tip="Upper bound per strategy as a multiple of equal-weight. 2.0 = a hot strategy can take at most 2× its equal-weight share — never over-concentrated.">ⓘ</span></label>
+        <div class="sz-wrap"><input id="szTiltCap" class="sz-input" type="number" value="2.0" min="1" step="0.25"></div></div>
+    </div>
+
     <div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px;font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.05em;margin:14px 0 8px;">
       Max contracts per strategy
       <span style="font-weight:500;color:var(--text3);text-transform:none;letter-spacing:0;">optional — leave blank for no cap</span>
@@ -506,6 +526,11 @@ body {
       </div>
       <div class="chart-box" id="chartEquity" style="justify-content:flex-start;align-items:flex-start;padding:8px 12px;min-height:420px">
         <div style="text-align:center;width:100%;color:var(--text3);padding:100px 0">Portfolio equity curve will render here after RUN</div>
+      </div>
+      <!-- Auto-Tilt only: evolving per-strategy allocation % (stacked area). Hidden in Fixed mode. -->
+      <div class="chart-box" id="tiltWeightsBox" style="display:none;flex-direction:column;justify-content:flex-start;align-items:stretch;padding:8px 12px;min-height:280px">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:var(--text2);padding:4px 6px 8px;">Auto-Tilt — evolving allocation % of equity per strategy (stacked)</div>
+        <div style="position:relative;height:230px;width:100%"><canvas id="tiltWeightsCanvas"></canvas></div>
       </div>
     </div>
     <div class="tab-panel" data-tab="strategies">
@@ -848,6 +873,119 @@ function _szRangeRows() {
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// Auto-Tilt (rolling MAR) — alternative allocation mode. Each simulated
+// day the user's TOTAL allocation % is re-split across the ACTIVE alloc
+// strategies (allocPct > 0) proportional to each one's trailing-window
+// MAR. Fixed mode bypasses all of this (dayAlloc === allocPct in
+// _sizingRun), so toggle-off behavior stays byte-identical.
+// ══════════════════════════════════════════════════════════════════════
+function _tiltMode() {
+  const r = document.querySelector('input[name="allocMode"]:checked');
+  return (r && r.value === 'tilt') ? 'tilt' : 'fixed';
+}
+function _tiltGetParams() {
+  return {
+    win:    Math.max(5, parseInt(document.getElementById('szTiltWin')?.value, 10) || 60),
+    floorM: Math.max(0, parseFloat(document.getElementById('szTiltFloor')?.value) || 0.25),
+    capM:   Math.max(1, parseFloat(document.getElementById('szTiltCap')?.value) || 2),
+    minTrades: 5,   // < 5 trades in window → neutral (equal) weight
+    marCap: 99,     // windowMAR ceiling (also used when maxDD = 0 and sum > 0)
+  };
+}
+// Trailing-window MAR for one strategy over sorted[i-win .. i-1] — STRICTLY
+// days before index i (no look-ahead). Uses the raw 1-lot P/L (row[fld]) on
+// only the days the strategy actually traded; maxDD is the peak-to-trough $
+// decline of the cumulative P/L inside the window.
+function _tiltWindowMAR(sorted, i, fld, p) {
+  const lo = Math.max(0, i - p.win);
+  let n = 0, sum = 0, cum = 0, peak = 0, mdd = 0;
+  for (let j = lo; j < i; j++) {
+    const v = sorted[j][fld];
+    if (v == null || v === 0) continue;
+    n++; sum += v; cum += v;
+    if (cum > peak) peak = cum;
+    const dd = peak - cum;
+    if (dd > mdd) mdd = dd;
+  }
+  if (n < p.minTrades) return { neutral: true, mar: 0 };
+  const mar = mdd > 0 ? sum / mdd : (sum > 0 ? p.marCap : 0);
+  return { neutral: false, mar };
+}
+// Per-day weight FRACTIONS across the active alloc strategies (actKeys is a
+// subset of _SZ_ALLOC_KEYS). Neutral strategies get the equal-weight share
+// (1/N); the rest split the remaining mass ∝ clamp(windowMAR, 0, marCap)
+// (negative MAR → 0 → lands on the floor). Every weight is then hard-bounded
+// to [floorM, capM] × equal-weight. The bounds are HARD per the spec — no
+// renormalisation afterwards (renormalising could push a weight back over
+// the cap), so the summed allocation can drift slightly when bounds bite.
+function _tiltWeightsForDay(sorted, i, actKeys, p) {
+  const nAct = actKeys.length;
+  if (!nAct) return {};
+  const eq = 1 / nAct;
+  const raw = {}, isNeutral = {};
+  let rawSum = 0, nNeutral = 0;
+  for (const [k,, fld] of actKeys) {
+    const m = _tiltWindowMAR(sorted, i, fld, p);
+    if (m.neutral) { isNeutral[k] = true; nNeutral++; }
+    else { raw[k] = Math.min(Math.max(m.mar, 0), p.marCap); rawSum += raw[k]; }
+  }
+  const nNon = nAct - nNeutral;
+  const nonNeutralMass = 1 - nNeutral * eq;   // mass left for MAR-scored strategies
+  const w = {};
+  for (const [k] of actKeys) {
+    let wi;
+    if (isNeutral[k])    wi = eq;
+    else if (rawSum > 0) wi = nonNeutralMass * (raw[k] / rawSum);
+    else                 wi = nonNeutralMass / nNon;  // all scored MARs ≤ 0 → equal split
+    w[k] = Math.min(Math.max(wi, p.floorM * eq), p.capM * eq);
+  }
+  return w;
+}
+// Fixed-weights counterpart of the _sizingRun day loop — SAME sizing math
+// (forced-1 → max-contracts cap order, tail per-$50k, compounding) but
+// portfolio KPIs only. Used in Auto-Tilt mode for the side-by-side Fixed vs
+// Auto-Tilt summary; its numbers match a real Fixed-mode RUN exactly.
+function _szFixedCounterpart(sorted, startCap, allocPct, maxCt, tailPer50k, capPerCt) {
+  let equity = startCap, peak = startCap, mddFrac = 0;
+  let firstDate = null, lastDate = null;
+  for (const row of sorted) {
+    let dayPnL = 0, traded = false;
+    for (const [k,, fld] of _SZ_KEYS) {
+      const v = row[fld];
+      if (v == null || v === 0) continue;
+      let contracts;
+      if (k === 'tail') {
+        contracts = tailPer50k > 0 ? Math.floor(equity * tailPer50k / 50000) : 0;
+        if (contracts < 1) continue;
+      } else {
+        const cpc = capPerCt[k];
+        contracts = cpc > 0 ? Math.floor((allocPct[k] / 100 * equity) / cpc) : 0;
+        if (contracts < 1 && allocPct[k] > 0) contracts = 1;
+        if (contracts < 1) continue;
+        if (maxCt[k] != null && contracts > maxCt[k]) contracts = maxCt[k];
+      }
+      dayPnL += v * contracts; traded = true;
+    }
+    if (traded) {
+      equity += dayPnL;
+      if (!firstDate) firstDate = row.date;
+      lastDate = row.date;
+      if (equity > peak) peak = equity;
+      const ddf = peak > 0 ? (equity - peak) / peak : 0;
+      if (ddf < mddFrac) mddFrac = ddf;
+    }
+  }
+  if (!firstDate) return null;
+  const maxDDpct = mddFrac * 100;
+  const years = Math.max(_szDays(firstDate, lastDate) / 365.25, 1/365.25);
+  const cagr = (startCap > 0 && equity > 0)
+    ? (Math.pow(equity / startCap, 1 / years) - 1) * 100
+    : (equity <= 0 ? -100 : 0);
+  const mar = maxDDpct < 0 ? cagr / Math.abs(maxDDpct) : 0;
+  return { pl: equity - startCap, maxDDpct, mar, endCap: equity };
+}
+
 function _sizingRun() {
   const el = document.getElementById('sizingCalcResults');
   if (!el) return;
@@ -876,6 +1014,16 @@ function _sizingRun() {
   // (Distinct from % allocation: this scales linearly with account value, with
   // a $50k granularity step — no fractional contracts, no fixed dollar budget.)
   const tailPer50k = Math.max(0, parseInt(document.getElementById('szT_tail')?.value, 10) || 0);
+
+  // ── Auto-Tilt (rolling MAR) — OFF by default. When ON, each day's
+  //    allocation % per strategy = user's TOTAL allocation % re-split by
+  //    trailing-window MAR (_tiltWeightsForDay). Fixed mode keeps
+  //    dayAlloc === allocPct below, so default behavior is unchanged. ──
+  const tiltOn = _tiltMode() === 'tilt';
+  const tiltP = _tiltGetParams();
+  const tiltActKeys = _SZ_ALLOC_KEYS.filter(([k]) => allocPct[k] > 0);
+  const tiltTotal = tiltActKeys.reduce((s, [k]) => s + allocPct[k], 0);
+  const tiltTrack = [];   // [{date, m8bf:…%, …}] per-day alloc % for the weights chart
 
   // Compact currency so values always fit their cell (Option-Omega style):
   // < $1M shown in full with commas; $1M+ abbreviated M/B/T.
@@ -908,7 +1056,17 @@ function _sizingRun() {
     el.innerHTML = '<div style="padding:12px;color:var(--text3)">No trading days in the selected date range.</div>';
     return;
   }
-  for (const row of sorted) {
+  for (let di = 0; di < sorted.length; di++) {
+    const row = sorted[di];
+    // Per-day allocation map: Fixed mode = the static inputs (same object,
+    // identical math); Auto-Tilt = dynamic re-split of the same total %.
+    let dayAlloc = allocPct;
+    if (tiltOn && tiltActKeys.length && tiltTotal > 0) {
+      const w = _tiltWeightsForDay(sorted, di, tiltActKeys, tiltP);
+      dayAlloc = { m8bf: 0, strad: 0, gxbf: 0, bobf: 0, diagonal: 0 };
+      for (const [k] of tiltActKeys) dayAlloc[k] = tiltTotal * w[k];
+      tiltTrack.push(Object.assign({ date: row.date }, dayAlloc));
+    }
     let dayPnL = 0, traded = false;
     for (const [k,, fld] of _SZ_KEYS) {
       const v = row[fld];
@@ -922,8 +1080,8 @@ function _sizingRun() {
       } else {
         // Sigma 3 + Diagonal: Option-Omega style compounding % allocation.
         const cpc = capPerCt[k];
-        contracts = cpc > 0 ? Math.floor((allocPct[k] / 100 * equity) / cpc) : 0;
-        if (contracts < 1 && allocPct[k] > 0) { contracts = 1; perStrat[k].forced = true; }
+        contracts = cpc > 0 ? Math.floor((dayAlloc[k] / 100 * equity) / cpc) : 0;
+        if (contracts < 1 && dayAlloc[k] > 0) { contracts = 1; perStrat[k].forced = true; }
         if (contracts < 1) continue;             // 0% allocation = excluded
         // Apply optional per-strategy max-contracts cap (null = no cap).
         if (maxCt[k] != null && contracts > maxCt[k]) { contracts = maxCt[k]; perStrat[k].capped = true; }
@@ -982,6 +1140,20 @@ function _sizingRun() {
     firstDate, lastDate,
   };
 
+  // Auto-Tilt extras: the fixed-weights counterpart (side-by-side summary —
+  // identical to what a Fixed-mode RUN reports) + the per-strategy AVERAGE
+  // tilted allocation % (shown where Fixed mode shows the static alloc %).
+  let fixedCmp = null;
+  const tiltAvgAlloc = {};
+  if (tiltOn) {
+    fixedCmp = _szFixedCounterpart(sorted, startCap, allocPct, maxCt, tailPer50k, capPerCt);
+    for (const [k] of _SZ_ALLOC_KEYS) {
+      let s = 0;
+      for (const t of tiltTrack) s += t[k];
+      tiltAvgAlloc[k] = tiltTrack.length ? s / tiltTrack.length : 0;
+    }
+  }
+
   // Per-strategy KPIs — series is already contract-scaled; uses startCap base
   // for comparability (matches the prompt spec).
   const rows = [];
@@ -1009,16 +1181,31 @@ function _sizingRun() {
       ? ` <span style="color:#f59e0b;font-weight:700" title="capped at ${maxCt[k]} contracts per trade">⊏${maxCt[k]}${ps.capped ? '*' : ''}</span>`
       : '';
     const share = (perStrat[k].pnl / totAbs) * 100;
+    // Auto-Tilt: the static alloc % is replaced by a daily dynamic split —
+    // show the run's AVERAGE tilted % instead (tail isn't tilted; unchanged).
+    const allocTxt = (tiltOn && tiltAvgAlloc[k] != null)
+      ? `auto ~${tiltAvgAlloc[k].toFixed(1)}%` : `${allocPct[k]}%`;
     return `<div class="sz-mini"><b>${label}</b> &nbsp;
-      <span>Alloc</span> <b>${allocPct[k]}%</b> &nbsp;
+      <span>Alloc</span> <b>${allocTxt}</b> &nbsp;
       <span>Ct</span> <b style="${cl2(1)}">${ctTxt}</b>${warn}${capMini} &nbsp;
       <span>P/L</span> <b style="${cl2(kpi.pl)}">${fmt$(kpi.pl)}</b> &nbsp;
       <span>% of port</span> <b style="${cl2(share)}">${(share>=0?'+':'')+share.toFixed(1)}%</b> &nbsp;
       <span>Win</span> <b>${kpi.winPct.toFixed(1)}%</b></div>`;
   };
 
+  // Auto-Tilt: side-by-side vs the fixed-weights counterpart (same inputs,
+  // static split). Δ colors show whether tilting helped on this data.
+  const tiltCmpHtml = (tiltOn && fixedCmp) ? `
+     <div class="sz-mini" style="display:inline-block;margin:0 0 10px 8px" title="Same inputs run with STATIC weights — what a Fixed-mode RUN reports">
+       <b>vs Fixed</b> &nbsp;
+       <span>P/L</span> <b style="${cl2(fixedCmp.pl)}">${fmt$(fixedCmp.pl)}</b> &nbsp;
+       <span>Δ</span> <b style="${cl2(port.pl - fixedCmp.pl)}">${fmt$(port.pl - fixedCmp.pl)}</b> &nbsp;
+       <span>MaxDD</span> <b style="color:#ef4444">${fixedCmp.maxDDpct.toFixed(1)}%</b> &nbsp;
+       <span>MAR</span> <b>${fixedCmp.mar.toFixed(2)}</b>
+     </div>` : '';
+
   el.innerHTML =
-    `<div class="sz-sub">Combo portfolio — compounded</div>
+    `<div class="sz-sub">Combo portfolio — compounded${tiltOn ? ' · AUTO-TILT ' + tiltP.win + 'd' : ''}</div>
      <div class="sz-mini" style="display:inline-block;margin-bottom:10px">
        <b>P/L</b> <b style="${cl2(port.pl)}">${fmt$(port.pl)}</b> &nbsp;
        <span>CAGR</span> <b style="${cl2(port.cagr)}">${port.cagr.toFixed(1)}%</b> &nbsp;
@@ -1026,7 +1213,7 @@ function _sizingRun() {
        <span>MAR</span> <b>${port.mar.toFixed(2)}</b> &nbsp;
        <span>Start</span> <b>${fmt$(port.startCap)}</b> &nbsp;
        <span>End</span> <b>${fmt$(port.endCap)}</b>
-     </div>
+     </div>${tiltCmpHtml}
      <div class="sz-sub">Per strategy</div><div class="sz-strip">${rows.map(miniLine).join('')}</div>
      <div style="margin-top:14px;padding:10px 12px;background:var(--bg3);border-radius:8px;font-size:11px;line-height:1.6;color:var(--text3)">
        <div style="color:var(--text);font-weight:700;margin-bottom:6px">Max risk / contract (fixed — you set these):
@@ -1041,6 +1228,69 @@ function _sizingRun() {
   // Stash for the tab renderers, then build the 4 report tabs.
   window._szLast = { combo, eqCurve, perStrat, port, allocPct, capPerCt, maxCt, rows, startCap };
   try { _buildResultTabs(); } catch (e) { console.error('[mst] tab build failed', e); }
+  try { _tiltRenderWeights(tiltOn ? tiltTrack : null); } catch (e) { console.error('[mst] tilt chart failed', e); }
+}
+
+// Auto-Tilt weights chart: stacked area of each strategy's allocation % of
+// equity over the run. Vanilla canvas (no chart lib on this page), DPR-aware.
+// Pass null (Fixed mode) to hide the box.
+const _TILT_COLORS = { m8bf:'#6366f1', strad:'#f59e0b', gxbf:'#22c55e', bobf:'#ec4899', diagonal:'#06b6d4' };
+function _tiltRenderWeights(track) {
+  const box = document.getElementById('tiltWeightsBox');
+  if (!box) return;
+  if (!track || track.length < 2) { box.style.display = 'none'; return; }
+  box.style.display = 'flex';
+  const canvas = document.getElementById('tiltWeightsCanvas');
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.parentElement.clientWidth || 800, H = canvas.parentElement.clientHeight || 230;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, W, H);
+  const keys = Object.keys(_TILT_COLORS);
+  const padL = 34, padR = 8, padT = 6, padB = 18;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  // y-scale: 0 → max total stacked % across days (usually the total alloc %)
+  let maxTot = 0;
+  for (const t of track) {
+    let s = 0; for (const k of keys) s += (t[k] || 0);
+    if (s > maxTot) maxTot = s;
+  }
+  if (maxTot <= 0) { box.style.display = 'none'; return; }
+  const x = i => padL + (i / (track.length - 1)) * plotW;
+  const y = v => padT + plotH - (v / maxTot) * plotH;
+  // stacked areas, bottom-up
+  const base = new Array(track.length).fill(0);
+  for (const k of keys) {
+    const tops = track.map((t, i) => base[i] + (t[k] || 0));
+    ctx.beginPath();
+    ctx.moveTo(x(0), y(base[0]));
+    for (let i = 0; i < track.length; i++) ctx.lineTo(x(i), y(tops[i]));
+    for (let i = track.length - 1; i >= 0; i--) ctx.lineTo(x(i), y(base[i]));
+    ctx.closePath();
+    ctx.fillStyle = _TILT_COLORS[k] + '99';   // ~60% alpha
+    ctx.fill();
+    for (let i = 0; i < track.length; i++) base[i] = tops[i];
+  }
+  // axes labels: y max + 0, x first/last date
+  const css = getComputedStyle(document.documentElement);
+  ctx.fillStyle = css.getPropertyValue('--text3').trim() || '#888';
+  ctx.font = '10px "JetBrains Mono", monospace';
+  ctx.fillText(maxTot.toFixed(0) + '%', 2, padT + 8);
+  ctx.fillText('0%', 2, padT + plotH);
+  ctx.fillText(track[0].date, padL, H - 5);
+  const lastD = track[track.length - 1].date;
+  ctx.fillText(lastD, W - padR - ctx.measureText(lastD).width, H - 5);
+  // legend
+  let lx = padL + 60;
+  for (const k of keys) {
+    ctx.fillStyle = _TILT_COLORS[k];
+    ctx.fillRect(lx, H - 13, 8, 8);
+    ctx.fillStyle = css.getPropertyValue('--text2').trim() || '#aaa';
+    ctx.fillText(k, lx + 11, H - 5);
+    lx += 11 + ctx.measureText(k).width + 14;
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -1988,6 +2238,25 @@ function safeRender(name, fn) {
   }
 });
 _szUpdateSum();
+
+// Auto-Tilt UI wiring: radios show/hide the tilt params; window input echoes
+// into the radio label. (The agent that built the engine died before adding
+// these listeners — completed 2026-06-09.)
+document.querySelectorAll('input[name="allocMode"]').forEach(r => {
+  r.addEventListener('change', () => {
+    const tp = document.getElementById('tiltParams');
+    if (tp) tp.style.display = (_tiltMode() === 'tilt') ? 'grid' : 'none';
+    if (_tiltMode() === 'fixed') {
+      const box = document.getElementById('tiltWeightsBox');
+      if (box) box.style.display = 'none';
+    }
+  });
+});
+const _tiltWinEl = document.getElementById('szTiltWin');
+if (_tiltWinEl) ['change','input'].forEach(ev => _tiltWinEl.addEventListener(ev, () => {
+  const echo = document.getElementById('tiltWinEcho');
+  if (echo) echo.textContent = String(Math.max(5, parseInt(_tiltWinEl.value, 10) || 60));
+}));
 
 loadHistory()
   .then(() => safeRender('sizing', _sizingReady))
