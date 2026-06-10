@@ -131,6 +131,55 @@ python3 fetch_thetadata_diagonal.py --time 09:35 --date "$TODAY" >> "$LOG" 2>&1
 log "Rebuilding cor1m_contango_bundle.json..."
 python3 build_cor1m_contango_bundle.py >> "$LOG" 2>&1
 
+# ── 7a. Backfill today's cor1m into history_data.json ──────────────────────
+# (2026-06-09: added so the historical table's COR1M column auto-populates for
+# today after EOD, alongside m8bfPL / vixClose / etc. that the worker writes.)
+# Uses push-history.sh to atomically sync KV + GitHub — never plain `git push`
+# on history_data.json (see CLAUDE.md rule #1).
+log "Backfilling today's cor1m into history_data.json..."
+TODAY_COR1M=$(python3 -c "
+import json
+b = json.load(open('cor1m_contango_bundle.json'))
+for d in b['daily']:
+    if d.get('date') == '$TODAY' and d.get('cor1m') is not None:
+        print(round(float(d['cor1m']), 2)); break
+" 2>/dev/null)
+
+if [ -z "$TODAY_COR1M" ]; then
+  log "  cor1m not yet computed for $TODAY (skipping history backfill)"
+else
+  # Check whether history_data.json already has today's cor1m (idempotent)
+  HAS_COR1M=$(python3 -c "
+import json
+h = json.load(open('history_data.json'))
+for r in h:
+    if r.get('date') == '$TODAY':
+        print('yes' if r.get('cor1m') is not None else 'no'); break
+" 2>/dev/null)
+
+  if [ "$HAS_COR1M" = "yes" ]; then
+    log "  cor1m already in history_data.json for $TODAY ($TODAY_COR1M)"
+  else
+    # Surgical edit: add ONLY cor1m to today's row. Preserves all worker EOD writes.
+    python3 -c "
+import json
+with open('history_data.json') as f: h = json.load(f)
+for r in h:
+    if r.get('date') == '$TODAY':
+        r['cor1m'] = $TODAY_COR1M; break
+with open('history_data.json','w') as f: json.dump(h, f, separators=(',',':'))
+print('  cor1m=$TODAY_COR1M written for $TODAY')
+" 2>&1 | tee -a "$LOG"
+
+    # Sync KV + GitHub via canonical script (never a bare git push on this file)
+    if ./scripts/push-history.sh "auto: $TODAY cor1m=$TODAY_COR1M (Tail Hedge refresh)" >> "$LOG" 2>&1; then
+      log "  ✓ Synced to KV + GitHub"
+    else
+      log "  ✗ push-history.sh failed — history_data.json mutation rolled back manually if needed"
+    fi
+  fi
+fi
+
 # ── 8. Detect what changed, commit + push if anything did ──────────────────
 TO_ADD=(
   cor1m_contango_bundle.json
