@@ -1685,16 +1685,39 @@ function buildSpecialDateSets(tradingDays, byDate = null) {
     if (next) sets['OPEX+1'].add(next);
   });
 
-  // EOM / EOM-1 / NM from trading days themselves
+  // EOM / EOM-1 / NM — CALENDAR-derived via SignalEngine (parity class 3 fix,
+  // 2026-06-09). The old "last/first date present in data" heuristic mislabeled
+  // months whose true EOM is a half-day session absent from the bundle:
+  // e.g. Nov 2024 — true EOM = 11-29 (half-day, no data), live blocks 11-27
+  // (EOM-1) and trades 11-26; the old code blocked BOTH 11-26 and 11-27.
+  // SignalEngine.prevTrade/nextTrade skip weekends + holidays only (half-days
+  // count as trading days) — identical to the live worker's isEomN semantics.
   const byMonth = {};
   tradingDays.forEach(d => {
     const ym = d.slice(0, 7);
     (byMonth[ym] = byMonth[ym] || []).push(d);
   });
-  Object.values(byMonth).forEach(ds => {
-    sets['NM'].add(ds[0]);
-    sets['EOM'].add(ds[ds.length - 1]);
-    if (ds.length >= 2) sets['EOM-1'].add(ds[ds.length - 2]);
+  const SEcal = (typeof globalThis !== 'undefined' && globalThis.SignalEngine) || null;
+  const _isoLocal = dt => `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+  Object.entries(byMonth).forEach(([ym, ds]) => {
+    const dsSet = new Set(ds);
+    if (SEcal) {
+      const [y, m] = ym.split('-').map(Number);
+      const firstNext = new Date(y, m, 1, 12);          // 1st of NEXT month (m is 1-based here → index m)
+      const calEom  = SEcal.prevTrade(firstNext);        // true last trading day of month
+      const calEom1 = SEcal.prevTrade(calEom);
+      const firstThis = new Date(y, m - 1, 1, 12);
+      const calNm = SEcal.isTrade(firstThis) ? firstThis : SEcal.nextTrade(firstThis);
+      const eomIso = _isoLocal(calEom), eom1Iso = _isoLocal(calEom1), nmIso = _isoLocal(calNm);
+      if (dsSet.has(eomIso))  sets['EOM'].add(eomIso);
+      if (dsSet.has(eom1Iso)) sets['EOM-1'].add(eom1Iso);
+      if (dsSet.has(nmIso))   sets['NM'].add(nmIso);
+    } else {
+      // SignalEngine unavailable (shouldn't happen) — legacy data-endpoint fallback
+      sets['NM'].add(ds[0]);
+      sets['EOM'].add(ds[ds.length - 1]);
+      if (ds.length >= 2) sets['EOM-1'].add(ds[ds.length - 2]);
+    }
   });
 
   // FED (FOMC announcement days) — verified calendar

@@ -23,6 +23,7 @@ set -e
 ./scripts/check-no-conflict-markers.sh
 ./scripts/check-html-smoke.sh
 ./scripts/check-pnl-tests.sh
+./scripts/check-diagonal-parity.sh
 EOF
 chmod +x "$HOOK"
 
@@ -35,5 +36,6 @@ echo "  → runs scripts/check-html-js.sh"
 echo "  → runs scripts/check-no-conflict-markers.sh   (added after 2026-06-02 broken-dashboard incident)"
 echo "  → runs scripts/check-html-smoke.sh             (added 2026-06-09 — headless-Chrome JS-error catcher)"
 echo "  → runs scripts/check-pnl-tests.sh              (added 2026-06-09 — money-math unit tests)"
+echo "  → runs scripts/check-diagonal-parity.sh        (added 2026-06-09 — Python↔JS Diagonal agreement)"
 echo ""
 echo "Bypass for one-off commits: git commit --no-verify"
