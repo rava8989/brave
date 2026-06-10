@@ -595,7 +595,7 @@ body {
     <strong>Allowed days</strong> — OPEX-1, CPI, and NM-non-Monday are <em>no longer banned</em>; they fire if the trigger/block check passes.
     GXBF is fully independent of M8BF / Straddle / BOBF — it neither blocks nor is blocked by them.
     <br><br>
-    <strong>Center routing (hybrid, live default)</strong> — at the chosen <strong>Entry Time</strong> (default <code>09:35 ET</code>;
+    <strong>Center routing (volume, live default — hybrid retired 2026-06-10 after failing OOS validation)</strong> — at the chosen <strong>Entry Time</strong> (default <code>09:35 ET</code>;
     the dropdown below offers every 5-min step from <code>09:35</code> through <code>14:00</code>) the gamma model computes two centers
     from the 0DTE call chain (Black-Scholes γ within ±5% of spot, snapped to the nearest 5):
     <ul style="margin:4px 0 4px 18px;padding:0">
@@ -669,11 +669,11 @@ body {
     <div class="fg-label">Gamma center source</div>
     <div class="fg-row" style="gap:16px">
       <label style="display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--text);cursor:pointer;font-weight:600">
-        <input type="radio" name="centerSrc" value="hybrid" checked style="cursor:pointer">
+        <input type="radio" name="centerSrc" value="hybrid" style="cursor:pointer">
         <span>Hybrid (auto per-day)</span> <span style="font-weight:400;color:var(--text3)">(OI on OPEX-1 / VIX-exp / FED, else Volume — live default)</span>
       </label>
       <label style="display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--text);cursor:pointer;font-weight:600">
-        <input type="radio" name="centerSrc" value="vol" style="cursor:pointer">
+        <input type="radio" name="centerSrc" value="vol" checked style="cursor:pointer">
         <span>Volume</span> <span style="font-weight:400;color:var(--text3)">(Major Positive by Volume — force)</span>
       </label>
       <label style="display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--text);cursor:pointer;font-weight:600">
@@ -1249,7 +1249,7 @@ function getParams() {
     contracts:     parseInt(document.getElementById('contracts').value, 10) || 1,
     ovDropOn:      document.getElementById('ovDropOn').checked,
     ovDropThr:     (() => { const v = parseFloat(document.getElementById('ovDropThr').value); return Number.isFinite(v) ? v : 0.65; })(),
-    centerSrc:     (document.querySelector('input[name="centerSrc"]:checked') || {}).value || 'hybrid',
+    centerSrc:     (document.querySelector('input[name="centerSrc"]:checked') || {}).value || 'vol',
     gxbfGating:    document.getElementById('gxbfGating').checked,
     gVixMax:       (() => { const v = parseFloat(document.getElementById('gVixMax').value); return Number.isFinite(v) ? v : 25; })(),
     gGapPct:       (() => { const v = parseFloat(document.getElementById('gGapPct').value); return Number.isFinite(v) ? v : 2; })(),

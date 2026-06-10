@@ -683,9 +683,11 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
   // Only meaningful when theme === 'gxbf'. OPEX-1 / VIX-expiry / FED → OI grid;
   // all other GXBF days use the volume-weighted center (live default).
   // Consumed by schwab-proxy.js handleGxbfEntry to pick computed.center vs centerOI.
-  const centerSource = (theme === 'gxbf')
-    ? ((opex1 || vixExpDay || fedDay) ? 'oi' : 'vol')
-    : null;
+  // 2026-06-10: hybrid OI routing RETIRED (user-approved). The OPEX-1/VIX-exp/
+  // FED → OI rule failed out-of-sample validation: always-volume beat hybrid
+  // on the test half (+$33.2k vs +$24.4k, n=33) and tied on train
+  // (scripts/research_gxbf_negamma_oos.py). Volume center on every GXBF day.
+  const centerSource = (theme === 'gxbf') ? 'vol' : null;
 
   // ── DIAGONAL (companion strategy) — delegated to single source of truth ──
   // cor1m = today's COR1M open (worker: KV cloud capture; dashboard: /health

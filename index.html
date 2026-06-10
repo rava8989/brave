@@ -708,7 +708,7 @@
     <div class="strategy-image"><img src="./Straddle.jpg" alt="Straddle" loading="lazy" /></div>
 
     <hr class="divider">
-    <h3>GXBF (GEX Butterfly) — 0DTE long-call gamma butterfly (hybrid)</h3>
+    <h3>GXBF (GEX Butterfly) — 0DTE long-call gamma butterfly</h3>
     <ul>
       <li><strong>The idea.</strong> Every morning a gamma model computes the SPX call strike with the most positive dealer-positioning gamma — loosely, the level that dealer hedging tends to pull the market toward and "pin" into the close. GXBF builds an inexpensive long-call butterfly centered there, so it profits when SPX settles near that strike.</li>
       <li><strong>When it trades (trigger).</strong> Either condition fires the day:
@@ -722,16 +722,10 @@
           <li><strong>VIX ≥ 25</strong> today (too wild to pin reliably — hard volatility cap).</li>
           <li>It's <strong>OPEX+1 and VIX gapped up ≥ 2%</strong> overnight (the auto-trigger is suppressed when post-expiration vol jumps).</li>
           <li>It's <strong>EOM</strong> (the last trading day of the month — handed to the Straddle).</li>
-          <li>It's a <strong>CPI day</strong> — hard block, no GXBF on CPI days regardless of trigger.</li>
         </ul>
       </li>
-      <li><strong>What's no longer a block.</strong> <strong>OPEX-1</strong> and <strong>NM-non-Monday</strong> days used to be banned. Under the current rules they're allowed — they fire on their own merits when the trigger/block test passes. Fed-decision days remain fine. GXBF is strategy-independent: it never blocks the other Sigma 3 strategies and is never blocked by them — except for the CPI hard block which applies to all Sigma 3 strategies.</li>
-      <li><strong>How the center is chosen (hybrid routing).</strong> At <strong>~9:35 AM ET</strong> the gamma model computes two candidate centers from the live 0DTE SPX call chain (Black-Scholes γ within ±5% of spot, snapped to the nearest 5): one weighted by traded volume, one weighted by open interest. The hybrid rule auto-routes the day:
-        <ul>
-          <li><strong>OI center</strong> on OPEX-1, VIX expiry (Wednesday two days before OPEX), and FOMC announcement days.</li>
-          <li><strong>Volume center</strong> on every other day.</li>
-        </ul>
-        The OI center reflects standing dealer inventory; the volume center reflects today's traded flow. The radio buttons on <code>gxbf-backtester.html</code> let you force Volume-only or OI-only for what-if studies.
+      <li><strong>What's no longer a block.</strong> <strong>OPEX-1</strong>, <strong>NM-non-Monday</strong> and <strong>CPI</strong> days used to be banned. Under the current rules they're allowed — they fire on their own merits when the trigger/block test passes (CPI still hard-blocks M8BF/Straddle/BOBF, but GXBF is exempt). Fed-decision days remain fine. GXBF is strategy-independent: it never blocks the other Sigma 3 strategies and is never blocked by them.</li>
+      <li><strong>How the center is chosen.</strong> At <strong>~9:35 AM ET</strong> the gamma model computes the center from the live 0DTE SPX call chain (Black-Scholes γ within ±5% of spot, snapped to the nearest 5), weighted by <strong>traded volume</strong> — today's actual flow. <em>History:</em> a hybrid rule used to route OPEX-1 / VIX-expiry / FOMC days to the open-interest-weighted center; it was retired <strong>2026-06-10</strong> after failing out-of-sample validation (always-volume beat hybrid +$33.2k vs +$24.4k on the held-out half and tied in-sample). The OI center is still computed and shown for reference, and the radio buttons on <code>gxbf-backtester.html</code> let you force OI or hybrid for what-if studies.
       </li>
       <li><strong>How the trade is built.</strong> Buy one lower call (center − wing), sell two center calls, buy one upper call (center + wing) for a net debit. The wing widens as far as possible while keeping one hard rule: <strong>max risk ≤ max reward</strong> (net debit ≤ half the wing). It picks the <em>widest</em> width that still satisfies that — worst-case loss is capped near $5,000 per contract via the <code>W ≤ 100</code> cap. If no width qualifies that day, no trade.</li>
       <li><strong>Timing &amp; exit.</strong> Enter ~<strong>9:35 AM ET</strong> (once the morning gamma level is out) and hold all the way to the 4:00 PM SPX cash close — no stop, no early exit. P&amp;L is the exact butterfly intrinsic at the close minus the entry debit.</li>
@@ -786,7 +780,7 @@
       <li><strong>EOM Straddle</strong> — last trading day of month. Max risk: <strong>$3,500</strong>.</li>
       <li>Both use standard 9:32 AM Straddle entry.</li>
       <li><strong>EOM blocks GXBF</strong> — the last trading day of the month is in GXBF's block list, so a GXBF trigger on EOM is suppressed and the day goes to the EOM Straddle.</li>
-      <li><strong>NM does <em>not</em> block GXBF</strong> — under the current hybrid rules NM-non-Monday is allowed for GXBF; the two strategies are independent and can both fire the same day if their own conditions are met.</li>
+      <li><strong>NM does <em>not</em> block GXBF</strong> — under the current rules NM-non-Monday is allowed for GXBF; the two strategies are independent and can both fire the same day if their own conditions are met.</li>
       <li>NM Monday follows the regular VIX calculator (no NM Straddle override).</li>
     </ul>
 
