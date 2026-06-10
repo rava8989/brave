@@ -97,19 +97,41 @@ async function captureCor1mVvix(env, etNow, token) {
   const h = etNow.getHours(), m = etNow.getMinutes();
   const todayISO = isoDateET(etNow);
   const openKey = `cor1m_open_${todayISO}`;
-  const haveOpen = await env.SIGNAL_KV.get(openKey);
-  const inOpenWindow = h === 9 && m >= 30 && m <= 36;
+  const haveOpenRaw = await env.SIGNAL_KV.get(openKey);
+  let haveOpen = null;
+  try { haveOpen = haveOpenRaw ? JSON.parse(haveOpenRaw) : null; } catch (_) {}
+  // Open window runs 9:30–10:00: $COR1M is a calculated index whose FIRST
+  // print can arrive 9:35–9:40 ET (2026-06-10: 9:37). The old 9:36 cutoff
+  // plus no freshness check captured yesterday's close as today's open.
+  const sinceOpenMin = (h - 9) * 60 + (m - 30);
+  const inOpenWindow = sinceOpenMin >= 0 && sinceOpenMin <= 30;
+  const needVvixBackfill = haveOpen != null && haveOpen.vvix == null;
   const isSampleTick = m % 5 === 0;
-  if (!(inOpenWindow && !haveOpen) && !isSampleTick) return;   // throttle
+  if (!(inOpenWindow && (!haveOpen || needVvixBackfill)) && !isSampleTick) return;   // throttle
 
   const q = await fetchSchwabJSON(
     'https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24COR1M,%24VVIX&fields=quote',
     token, env);
-  const corRaw = q?.['$COR1M']?.quote?.lastPrice;
-  const vvixRaw = q?.['$VVIX']?.quote?.lastPrice;
-  if (corRaw == null || !(corRaw > 0)) return;
-  const cor = parseFloat(corRaw.toFixed(2));
+  // Freshness gate (2026-06-10): until an index publishes its first print of
+  // the day, Schwab's quote serves the PRIOR session's last value (with a
+  // stale tradeTime). Only accept a print from the last 10 minutes — during
+  // RTH these indices republish every ~15s, so fresh data always qualifies.
+  const isFreshQ = (qq) => {
+    const tt = qq?.tradeTime ?? qq?.quoteTime;
+    return tt != null && tt > 0 && (Date.now() - tt) < 10 * 60 * 1000;
+  };
+  const corQ = q?.['$COR1M']?.quote, vvixQ = q?.['$VVIX']?.quote;
+  const corRaw = isFreshQ(corQ) ? corQ?.lastPrice : null;
+  const vvixRaw = isFreshQ(vvixQ) ? vvixQ?.lastPrice : null;
   const vvix = (vvixRaw != null && vvixRaw > 0) ? parseFloat(vvixRaw.toFixed(2)) : null;
+
+  // VVIX-only backfill: open captured on an earlier tick before VVIX printed.
+  if (needVvixBackfill && vvix != null) {
+    haveOpen.vvix = vvix;
+    await env.SIGNAL_KV.put(openKey, JSON.stringify(haveOpen), { expirationTtl: 7 * 86400 });
+  }
+  if (corRaw == null || !(corRaw > 0)) return;   // no fresh COR1M print yet — retry next tick
+  const cor = parseFloat(corRaw.toFixed(2));
   const hhmm = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 
   // Read today's series (also yields prev sample for cross detection)
@@ -163,6 +185,18 @@ async function captureCor1mVvix(env, etNow, token) {
       } catch (_) { /* notify best-effort */ }
     }
   }
+}
+
+// Today's cloud-captured COR1M open (freshness-gated by captureCor1mVvix).
+// Returns the number or null when not yet captured — callers pass it to
+// calculateSignal({ cor1m }) so the Diagonal COR1M_LOW filter can evaluate.
+async function getCor1mOpenToday(env, todayISO) {
+  try {
+    const raw = await env.SIGNAL_KV.get(`cor1m_open_${todayISO}`);
+    if (!raw) return null;
+    const v = JSON.parse(raw)?.cor1m;
+    return (v != null && isFinite(v)) ? v : null;
+  } catch (_) { return null; }
 }
 
 // ── Daily total-risk cap (2026-06-09) ──────────────────────────────────
@@ -3741,7 +3775,7 @@ async function handleScheduled(env) {
     }
   }
 
-  if (morningDone === 'sent' || preMarket) {
+  if (morningDone === 'sent' || globalThis.__morningSentDay === todayISO || preMarket) {
     return { status: 'discord_poll', discord: discordResult, gex: gexResult, diagonal: diagResult, time: `${etHour}:${String(etMin).padStart(2,'0')} ET` };
   }
 
@@ -4188,6 +4222,10 @@ async function handleScheduled(env) {
   } catch (e) { console.warn('[proxy] history fetch failed:', e.message || e); }
 
   // 5. Calculate signal
+  // COR1M open from the cloud capture — may still be null at 9:30–9:37
+  // (calculated index prints late); the Diagonal line then shows "pending"
+  // and the /trade endpoint + dashboard pick up the real status minutes later.
+  const cor1mOpenToday = await getCor1mOpenToday(env, isoDateET(etNow));
   const signal = calculateSignal({
     vixToday,
     vixYOpen,
@@ -4197,6 +4235,7 @@ async function handleScheduled(env) {
     prevWR,
     vixPct20d,
     rsi14,
+    cor1m: cor1mOpenToday,
   });
 
   // 5a. Persist the morning signal so /straddle-today and other endpoints
@@ -4230,6 +4269,18 @@ async function handleScheduled(env) {
   if (!dcRaw) { await env.SIGNAL_KV.delete(msDoneKey); throw new Error('No Discord config in KV — sync from browser'); }
   const dc = JSON.parse(dcRaw);
 
+  // 8-pre. LAST-CALL dupe gate (2026-06-10: TRIPLE send at 9:33:18/9:33:33/
+  // 9:34:09). The claim verify at the top runs ~20-35s before this point;
+  // KV is eventually consistent, so a parallel invocation (overlapping cron
+  // tick or /gex fallback) can pass its own claim verify without either side
+  // seeing the other. By NOW the rival's claim/'sent' write has had those
+  // ~30s to propagate — one fresh read here kills the duplicate pre-post.
+  const lastCall = await env.SIGNAL_KV.get(msDoneKey);
+  if (lastCall === 'sent' || (lastCall && lastCall.startsWith('claim:') && lastCall !== claimValue)) {
+    console.log(`[proxy] Pre-send dupe gate: slot='${(lastCall || '').slice(0, 24)}…' not mine — aborting duplicate`);
+    return { status: 'duplicate_avoided_presend', time: `${etHour}:${String(etMin).padStart(2, '0')} ET` };
+  }
+
   const result = await sendDiscordDM(env, dc.channelId, message.slice(0, 2000), dc.proxyUrl);
   let dcData = result.data || {};
   if (!result.ok) {
@@ -4242,6 +4293,7 @@ async function handleScheduled(env) {
         throw new Error('Discord post failed after retry: ' + JSON.stringify(retry));
       }
       await env.SIGNAL_KV.put(msDoneKey, 'sent', { expirationTtl: 86400 });
+      globalThis.__morningSentDay = todayISO;
       return retry.data || { ok: true };
     }
     await env.SIGNAL_KV.delete(msDoneKey);
@@ -4250,6 +4302,7 @@ async function handleScheduled(env) {
 
   // Mark morning signal as fully sent
   await env.SIGNAL_KV.put(msDoneKey, 'sent', { expirationTtl: 86400 });
+  globalThis.__morningSentDay = todayISO;   // isolate-local guard (KV-lag immune)
   await logEvent(env, 'info', 'morning', 'canonical signal posted', {
     source: vixSource,   // 'schwab' or 'tastytrade' — which won the VIX race
     rec: signal.rec, badge: signal.badge, theme: signal.theme,
@@ -4394,6 +4447,7 @@ async function handleScheduled(env) {
         vixToday: vixOther, vixYOpen, vixYClose,
         spxGapPct: spxGapOther,
         etDate: etNow, prevWR, vixPct20d, rsi14,
+        cor1m: cor1mOpenToday,
       });
       const otherBanner = otherSource === 'schwab' ? '📡 **SCHWAB DATA**\n\n' : '📡 **TASTYTRADE DATA**\n\n';
       const msgOther = otherBanner + buildDiscordMessage(signalOther, { yOpen: vixYOpen, yClose: vixYClose, todayOpen: vixOther }, tailLineCanon);
@@ -7796,6 +7850,7 @@ export default {
         out.context = { prevWR, vixPct20d, rsi14, vixYOpen, vixYClose, spxYClose };
 
         // 3. Compute signal twice (once per source) — same calculateSignal call
+        const cor1mOpenTrade = await getCor1mOpenToday(env, isoDateET(etNow));
         function makeSignal(vixVal, spxOpen) {
           if (vixVal == null) return null;
           const gap = (spxYClose && spxOpen) ? ((spxOpen - spxYClose) / spxYClose) * 100 : null;
@@ -7803,6 +7858,7 @@ export default {
             vixToday: vixVal, vixYOpen, vixYClose,
             spxGapPct: gap,
             etDate: etNow, prevWR, vixPct20d, rsi14,
+            cor1m: cor1mOpenTrade,
           });
         }
         const sigSchwab = makeSignal(vixSchwab, spxSchwab);
@@ -8108,8 +8164,10 @@ export default {
         try {
           const c = await env.SIGNAL_KV.get(`cor1m_open_${todayISO}`);
           if (c) cor1mCloud = JSON.parse(c);
-          // Capture missing after 9:40 ET on a weekday = capture path broken
-          if (!cor1mCloud && isWeekday && (etH > 9 || (etH === 9 && etM >= 40)) && etH < 16) {
+          // Capture missing after 10:05 ET on a weekday = capture path broken.
+          // (Start was 9:40, but $COR1M's first print can arrive 9:35–9:40 and
+          // the freshness-gated capture window now runs to 10:00.)
+          if (!cor1mCloud && isWeekday && (etH > 10 || (etH === 10 && etM >= 5)) && etH < 16) {
             alerts.push('cor1m_capture_missing');
           }
         } catch (_) {}
@@ -8251,7 +8309,11 @@ export default {
         }
 
         // ── Morning signal fallback: fire from /gex if cron missed it ──
-        if (marketOpen && (etH > 9 || (etH === 9 && etM >= 30))) {
+        // ≥9:40 ET only (2026-06-10): cron normally completes by ~9:34; at
+        // 9:33 this fallback fired DURING the cron's in-flight send (the
+        // 'sent' marker hadn't propagated) and produced a duplicate message.
+        // A fallback that jumps in 3 min after open isn't a fallback.
+        if (marketOpen && (etH > 9 || (etH === 9 && etM >= 40))) {
           const todayCheck = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
           const mKey = `morning_signal_${todayCheck}`;
           const mFailKey = `morning_signal_fail_${todayCheck}`;

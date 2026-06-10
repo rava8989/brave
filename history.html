@@ -792,6 +792,7 @@ async function init() {
         etDate,
         prevWR,
         rsi14,
+        cor1m: cur.cor1m != null ? parseFloat(cur.cor1m) : null,
       });
 
       // M8BF ran if history_data has a non-zero m8bfPL for this date

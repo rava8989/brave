@@ -1442,6 +1442,20 @@
 
   /* ====== MAIN CALCULATOR ====== */
   function calculateStrategy(){
+    // One-shot COR1M fetch (worker /health → cor1m_cloud, today's 9:30+ open).
+    // Feeds the Diagonal COR1M_LOW filter; re-renders once when it arrives.
+    // schwabPollHealth refreshes the value every 5 min thereafter.
+    if (window._cloudCor1m === undefined) {
+      window._cloudCor1m = null;   // only auto-fetch once per page load
+      const _px = (localStorage.getItem('sc_proxyUrl') || '').trim();
+      if (_px) fetch(_px.replace(/\/$/, '') + '/health', { cache: 'no-store' })
+        .then(r => r && r.ok ? r.json() : null)
+        .then(j => {
+          const v = j && j.cor1m_cloud ? j.cor1m_cloud.cor1m : null;
+          if (v != null && isFinite(v)) { window._cloudCor1m = v; try { calculateStrategy(); } catch (_) {} }
+        })
+        .catch(() => {});
+    }
     ['todayOpen','yesterdayOpen','yesterdayClose'].forEach(id=>document.getElementById('err-'+id).textContent='');
     const vToday=parseFloat(document.getElementById('todayOpen').value);
     const vYOpen=parseFloat(document.getElementById('yesterdayOpen').value);
@@ -1514,7 +1528,7 @@
         _diagVixPct = Math.round(100 * below / _vix20dCloses.length);
       }
       const _diagSig = (typeof SignalEngine !== 'undefined' && SignalEngine.computeDiagonalSignal)
-        ? SignalEngine.computeDiagonalSignal(new Date(), _diagVixPct)
+        ? SignalEngine.computeDiagonalSignal(new Date(), _diagVixPct, window._cloudCor1m ?? null)
         : null;
       const diagRecCpi   = document.getElementById('diagRec');
       const diagReasonCpi= document.getElementById('diagReason');
@@ -1678,6 +1692,7 @@
       prevWR,
       vixPct20d: _vixPctToday,
       rsi14:     _spxRsi14,
+      cor1m:     window._cloudCor1m ?? null,
     });
 
     /* ====== RENDER 5 CARDS ====== */
@@ -2724,7 +2739,12 @@
       if (!res.ok) return;
       const h = await res.json();
       let mirror = null;
-      try { if (resH && resH.ok) { const hh = await resH.json(); mirror = hh.history_mirror || null; } } catch (_) {}
+      try { if (resH && resH.ok) {
+        const hh = await resH.json(); mirror = hh.history_mirror || null;
+        // Keep the dashboard's COR1M (Diagonal filter input) fresh every poll.
+        const _cc = hh.cor1m_cloud ? hh.cor1m_cloud.cor1m : null;
+        if (_cc != null && isFinite(_cc)) window._cloudCor1m = _cc;
+      } } catch (_) {}
       const banner = document.getElementById('schwabHealthBanner');
       const txt = document.getElementById('schwabHealthBannerText');
       if (!banner || !txt) return;

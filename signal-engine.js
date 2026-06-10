@@ -402,7 +402,7 @@ export function computeDiagonalSignal(etDate, vixPct20d = null, cor1m = null, co
 // Consumed by: schwab-proxy.js, index.html, history.html
 // ════════════════════════════════════════════════════════════════════
 
-export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate, prevWR = null, vixPct20d = null, rsi14 = null }) {
+export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDate, prevWR = null, vixPct20d = null, rsi14 = null, cor1m = null }) {
   const cpiDay = cpiSch.includes(todayLong(etDate));
   const dow = etDate.getDay();
   const isMon = dow === 1, isFri = dow === 5, isWed = dow === 3;
@@ -688,7 +688,10 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
     : null;
 
   // ── DIAGONAL (companion strategy) — delegated to single source of truth ──
-  const { diagText, diagBadge, diagGo, diagSkipCode } = computeDiagonalSignal(etDate, vixPct20d);
+  // cor1m = today's COR1M open (worker: KV cloud capture; dashboard: /health
+  // cor1m_cloud; history: the row's cor1m column). Without it the COR1M_LOW
+  // filter can't evaluate and the signal stays in the "pending" waiting state.
+  const { diagText, diagBadge, diagGo, diagSkipCode } = computeDiagonalSignal(etDate, vixPct20d, cor1m);
 
   return {
     rec, theme, crossed, badge, entryT, blockT, blockD, pmNote,
@@ -697,7 +700,7 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
     bobfRec, bobfBadge, bobfBlocks,
     centerSource,
     // Diagonal (companion — independent of Sigma 3)
-    diagText, diagBadge, diagGo, diagSkipCode, vixPct20d,
+    diagText, diagBadge, diagGo, diagSkipCode, vixPct20d, cor1m,
     oNight, o2o,
     spxGapPct, spxGapCancelsStrad, m8bfBanned,
     dayLabel: tradeWdLabel(etDate),
