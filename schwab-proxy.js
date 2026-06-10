@@ -1292,6 +1292,25 @@ async function getTastyAccessToken(env) {
 // Get latest VIX quote via Tastytrade. Returns { price, asOf, source }.
 // Endpoint per tastyware/tastytrade SDK: /market-data/{instrumentType}/{symbol}
 // VIX is InstrumentType.INDEX → "Index", path /market-data/Index/VIX
+// Generic Tasty index quote — same /market-data/Index endpoint as VIX but
+// symbol-parameterized. Returns { price, open, asOf } or throws. Used as the
+// BACKUP source when Schwab quotes are stale/down (2026-06-10 user request:
+// "tasty jumps in and picks up the slack").
+async function tastyGetIndexQuote(env, symbol) {
+  const token = await getTastyAccessToken(env);
+  const resp = await fetch(`${TASTY_BASE}/market-data/Index/${encodeURIComponent(symbol)}`,
+    { headers: tastyHeaders({ 'Authorization': `Bearer ${token}` }) });
+  if (!resp.ok) throw new Error(`Tasty ${symbol} HTTP ${resp.status}: ${(await resp.text()).slice(0, 150)}`);
+  const d = (await resp.json())?.data || {};
+  const price = d.last ?? d['last-price'] ?? d.mark ?? d.mid ?? null;
+  const open = d.open ?? d['open-price'] ?? null;
+  const asOf = d['updated-at'] || d['quote-time'] || d.timestamp || null;
+  if (price == null) throw new Error(`Tasty ${symbol}: no price field`);
+  return { price: parseFloat(price), open: open != null ? parseFloat(open) : null,
+           prevClose: d['prev-close'] != null ? parseFloat(d['prev-close']) : (d['close-price'] != null ? parseFloat(d['close-price']) : null),
+           asOf, raw: d };
+}
+
 async function tastyGetVix(env) {
   const token = await getTastyAccessToken(env);
   const url = `${TASTY_BASE}/market-data/Index/VIX`;
@@ -8072,6 +8091,15 @@ export default {
     //   ?force_no_schwab=1  — simulate Schwab failure (skip Schwab fetch)
     //   ?force_no_tasty=1   — simulate Tasty failure (skip Tasty fetch)
     //   ?force_no_token=1   — simulate Schwab token unavailable
+    if (url.pathname === '/tasty-index-test' && request.method === 'GET') {
+      const sym = url.searchParams.get('sym') || 'VIX';
+      let result;
+      try { result = await tastyGetIndexQuote(env, sym); delete result.raw; }
+      catch (e) { result = { error: e.message }; }
+      return new Response(JSON.stringify({ sym, ...result }, null, 2),
+        { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
+    }
+
     if (url.pathname === '/cyclicality-append-now' && request.method === 'GET') {
       let result;
       try { result = await appendCyclicalityDays(env); } catch (e) { result = { error: e.message }; }
