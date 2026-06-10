@@ -38,6 +38,20 @@
       bar.appendChild(a);
     }
     document.body.prepend(bar);
+    // Flex/grid bodies (e.g. the dashboard's sidebar+content row): a prepended
+    // bar becomes a narrow LEFT COLUMN and shoves the page sideways. Make the
+    // bar span the full first row instead — and drop sticky there so it can't
+    // overlap the page's own sticky sidebar.
+    const disp = getComputedStyle(document.body).display;
+    if (disp.includes('flex')) {
+      document.body.style.flexWrap = 'wrap';
+      bar.style.flex = '0 0 100%';
+      bar.style.width = '100%';
+      bar.style.position = 'static';
+    } else if (disp.includes('grid')) {
+      bar.style.gridColumn = '1 / -1';
+      bar.style.position = 'static';
+    }
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', build);
   else build();
