@@ -252,6 +252,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);font-
   <div class="card wide tall">
     <div class="card-title">VIX − VIX9D Spread with 60-day Bands <span style="font-weight:400;color:#94a3b8;font-size:11px">(+ = calm contango · − = short-dated stress; band exits mark regime turns)</span></div>
     <div id="spread-stats" style="display:flex;gap:18px;flex-wrap:wrap;margin:4px 0 8px 4px;font-size:12px;color:#cbd5e1"></div>
+    <div id="vixeq-stats" style="display:flex;gap:18px;flex-wrap:wrap;margin:0 0 8px 4px;font-size:12px;color:#cbd5e1"></div>
     <div id="spread-plot" class="plot"></div>
   </div>
 
@@ -641,6 +642,34 @@ function renderSpreadPlot() {
   Plotly.newPlot('spread-plot', traces, plotlyLayout({
     margin: { t: 30, r: 18, b: 40, l: 50 }, yaxis: { title: 'VIX − VIX9D (vol pts)' },
   }), { displayModeBar: false, responsive: true });
+  renderVixeqStats(d);
+}
+
+// VIXEQ − VIX dispersion premium (2026-06-11). VIXEQ = avg single-stock
+// implied vol of the SPX top-50; the gap over VIX is what index-level
+// correlation "eats" — the same trade COR1M prices. data/vixeq_daily.json:
+// ThetaData backfill (index launched 2024-10) + daily Schwab self-feed.
+async function renderVixeqStats(dailyRows) {
+  const el = document.getElementById('vixeq-stats');
+  let ve = null;
+  try {
+    const r = await fetch('data/vixeq_daily.json', { cache: 'no-store' });
+    if (r.ok) ve = await r.json();
+  } catch (_) {}
+  if (!ve) { el.style.display = 'none'; return; }
+  const vixByDate = Object.fromEntries(dailyRows.map(r => [r.date, r.vix]));
+  const series = Object.keys(ve).sort()
+    .filter(d => ve[d].close > 0 && vixByDate[d] > 0)
+    .map(d => ({ d, gap: ve[d].close - vixByDate[d] }));
+  if (series.length < 60) { el.style.display = 'none'; return; }
+  const last = series[series.length - 1];
+  const sorted = series.map(s => s.gap).sort((a, b) => a - b);
+  const pct = Math.round(100 * sorted.filter(v => v <= last.gap).length / sorted.length);
+  el.innerHTML = `
+    <span style="color:#94a3b8">Dispersion:</span>
+    <span>VIXEQ − VIX = <b style="color:#a78bfa">+${last.gap.toFixed(2)}</b> (${last.d})</span>
+    <span>Percentile (${series.length}d): <b>${pct}%</b></span>
+    <span style="color:#64748b">high gap = single-stock vol rich vs index → correlation cheap (low COR1M usually nearby); collapse of the gap = stocks moving together — stress</span>`;
 }
 
 // VIX move decomposition panel (2026-06-11). Reads data/vix_decomposition.json
