@@ -445,16 +445,25 @@ def build_special_sets(trading_days: list[str], by_date_entry_snapshot: dict[str
         return None
 
     lo, hi = vix_band
-    for i, today in enumerate(trading_days):
+    # 2026-06-10 parity fix: the prior-walk must use the FULL entry-snapshot
+    # calendar (bs_data by_date — diagonal.html's validDays), NOT the trade
+    # universe. When the bs file gained 2022 history, diagonal.html computed
+    # percentiles for early-2023 days (>=20 priors available) while this walk,
+    # confined to trading_days starting 2023-01-03, still dead-zoned them
+    # (2023-01-17 traded only in JS — caught by the parity gate).
+    snap_days = sorted(d for d in by_date_entry_snapshot.keys())
+    snap_pos = {d: i for i, d in enumerate(snap_days)}
+    for today in trading_days:
         row = by_date_entry_snapshot.get(today) or {}
         v_today = row.get("vix_open")
         if not isinstance(v_today, (int, float)):
             v_today = row.get("vix_14")  # legacy fallback
-        # Collect up to 20 valid prior closes, walking back over trading_days
+        # Collect up to 20 valid prior closes, walking back over the FULL snapshot calendar
         priors: list[float] = []
+        i = snap_pos.get(today, -1)
         j = i - 1
         while j >= 0 and len(priors) < 20:
-            c = _close_for_pctile(trading_days[j])
+            c = _close_for_pctile(snap_days[j])
             if c is not None:
                 priors.append(c)
             j -= 1
@@ -473,7 +482,7 @@ def build_special_sets(trading_days: list[str], by_date_entry_snapshot: dict[str
             sets["VIX_MID"].add(today)
             # VIX_DEAD: also requires prior-day SPX |change| < 0.5%
             if i >= 2:
-                d_prev, d_prev2 = trading_days[i - 1], trading_days[i - 2]
+                d_prev, d_prev2 = snap_days[i - 1], snap_days[i - 2]
                 s_prev = (by_date_entry_snapshot.get(d_prev) or {}).get("spot_14")
                 s_prev2 = (by_date_entry_snapshot.get(d_prev2) or {}).get("spot_14")
                 if s_prev and s_prev2:

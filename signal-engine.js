@@ -398,6 +398,70 @@ export function computeDiagonalSignal(etDate, vixPct20d = null, cor1m = null, co
 }
 
 // ════════════════════════════════════════════════════════════════════
+// CYCLELAB SHAPE ADVISORY (2026-06-10) — INFORMATIONAL ONLY
+// Classifies today\'s 4-week same-weekday prediction curve into the user\'s
+// shape classes and carries the validated per-strategy reference numbers.
+// Consumed by the worker morning message AND the dashboard calculator —
+// never by any gating logic. Definition (user, 2026-06-10): choppy = the
+// cumulative curve spends real time on BOTH sides of zero (30-70% above);
+// one-sided after an early cross is a trend, not chop.
+// Stats from research 2026-06-10 (445 joined days; ✓ = held in both
+// halves of history, (!) = thin sample, treat as a hint).
+// ════════════════════════════════════════════════════════════════════
+
+export function classifyCyclePrediction(cycDays, etDate = new Date(), lookback = 4) {
+  // cycDays = parsed cyclicality_data.json `days` array
+  const w = (etDate.getDay() + 6) % 7;            // 0=Mon
+  if (w > 4) return null;
+  const iso = `${etDate.getFullYear()}-${String(etDate.getMonth() + 1).padStart(2, '0')}-${String(etDate.getDate()).padStart(2, '0')}`;
+  const pri = cycDays.filter(x => x.w === w && x.d < iso).slice(-lookback);
+  if (pri.length < lookback) return null;
+  const ns = pri[0].m.length;
+  let c = 0, above = 0, end = 0;
+  const cum = [];
+  for (let s = 0; s < ns; s++) {
+    let v = 0;
+    for (const p of pri) v += (p.m[s] || 0);
+    c += v; cum.push(c);
+    if (c > 0) above++;
+  }
+  end = c;
+  const aboveShare = above / ns;
+  let cls = 'MIXED';
+  if (aboveShare > 0.3 && aboveShare < 0.7) cls = 'CHOPPY';
+  else if (aboveShare >= 0.7 && end > 0) cls = 'BULLISH';
+  else if (aboveShare <= 0.3 && end < 0) cls = 'BEARISH';
+  return { cls, end: Math.round(end * 10) / 10, aboveShare: Math.round(100 * aboveShare),
+           basedOn: pri.map(p => p.d) };
+}
+
+// avg $/trade (winRate%, n) per shape vs the strategy\'s own normal.
+export const CYCLE_SHAPE_STATS = {
+  asOf: '2026-06-10',
+  normals: { m8bf: [434, 68, 274], strad: [1091, 63, 84], bobf: [510, 64, 113], gxbf: [856, 70, 69], diag: [378, 74, 234] },
+  BULLISH: { m8bf: [422, 65, 133, '⚪'], strad: [818, 58, 38, '🔴'], bobf: [517, 65, 55, '⚪'], gxbf: [886, 70, 30, '⚪'], diag: [435, 74, 113, '⚪'] },
+  BEARISH: { m8bf: [476, 73, 86, '⚪'], strad: [1248, 71, 35, '🟢✓'], bobf: [630, 67, 33, '🟢'], gxbf: [1218, 72, 25, '🟢'], diag: [218, 70, 71, '🔴(flip-risk)'] },
+  CHOPPY:  { m8bf: [535, 74, 42, '🟢✓'], strad: [327, 43, 7, '🔴(n=7!)'], bobf: [321, 55, 20, '🔴'], gxbf: [-36, 56, 9, '🔴(n=9!)'], diag: [536, 80, 41, '🟢✓'] },
+  MIXED: null,
+};
+
+// One compact Discord line: class + only the strategies that DEVIATE.
+export function cycleAdvisoryLine(cycInfo) {
+  if (!cycInfo || !cycInfo.cls) return null;
+  const st = CYCLE_SHAPE_STATS[cycInfo.cls];
+  if (!st) return `CycleLab   │ ${cycInfo.cls} week-pattern`;
+  const names = { m8bf: 'M8BF', strad: 'Strad', bobf: 'BOBF', gxbf: 'GXBF', diag: 'Diag' };
+  const parts = [];
+  for (const [k, v] of Object.entries(st)) {
+    const flag = v[3] || '';
+    if (flag.startsWith('⚪')) continue;
+    const norm = CYCLE_SHAPE_STATS.normals[k][0];
+    parts.push(`${names[k]} $${v[0]} vs $${norm}${flag.includes('✓') ? '✓' : flag.includes('!') || flag.includes('flip') ? '?' : ''}`);
+  }
+  return `CycleLab   │ ${cycInfo.cls} — ` + (parts.length ? parts.join(' · ') : 'all strategies ≈ normal');
+}
+
+// ════════════════════════════════════════════════════════════════════
 // SIGNAL CALCULATION (single source of truth)
 // Consumed by: schwab-proxy.js, index.html, history.html
 // ════════════════════════════════════════════════════════════════════
@@ -727,5 +791,6 @@ if (typeof globalThis !== 'undefined') {
     computeDiagonalSignal,
     computeVixPct20d,
     calculateSignal,
+    classifyCyclePrediction, CYCLE_SHAPE_STATS, cycleAdvisoryLine,
   };
 }

@@ -557,6 +557,28 @@ async function computeGexLine(env) {
   return `GEX        │ ${g.regime} ${bn >= 0 ? '+' : '-'}$${Math.abs(bn).toFixed(1)}B · flip ${g.flipStrike ?? '—'}`;
 }
 
+// CycleLab shape advisory for the morning message (2026-06-10).
+// INFORMATIONAL ONLY. Fetches cyclicality_data.json (the worker itself keeps
+// it current via the EOD append) and classifies today\'s 4-week prediction.
+async function computeCycleLine(env, etNow) {
+  const todayISO = isoDateET(etNow);
+  const ck = `cycle_line_${todayISO}`;
+  const cached = await env.SIGNAL_KV.get(ck);
+  if (cached) return cached === 'none' ? null : cached;
+  let line = null;
+  try {
+    const r = await fetch('https://raw.githubusercontent.com/rava8989/brave/main/cyclicality_data.json',
+      { headers: { 'User-Agent': 'schwab-proxy-worker/1.0' } });
+    if (r.ok) {
+      const cyc = await r.json();
+      const info = classifyCyclePrediction(cyc.days, etNow);
+      line = cycleAdvisoryLine(info);
+    }
+  } catch (e) { console.warn('[cycle-line]', e.message); }
+  await env.SIGNAL_KV.put(ck, line || 'none', { expirationTtl: 86400 });
+  return line;
+}
+
 // ── Daily total-risk cap (2026-06-09) ──────────────────────────────────
 // On multi-strategy days, Straddle + BOBF + GXBF + Diagonal can all be live
 // at once and nothing checked COMBINED max-loss against the account. Each
@@ -807,6 +829,7 @@ import {
   m8Sched, m8Msg, ordinal, wdName, tradeWdLabel,
   isEarningsDay, isNonAmznTslaEarningsDay, isDayAfterAnyEarnings,
   calculateSignal, computeDiagonalSignal, computeVixPct20d,
+  classifyCyclePrediction, cycleAdvisoryLine,
 } from './signal-engine.js';
 
 
@@ -938,6 +961,13 @@ function buildDiscordMessage(signal, vixValues, tailLine) {
   if (signal._gexLine) {
     const gc = signal._gexLine.includes('PIN') ? GRN : signal._gexLine.includes('BREAKOUT') ? RED : DIM;
     inner += `${gc}${signal._gexLine}${RST}\n`;
+  }
+
+  // CycleLab week-pattern (informational — which strategies historically
+  // deviate from their own normal on days like today)
+  if (signal._cycleLine) {
+    const cc = signal._cycleLine.includes('BULLISH') ? GRN : signal._cycleLine.includes('BEARISH') ? RED : DIM;
+    inner += `${cc}${signal._cycleLine}${RST}\n`;
   }
 
   // VIX values
@@ -4677,6 +4707,7 @@ async function handleScheduled(env) {
   signal._tailLine = tailLineCanon;  // for embed builder
   try { signal._tiltLine = await computeTiltLine(env, isoDateET(etNow)); } catch (_) { /* advisory only */ }
   try { signal._gexLine = await computeGexLine(env); } catch (_) { /* advisory only */ }
+  try { signal._cycleLine = await computeCycleLine(env, etNow); } catch (_) { /* advisory only */ }
   const message = canonBanner + buildDiscordMessage(signal, vixValues, tailLineCanon);
 
   // 7. Slot already claimed at the top of the morning block. Reuse the same key.
@@ -4869,6 +4900,7 @@ async function handleScheduled(env) {
       });
       signalOther._tiltLine = signal._tiltLine;   // same advisory on the 2nd copy
       signalOther._gexLine = signal._gexLine;
+      signalOther._cycleLine = signal._cycleLine;
       const otherBanner = otherSource === 'schwab' ? '📡 **SCHWAB DATA**\n\n' : '📡 **TASTYTRADE DATA**\n\n';
       const msgOther = otherBanner + buildDiscordMessage(signalOther, { yOpen: vixYOpen, yClose: vixYClose, todayOpen: vixOther }, tailLineCanon);
       await new Promise(r => setTimeout(r, 1500));   // Discord rate-limit safety
@@ -8312,10 +8344,11 @@ export default {
         // Tail Hedge today (fetched once, cached). Shared between both renders.
         const tailLine = await getTailHedgeStatusLine(env);
         // Advisory lines — keep the preview identical to the real morning message
-        let tiltL = null, gexL = null;
+        let tiltL = null, gexL = null, cycL = null;
         try { tiltL = await computeTiltLine(env, isoDateET(etNow)); } catch (_) {}
         try { gexL = await computeGexLine(env); } catch (_) {}
-        for (const s of [sigSchwab, sigTasty]) if (s) { s._tiltLine = tiltL; s._gexLine = gexL; }
+        try { cycL = await computeCycleLine(env, etNow); } catch (_) {}
+        for (const s of [sigSchwab, sigTasty]) if (s) { s._tiltLine = tiltL; s._gexLine = gexL; s._cycleLine = cycL; }
 
         function renderMsg(sig, vixVal, source) {
           if (!sig) return null;
