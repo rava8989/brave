@@ -146,8 +146,35 @@ fetch('cyclicality_data.json?v=' + Date.now()).then(r => r.json()).then(j => {
   $('selWeek').innerHTML = list.map(w =>
     `<option value="${w}" ${w === weekKey ? 'selected' : ''}>${fmtWeek(w)}${w > todayISO ? ' (next)' : w === weekKey ? ' (current)' : ''}</option>`).join('');
   $('selWeek').onchange = () => { weekKey = $('selWeek').value; render(); };
-  buildSegs(); whenEngineReady(() => { render(); buildValidation(); });
+  buildSegs(); whenEngineReady(() => { render(); buildValidation(); pollLive(); });
 });
+
+// ── LIVE actual (2026-06-11, user request) ──────────────────────────────
+// The worker snapshots today's session-so-far into KV every 5 min
+// (captureCycTodaySlots); GET /cyclicality-today is a pure KV read, so
+// polling costs zero Schwab calls. The record uses the same {d, w, m}
+// shape as cyclicality_data days — merged as a _live day, the chart,
+// gap-tolerance and the "actual so far" card all just work. Once the EOD
+// append lands the real record, the live one is ignored.
+const WORKER_URL = (localStorage.getItem('sc_proxyUrl') || 'https://schwab-proxy.ravamt4.workers.dev').replace(/\/$/, '');
+let liveAt = null;
+function mergeLive(rec) {
+  if (!rec || !rec.d || !Array.isArray(rec.m) || !DATA) return false;
+  const existing = DATA.days.find(x => x.d === rec.d);
+  if (existing && !existing._live) return false;   // completed session already in the file
+  if (existing) existing.m = rec.m;
+  else { DATA.days.push({ d: rec.d, w: rec.w, m: rec.m, _live: true }); DATA.days.sort((a, b) => a.d.localeCompare(b.d)); }
+  liveAt = rec.at || null;
+  return true;
+}
+function pollLive() {
+  if (document.visibilityState === 'hidden') return;
+  fetch(WORKER_URL + '/cyclicality-today', { cache: 'no-store' })
+    .then(r => r.ok ? r.json() : null)
+    .then(rec => { if (rec && mergeLive(rec)) render(); })
+    .catch(() => {});
+}
+setInterval(pollLive, 120000);
 
 function whenEngineReady(fn, tries = 0) {
   if (globalThis.SignalEngine || tries > 40) return fn();
@@ -179,7 +206,8 @@ function buildSegs() {
 // weekStart — holidays are simply absent from the data, so the window
 // automatically reaches further back (always N real sessions).
 function predFor(dowW, beforeISO) {
-  const pri = DATA.days.filter(x => x.w === dowW && x.d < beforeISO).slice(-lookback);
+  // _live (partial, intraday) days never feed predictions — only the chart's actual line
+  const pri = DATA.days.filter(x => x.w === dowW && x.d < beforeISO && !x._live).slice(-lookback);
   if (pri.length < Math.min(4, lookback)) return null;
   return { priors: pri.map(p => p.d), slots: buildSlots(pri.map(p => p.m)) };
 }
@@ -231,8 +259,10 @@ function render() {
     $('cAct').className = 'v ' + (ae >= 0 ? 'pos' : 'neg');
     const filled = r.actCum.filter(v => v != null).length;
     const predAt = r.predCum[lastIdx];
+    const liveTag = (liveAt && r.days.some(d => DATA.days.find(x => x.d === d.iso && x._live)))
+      ? ` · 🔴 LIVE (updated ${liveAt} ET)` : '';
     $('cActN').textContent = `${filled} of ${r.predCum.length} slots elapsed · ` +
-      ((predAt >= 0) === (ae >= 0) ? 'direction HIT ✓' : 'direction MISS ✗');
+      ((predAt >= 0) === (ae >= 0) ? 'direction HIT ✓' : 'direction MISS ✗') + liveTag;
   } else { $('cAct').textContent = '—'; $('cAct').className = 'v'; $('cActN').textContent = 'no sessions from this week in the data yet'; }
   draw(r);
 }
@@ -295,7 +325,8 @@ function buildValidation() {
   const ns = DATA.slots.length;
   let rows = '', totHit = 0, totN = 0, totBaseUp = 0, totDays = 0, totErr = 0, zeroErr = 0, zeroN = 0;
   for (let w = 0; w < 5; w++) {
-    const idxs = DATA.days.map((d, i) => i).filter(i => DATA.days[i].w === w);
+    // _live partial day excluded — validation must only judge completed sessions
+    const idxs = DATA.days.map((d, i) => i).filter(i => DATA.days[i].w === w && !DATA.days[i]._live);
     const net = i => DATA.days[i].m.reduce((a, m) => a + (m || 0), 0);
     const baseUp = idxs.filter(i => net(i) > 0).length / idxs.length;
     let hit = 0, tot = 0, csum = 0, esum = 0;

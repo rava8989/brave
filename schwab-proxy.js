@@ -409,15 +409,67 @@ async function captureVixSurfaceSnap(env, etNow, token) {
     { expirationTtl: 90 * 86400 });
 }
 
+// CycleLab 5-min slot helpers — shared by the EOD append and the live feed.
+function _cycSlots() {
+  const slots = [];
+  for (let h = 9, m = 30; h < 16; m += 5) { if (m >= 60) { m = 0; h++; if (h >= 16) break; }
+    slots.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`); }
+  return slots;
+}
+
+// Schwab 1-min candles → per-5-min-slot net moves array (nulls where empty).
+function _cycMovesFromCandles(candles, iso, slots, slotIdx) {
+  const oc = {};   // slot idx -> [firstOpen, lastClose]
+  for (const c of candles) {
+    if (!(c.open > 0 && c.close > 0)) continue;
+    const t = toET(new Date(c.datetime));
+    if (isoDateET(t) !== iso) continue;
+    const h = t.getHours(), m = t.getMinutes();
+    if (h < 9 || (h === 9 && m < 30) || h >= 16) continue;
+    const idx = slotIdx[`${String(h).padStart(2, '0')}:${String(m - (m % 5)).padStart(2, '0')}`];
+    if (idx == null) continue;
+    if (oc[idx]) oc[idx][1] = c.close; else oc[idx] = [c.open, c.close];
+  }
+  const moves = new Array(slots.length).fill(null);
+  for (const [idx, [o, c]] of Object.entries(oc)) moves[idx] = parseFloat((c - o).toFixed(2));
+  return { moves, filled: Object.keys(oc).length };
+}
+
+// CycleLab LIVE feed (2026-06-11, user: "continue the orange SPX line live").
+// Once per 5 min during RTH the cron snapshots today's session-so-far into
+// KV `cyc_today` ({d, w, m, at} — cyclicality_data day format + timestamp).
+// Page views read it via GET /cyclicality-today (pure KV) — ZERO extra
+// Schwab calls per viewer; total cost ≈ 78 pricehistory calls/day.
+async function captureCycTodaySlots(env, etNow, token) {
+  const h = etNow.getHours(), m = etNow.getMinutes();
+  const inWindow = (h > 9 || (h === 9 && m >= 36)) && (h < 16 || (h === 16 && m <= 6));
+  if (!inWindow || m % 5 !== 1 || !token) return;   // :36/:41/… — slot just completed
+  if (etNow.getDay() === 0 || etNow.getDay() === 6 || isHol(etNow)) return;
+  const todayISO = isoDateET(etNow);
+  const slots = _cycSlots();
+  const slotIdx = Object.fromEntries(slots.map((s, i) => [s, i]));
+  const start = Date.parse(`${todayISO}T08:00:00Z`), end = Date.parse(`${todayISO}T23:00:00Z`);
+  let hist;
+  try {
+    hist = await fetchSchwabJSON(
+      `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24SPX&periodType=day&frequencyType=minute&frequency=1&startDate=${start}&endDate=${end}&needExtendedHoursData=false`,
+      token, env);
+  } catch (e) { console.warn('[cyc-live]', e.message); return; }
+  const { moves, filled } = _cycMovesFromCandles(hist.candles || [], todayISO, slots, slotIdx);
+  if (!filled) return;
+  const wd = new Date(`${todayISO}T12:00:00Z`).getUTCDay() - 1;   // 0=Mon
+  await env.SIGNAL_KV.put('cyc_today', JSON.stringify(
+    { d: todayISO, w: wd, m: moves, at: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}` }),
+    { expirationTtl: 86400 });
+}
+
 // CycleLab daily feed (2026-06-10): append today\'s (and any recent missing)
 // SPX session to cyclicality_data.json from Schwab 1-min pricehistory —
 // 5-min slot net moves, the format build_cyclicality_data.py produces.
 // ThetaData-free; the page self-updates daily. Runs at EOD + manual route.
 async function appendCyclicalityDays(env) {
   const token = await getAccessToken(env);
-  const slots = [];
-  for (let h = 9, m = 30; h < 16; m += 5) { if (m >= 60) { m = 0; h++; if (h >= 16) break; }
-    slots.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`); }
+  const slots = _cycSlots();
   const slotIdx = Object.fromEntries(slots.map((s, i) => [s, i]));
 
   // current file (raw — cheaper than contents API for a 450KB read)
@@ -448,20 +500,8 @@ async function appendCyclicalityDays(env) {
         `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24SPX&periodType=day&frequencyType=minute&frequency=1&startDate=${start}&endDate=${end}&needExtendedHoursData=false`,
         token, env);
     } catch (e) { console.warn('[cyclelab] pricehistory failed', iso, e.message); continue; }
-    const candles = (hist.candles || []).filter(c => c.open > 0 && c.close > 0);
-    const oc = {};   // slot idx -> [firstOpen, lastClose]
-    for (const c of candles) {
-      const t = toET(new Date(c.datetime));
-      if (isoDateET(t) !== iso) continue;
-      const h = t.getHours(), m = t.getMinutes();
-      if (h < 9 || (h === 9 && m < 30) || h >= 16) continue;
-      const idx = slotIdx[`${String(h).padStart(2, '0')}:${String(m - (m % 5)).padStart(2, '0')}`];
-      if (idx == null) continue;
-      if (oc[idx]) oc[idx][1] = c.close; else oc[idx] = [c.open, c.close];
-    }
-    if (Object.keys(oc).length < 30) { console.warn('[cyclelab] too few slots', iso); continue; }
-    const moves = new Array(slots.length).fill(null);
-    for (const [idx, [o, c]] of Object.entries(oc)) moves[idx] = parseFloat((c - o).toFixed(2));
+    const { moves, filled } = _cycMovesFromCandles(hist.candles || [], iso, slots, slotIdx);
+    if (filled < 30) { console.warn('[cyclelab] too few slots', iso); continue; }
     const wd = new Date(`${iso}T12:00:00Z`).getUTCDay() - 1;   // 0=Mon
     appended.push({ d: iso, w: wd, m: moves });
   }
@@ -4368,6 +4408,8 @@ async function handleScheduled(env) {
     try { await captureGxbfChainSnap(env, etNow, masterChain); } catch (e) { console.warn('[gxbf-snap]', e.message); }
     // Research capture: ~15:45 30DTE smile (VIX decomposition dataset)
     try { await captureVixSurfaceSnap(env, etNow, schwabToken); } catch (e) { console.warn('[surface-snap]', e.message); }
+    // CycleLab live actual — today's session-so-far into KV (every 5 min)
+    try { await captureCycTodaySlots(env, etNow, schwabToken); } catch (e) { console.warn('[cyc-live]', e.message); }
   }
 
   // ── Diagonal trade: open/close at 12:30 ET. Idempotent via diag_done_<date>.
@@ -8617,6 +8659,14 @@ export default {
       try { result = await persistResearchArtifacts(env, etNowR); }
       catch (e) { result = { error: e.message }; }
       return new Response(JSON.stringify({ date: isoDateET(etNowR), result }, null, 2),
+        { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
+    }
+
+    if (url.pathname === '/cyclicality-today' && request.method === 'GET') {
+      // CycleLab live actual — today's session-so-far (KV, written by the
+      // cron every 5 min during RTH). Pure KV read: zero Schwab calls.
+      const raw = await env.SIGNAL_KV.get('cyc_today');
+      return new Response(raw || 'null',
         { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
     }
 
