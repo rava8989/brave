@@ -1585,7 +1585,7 @@
         _diagVixPct = Math.round(100 * below / _vix20dCloses.length);
       }
       const _diagSig = (typeof SignalEngine !== 'undefined' && SignalEngine.computeDiagonalSignal)
-        ? SignalEngine.computeDiagonalSignal(new Date(), _diagVixPct, window._cloudCor1m ?? null)
+        ? SignalEngine.computeDiagonalSignal(new Date(), _diagVixPct, window._cloudCor1m ?? window._histLastCor1m ?? null)
         : null;
       const diagRecCpi   = document.getElementById('diagRec');
       const diagReasonCpi= document.getElementById('diagReason');
@@ -1749,7 +1749,7 @@
       prevWR,
       vixPct20d: _vixPctToday,
       rsi14:     _spxRsi14,
-      cor1m:     window._cloudCor1m ?? null,
+      cor1m:     window._cloudCor1m ?? window._histLastCor1m ?? null,
     });
 
     /* ====== RENDER 5 CARDS ====== */
@@ -1983,6 +1983,8 @@
       diagReason.textContent = 'Short 1 DTE SPX put +10 pts ITM · long 25 DTE SPX put −20 pts below short (long is 10 OTM, width 20) · ±5 pt tol. Entry anywhere in the 12:30–15:00 ET window; exit at the same clock time on the next trading day (24-hour hold, entry time = exit time). All 6 default filters (OPEX-1, EOM, EOM-1, NM, VIX 50-80%, COR1M≥10) clear today.';
       diagBadge.textContent  = diagBadgeCanon;
       cardDiag.className     = 'scard active-ok';
+      if (window._cloudCor1m == null && window._histLastCor1m != null)
+        diagReason.textContent += ' (COR1M = last close — today\'s prints after 9:35 ET)';
       if (pillDiag) pillDiag.style.display = '';
     } else if (diagSkipCode) {
       diagRec.textContent    = diagText;
@@ -1993,7 +1995,7 @@
     } else {
       // Calendar filters cleared but VIX 20d percentile not yet populated.
       diagRec.textContent    = 'Waiting for VIX 20-day percentile…';
-      diagReason.textContent = 'Calendar filters all clear, but need today\'s VIX open + last 20 daily closes to confirm regime. Connect Schwab and check back after 9:30 AM ET.';
+      diagReason.textContent = 'Calendar filters all clear. Needs a value in "Today Open" (type one for a what-if) + the last 20 VIX closes (auto-loaded from history — no Schwab needed). If you just opened the page, press Calculate again.';
       diagBadge.textContent  = diagBadgeCanon;
       cardDiag.className     = 'scard';
       if (pillDiag) pillDiag.style.display = 'none';
@@ -2556,6 +2558,14 @@
       if(priors.length){
         _vix20dCloses = priors.slice(-20);  // most recent 20 prior trading days
       }
+      // Last known COR1M from history — manual/pre-market fallback for the
+      // Diagonal filter (today's cloud capture only exists after ~9:35 ET).
+      const cor1mRows = data.filter(r => r.cor1m != null && parseFloat(r.cor1m) > 0)
+        .sort((a, b) => a.date.localeCompare(b.date));
+      if (cor1mRows.length) window._histLastCor1m = parseFloat(cor1mRows[cor1mRows.length - 1].cor1m);
+      // If the user already pressed Calculate before this fetch landed,
+      // re-render now so the Diagonal card doesn't stick on "Waiting…".
+      try { if (document.getElementById('todayOpen').value) calculateStrategy(); } catch (_) {}
       // ── ALSO compute RSI(14) + prior-day SPX %chg from history_data.json's
       // spxClose values — no Schwab token needed. Same data source the worker
       // uses (schwab-proxy.js prefilterBobf reads m8bfWR + spxClose from
