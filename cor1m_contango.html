@@ -255,6 +255,12 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);font-
     <div id="spread-plot" class="plot"></div>
   </div>
 
+  <div class="card wide tall">
+    <div class="card-title">VIX Move Decomposition — ~30DTE ATM IV <span style="font-weight:400;color:#94a3b8;font-size:11px">(slide = spot moving along yesterday's frozen smile — mechanical · parallel = real fixed-strike vol repricing)</span></div>
+    <div id="decomp-stats" style="display:flex;gap:18px;flex-wrap:wrap;margin:4px 0 8px 4px;font-size:12px;color:#cbd5e1"></div>
+    <div id="decomp-plot" class="plot"></div>
+  </div>
+
   <div class="card">
     <div class="card-title">Per-Regime P/L</div>
     <table class="tbl" id="regime-tbl"><thead>
@@ -452,6 +458,7 @@ function render() {
   renderTermPlot();
   renderRatioPlot();
   renderSpreadPlot();
+  renderDecompPlot();
   renderRegimeTbl(trades);
   renderTriggerTbl(result.triggers);
   renderTradesTbl(trades, preset);
@@ -633,6 +640,53 @@ function renderSpreadPlot() {
   ];
   Plotly.newPlot('spread-plot', traces, plotlyLayout({
     margin: { t: 30, r: 18, b: 40, l: 50 }, yaxis: { title: 'VIX − VIX9D (vol pts)' },
+  }), { displayModeBar: false, responsive: true });
+}
+
+// VIX move decomposition panel (2026-06-11). Reads data/vix_decomposition.json
+// (built by compute_vix_decomposition.py from the ~30DTE smile snapshots;
+// extends daily via the worker's vix_surface_snap capture). Shows whether a
+// VIX move was MECHANICAL (spot sliding along the frozen smile) or real
+// repricing (VOL_BID / VOL_SUPPLY). INFORMATIONAL ONLY.
+async function renderDecompPlot() {
+  const stats = document.getElementById('decomp-stats');
+  let dd = null;
+  try {
+    const r = await fetch('data/vix_decomposition.json', { cache: 'no-store' });
+    if (r.ok) dd = await r.json();
+  } catch (_) {}
+  if (!dd || !Object.keys(dd).length) {
+    stats.innerHTML = '<span style="color:#94a3b8">Dataset building — this panel lights up automatically once the ThetaData surface backfill finishes (then self-feeds daily from the 15:45 cloud capture).</span>';
+    document.getElementById('decomp-plot').style.display = 'none';
+    return;
+  }
+  const days = Object.keys(dd).sort();
+  const lastD = days[days.length - 1], L = dd[lastD];
+  const lblColor = { MECHANICAL: '#94a3b8', VOL_BID: '#ef4444', VOL_SUPPLY: '#22c55e', MIXED: '#f59e0b' };
+  const counts = {};
+  days.forEach(d => { counts[dd[d].label] = (counts[dd[d].label] || 0) + 1; });
+  stats.innerHTML = `
+    <span>${lastD}: ΔATM-IV <b style="color:${L.dATM >= 0 ? '#ef4444' : '#22c55e'}">${L.dATM >= 0 ? '+' : ''}${L.dATM.toFixed(2)}</b></span>
+    <span>= slide <b>${L.slide >= 0 ? '+' : ''}${L.slide.toFixed(2)}</b> (mechanical)</span>
+    <span>+ parallel <b style="color:${L.parallel >= 0.5 ? '#ef4444' : L.parallel <= -0.5 ? '#22c55e' : '#cbd5e1'}">${L.parallel >= 0 ? '+' : ''}${L.parallel.toFixed(2)}</b> (real repricing)</span>
+    <span>+ twist ${L.residual >= 0 ? '+' : ''}${L.residual.toFixed(2)}</span>
+    <span>→ <b style="color:${lblColor[L.label] || '#cbd5e1'}">${L.label}</b></span>
+    <span style="color:#64748b">put-skew ${L.put_skew.toFixed(2)} (Δ ${L.d_put_skew >= 0 ? '+' : ''}${L.d_put_skew.toFixed(2)})</span>
+    <span style="color:#64748b">sample: ${days.length}d — ${Object.entries(counts).map(([k, v]) => `${k} ${Math.round(100 * v / days.length)}%`).join(' · ')}</span>`;
+  const recent = days.slice(-90);
+  const traces = [
+    { type: 'bar', x: recent, y: recent.map(d => dd[d].slide), name: 'Slide (mechanical)',
+      marker: { color: '#64748b' }, hovertemplate: '%{x}<br>slide %{y:.2f}<extra></extra>' },
+    { type: 'bar', x: recent, y: recent.map(d => dd[d].parallel), name: 'Parallel (real)',
+      marker: { color: recent.map(d => dd[d].parallel >= 0 ? '#ef4444' : '#22c55e') },
+      hovertemplate: '%{x}<br>parallel %{y:.2f}<extra></extra>' },
+    { type: 'scatter', mode: 'markers', x: recent, y: recent.map(d => dd[d].dATM),
+      name: 'ΔATM-IV (total)', marker: { color: '#818cf8', size: 5 },
+      hovertemplate: '%{x}<br>ΔATM %{y:.2f} (%{text})<extra></extra>', text: recent.map(d => dd[d].label) },
+  ];
+  Plotly.newPlot('decomp-plot', traces, plotlyLayout({
+    barmode: 'relative', margin: { t: 30, r: 18, b: 40, l: 50 },
+    yaxis: { title: 'vol pts (day-over-day)' }, legend: { orientation: 'h', y: 1.12 },
   }), { displayModeBar: false, responsive: true });
 }
 
