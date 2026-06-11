@@ -8208,6 +8208,18 @@ export default {
         { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
     }
 
+    if (url.pathname === '/advisory-lines' && request.method === 'GET') {
+      // The three informational lines the REAL morning message carries —
+      // served to the dashboard so its test/manual sends match production.
+      const out = { tilt: null, gex: null, daytype: null };
+      const etNowA = toET(new Date());
+      try { out.tilt = await computeTiltLine(env, isoDateET(etNowA)); } catch (_) {}
+      try { out.gex = await computeGexLine(env); } catch (_) {}
+      try { out.daytype = await computeCycleLine(env, etNowA); } catch (_) {}
+      return new Response(JSON.stringify(out),
+        { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
+    }
+
     if (url.pathname === '/research-persist-now' && request.method === 'GET') {
       // Manual trigger for the EOD research persist (idempotent upserts).
       const etNowR = toET(new Date());

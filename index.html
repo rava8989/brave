@@ -1494,6 +1494,12 @@
         .catch(() => {});
     }
     // CycleLab shape advisory — one-shot fetch + render (informational only)
+    if (window._advLines === undefined) {
+      window._advLines = null;
+      const _px2 = (localStorage.getItem('sc_proxyUrl') || '').trim();
+      if (_px2) fetch(_px2.replace(/\/$/, '') + '/advisory-lines', { cache: 'no-store' })
+        .then(r => r.ok ? r.json() : null).then(j => { if (j) window._advLines = j; }).catch(() => {});
+    }
     if (window._cycAdv === undefined) {
       window._cycAdv = null; window._cycRegime = null;
       Promise.all([
@@ -2970,6 +2976,21 @@
                : _tailHedgeState.state === 'SKIP'  ? RED
                : DIM;
       inner += `${tc}${tl}${RST}\n`;
+    }
+
+    // Advisory lines — fetched from the worker (/advisory-lines) so the test
+    // message matches the real morning message exactly (Tilt / GEX / Day-type).
+    if (window._advLines) {
+      const A = window._advLines;
+      if (A.tilt) inner += `${DIM}${A.tilt}${RST}\n`;
+      if (A.gex) {
+        const gc = A.gex.includes('PIN') ? GRN : A.gex.includes('BREAKOUT') ? RED : DIM;
+        inner += `${gc}${A.gex}${RST}\n`;
+      }
+      if (A.daytype) {
+        const cc = A.daytype.includes('/BULL') ? GRN : A.daytype.includes('/BEAR') ? RED : DIM;
+        inner += `${cc}${A.daytype}${RST}\n`;
+      }
     }
 
     // Pattern notes
