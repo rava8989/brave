@@ -1457,11 +1457,15 @@
     const shapeShort = { BULLISH: 'BULL', BEARISH: 'BEAR', CHOPPY: 'CHOP', MIXED: 'MIX' }[info.cls];
     const dtKey = grp ? `${grp}/${shapeShort}` : null;
     const dtCells = dtKey && SignalEngine.DAYTYPE_STATS ? SignalEngine.DAYTYPE_STATS.cells[dtKey] : null;
+    const vf = window._advLines && window._advLines.volflow;
+    const vfCol = vf && vf.includes('VOL_BID') ? 'var(--red,#ef4444)'
+                : vf && vf.includes('MIXED') ? 'var(--green,#22c55e)' : 'var(--text3)';
     document.getElementById('cycleAdvTitle').innerHTML =
       `Day-type: <span style="color:${colors[info.cls]}">${dtKey || info.cls}</span> ` +
       `<span style="font-weight:400;color:var(--text3)">(pred ${info.end >= 0 ? '+' : ''}${info.end} pts · ${info.aboveShare}% above zero · regime as of yesterday)</span>` +
       (dtCells ? `<div style="font-size:12px;margin-top:4px;color:var(--amber,#f59e0b)">` +
-        dtCells.map(c => `${c[0]} ${c[4]} ($${c[1]} vs $${c[2]} normal, n=${c[3]})`).join(' · ') + `</div>` : '');
+        dtCells.map(c => `${c[0]} ${c[4]} ($${c[1]} vs $${c[2]} normal, n=${c[3]})`).join(' · ') + `</div>` : '') +
+      (vf ? `<div style="font-size:12px;margin-top:3px;color:${vfCol}">${vf.replace('   │', ':')}</div>` : '');
     const tbl = document.getElementById('cycleAdvTable');
     if (!shape) { tbl.innerHTML = ''; box.style.display = 'block'; return; }
     const names = { m8bf: 'M8BF', strad: 'Straddle', bobf: 'BOBF', gxbf: 'GXBF', diag: 'Diagonal' };
@@ -1486,13 +1490,16 @@
       box.appendChild(foot);
     }
     if (window._scoreLedger) {
-      let gh = 0, gt = 0, dh = 0, dt = 0, first = null;
+      let gh = 0, gt = 0, dh = 0, dt = 0, vh = 0, vt = 0, first = null;
       for (const [d, e] of Object.entries(window._scoreLedger)) {
         if (!first || d < first) first = d;
         if (e.gex) { gt++; if (e.gex.hit) gh++; }
         for (const c of (e.daytype?.cells || [])) { dt++; if (c.hit) dh++; }
+        for (const c of (e.volflow?.cells || [])) { vt++; if (c.hit) vh++; }
       }
-      foot.textContent = `Self-scorecard since ${first}: GEX regime calls ${gh}/${gt} (${gt ? Math.round(100*gh/gt) : 0}%) · Day-type claims ${dh}/${dt} (${dt ? Math.round(100*dh/dt) : 0}%) — scored nightly, ledger in data/advisory_scorecard.json`;
+      foot.textContent = `Self-scorecard since ${first}: GEX regime calls ${gh}/${gt} (${gt ? Math.round(100*gh/gt) : 0}%) · Day-type claims ${dh}/${dt} (${dt ? Math.round(100*dh/dt) : 0}%)` +
+        (vt ? ` · Vol-flow claims ${vh}/${vt} (${Math.round(100*vh/vt)}%)` : '') +
+        ` — scored nightly, ledger in data/advisory_scorecard.json`;
     } else foot.textContent = '';
     box.style.display = 'block';
   }
@@ -3030,6 +3037,10 @@
       if (A.daytype) {
         const cc = A.daytype.includes('/BULL') ? GRN : A.daytype.includes('/BEAR') ? RED : DIM;
         inner += `${cc}${A.daytype}${RST}\n`;
+      }
+      if (A.volflow) {
+        const vc = A.volflow.includes('VOL_BID') ? RED : A.volflow.includes('MIXED') ? GRN : DIM;
+        inner += `${vc}${A.volflow}${RST}\n`;
       }
     }
 

@@ -464,6 +464,38 @@ export function regimeGroup(bundleRegime) {
   return { R1: 'COMPLACENT', R0: 'NEUTRAL', R2: 'NEUTRAL', R3: 'STRESS', R4: 'STRESS' }[bundleRegime] || null;
 }
 
+// Vol-flow day-type (2026-06-11): PRIOR day's VIX-decomposition label —
+// ΔATM-IV(~30DTE) = sticky-strike slide + parallel (real fixed-strike
+// repricing) + twist; labels from compute_vix_decomposition.py / the worker
+// EOD port. Validated cells only (both halves of 2024-09→2026-06 agree,
+// n≥10 per half; data/research_vix_instruments_dataset.json). Straddle
+// VOL_BID is n=9/9 per half — one short of the bar, shown as suggestive,
+// NOT scored. INFORMATIONAL ONLY (tasks/ADVISORY_STACK.md).
+export const VOLFLOW_STATS = {
+  asOf: '2026-06-11',
+  cells: {
+    VOL_BID: [
+      ['M8BF', 149, 434, 59, 'below its normal'],
+      ['Strad', 1902, 1091, 18, 'above (suggestive, small n)'],
+    ],
+    VOL_SUPPLY: [['Diag', 113, 378, 36, 'below its normal']],
+    MIXED: [
+      ['M8BF', 595, 434, 108, 'favored'],
+      ['Diag', 518, 378, 93, 'favored'],
+    ],
+    MECHANICAL: null,   // M8BF mildly below normal but deviation is noise-grade
+  },
+};
+
+export function volFlowAdvisoryLine(label) {
+  if (!label) return null;
+  const head = `Vol flow   │ yday ${label}`;
+  const cells = VOLFLOW_STATS.cells[label];
+  if (!cells) return `${head} — no proven strategy deviations`;
+  const parts = cells.map(([s, v, n, cnt, note]) => `${s} ${note} ($${v} vs $${n})`);
+  return `${head} — ` + parts.join(' · ');
+}
+
 export function dayTypeAdvisoryLine(group, cycInfo) {
   if (!cycInfo || !cycInfo.cls) return null;
   const shape = { BULLISH: 'BULL', BEARISH: 'BEAR', CHOPPY: 'CHOP', MIXED: 'MIX' }[cycInfo.cls];

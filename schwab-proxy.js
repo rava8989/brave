@@ -493,6 +493,15 @@ const SCORE_DAYTYPE_CLAIMS = {
   'NEUTRAL/BULL': [['stradPL', 'below-normal', 1091]],
 };
 
+// Vol-flow claims (2026-06-11): scored cells = the ones that replicated both
+// halves in the 3-leg study. Straddle/VOL_BID is suggestive-only — NOT scored.
+// 'above-normal' → P/L > normal; 'below-normal' → P/L < normal.
+const SCORE_VOLFLOW_CLAIMS = {
+  VOL_BID: [['m8bfPL', 'below-normal', 434]],
+  VOL_SUPPLY: [['diagPL', 'below-normal', 378]],
+  MIXED: [['m8bfPL', 'above-normal', 434], ['diagPL', 'above-normal', 378]],
+};
+
 async function scoreAdvisories(env) {
   const gh = { headers: { 'User-Agent': 'schwab-proxy-worker/1.0' } };
   const [cycR, bunR, hist] = await Promise.all([
@@ -516,6 +525,23 @@ async function scoreAdvisories(env) {
       if (r.ok) Object.assign(gexd, await r.json());
     } catch (_) {}
   }
+
+  // vix decomposition (vol-flow labels) — keyed by the day the label is FOR;
+  // the advisory on day d used the latest label STRICTLY BEFORE d (≤5d gap).
+  let decomp = {};
+  try {
+    const r = await fetch('https://raw.githubusercontent.com/rava8989/brave/main/data/vix_decomposition.json', gh);
+    if (r.ok) decomp = await r.json();
+  } catch (_) {}
+  const decompDates = Object.keys(decomp).sort();
+  const priorLabelFor = d => {
+    let lo = 0, hi = decompDates.length - 1, best = null;
+    while (lo <= hi) { const m = (lo + hi) >> 1;
+      if (decompDates[m] < d) { best = decompDates[m]; lo = m + 1; } else hi = m - 1; }
+    if (!best) return null;
+    const gap = (new Date(d) - new Date(best)) / 86400000;
+    return gap <= 5 ? decomp[best].label : null;
+  };
 
   const dayRange = d => {
     const m = cycBy[d]?.m; if (!m) return null;
@@ -554,7 +580,19 @@ async function scoreAdvisories(env) {
         entry.daytype.cells.push({ strat: fld.replace('PL', ''), claim, pnl, hit });
       }
     }
-    if (entry.gex || (entry.daytype && entry.daytype.cells.length)) scored[d] = entry;
+    // 3. Vol-flow claims (prior day's decomposition label)
+    const vfLabel = priorLabelFor(d);
+    if (vfLabel) {
+      entry.volflow = { label: vfLabel, cells: [] };
+      for (const [fld, claim, normal] of (SCORE_VOLFLOW_CLAIMS[vfLabel] || [])) {
+        const pnl = histBy[d]?.[fld];
+        if (pnl == null || pnl === 0) continue;   // strategy didn't trade → unscorable
+        const hit = claim === 'above-normal' ? pnl > normal : pnl < normal;
+        entry.volflow.cells.push({ strat: fld.replace('PL', ''), claim, pnl, hit });
+      }
+      if (!entry.volflow.cells.length) delete entry.volflow;
+    }
+    if (entry.gex || (entry.daytype && entry.daytype.cells.length) || entry.volflow) scored[d] = entry;
   }
 
   await githubUpsertResearchFile(env, 'data/advisory_scorecard.json',
@@ -570,16 +608,18 @@ async function scorecardLine(env, etNow) {
     if (!r.ok) return null;
     const led = await r.json();
     const ym = isoDateET(etNow).slice(0, 7);
-    let gh = 0, gt = 0, dh = 0, dt = 0;
+    let gh = 0, gt = 0, dh = 0, dt = 0, vh = 0, vt = 0;
     for (const [d, e] of Object.entries(led)) {
       if (!d.startsWith(ym)) continue;
       if (e.gex) { gt++; if (e.gex.hit) gh++; }
       for (const c of (e.daytype?.cells || [])) { dt++; if (c.hit) dh++; }
+      for (const c of (e.volflow?.cells || [])) { vt++; if (c.hit) vh++; }
     }
-    if (!gt && !dt) return null;
+    if (!gt && !dt && !vt) return null;
     const parts = [];
     if (gt) parts.push(`GEX ${gh}/${gt}`);
     if (dt) parts.push(`Day-type ${dh}/${dt}`);
+    if (vt) parts.push(`Vol-flow ${vh}/${vt}`);
     return `Scorecard: ${parts.join(' · ')} (MTD)`;
   } catch (_) { return null; }
 }
@@ -785,6 +825,139 @@ async function computeCycleLine(env, etNow) {
       line = dayTypeAdvisoryLine(group, info);
     }
   } catch (e) { console.warn('[cycle-line]', e.message); }
+  await env.SIGNAL_KV.put(ck, line || 'none', { expirationTtl: 86400 });
+  return line;
+}
+
+// ── Vol-flow advisory (2026-06-11) — INFORMATIONAL ONLY ────────────────
+// JS port of compute_vix_decomposition.py: yesterday's ~30DTE smile vs the
+// day before's splits ΔATM-IV into sticky-strike slide / parallel (real
+// repricing) / twist → label. Validated cells live in signal-engine
+// VOLFLOW_STATS (M8BF↓ after VOL_BID, Diag↓ after VOL_SUPPLY, both ↑ on
+// MIXED — all replicate both halves). Smile source: vix_surface_snap KV
+// (15:45 capture), GitHub data/vix_surface/<ym>.json fallback (incl. the
+// ThetaData-backfill seed).
+
+function _smileFn(rec) {
+  const byK = {};
+  for (const r of rec.rows || []) {
+    const k = r[0], iv = r[4];                 // [k, right, bid, ask, iv, (delta)]
+    if (iv != null && iv > 0) (byK[k] = byK[k] || []).push(iv);
+  }
+  const pts = Object.entries(byK)
+    .map(([k, v]) => [parseFloat(k), v.reduce((a, b) => a + b, 0) / v.length])
+    .sort((a, b) => a[0] - b[0]);
+  if (pts.length < 4) return null;
+  const ks = pts.map(p => p[0]), ivs = pts.map(p => p[1]);
+  const fn = x => {
+    if (x <= ks[0]) return ivs[0];
+    if (x >= ks[ks.length - 1]) return ivs[ivs.length - 1];
+    for (let i = 1; i < ks.length; i++) {
+      if (x <= ks[i]) {
+        const w = (x - ks[i - 1]) / (ks[i] - ks[i - 1]);
+        return ivs[i - 1] * (1 - w) + ivs[i] * w;
+      }
+    }
+    return ivs[ivs.length - 1];
+  };
+  return { fn, lo: ks[0], hi: ks[ks.length - 1] };
+}
+
+// Same math/keys as compute_vix_decomposition.py — the page chart reads both.
+function computeDecompPair(prevRec, curRec) {
+  const f0 = _smileFn(prevRec), f1 = _smileFn(curRec);
+  if (!f0 || !f1 || !prevRec.spot || !curRec.spot) return null;
+  const s0 = prevRec.spot, s1 = curRec.spot;
+  const atm0 = f0.fn(s0), atm1 = f1.fn(s1);
+  const dATM = atm1 - atm0;
+  const slide = f0.fn(Math.min(Math.max(s1, f0.lo), f0.hi)) - f0.fn(s0);
+  const klo = Math.max(f0.lo, f1.lo, s0 * 0.88), khi = Math.min(f0.hi, f1.hi, s0 * 1.06);
+  if (khi <= klo) return null;
+  let parallel = 0;
+  for (let j = 0; j < 9; j++) parallel += f1.fn(klo + (khi - klo) * j / 8) - f0.fn(klo + (khi - klo) * j / 8);
+  parallel /= 9;
+  const residual = dATM - slide - parallel;
+  const putSkew0 = f0.fn(s0 * 0.92) - atm0, putSkew1 = f1.fn(s1 * 0.92) - atm1;
+  const callSkew0 = f0.fn(s0 * 1.04) - atm0, callSkew1 = f1.fn(s1 * 1.04) - atm1;
+  let label;
+  if (Math.abs(slide) >= Math.abs(dATM) * 2 / 3 && Math.abs(parallel) < Math.max(Math.abs(dATM) / 3, 0.15)) label = 'MECHANICAL';
+  else if (parallel >= 0.5) label = 'VOL_BID';
+  else if (parallel <= -0.5) label = 'VOL_SUPPLY';
+  else label = 'MIXED';
+  const r2 = x => Math.round(x * 100) / 100;
+  return { atm: r2(atm1), spot: s1, dATM: r2(dATM), slide: r2(slide), parallel: r2(parallel),
+           residual: r2(residual), put_skew: r2(putSkew1), d_put_skew: r2(putSkew1 - putSkew0),
+           call_skew: r2(callSkew1), d_call_skew: r2(callSkew1 - callSkew0), label };
+}
+
+// EOD: compute today's decomposition record (today's 15:45 smile vs the
+// prior session's) → KV vix_decomp_<date> + upsert data/vix_decomposition.json
+// so the page chart self-feeds. Idempotent; best-effort.
+async function computeVixDecompDaily(env, etNow) {
+  const todayISO = isoDateET(etNow);
+  if (etNow.getDay() === 0 || etNow.getDay() === 6 || isHol(etNow)) return { skipped: 'non-trading' };
+  if (await env.SIGNAL_KV.get(`vix_decomp_${todayISO}`)) return { skipped: 'done' };
+  const curRaw = await env.SIGNAL_KV.get(`vix_surface_snap_${todayISO}`);
+  if (!curRaw) return { skipped: 'no surface snap today' };
+  const cur = JSON.parse(curRaw);
+  // prior session smile: KV walk-back ≤5d, then GitHub monthly file(s)
+  let prev = null;
+  for (let back = 1; back <= 5 && !prev; back++) {
+    const d = new Date(etNow); d.setDate(d.getDate() - back);
+    const raw = await env.SIGNAL_KV.get(`vix_surface_snap_${isoDateET(d)}`);
+    if (raw) { try { prev = JSON.parse(raw); } catch (_) {} }
+  }
+  if (!prev) {
+    const lo = new Date(etNow); lo.setDate(lo.getDate() - 5);
+    const months = [...new Set([isoDateET(lo).slice(0, 7), todayISO.slice(0, 7)])];
+    const found = {};
+    for (const ym of months) {
+      try {
+        const r = await fetch(`https://raw.githubusercontent.com/rava8989/brave/main/data/vix_surface/${ym}.json`,
+          { headers: { 'User-Agent': 'schwab-proxy-worker/1.0' } });
+        if (r.ok) Object.assign(found, await r.json());
+      } catch (_) {}
+    }
+    const loISO = isoDateET(lo);
+    const cand = Object.keys(found).filter(d => d < todayISO && d >= loISO).sort();
+    if (cand.length) prev = found[cand[cand.length - 1]];
+  }
+  if (!prev) return { skipped: 'no prior smile within 5d' };
+  const rec = computeDecompPair(prev, cur);
+  if (!rec) return { skipped: 'smiles too sparse' };
+  await env.SIGNAL_KV.put(`vix_decomp_${todayISO}`, JSON.stringify(rec), { expirationTtl: 90 * 86400 });
+  await githubUpsertResearchFile(env, 'data/vix_decomposition.json',
+    curF => { curF[todayISO] = rec; return curF; }, `auto: vix decomp ${todayISO} ${rec.label}`);
+  return { ok: true, label: rec.label };
+}
+
+// Morning-message line: YESTERDAY's label (KV walk-back ≤5d, GitHub
+// data/vix_decomposition.json fallback). Cached per day like computeCycleLine.
+async function computeVolFlowLine(env, etNow) {
+  const todayISO = isoDateET(etNow);
+  const ck = `volflow_line_${todayISO}`;
+  const cached = await env.SIGNAL_KV.get(ck);
+  if (cached) return cached === 'none' ? null : cached;
+  let label = null;
+  for (let back = 1; back <= 5 && !label; back++) {
+    const d = new Date(etNow); d.setDate(d.getDate() - back);
+    const raw = await env.SIGNAL_KV.get(`vix_decomp_${isoDateET(d)}`);
+    if (raw) { try { label = JSON.parse(raw).label; } catch (_) {} }
+  }
+  if (!label) {
+    try {
+      const r = await fetch('https://raw.githubusercontent.com/rava8989/brave/main/data/vix_decomposition.json',
+        { headers: { 'User-Agent': 'schwab-proxy-worker/1.0' } });
+      if (r.ok) {
+        const dd = await r.json();
+        const lo = new Date(etNow); lo.setDate(lo.getDate() - 5);
+        const loISO = isoDateET(lo);
+        const cand = Object.keys(dd).filter(d => d < todayISO && d >= loISO).sort();
+        if (cand.length) label = dd[cand[cand.length - 1]].label;
+      }
+    } catch (e) { console.warn('[volflow-line]', e.message); }
+  }
+  const line = volFlowAdvisoryLine(label);
   await env.SIGNAL_KV.put(ck, line || 'none', { expirationTtl: 86400 });
   return line;
 }
@@ -1040,6 +1213,7 @@ import {
   isEarningsDay, isNonAmznTslaEarningsDay, isDayAfterAnyEarnings,
   calculateSignal, computeDiagonalSignal, computeVixPct20d,
   classifyCyclePrediction, cycleAdvisoryLine, regimeGroup, dayTypeAdvisoryLine,
+  volFlowAdvisoryLine,
 } from './signal-engine.js';
 
 
@@ -1178,6 +1352,11 @@ function buildDiscordMessage(signal, vixValues, tailLine) {
   if (signal._cycleLine) {
     const cc = signal._cycleLine.includes('/BULL') ? GRN : signal._cycleLine.includes('/BEAR') ? RED : DIM;
     inner += `${cc}${signal._cycleLine}${RST}\n`;
+  }
+  if (signal._volFlowLine) {
+    const vc = signal._volFlowLine.includes('VOL_BID') ? RED
+             : signal._volFlowLine.includes('MIXED') ? GRN : DIM;
+    inner += `${vc}${signal._volFlowLine}${RST}\n`;
   }
 
   // VIX values
@@ -4116,6 +4295,8 @@ async function handleScheduled(env) {
     try { scrapeAppend = await appendScrapedSignals(env, etNow); } catch(e) { scrapeAppend = { error: e.message }; }
     // Fold today\'s research captures (fly marks, put snap) into monthly GitHub files
     try { await persistResearchArtifacts(env, etNow); } catch (e) { console.warn('[research-persist]', e.message); }
+    // Vol-flow: compute today's VIX decomposition (needs the 15:45 surface snap)
+    try { await computeVixDecompDaily(env, etNow); } catch (e) { console.warn('[vix-decomp]', e.message); }
     // CycleLab: append today's SPX session (+ backfill recent gaps) from Schwab
     try { await appendCyclicalityDays(env); } catch (e) { console.warn('[cyclelab]', e.message); }
     return { ...eodResult, discord: discordResult, backfill_wr: backfillWR, backfill_pl: backfillPL, scrape_append: scrapeAppend };
@@ -4920,6 +5101,7 @@ async function handleScheduled(env) {
   try { signal._tiltLine = await computeTiltLine(env, isoDateET(etNow)); } catch (_) { /* advisory only */ }
   try { signal._gexLine = await computeGexLine(env); } catch (_) { /* advisory only */ }
   try { signal._cycleLine = await computeCycleLine(env, etNow); } catch (_) { /* advisory only */ }
+  try { signal._volFlowLine = await computeVolFlowLine(env, etNow); } catch (_) { /* advisory only */ }
   const message = canonBanner + buildDiscordMessage(signal, vixValues, tailLineCanon);
 
   // 7. Slot already claimed at the top of the morning block. Reuse the same key.
@@ -5113,6 +5295,7 @@ async function handleScheduled(env) {
       signalOther._tiltLine = signal._tiltLine;   // same advisory on the 2nd copy
       signalOther._gexLine = signal._gexLine;
       signalOther._cycleLine = signal._cycleLine;
+      signalOther._volFlowLine = signal._volFlowLine;
       const otherBanner = otherSource === 'schwab' ? '📡 **SCHWAB DATA**\n\n' : '📡 **TASTYTRADE DATA**\n\n';
       const msgOther = otherBanner + buildDiscordMessage(signalOther, { yOpen: vixYOpen, yClose: vixYClose, todayOpen: vixOther }, tailLineCanon);
       await new Promise(r => setTimeout(r, 1500));   // Discord rate-limit safety
@@ -8417,11 +8600,12 @@ export default {
     if (url.pathname === '/advisory-lines' && request.method === 'GET') {
       // The three informational lines the REAL morning message carries —
       // served to the dashboard so its test/manual sends match production.
-      const out = { tilt: null, gex: null, daytype: null };
+      const out = { tilt: null, gex: null, daytype: null, volflow: null };
       const etNowA = toET(new Date());
       try { out.tilt = await computeTiltLine(env, isoDateET(etNowA)); } catch (_) {}
       try { out.gex = await computeGexLine(env); } catch (_) {}
       try { out.daytype = await computeCycleLine(env, etNowA); } catch (_) {}
+      try { out.volflow = await computeVolFlowLine(env, etNowA); } catch (_) {}
       return new Response(JSON.stringify(out),
         { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
     }
@@ -8433,6 +8617,18 @@ export default {
       try { result = await persistResearchArtifacts(env, etNowR); }
       catch (e) { result = { error: e.message }; }
       return new Response(JSON.stringify({ date: isoDateET(etNowR), result }, null, 2),
+        { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
+    }
+
+    if (url.pathname === '/vix-decomp-now' && request.method === 'GET') {
+      // Manual trigger for the daily vol-flow decomposition (idempotent).
+      const etNowV = toET(new Date());
+      let result;
+      try { result = await computeVixDecompDaily(env, etNowV); }
+      catch (e) { result = { error: e.message }; }
+      let line = null;
+      try { line = await computeVolFlowLine(env, etNowV); } catch (_) {}
+      return new Response(JSON.stringify({ date: isoDateET(etNowV), result, advisoryLine: line }, null, 2),
         { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
     }
 
@@ -8575,11 +8771,12 @@ export default {
         // Tail Hedge today (fetched once, cached). Shared between both renders.
         const tailLine = await getTailHedgeStatusLine(env);
         // Advisory lines — keep the preview identical to the real morning message
-        let tiltL = null, gexL = null, cycL = null;
+        let tiltL = null, gexL = null, cycL = null, volL = null;
         try { tiltL = await computeTiltLine(env, isoDateET(etNow)); } catch (_) {}
         try { gexL = await computeGexLine(env); } catch (_) {}
         try { cycL = await computeCycleLine(env, etNow); } catch (_) {}
-        for (const s of [sigSchwab, sigTasty]) if (s) { s._tiltLine = tiltL; s._gexLine = gexL; s._cycleLine = cycL; }
+        try { volL = await computeVolFlowLine(env, etNow); } catch (_) {}
+        for (const s of [sigSchwab, sigTasty]) if (s) { s._tiltLine = tiltL; s._gexLine = gexL; s._cycleLine = cycL; s._volFlowLine = volL; }
 
         function renderMsg(sig, vixVal, source) {
           if (!sig) return null;
@@ -9562,7 +9759,18 @@ export default {
           try { tiltP = await computeTiltLine(env, isoDateET(nextTrade(etP))); } catch (_) {}
           // Retry research persistence (idempotent) — catches EOD-time failures
           try { await persistResearchArtifacts(env, etP); } catch (_) {}
-          // Score our own advisory claims (GEX regime + Day-type cells)
+          // Vol-flow decomposition retry (idempotent) — then tomorrow's context
+          // line: today's label IS what the morning message will report.
+          let volP = null;
+          try {
+            await computeVixDecompDaily(env, etP);
+            const vdRaw = await env.SIGNAL_KV.get(`vix_decomp_${todayP}`);
+            if (vdRaw) {
+              const vd = JSON.parse(vdRaw);
+              volP = `Vol flow today: ${vd.label} (slide ${vd.slide >= 0 ? '+' : ''}${vd.slide} · real ${vd.parallel >= 0 ? '+' : ''}${vd.parallel})`;
+            }
+          } catch (_) {}
+          // Score our own advisory claims (GEX regime + Day-type + Vol-flow cells)
           try { await scoreAdvisories(env); } catch (e) { console.warn('[scorecard]', e.message); }
           const dcRaw = await env.SIGNAL_KV.get('discord_config');
           if (dcRaw) {
@@ -9574,6 +9782,7 @@ export default {
                 (tags.length ? tags.map(t => `• ${t}`).join('\n') : '• No special days — all strategies on their own merits') +
                 `\n${health.join(' · ')}` +
                 (tiltP ? `\n${tiltP.replace('   │', ':')}` : '') +
+                (volP ? `\n${volP}` : '') +
                 (scoreLine ? `\n${scoreLine}` : '');
               await sendDiscordDM(env, dc.channelId, msg, dc.proxyUrl);
             }
