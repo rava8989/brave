@@ -472,6 +472,23 @@ async function persistResearchArtifacts(env, etNow) {
       try { await logEvent(env, 'error', 'research', `${label} persist FAILED`, { msg: e.message }); } catch (_) {}
     }
   }
+  // GEX daily summary: morning snapshot (gex_daily KV) + closing gex_current
+  try {
+    const amRaw = await env.SIGNAL_KV.get(`gex_daily_${todayISO}`);
+    const pmRaw = await env.SIGNAL_KV.get('gex_current');
+    const trim = g => g ? { t: g.timestamp, spot: g.spot, regime: g.regime, totalGex: g.totalGex,
+                            flip: g.flipStrike ?? null, maxPos: g.maxPosStrike ?? null, maxNeg: g.maxNegStrike ?? null } : null;
+    const am = amRaw ? JSON.parse(amRaw).am : null;
+    const pm = pmRaw ? trim(JSON.parse(pmRaw)) : null;
+    if (am || pm) {
+      await githubUpsertResearchFile(env, `data/gex_daily/${ym}.json`,
+        cur => { cur[todayISO] = { am, pm }; return cur; }, `auto: gex daily ${todayISO}`);
+      results.push({ label: 'gex daily', ok: true });
+    } else results.push({ label: 'gex daily', skipped: 'no snapshots' });
+  } catch (e) {
+    results.push({ label: 'gex daily', error: e.message });
+    console.warn('[research-persist] gex daily failed:', e.message);
+  }
   return results;
 }
 
@@ -525,6 +542,19 @@ async function computeTiltLine(env, todayISO) {
     parts.push(`${name} ${(wi * nAct).toFixed(1)}x`);
   }
   return `Tilt 60d   │ ${parts.join(' · ')}`;
+}
+
+// Morning GEX line (2026-06-10, git-mined validation): the PIN/BREAKOUT
+// regime is real — BREAKOUT mornings realized 103-pt avg ranges vs 60 on
+// PIN, and the pin-style book bled on BREAKOUT mornings. One line, colored
+// by regime, in both morning messages. ADVISORY only.
+async function computeGexLine(env) {
+  const raw = await env.SIGNAL_KV.get('gex_current');
+  if (!raw) return null;
+  const g = JSON.parse(raw);
+  if (!g || !g.regime || g.totalGex == null) return null;
+  const bn = g.totalGex / 1e9;
+  return `GEX        │ ${g.regime} ${bn >= 0 ? '+' : '-'}$${Math.abs(bn).toFixed(1)}B · flip ${g.flipStrike ?? '—'}`;
 }
 
 // ── Daily total-risk cap (2026-06-09) ──────────────────────────────────
@@ -903,6 +933,12 @@ function buildDiscordMessage(signal, vixValues, tailLine) {
 
   // Auto-Tilt advisory (60d MAR weights — informational, user sizes manually)
   if (signal._tiltLine) inner += `${DIM}${signal._tiltLine}${RST}\n`;
+
+  // GEX regime (validated 2026-06-10: BREAKOUT mornings ≈ 1.7× wider days)
+  if (signal._gexLine) {
+    const gc = signal._gexLine.includes('PIN') ? GRN : signal._gexLine.includes('BREAKOUT') ? RED : DIM;
+    inner += `${gc}${signal._gexLine}${RST}\n`;
+  }
 
   // VIX values
   inner += `${DIM}${'─'.repeat(34)}${RST}\n`;
@@ -3885,6 +3921,24 @@ async function handleScheduled(env) {
   if (isMarket && schwabToken) {
     try { await captureCor1mVvix(env, etNow, schwabToken); }
     catch (e) { console.warn('[cor1m] capture failed:', e.message || e); }
+    // Research capture: morning (~10:00) GEX snapshot → gex_daily_<date>.am
+    // (EOD persist pairs it with the close snapshot into data/gex_daily/)
+    try {
+      const hG = etNow.getHours(), mG = etNow.getMinutes();
+      if (hG === 9 && mG >= 55 || hG === 10 && mG <= 10) {
+        const kG = `gex_daily_${isoDateET(etNow)}`;
+        if (!(await env.SIGNAL_KV.get(kG))) {
+          const cur = await env.SIGNAL_KV.get('gex_current');
+          if (cur) {
+            const g = JSON.parse(cur);
+            await env.SIGNAL_KV.put(kG, JSON.stringify({ am: {
+              t: g.timestamp, spot: g.spot, regime: g.regime, totalGex: g.totalGex,
+              flip: g.flipStrike ?? null, maxPos: g.maxPosStrike ?? null, maxNeg: g.maxNegStrike ?? null,
+            } }), { expirationTtl: 90 * 86400 });
+          }
+        }
+      }
+    } catch (e) { console.warn('[gex-daily]', e.message); }
     // Research capture: 9:45-ish SPX put snapshot (Tail Hedge dataset, ThetaData-free)
     try { await captureTailPutSnap(env, etNow, masterChain); } catch (e) { console.warn('[tail-snap]', e.message); }
     // Research capture: Diagonal 12:30 put chain + GXBF 9:35 call chain
@@ -4622,6 +4676,7 @@ async function handleScheduled(env) {
   const tailLineCanon = await getTailHedgeStatusLine(env);
   signal._tailLine = tailLineCanon;  // for embed builder
   try { signal._tiltLine = await computeTiltLine(env, isoDateET(etNow)); } catch (_) { /* advisory only */ }
+  try { signal._gexLine = await computeGexLine(env); } catch (_) { /* advisory only */ }
   const message = canonBanner + buildDiscordMessage(signal, vixValues, tailLineCanon);
 
   // 7. Slot already claimed at the top of the morning block. Reuse the same key.
@@ -4813,6 +4868,7 @@ async function handleScheduled(env) {
         cor1m: cor1mOpenToday,
       });
       signalOther._tiltLine = signal._tiltLine;   // same advisory on the 2nd copy
+      signalOther._gexLine = signal._gexLine;
       const otherBanner = otherSource === 'schwab' ? '📡 **SCHWAB DATA**\n\n' : '📡 **TASTYTRADE DATA**\n\n';
       const msgOther = otherBanner + buildDiscordMessage(signalOther, { yOpen: vixYOpen, yClose: vixYClose, todayOpen: vixOther }, tailLineCanon);
       await new Promise(r => setTimeout(r, 1500));   // Discord rate-limit safety
@@ -8255,6 +8311,11 @@ export default {
         const sigTasty  = makeSignal(vixTasty,  spxTasty);
         // Tail Hedge today (fetched once, cached). Shared between both renders.
         const tailLine = await getTailHedgeStatusLine(env);
+        // Advisory lines — keep the preview identical to the real morning message
+        let tiltL = null, gexL = null;
+        try { tiltL = await computeTiltLine(env, isoDateET(etNow)); } catch (_) {}
+        try { gexL = await computeGexLine(env); } catch (_) {}
+        for (const s of [sigSchwab, sigTasty]) if (s) { s._tiltLine = tiltL; s._gexLine = gexL; }
 
         function renderMsg(sig, vixVal, source) {
           if (!sig) return null;
