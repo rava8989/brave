@@ -831,7 +831,8 @@ async function computeGexLine(env) {
   const g = JSON.parse(raw);
   if (!g || !g.regime || g.totalGex == null) return null;
   const bn = g.totalGex / 1e9;
-  return `GEX        │ ${g.regime} ${bn >= 0 ? '+' : '-'}$${Math.abs(bn).toFixed(1)}B · flip ${g.flipStrike ?? '—'}`;
+  const flipTxt = g.flipStrike != null ? `flip ${g.flipStrike}` : 'no flip in range (one-sided)';
+  return `GEX        │ ${g.regime} ${bn >= 0 ? '+' : '-'}$${Math.abs(bn).toFixed(1)}B · ${flipTxt}`;
 }
 
 // CycleLab shape advisory for the morning message (2026-06-10).
@@ -5599,15 +5600,22 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
     if (r.netGex < maxNegGex) { maxNegStrike = r.strike; maxNegGex = r.netGex; }
   }
 
-  // GEX flip: cumulative net_gex zero crossing nearest to spot
+  // GEX flip: cumulative net_gex zero crossing nearest to spot.
+  // Significance gate (2026-06-11, user caught flip 6972 with spot 7293):
+  // on a one-sided day the cumulative can graze zero at the band edge off a
+  // noise pocket (+62M vs −48B that day) — a technically-true crossing with
+  // no meaning. A real flip requires the cumulative to hold REAL mass on
+  // BOTH sides (≥2% of |total|); otherwise flip = null ("no flip in range").
   let flipStrike = null;
   {
     const crossings = [];
-    let cumGex = 0;
+    let cumGex = 0, maxCum = -Infinity, minCum = Infinity;
     let minAbsCum = Infinity, minAbsCumStrike = null; // fallback: closest to zero
     for (let i = 0; i < strikeResults.length; i++) {
       const prevCum = cumGex;
       cumGex += strikeResults[i].netGex;
+      if (cumGex > maxCum) maxCum = cumGex;
+      if (cumGex < minCum) minCum = cumGex;
       if (i > 0 && ((prevCum < 0 && cumGex >= 0) || (prevCum > 0 && cumGex <= 0))) {
         const s0 = strikeResults[i - 1].strike;
         const s1 = strikeResults[i].strike;
@@ -5619,14 +5627,17 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
         minAbsCumStrike = strikeResults[i].strike;
       }
     }
-    if (crossings.length > 0) {
+    const sig = Math.abs(totalGex) * 0.02;
+    const twoSided = maxCum > sig && minCum < -sig;
+    if (twoSided && crossings.length > 0) {
       // Pick the crossing nearest to spot price
       crossings.sort((a, b) => Math.abs(a - S) - Math.abs(b - S));
       flipStrike = crossings[0];
-    } else if (minAbsCumStrike !== null) {
+    } else if (twoSided && minAbsCumStrike !== null) {
       // No true zero crossing — use the strike where cumulative is closest to zero
       flipStrike = minAbsCumStrike;
     }
+    // else: book is one-sided across the whole band → no meaningful flip
   }
 
   // Top 10 walls by absolute net GEX

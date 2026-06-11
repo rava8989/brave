@@ -398,7 +398,10 @@ function renderTopBar(data) {
 function renderCards(data) {
   document.getElementById('maxPosStrike').textContent = data.maxPosStrike ? data.maxPosStrike.toFixed(0) : '--';
   document.getElementById('maxPosValue').textContent = data.maxPosGex ? fmtGex(data.maxPosGex) : '--';
-  document.getElementById('flipStrike').textContent = data.flipStrike != null ? data.flipStrike.toFixed(0) : 'N/A';
+  document.getElementById('flipStrike').textContent = data.flipStrike != null ? data.flipStrike.toFixed(0) : 'none';
+  document.getElementById('flipDesc').textContent = data.flipStrike != null
+    ? 'Above = long gamma, Below = short gamma'
+    : 'One-sided book — no flip within the ±5% band (deep ' + (data.totalGex >= 0 ? 'positive' : 'negative') + ' everywhere)';
   document.getElementById('maxNegStrike').textContent = data.maxNegStrike ? data.maxNegStrike.toFixed(0) : '--';
   document.getElementById('maxNegValue').textContent = data.maxNegGex ? fmtGex(data.maxNegGex) : '--';
 }
