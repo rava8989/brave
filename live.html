@@ -229,6 +229,11 @@
   <!-- Dynamically rendered by renderDiagonal() -->
 </div>
 
+<div class="main" id="tailSection" style="display:none;">
+  <!-- Dynamically rendered by renderTail() — visible ONLY while the COR1M
+       trigger sequence is active (the one strategy that stays MANUAL) -->
+</div>
+
 
 <script>
 // ─── Diagonal section styles ────────────────────────────────────────────
@@ -244,6 +249,8 @@
     #straddleSection  .diag-title span{color:#22d3ee;}
     #diagonalSection  .diag-card{border-top:3px solid #fb7185;background:linear-gradient(180deg,rgba(251,113,133,.06) 0%,var(--bg2) 60%);}
     #diagonalSection  .diag-title span{color:#fb7185;}
+    #tailSection      .diag-card{border-top:3px solid #ef4444;background:linear-gradient(180deg,rgba(239,68,68,.08) 0%,var(--bg2) 60%);}
+    #tailSection      .diag-title span{color:#ef4444;}
     /* M8BF lives inside #mainContent — apply violet accent to both the
        butterfly card (when triggered) and the diag-card (when waiting). */
     #mainContent .bf-card,
@@ -589,6 +596,47 @@ async function loadBobf() {
     const r = await fetchWithRetry(PROXY + '/bobf-today', { cache: 'no-store' });
     if (r.ok) bobf = await r.json();
   } catch (e) { console.warn('[live] /bobf-today fetch failed:', e); }
+}
+
+// ─── Tail Hedge (MANUAL strategy — user 2026-06-11: must appear among
+// today's live trades whenever the COR1M trigger sequence is active) ────
+let tail = null;
+async function loadTail() {
+  try {
+    const r = await fetchWithRetry(PROXY + '/tail-today', { cache: 'no-store' });
+    if (r.ok) tail = await r.json();
+  } catch (e) { console.warn('[live] /tail-today fetch failed:', e); }
+}
+
+function renderTail() {
+  const sec = document.getElementById('tailSection');
+  if (!tail || (!tail.active && !tail.skip)) { sec.style.display = 'none'; return; }
+  sec.style.display = '';
+  const since = tail.state && tail.state.since ? ` · trigger since ${tail.state.since}` : '';
+  const cand = tail.candidate;
+  const candRow = cand
+    ? `<div style="font-family:'JetBrains Mono',monospace;font-size:15px;margin:10px 0 4px;">
+         Candidate: <b>SPXW ${cand.k}P</b> (Δ ${cand.d}) — bid ${cand.b ?? '—'} / ask ${cand.a ?? '—'}
+         <span style="font-size:11px;color:var(--text3)"> @ ${tail.snapAt ?? '9:40'} snap, exp ${cand.e}</span>
+       </div>`
+    : `<div style="font-size:12px;color:var(--text3);margin:10px 0 4px;">Candidate put appears here after the ~9:40 chain snapshot.</div>`;
+  const badge = tail.skip
+    ? `<span class="diag-badge skip">SKIP TODAY</span>`
+    : `<span class="diag-badge open">TRIGGER ACTIVE</span>`;
+  const body = tail.skip
+    ? `<div style="font-size:13px;color:var(--text2);">${tail.line.replace('Tail Hedge │ ', '')} — sequence stays open; check again tomorrow.</div>`
+    : `<div style="font-size:13px;color:var(--text);font-weight:600;">Buy ONE 0DTE SPXW put, Δ −0.20, at <u>9:45 ET</u> — repeat daily until the first profitable day.</div>
+       ${candRow}
+       <div style="font-size:11.5px;color:var(--text3);margin-top:6px;">Skip rule: no entry when VVIX ≥ 110 (now ${tail.vvix ?? '—'}). COR1M ${tail.cor1m ?? '—'}${since}.</div>`;
+  sec.innerHTML = `
+    <div class="diag-card">
+      <div class="diag-header">
+        <div class="diag-title">▼ <span>Tail Hedge</span></div>
+        ${badge}
+        <span class="diag-badge pending" title="No bot for this one — you place it yourself">MANUAL</span>
+      </div>
+      ${body}
+    </div>`;
 }
 
 function renderBobf() {
@@ -2082,13 +2130,14 @@ async function tick() {
   // Re-check trade state every tick — catches trigger/close without page refresh
   const prevTriggered = trade?.triggered;
   const prevStatus = trade?.status;
-  await Promise.all([loadTrade(), loadDiagonal(), loadStraddle(), loadBobf(), loadGxbf()]);
+  await Promise.all([loadTrade(), loadDiagonal(), loadStraddle(), loadBobf(), loadGxbf(), loadTail()]);
   // Wrap each render so the user's "show per-leg fills" <details> toggle
   // doesn't reset every 30s tick.
   preserveDetailsState('diagonalSection', renderDiagonal);
   preserveDetailsState('straddleSection', renderStraddle);
   preserveDetailsState('bobfSection',     renderBobf);
   preserveDetailsState('gxbfSection',     renderGxbf);
+  preserveDetailsState('tailSection',     renderTail);
   const stateChanged = (trade?.triggered !== prevTriggered) || (trade?.status !== prevStatus);
   if (stateChanged) { render(); }
 
@@ -2144,6 +2193,7 @@ function reorderStrategySections() {
     { id: 'gxbfSection',     active: () => !!gxbf?.open || gxbf?.lastClosed?.openDate === today },
     { id: 'straddleSection', active: () => !!straddle?.open || straddle?.lastClosed?.closeDate === today },
     { id: 'diagonalSection', active: () => !!diagonal?.open || diagonal?.lastClosed?.closeDate === today || diagonal?.lastClosed?.openDate === today },
+    { id: 'tailSection',     active: () => !!tail?.active },
   ];
   // Collect skip elements (preserve their original order)
   const skipEls = [];
@@ -2162,7 +2212,7 @@ function reorderStrategySections() {
 async function init() {
   try {
     checkOAuthCallback();
-    await Promise.all([loadTrade(), loadSPXHistory(), loadSignals(), loadDiagonal(), loadStraddle(), loadBobf(), loadGxbf()]);
+    await Promise.all([loadTrade(), loadSPXHistory(), loadSignals(), loadDiagonal(), loadStraddle(), loadBobf(), loadGxbf(), loadTail()]);
     updateLiveBadge();
     createSPXChart();
     rebuildSPXChart();
@@ -2171,6 +2221,7 @@ async function init() {
     renderStraddle();
     renderBobf();
     renderGxbf();
+    renderTail();
     try { renderLiveTotal(); } catch (e) { console.warn('renderLiveTotal init failed:', e); }
     try { reorderStrategySections(); } catch (e) { console.warn('reorderStrategySections init failed:', e); }
     await tick();

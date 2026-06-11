@@ -8662,6 +8662,32 @@ export default {
         { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
     }
 
+    if (url.pathname === '/tail-today' && request.method === 'GET') {
+      // Tail Hedge live status for the Live page (user 2026-06-11: the only
+      // manual strategy must appear among today's trades when triggered).
+      // Truth source = getTailHedgeStatusLine (same line as the morning msg).
+      const etNowT = toET(new Date());
+      const todayT = isoDateET(etNowT);
+      const line = await getTailHedgeStatusLine(env);
+      let st = null, snap = null, openRec = null;
+      try { st = JSON.parse(await env.SIGNAL_KV.get('tail_trigger_state') || 'null'); } catch (_) {}
+      try { snap = JSON.parse(await env.SIGNAL_KV.get(`tail_put_snap_${todayT}`) || 'null'); } catch (_) {}
+      try { openRec = JSON.parse(await env.SIGNAL_KV.get(`cor1m_open_${todayT}`) || 'null'); } catch (_) {}
+      // candidate = nearest-expiry put closest to Δ-0.20 from the ~9:40 snapshot
+      let candidate = null;
+      if (snap && Array.isArray(snap.puts) && snap.puts.length) {
+        const e0 = snap.puts[0].e;
+        candidate = snap.puts.filter(p => p.e === e0)
+          .sort((a, b) => Math.abs(a.d + 0.20) - Math.abs(b.d + 0.20))[0] || null;
+      }
+      return new Response(JSON.stringify({
+        date: todayT, line,
+        active: line.includes('▶ TRADE'), skip: line.includes('SKIP today'),
+        state: st, cor1m: openRec?.cor1m ?? null, vvix: openRec?.vvix ?? null,
+        spot: snap?.spot ?? null, snapAt: snap?.at ?? null, candidate,
+      }), { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
+    }
+
     if (url.pathname === '/cyclicality-today' && request.method === 'GET') {
       // CycleLab live actual — today's session-so-far (KV, written by the
       // cron every 5 min during RTH). Pure KV read: zero Schwab calls.
