@@ -38,6 +38,10 @@
       bar.appendChild(a);
     }
     document.body.prepend(bar);
+    // Pages had their own header link rows (nav.nav) before this bar existed —
+    // hide them so there's ONE navigation (titles/meta/theme buttons stay).
+    // index.html has no nav.nav (sidebar layout), so the dashboard menu is safe.
+    document.querySelectorAll('nav.nav').forEach(n => { n.style.display = 'none'; });
     // Flex/grid bodies (e.g. the dashboard's sidebar+content row): a prepended
     // bar becomes a narrow LEFT COLUMN and shoves the page sideways. Make the
     // bar span the full first row instead — and drop sticky there so it can't
