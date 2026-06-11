@@ -445,6 +445,36 @@ export const CYCLE_SHAPE_STATS = {
   MIXED: null,
 };
 
+// Combined day-type (2026-06-10): COR1M regime group × CycleLab shape.
+// Validated cells only (both halves of 2024-09→2026-06 agree, n>=15/cell);
+// all other day-types show the label with no strategy claims.
+export const DAYTYPE_STATS = {
+  asOf: '2026-06-10',
+  cells: {
+    'NEUTRAL/BEAR': [
+      ['Diag', 6, 356, 50, 'historically FLAT — dead weight'],
+      ['BOBF', 684, 510, 28, 'favored'],
+    ],
+    'NEUTRAL/CHOP': [['Diag', 470, 356, 31, 'favored']],
+    'NEUTRAL/BULL': [['Strad', 695, 1091, 30, 'below its normal']],
+  },
+};
+
+export function regimeGroup(bundleRegime) {
+  return { R1: 'COMPLACENT', R0: 'NEUTRAL', R2: 'NEUTRAL', R3: 'STRESS', R4: 'STRESS' }[bundleRegime] || null;
+}
+
+export function dayTypeAdvisoryLine(group, cycInfo) {
+  if (!cycInfo || !cycInfo.cls) return null;
+  const shape = { BULLISH: 'BULL', BEARISH: 'BEAR', CHOPPY: 'CHOP', MIXED: 'MIX' }[cycInfo.cls];
+  const key = group ? `${group}/${shape}` : null;
+  const head = `Day-type   │ ${group || '?'}/${shape}`;
+  const cells = key && DAYTYPE_STATS.cells[key];
+  if (!cells) return `${head} — no proven strategy deviations`;
+  const parts = cells.map(([s, v, n, cnt, note]) => `${s} ${note} ($${v} vs $${n})`);
+  return `${head} — ` + parts.join(' · ');
+}
+
 // One compact Discord line: class + only the strategies that DEVIATE.
 export function cycleAdvisoryLine(cycInfo) {
   if (!cycInfo || !cycInfo.cls) return null;
@@ -792,5 +822,6 @@ if (typeof globalThis !== 'undefined') {
     computeVixPct20d,
     calculateSignal,
     classifyCyclePrediction, CYCLE_SHAPE_STATS, cycleAdvisoryLine,
+    DAYTYPE_STATS, regimeGroup, dayTypeAdvisoryLine,
   };
 }

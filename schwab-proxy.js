@@ -567,12 +567,25 @@ async function computeCycleLine(env, etNow) {
   if (cached) return cached === 'none' ? null : cached;
   let line = null;
   try {
-    const r = await fetch('https://raw.githubusercontent.com/rava8989/brave/main/cyclicality_data.json',
-      { headers: { 'User-Agent': 'schwab-proxy-worker/1.0' } });
+    const [r, rb] = await Promise.all([
+      fetch('https://raw.githubusercontent.com/rava8989/brave/main/cyclicality_data.json',
+        { headers: { 'User-Agent': 'schwab-proxy-worker/1.0' } }),
+      fetch('https://raw.githubusercontent.com/rava8989/brave/main/cor1m_contango_bundle.json',
+        { headers: { 'User-Agent': 'schwab-proxy-worker/1.0' } }),
+    ]);
     if (r.ok) {
       const cyc = await r.json();
       const info = classifyCyclePrediction(cyc.days, etNow);
-      line = cycleAdvisoryLine(info);
+      // Regime: last bundle day (= yesterday) — today's COR1M may not be
+      // captured yet at send time; regimes persist day-to-day. Honest label.
+      let group = null;
+      if (rb.ok) {
+        try {
+          const daily = (await rb.json()).daily || [];
+          if (daily.length) group = regimeGroup(daily[daily.length - 1].regime);
+        } catch (_) {}
+      }
+      line = dayTypeAdvisoryLine(group, info);
     }
   } catch (e) { console.warn('[cycle-line]', e.message); }
   await env.SIGNAL_KV.put(ck, line || 'none', { expirationTtl: 86400 });
@@ -829,7 +842,7 @@ import {
   m8Sched, m8Msg, ordinal, wdName, tradeWdLabel,
   isEarningsDay, isNonAmznTslaEarningsDay, isDayAfterAnyEarnings,
   calculateSignal, computeDiagonalSignal, computeVixPct20d,
-  classifyCyclePrediction, cycleAdvisoryLine,
+  classifyCyclePrediction, cycleAdvisoryLine, regimeGroup, dayTypeAdvisoryLine,
 } from './signal-engine.js';
 
 
@@ -966,7 +979,7 @@ function buildDiscordMessage(signal, vixValues, tailLine) {
   // CycleLab week-pattern (informational — which strategies historically
   // deviate from their own normal on days like today)
   if (signal._cycleLine) {
-    const cc = signal._cycleLine.includes('BULLISH') ? GRN : signal._cycleLine.includes('BEARISH') ? RED : DIM;
+    const cc = signal._cycleLine.includes('/BULL') ? GRN : signal._cycleLine.includes('/BEAR') ? RED : DIM;
     inner += `${cc}${signal._cycleLine}${RST}\n`;
   }
 

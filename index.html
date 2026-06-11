@@ -1451,9 +1451,15 @@
     const ST = SignalEngine.CYCLE_SHAPE_STATS;
     const shape = ST[info.cls];
     const colors = { BULLISH: 'var(--green,#22c55e)', BEARISH: 'var(--red,#ef4444)', CHOPPY: 'var(--amber,#f59e0b)', MIXED: 'var(--text2)' };
+    const grp = window._cycRegime;
+    const shapeShort = { BULLISH: 'BULL', BEARISH: 'BEAR', CHOPPY: 'CHOP', MIXED: 'MIX' }[info.cls];
+    const dtKey = grp ? `${grp}/${shapeShort}` : null;
+    const dtCells = dtKey && SignalEngine.DAYTYPE_STATS ? SignalEngine.DAYTYPE_STATS.cells[dtKey] : null;
     document.getElementById('cycleAdvTitle').innerHTML =
-      `CycleLab: <span style="color:${colors[info.cls]}">${info.cls}</span> week-pattern ` +
-      `<span style="font-weight:400;color:var(--text3)">(pred ${info.end >= 0 ? '+' : ''}${info.end} pts · ${info.aboveShare}% above zero)</span>`;
+      `Day-type: <span style="color:${colors[info.cls]}">${dtKey || info.cls}</span> ` +
+      `<span style="font-weight:400;color:var(--text3)">(pred ${info.end >= 0 ? '+' : ''}${info.end} pts · ${info.aboveShare}% above zero · regime as of yesterday)</span>` +
+      (dtCells ? `<div style="font-size:12px;margin-top:4px;color:var(--amber,#f59e0b)">` +
+        dtCells.map(c => `${c[0]} ${c[4]} ($${c[1]} vs $${c[2]} normal, n=${c[3]})`).join(' · ') + `</div>` : '');
     const tbl = document.getElementById('cycleAdvTable');
     if (!shape) { tbl.innerHTML = ''; box.style.display = 'block'; return; }
     const names = { m8bf: 'M8BF', strad: 'Straddle', bobf: 'BOBF', gxbf: 'GXBF', diag: 'Diagonal' };
@@ -1489,10 +1495,15 @@
     }
     // CycleLab shape advisory — one-shot fetch + render (informational only)
     if (window._cycAdv === undefined) {
-      window._cycAdv = null;
-      fetch('cyclicality_data.json?v=' + Date.now()).then(r => r.ok ? r.json() : null).then(j => {
+      window._cycAdv = null; window._cycRegime = null;
+      Promise.all([
+        fetch('cyclicality_data.json?v=' + Date.now()).then(r => r.ok ? r.json() : null),
+        fetch('cor1m_contango_bundle.json?v=' + Date.now()).then(r => r.ok ? r.json() : null).catch(() => null),
+      ]).then(([j, b]) => {
         if (!j || !globalThis.SignalEngine || !SignalEngine.classifyCyclePrediction) return;
         window._cycAdv = SignalEngine.classifyCyclePrediction(j.days, new Date());
+        if (b && b.daily && b.daily.length)
+          window._cycRegime = SignalEngine.regimeGroup(b.daily[b.daily.length - 1].regime);
         renderCycleAdvisory();
       }).catch(() => {});
     } else renderCycleAdvisory();
