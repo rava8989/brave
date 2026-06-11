@@ -471,6 +471,8 @@
       <div class="fg"><label>VIX Today's Open</label><input type="number" id="todayOpen" step="0.01" placeholder="e.g. 18.50" oninput="onManualInput(this,'todayOpen')" /><span class="fe" id="err-todayOpen"></span></div>
       <div class="fg"><label>VIX Yesterday's Open</label><input type="number" id="yesterdayOpen" step="0.01" placeholder="e.g. 19.10" oninput="onManualInput(this,'yesterdayOpen')" /><span class="fe" id="err-yesterdayOpen"></span></div>
       <div class="fg"><label>VIX Yesterday's Close</label><input type="number" id="yesterdayClose" step="0.01" placeholder="e.g. 18.80" oninput="onManualInput(this,'yesterdayClose')" /><span class="fe" id="err-yesterdayClose"></span></div>
+      <div class="fg"><label>SPX Today's Open <span style="font-weight:400;opacity:.6">(optional — for gap when Schwab is down)</span></label><input type="number" id="spxTodayManual" step="0.01" placeholder="e.g. 7350.50" /></div>
+      <div class="fg"><label>SPX Yesterday's Close <span style="font-weight:400;opacity:.6">(optional)</span></label><input type="number" id="spxYCloseManual" step="0.01" placeholder="e.g. 7385.20" /></div>
       <div class="btn-row">
         <button class="btn-p" onclick="calculateStrategy()">Calculate</button>
         <button class="btn-s" onclick="resetCalculator()">Reset</button>
@@ -1664,6 +1666,15 @@
     let spxGapPct = null;
     if (spxData && spxData.yClose && spxData.todayOpen) {
       spxGapPct = ((spxData.todayOpen - spxData.yClose) / spxData.yClose) * 100;
+    } else {
+      // Manual fallback (emergency route: Schwab down, user types from a
+      // chart). Gap blocks the Straddle — without this, a dead Schwab made
+      // the gap checks silently inactive on exactly the mornings they matter.
+      const mT = parseFloat(document.getElementById('spxTodayManual')?.value);
+      const mY = parseFloat(document.getElementById('spxYCloseManual')?.value);
+      if (!isNaN(mT) && !isNaN(mY) && mY > 0) {
+        spxGapPct = ((mT - mY) / mY) * 100;
+      }
     }
     const spxGapWrap = document.getElementById('spxGapWrap');
     const spxGapEl   = document.getElementById('spxGapDisplay');
