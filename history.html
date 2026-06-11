@@ -314,6 +314,15 @@
     </div>
   </div>
 
+  <div class="chart-card" id="portfolioRiskCard" style="display:none">
+    <div class="chart-card-header">
+      <span class="chart-card-title">Portfolio Risk — the combined book <span style="font-weight:400;color:var(--text3);font-size:11px">(selected strategies, current filters)</span></span>
+    </div>
+    <div id="prStats" style="display:flex;gap:22px;flex-wrap:wrap;font-size:12.5px;color:var(--text2);margin:6px 0 4px;"></div>
+    <div id="prMatrix" style="margin-top:10px;overflow-x:auto;"></div>
+    <div id="prNote" style="font-size:11px;color:var(--text3);margin-top:8px;"></div>
+  </div>
+
   <div class="chart-card" id="barChartCard" style="display:none">
     <div class="chart-card-header">
       <span class="chart-card-title">P/L Distribution</span>
@@ -565,6 +574,100 @@ function applyFilters() {
   rows = filtered;
   sortCol = null;
   renderTable();
+  try { renderPortfolioRisk(rows); } catch (e) { console.warn('portfolio risk failed:', e); }
+}
+
+// ══════════════════════════════════════════════════════════════
+// PORTFOLIO RISK (2026-06-11, user-approved) — drawdown + strategy
+// correlations for the COMBINED book. Same gating conventions as
+// getRowPL, same filter set as everything else on the page.
+// ══════════════════════════════════════════════════════════════
+
+const PR_STRATS = [
+  ['M8BF', r => (r.signal || {}).m8bfRan && r.m8bfPL != null ? r.m8bfPL : null],
+  ['Strad', r => (r.signal || {}).stradRan && r.stradPL != null ? r.stradPL : null],
+  ['BOBF', r => (r.signal || {}).bobfBadge !== 'BLOCKED' && r.bobfPL != null ? r.bobfPL : null],
+  ['GXBF', r => r.gxbfPL != null ? r.gxbfPL : null],
+  ['Diag', r => (r.diagPL != null && r.diagPL !== 0) ? r.diagPL : null],
+];
+
+function prPearson(xs, ys) {
+  const n = xs.length;
+  if (n < 2) return null;
+  const mx = xs.reduce((a, b) => a + b, 0) / n, my = ys.reduce((a, b) => a + b, 0) / n;
+  let sxy = 0, sxx = 0, syy = 0;
+  for (let i = 0; i < n; i++) { const dx = xs[i] - mx, dy = ys[i] - my; sxy += dx * dy; sxx += dx * dx; syy += dy * dy; }
+  if (sxx === 0 || syy === 0) return null;
+  return sxy / Math.sqrt(sxx * syy);
+}
+
+function renderPortfolioRisk(visibleRows) {
+  const card = document.getElementById('portfolioRiskCard');
+  if (!visibleRows || visibleRows.length < 20) { card.style.display = 'none'; return; }
+  const days = visibleRows.slice().sort((a, b) => a.date.localeCompare(b.date));
+
+  // 1. Combined equity → drawdown stats (getRowPL = selected strategies)
+  let cum = 0, peak = 0, maxDD = 0, maxDDfrom = null, peakDate = null, worstDay = 0, worstDayDate = null;
+  const dailyPL = [];
+  for (const r of days) {
+    const pl = getRowPL(r);
+    if (pl == null) continue;
+    dailyPL.push({ d: r.date, pl });
+    cum += pl;
+    if (cum > peak) { peak = cum; peakDate = r.date; }
+    const dd = peak - cum;
+    if (dd > maxDD) { maxDD = dd; maxDDfrom = peakDate; }
+    if (pl < worstDay) { worstDay = pl; worstDayDate = r.date; }
+  }
+  if (dailyPL.length < 20) { card.style.display = 'none'; return; }
+  const curDD = peak - cum;
+  let worstWeek = 0;
+  for (let i = 0; i < dailyPL.length; i++) {
+    let s = 0;
+    for (let j = i; j < Math.min(i + 5, dailyPL.length); j++) s += dailyPL[j].pl;
+    if (s < worstWeek) worstWeek = s;
+  }
+  const fmt = v => (v < 0 ? '-$' : '$') + Math.abs(Math.round(v)).toLocaleString();
+  const ddCls = curDD > maxDD * 0.7 ? 'var(--red,#ef4444)' : curDD > maxDD * 0.3 ? 'var(--amber,#f59e0b)' : 'var(--green,#22c55e)';
+  document.getElementById('prStats').innerHTML = `
+    <span>Total: <b style="color:${cum >= 0 ? 'var(--green,#22c55e)' : 'var(--red,#ef4444)'}">${fmt(cum)}</b> (${dailyPL.length}d)</span>
+    <span>Max drawdown: <b>${fmt(maxDD)}</b>${maxDDfrom ? ` <span style="color:var(--text3)">(peak ${maxDDfrom})</span>` : ''}</span>
+    <span>Now off peak: <b style="color:${ddCls}">${fmt(curDD)}</b></span>
+    <span>Worst day: <b>${fmt(worstDay)}</b> <span style="color:var(--text3)">${worstDayDate || ''}</span></span>
+    <span>Worst 5-day run: <b>${fmt(worstWeek)}</b></span>`;
+
+  // 2. Correlation matrix (pairwise, days BOTH traded) + stress split
+  const series = PR_STRATS.map(([name, fn]) => ({ name, by: Object.fromEntries(days.map(r => [r.date, fn(r)]).filter(x => x[1] != null)) }));
+  const stress = d => { const r = days.find(x => x.date === d); return r && r.vixOpen != null && r.vixOpen >= 20; };
+  let html = '<table style="border-collapse:collapse;font-family:\'JetBrains Mono\',monospace;font-size:11.5px;"><tr><td></td>' +
+    series.map(s => `<td style="padding:4px 10px;font-weight:700;color:var(--text2)">${s.name}</td>`).join('') + '</tr>';
+  let sumAll = 0, nAll = 0, sumStress = 0, nStress = 0;
+  for (let i = 0; i < series.length; i++) {
+    html += `<tr><td style="padding:4px 10px;font-weight:700;color:var(--text2)">${series[i].name}</td>`;
+    for (let j = 0; j < series.length; j++) {
+      if (j === i) { html += '<td style="padding:4px 10px;color:var(--text3)">—</td>'; continue; }
+      if (j < i) { html += '<td></td>'; continue; }
+      const shared = Object.keys(series[i].by).filter(d => series[j].by[d] != null);
+      const c = prPearson(shared.map(d => series[i].by[d]), shared.map(d => series[j].by[d]));
+      const sharedStress = shared.filter(stress);
+      const cS = prPearson(sharedStress.map(d => series[i].by[d]), sharedStress.map(d => series[j].by[d]));
+      if (c != null) { sumAll += c; nAll++; }
+      if (cS != null && sharedStress.length >= 8) { sumStress += cS; nStress++; }
+      const col = c == null ? 'var(--text3)' : c > 0.5 ? 'var(--red,#ef4444)' : c > 0.2 ? 'var(--amber,#f59e0b)' : 'var(--green,#22c55e)';
+      html += `<td style="padding:4px 10px;color:${col}" title="n=${shared.length} shared days${cS != null && sharedStress.length >= 8 ? ` · VIX≥20: ${cS.toFixed(2)} (n=${sharedStress.length})` : ''}">${c == null ? '—' : c.toFixed(2)}</td>`;
+    }
+    html += '</tr>';
+  }
+  html += '</table>';
+  document.getElementById('prMatrix').innerHTML = html;
+  const avgAll = nAll ? sumAll / nAll : null;
+  const avgStress = nStress ? sumStress / nStress : null;
+  document.getElementById('prNote').textContent =
+    `Pairwise daily-P/L correlation, days both strategies traded. Green < 0.2 · amber 0.2–0.5 · red > 0.5. ` +
+    (avgAll != null ? `Average pairwise: ${avgAll.toFixed(2)} all days` : '') +
+    (avgStress != null ? ` → ${avgStress.toFixed(2)} on VIX≥20 days — when correlations rise, the book is more concentrated than it looks.` : '.') +
+    ` Hover a cell for n and the stress-day value.`;
+  card.style.display = '';
 }
 
 // ══════════════════════════════════════════════════════════════
