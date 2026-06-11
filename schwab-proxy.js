@@ -105,12 +105,12 @@ async function captureCor1mVvix(env, etNow, token) {
   // plus no freshness check captured yesterday's close as today's open.
   const sinceOpenMin = (h - 9) * 60 + (m - 30);
   const inOpenWindow = sinceOpenMin >= 0 && sinceOpenMin <= 30;
-  const needVvixBackfill = haveOpen != null && haveOpen.vvix == null;
+  const needVvixBackfill = haveOpen != null && (haveOpen.vvix == null || haveOpen.vixeq == null);
   const isSampleTick = m % 5 === 0;
   if (!(inOpenWindow && (!haveOpen || needVvixBackfill)) && !isSampleTick) return;   // throttle
 
   const q = await fetchSchwabJSON(
-    'https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24COR1M,%24VVIX&fields=quote',
+    'https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24COR1M,%24VVIX,%24VIXEQ&fields=quote',
     token, env);
   // Freshness gate (2026-06-10): until an index publishes its first print of
   // the day, Schwab's quote serves the PRIOR session's last value (with a
@@ -120,14 +120,17 @@ async function captureCor1mVvix(env, etNow, token) {
     const tt = qq?.tradeTime ?? qq?.quoteTime;
     return tt != null && tt > 0 && (Date.now() - tt) < 10 * 60 * 1000;
   };
-  const corQ = q?.['$COR1M']?.quote, vvixQ = q?.['$VVIX']?.quote;
+  const corQ = q?.['$COR1M']?.quote, vvixQ = q?.['$VVIX']?.quote, vixeqQ = q?.['$VIXEQ']?.quote;
   const corRaw = isFreshQ(corQ) ? corQ?.lastPrice : null;
   const vvixRaw = isFreshQ(vvixQ) ? vvixQ?.lastPrice : null;
   const vvix = (vvixRaw != null && vvixRaw > 0) ? parseFloat(vvixRaw.toFixed(2)) : null;
+  const vixeqRaw = isFreshQ(vixeqQ) ? vixeqQ?.lastPrice : null;
+  const vixeq = (vixeqRaw != null && vixeqRaw > 0) ? parseFloat(vixeqRaw.toFixed(2)) : null;
 
-  // VVIX-only backfill: open captured on an earlier tick before VVIX printed.
-  if (needVvixBackfill && vvix != null) {
-    haveOpen.vvix = vvix;
+  // Aux backfill: open captured on an earlier tick before VVIX/VIXEQ printed.
+  if (needVvixBackfill && (vvix != null || vixeq != null)) {
+    if (haveOpen.vvix == null && vvix != null) haveOpen.vvix = vvix;
+    if (haveOpen.vixeq == null && vixeq != null) haveOpen.vixeq = vixeq;
     await env.SIGNAL_KV.put(openKey, JSON.stringify(haveOpen), { expirationTtl: 7 * 86400 });
   }
   if (corRaw == null || !(corRaw > 0)) return;   // no fresh COR1M print yet — retry next tick
@@ -143,7 +146,7 @@ async function captureCor1mVvix(env, etNow, token) {
   // First sample of the day: capture open + use the PRIOR session's last
   // sample as `prev` so overnight crosses are caught (any-cross semantics).
   if (!haveOpen) {
-    await env.SIGNAL_KV.put(openKey, JSON.stringify({ cor1m: cor, vvix, at: hhmm }),
+    await env.SIGNAL_KV.put(openKey, JSON.stringify({ cor1m: cor, vvix, vixeq, at: hhmm }),
       { expirationTtl: 7 * 86400 });
     if (prev == null) {
       for (let back = 1; back <= 4 && prev == null; back++) {
@@ -340,6 +343,69 @@ async function captureGxbfChainSnap(env, etNow, masterChain) {
   rows.sort((a, b) => a[0] - b[0]);
   const hhmm = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
   await env.SIGNAL_KV.put(k, JSON.stringify({ at: hhmm, spot, exp: expKey.split(':')[0], calls: rows }),
+    { expirationTtl: 90 * 86400 });
+}
+
+// VIX-surface snapshot (2026-06-11, optionsgelt-inspired VIX decomposition).
+// At ~15:45 ET store the ~30DTE SPX smile at a sparse moneyness grid
+// (85%–110% of spot, OTM side: puts below / calls above, both at ATM).
+// masterChain is only ±$200 wide, so this makes its own chain call pinned to
+// ONE expiry ≈ today+30d (weekend-rolled; walks ±1/2 days on holiday misses —
+// SPXW expires daily, so the first probe almost always hits) with
+// strikeCount=500 for the deep-put wing. Schwab supplies per-contract
+// `volatility`, so day-over-day smile moves decompose into sticky-strike /
+// parallel / skew components with NO IV solving. Rows: [k, right, bid, ask, iv, delta].
+const SURFACE_MONEYNESS = [0.85, 0.88, 0.90, 0.92, 0.94, 0.96, 0.98, 1.00, 1.02, 1.04, 1.06, 1.10];
+async function captureVixSurfaceSnap(env, etNow, token) {
+  const h = etNow.getHours(), m = etNow.getMinutes();
+  if (!(h === 15 && m >= 40 && m <= 55)) return;
+  if (!token) return;
+  const todayISO = isoDateET(etNow);
+  const kvKey = `vix_surface_snap_${todayISO}`;
+  if (await env.SIGNAL_KV.get(kvKey)) return;       // once per day
+  // target expiry: today+30 calendar days, rolled off weekends
+  const base = new Date(etNow); base.setDate(base.getDate() + 30);
+  if (base.getDay() === 6) base.setDate(base.getDate() + 2);      // Sat → Mon
+  else if (base.getDay() === 0) base.setDate(base.getDate() + 1); // Sun → Mon
+  let data = null, expKey = null;
+  for (const off of [0, 1, -1, 2, -2]) {
+    const d = new Date(base); d.setDate(d.getDate() + off);
+    if (d.getDay() === 0 || d.getDay() === 6) continue;
+    const iso = isoDateET(d);
+    try {
+      const cand = await fetchSchwabJSON(
+        `https://api.schwabapi.com/marketdata/v1/chains?symbol=%24SPX&strikeCount=500&fromDate=${iso}&toDate=${iso}&includeUnderlyingQuote=true&strategy=SINGLE&contractType=ALL`,
+        token, env);
+      const keys = Object.keys(cand?.putExpDateMap || {});
+      if (keys.length) { data = cand; expKey = keys[0]; break; }
+    } catch (_) { /* try next candidate day */ }
+  }
+  if (!data || !expKey) return;
+  const spot = data.underlyingPrice || data.underlying?.last;
+  if (!spot) return;
+  const pickRows = (map, right) => {
+    const strikes = Object.keys(map?.[expKey] || {}).map(parseFloat).sort((a, b) => a - b);
+    const rows = [];
+    for (const mny of SURFACE_MONEYNESS) {
+      if (right === 'P' && mny > 1.001) continue;   // puts: ≤ ATM
+      if (right === 'C' && mny < 0.999) continue;   // calls: ≥ ATM
+      const target = spot * mny;
+      let best = null, bd = Infinity;
+      for (const s of strikes) { const d = Math.abs(s - target); if (d < bd) { bd = d; best = s; } }
+      if (best == null || bd > spot * 0.02) continue;   // no strike within 2% of target → skip point
+      const arr = map[expKey][String(best)] ?? map[expKey][best.toFixed(1)];
+      const c = Array.isArray(arr) ? arr[0] : arr;
+      if (!c) continue;
+      const iv = (c.volatility != null && c.volatility > 0 && c.volatility < 500) ? c.volatility : null;
+      rows.push([best, right, c.bid ?? null, c.ask ?? null, iv, c.delta ?? null]);
+    }
+    return rows;
+  };
+  const rows = [...pickRows(data.putExpDateMap, 'P'), ...pickRows(data.callExpDateMap, 'C')];
+  if (rows.length < 6) return;                       // too sparse to be useful — retry next tick
+  const hhmm = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  await env.SIGNAL_KV.put(kvKey, JSON.stringify(
+    { at: hhmm, spot, exp: expKey.split(':')[0], dte: parseInt(expKey.split(':')[1], 10), rows }),
     { expirationTtl: 90 * 86400 });
 }
 
@@ -560,6 +626,7 @@ async function persistResearchArtifacts(env, etNow) {
     [`tail_put_snap_${todayISO}`,  `data/tail_puts/${ym}.json`,   'tail put snap'],
     [`diag_chain_snap_${todayISO}`,`data/diag_chains/${ym}.json`, 'diag chain snap'],
     [`gxbf_chain_snap_${todayISO}`,`data/gxbf_chains/${ym}.json`, 'gxbf chain snap'],
+    [`vix_surface_snap_${todayISO}`,`data/vix_surface/${ym}.json`,'vix surface snap'],
   ];
   const results = [];
   for (const [kvKey, ghPath, label] of jobs) {
@@ -594,6 +661,30 @@ async function persistResearchArtifacts(env, etNow) {
   } catch (e) {
     results.push({ label: 'gex daily', error: e.message });
     console.warn('[research-persist] gex daily failed:', e.message);
+  }
+  // VIXEQ daily self-feed (2026-06-11): open from the 9:30-10:00 capture
+  // (cor1m_open KV), close quoted fresh now. Extends data/vixeq_daily.json
+  // (ThetaData backfill 2024-10→2026-06) Schwab-only, same {date:{open,close}}.
+  try {
+    const openRec = JSON.parse(await env.SIGNAL_KV.get(`cor1m_open_${todayISO}`) || 'null');
+    const open = openRec?.vixeq ?? null;
+    let close = null;
+    try {
+      const tk = await getAccessToken(env);
+      const q = await fetchSchwabJSON('https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIXEQ&fields=quote', tk, env);
+      const qq = q?.['$VIXEQ']?.quote;
+      const tt = qq?.tradeTime ?? qq?.quoteTime;
+      if (tt && isoDateET(toET(new Date(tt))) === todayISO && qq.lastPrice > 0) close = parseFloat(qq.lastPrice.toFixed(2));
+    } catch (_) { /* close best-effort */ }
+    if (open != null || close != null) {
+      await githubUpsertResearchFile(env, 'data/vixeq_daily.json',
+        cur => { cur[todayISO] = { open: open ?? cur[todayISO]?.open ?? null, close: close ?? cur[todayISO]?.close ?? null }; return cur; },
+        `auto: vixeq ${todayISO}`);
+      results.push({ label: 'vixeq daily', ok: true });
+    } else results.push({ label: 'vixeq daily', skipped: 'no data' });
+  } catch (e) {
+    results.push({ label: 'vixeq daily', error: e.message });
+    console.warn('[research-persist] vixeq failed:', e.message);
   }
   return results;
 }
@@ -4094,6 +4185,8 @@ async function handleScheduled(env) {
     // (with these all three bt datasets grow Schwab-only — ThetaData optional)
     try { await captureDiagChainSnap(env, etNow, masterChain); } catch (e) { console.warn('[diag-snap]', e.message); }
     try { await captureGxbfChainSnap(env, etNow, masterChain); } catch (e) { console.warn('[gxbf-snap]', e.message); }
+    // Research capture: ~15:45 30DTE smile (VIX decomposition dataset)
+    try { await captureVixSurfaceSnap(env, etNow, schwabToken); } catch (e) { console.warn('[surface-snap]', e.message); }
   }
 
   // ── Diagonal trade: open/close at 12:30 ET. Idempotent via diag_done_<date>.

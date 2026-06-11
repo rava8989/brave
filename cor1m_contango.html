@@ -249,6 +249,12 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);font-
     <div id="ratio-plot" class="plot"></div>
   </div>
 
+  <div class="card wide tall">
+    <div class="card-title">VIX − VIX9D Spread with 60-day Bands <span style="font-weight:400;color:#94a3b8;font-size:11px">(+ = calm contango · − = short-dated stress; band exits mark regime turns)</span></div>
+    <div id="spread-stats" style="display:flex;gap:18px;flex-wrap:wrap;margin:4px 0 8px 4px;font-size:12px;color:#cbd5e1"></div>
+    <div id="spread-plot" class="plot"></div>
+  </div>
+
   <div class="card">
     <div class="card-title">Per-Regime P/L</div>
     <table class="tbl" id="regime-tbl"><thead>
@@ -445,6 +451,7 @@ function render() {
   renderCor1mPlot();
   renderTermPlot();
   renderRatioPlot();
+  renderSpreadPlot();
   renderRegimeTbl(trades);
   renderTriggerTbl(result.triggers);
   renderTradesTbl(trades, preset);
@@ -576,6 +583,56 @@ function renderRatioPlot() {
   ];
   Plotly.newPlot('ratio-plot', traces, plotlyLayout({
     margin: { t: 30 }, yaxis: { title: 'VIX / VIX3M' },
+  }), { displayModeBar: false, responsive: true });
+}
+
+// VIX − VIX9D spread with rolling bands (2026-06-11, optionsgelt-inspired).
+// Spread > 0 = normal contango (30d above 9d). Spread < 0 = backwardation of
+// the short end — near-dated stress. Bands = rolling 60d mean ± 2σ; exits
+// below the lower band historically cluster at vol-event starts, re-entries
+// from below mark the turn. INFORMATIONAL ONLY.
+function renderSpreadPlot() {
+  const d = bundle.daily.filter(x => x.vix9d != null && x.vix != null);
+  if (d.length < 70) return;
+  const x = d.map(r => r.date);
+  const s = d.map(r => +(r.vix - r.vix9d).toFixed(2));
+  const WIN = 60;
+  const mean = [], up = [], lo = [], z = [];
+  for (let i = 0; i < s.length; i++) {
+    const a = Math.max(0, i - WIN + 1), w = s.slice(a, i + 1);
+    const mu = w.reduce((p, c) => p + c, 0) / w.length;
+    const sd = Math.sqrt(w.reduce((p, c) => p + (c - mu) ** 2, 0) / w.length) || 1e-9;
+    mean.push(mu); up.push(mu + 2 * sd); lo.push(mu - 2 * sd); z.push((s[i] - mu) / sd);
+  }
+  const last = s.length - 1;
+  // percentile of today's spread over the full sample
+  const sorted = [...s].sort((a, b) => a - b);
+  const pct = Math.round(100 * sorted.filter(v => v <= s[last]).length / sorted.length);
+  // deepest-since: last date with a spread ≤ today's (only meaningful when stretched)
+  let since = null;
+  if (z[last] <= -1.5) { for (let i = last - 1; i >= 0; i--) if (s[i] <= s[last]) { since = x[i]; break; } }
+  const zCls = z[last] <= -2 ? '#ef4444' : z[last] <= -1 ? '#f59e0b' : z[last] >= 2 ? '#38bdf8' : '#22c55e';
+  document.getElementById('spread-stats').innerHTML = `
+    <span>Today: <b style="color:${s[last] >= 0 ? '#22c55e' : '#ef4444'}">${s[last] >= 0 ? '+' : ''}${s[last].toFixed(2)}</b> (VIX ${d[last].vix.toFixed(2)} − VIX9D ${d[last].vix9d.toFixed(2)})</span>
+    <span>z-score (60d): <b style="color:${zCls}">${z[last].toFixed(2)}</b></span>
+    <span>Percentile (all ${s.length}d): <b>${pct}%</b></span>
+    ${since ? `<span>Deepest since: <b>${since}</b></span>` : ''}
+    <span style="color:#64748b">negative spread = VIX9D &gt; VIX → event premium in the short end</span>`;
+  const traces = [
+    { type: 'scatter', mode: 'lines', x, y: up, line: { width: 0 }, hoverinfo: 'skip', showlegend: false },
+    { type: 'scatter', mode: 'lines', x, y: lo, line: { width: 0 }, fill: 'tonexty',
+      fillcolor: 'rgba(99,102,241,0.10)', hoverinfo: 'skip', name: '±2σ band', showlegend: false },
+    { type: 'scatter', mode: 'lines', x, y: mean,
+      line: { color: '#64748b', width: 1, dash: 'dash' }, name: '60d mean',
+      hovertemplate: '%{x}<br>mean %{y:.2f}<extra></extra>' },
+    { type: 'scatter', mode: 'lines', x, y: s,
+      line: { color: '#818cf8', width: 1.4 }, name: 'VIX − VIX9D',
+      hovertemplate: '%{x}<br>spread %{y:.2f}<extra></extra>' },
+    { type: 'scatter', mode: 'lines', x, y: x.map(_ => 0),
+      line: { color: '#ef4444', width: 1, dash: 'dot' }, name: 'Zero (backwardation ↓)', hoverinfo: 'skip' },
+  ];
+  Plotly.newPlot('spread-plot', traces, plotlyLayout({
+    margin: { t: 30, r: 18, b: 40, l: 50 }, yaxis: { title: 'VIX − VIX9D (vol pts)' },
   }), { displayModeBar: false, responsive: true });
 }
 
