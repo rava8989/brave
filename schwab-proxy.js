@@ -412,6 +412,112 @@ async function appendCyclicalityDays(env) {
   return { ok: true, appended: appended.map(a => a.d) };
 }
 
+// ════════════════════════════════════════════════════════════════════
+// ADVISORY SCORECARD (2026-06-11) — score our own morning claims.
+// Idea adopted from a public vol dashboard that tracks its own predictions.
+// Each evening: score GEX regime calls (PIN = day range < 100 pts;
+// BREAKOUT = range >= 70 pts — thresholds from the 2026-06-10 validation:
+// PIN median 57, BREAKOUT median 84, 95% of PIN days < 100) and the
+// Day-type strategy claims (favored → P/L > 0; below-normal → P/L < its
+// normal; flat → |P/L| < half its normal). Ledger: data/advisory_scorecard.json
+// ════════════════════════════════════════════════════════════════════
+const SCORE_DAYTYPE_CLAIMS = {
+  'NEUTRAL/BEAR': [['diagPL', 'flat', 356], ['bobfPL', 'favored', 510]],
+  'NEUTRAL/CHOP': [['diagPL', 'favored', 378]],
+  'NEUTRAL/BULL': [['stradPL', 'below-normal', 1091]],
+};
+
+async function scoreAdvisories(env) {
+  const gh = { headers: { 'User-Agent': 'schwab-proxy-worker/1.0' } };
+  const [cycR, bunR, hist] = await Promise.all([
+    fetch('https://raw.githubusercontent.com/rava8989/brave/main/cyclicality_data.json', gh),
+    fetch('https://raw.githubusercontent.com/rava8989/brave/main/cor1m_contango_bundle.json', gh),
+    env.SIGNAL_KV.get('history_data').then(r => r ? JSON.parse(r) : []),
+  ]);
+  if (!cycR.ok || !bunR.ok) throw new Error('source fetch failed');
+  const cyc = await cycR.json();
+  const daily = (await bunR.json()).daily || [];
+  const regimeByDate = Object.fromEntries(daily.map(x => [x.date, x.regime]));
+  const bundleDates = daily.map(x => x.date);
+  const histBy = Object.fromEntries(hist.map(r => [r.date, r]));
+  const cycBy = Object.fromEntries(cyc.days.map(x => [x.d, x]));
+
+  // gex_daily monthly files
+  const gexd = {};
+  for (const ym of [...new Set(cyc.days.filter(x => x.d >= '2026-03-01').map(x => x.d.slice(0, 7)))]) {
+    try {
+      const r = await fetch(`https://raw.githubusercontent.com/rava8989/brave/main/data/gex_daily/${ym}.json`, gh);
+      if (r.ok) Object.assign(gexd, await r.json());
+    } catch (_) {}
+  }
+
+  const dayRange = d => {
+    const m = cycBy[d]?.m; if (!m) return null;
+    let c = 0, hi = 0, lo = 0;
+    for (const v of m) { c += (v || 0); if (c > hi) hi = c; if (c < lo) lo = c; }
+    return hi - lo;
+  };
+  const mkDate = s => new Date(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10), 12);
+
+  const scored = {};
+  for (const d of Object.keys(gexd).sort()) {
+    if (!cycBy[d]) continue;
+    const entry = {};
+    // 1. GEX regime call
+    const am = gexd[d]?.am;
+    const rng = dayRange(d);
+    if (am?.regime && rng != null) {
+      const hit = am.regime === 'BREAKOUT' ? rng >= 70 : rng < 100;
+      entry.gex = { regime: am.regime, range: Math.round(rng), hit };
+    }
+    // 2. Day-type strategy claims (line used PRIOR day's regime + that day's shape)
+    const bi = bundleDates.indexOf(d);
+    const prevRegime = bi > 0 ? regimeByDate[bundleDates[bi - 1]] : null;
+    const group = regimeGroup(prevRegime);
+    const cycInfo = classifyCyclePrediction(cyc.days, mkDate(d));
+    if (group && cycInfo) {
+      const shape = { BULLISH: 'BULL', BEARISH: 'BEAR', CHOPPY: 'CHOP', MIXED: 'MIX' }[cycInfo.cls];
+      const key = `${group}/${shape}`;
+      entry.daytype = { key, cells: [] };
+      for (const [fld, claim, normal] of (SCORE_DAYTYPE_CLAIMS[key] || [])) {
+        const pnl = histBy[d]?.[fld];
+        if (pnl == null || pnl === 0) continue;   // strategy didn't trade → unscorable
+        const hit = claim === 'favored' ? pnl > 0
+                  : claim === 'below-normal' ? pnl < normal
+                  : Math.abs(pnl) < normal / 2;   // 'flat'
+        entry.daytype.cells.push({ strat: fld.replace('PL', ''), claim, pnl, hit });
+      }
+    }
+    if (entry.gex || (entry.daytype && entry.daytype.cells.length)) scored[d] = entry;
+  }
+
+  await githubUpsertResearchFile(env, 'data/advisory_scorecard.json',
+    cur => { Object.assign(cur, scored); return cur; }, 'auto: advisory scorecard');
+  return { days: Object.keys(scored).length };
+}
+
+// Month-to-date scorecard line for the evening preview.
+async function scorecardLine(env, etNow) {
+  try {
+    const r = await fetch('https://raw.githubusercontent.com/rava8989/brave/main/data/advisory_scorecard.json',
+      { headers: { 'User-Agent': 'schwab-proxy-worker/1.0' } });
+    if (!r.ok) return null;
+    const led = await r.json();
+    const ym = isoDateET(etNow).slice(0, 7);
+    let gh = 0, gt = 0, dh = 0, dt = 0;
+    for (const [d, e] of Object.entries(led)) {
+      if (!d.startsWith(ym)) continue;
+      if (e.gex) { gt++; if (e.gex.hit) gh++; }
+      for (const c of (e.daytype?.cells || [])) { dt++; if (c.hit) dh++; }
+    }
+    if (!gt && !dt) return null;
+    const parts = [];
+    if (gt) parts.push(`GEX ${gh}/${gt}`);
+    if (dt) parts.push(`Day-type ${dh}/${dt}`);
+    return `Scorecard: ${parts.join(' · ')} (MTD)`;
+  } catch (_) { return null; }
+}
+
 // Generic GitHub research-file upsert — same auth pattern as
 // mirrorHistoryToGitHub but path-parameterized and merge-based.
 // mutate(currentObj) → newObj. 404 (no file yet) starts from {}.
@@ -8208,6 +8314,13 @@ export default {
         { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
     }
 
+    if (url.pathname === '/score-advisories-now' && request.method === 'GET') {
+      let result;
+      try { result = await scoreAdvisories(env); } catch (e) { result = { error: e.message }; }
+      return new Response(JSON.stringify(result, null, 2),
+        { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
+    }
+
     if (url.pathname === '/advisory-lines' && request.method === 'GET') {
       // The three informational lines the REAL morning message carries —
       // served to the dashboard so its test/manual sends match production.
@@ -9356,14 +9469,19 @@ export default {
           try { tiltP = await computeTiltLine(env, isoDateET(nextTrade(etP))); } catch (_) {}
           // Retry research persistence (idempotent) — catches EOD-time failures
           try { await persistResearchArtifacts(env, etP); } catch (_) {}
+          // Score our own advisory claims (GEX regime + Day-type cells)
+          try { await scoreAdvisories(env); } catch (e) { console.warn('[scorecard]', e.message); }
           const dcRaw = await env.SIGNAL_KV.get('discord_config');
           if (dcRaw) {
             const dc = JSON.parse(dcRaw);
             if (dc.channelId) {
+              let scoreLine = null;
+              try { scoreLine = await scorecardLine(env, etP); } catch (_) {}
               const msg = `🌙 **Tomorrow — ${todayLong(tm)} (${tradeWdLabel(tm)})**\n` +
                 (tags.length ? tags.map(t => `• ${t}`).join('\n') : '• No special days — all strategies on their own merits') +
                 `\n${health.join(' · ')}` +
-                (tiltP ? `\n${tiltP.replace('   │', ':')}` : '');
+                (tiltP ? `\n${tiltP.replace('   │', ':')}` : '') +
+                (scoreLine ? `\n${scoreLine}` : '');
               await sendDiscordDM(env, dc.channelId, msg, dc.proxyUrl);
             }
           }

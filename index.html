@@ -1477,6 +1477,23 @@
         `<td style="padding:3px 10px;font-size:11px;color:var(--text3)">${flag.replace('⚪','≈ normal').replace('🟢','better').replace('🔴','worse')}</td></tr>`;
     }
     tbl.innerHTML = html;
+    // Scorecard footer — how often our own advisory claims came true
+    let foot = document.getElementById('cycleScoreFoot');
+    if (!foot) {
+      foot = document.createElement('div');
+      foot.id = 'cycleScoreFoot';
+      foot.style.cssText = 'font-size:11.5px;color:var(--text3);margin-top:8px;border-top:1px solid var(--border);padding-top:6px';
+      box.appendChild(foot);
+    }
+    if (window._scoreLedger) {
+      let gh = 0, gt = 0, dh = 0, dt = 0, first = null;
+      for (const [d, e] of Object.entries(window._scoreLedger)) {
+        if (!first || d < first) first = d;
+        if (e.gex) { gt++; if (e.gex.hit) gh++; }
+        for (const c of (e.daytype?.cells || [])) { dt++; if (c.hit) dh++; }
+      }
+      foot.textContent = `Self-scorecard since ${first}: GEX regime calls ${gh}/${gt} (${gt ? Math.round(100*gh/gt) : 0}%) · Day-type claims ${dh}/${dt} (${dt ? Math.round(100*dh/dt) : 0}%) — scored nightly, ledger in data/advisory_scorecard.json`;
+    } else foot.textContent = '';
     box.style.display = 'block';
   }
 
@@ -1504,6 +1521,8 @@
     }
     if (window._cycAdv === undefined) {
       window._cycAdv = null; window._cycRegime = null;
+      fetch('data/advisory_scorecard.json?v=' + Date.now()).then(r => r.ok ? r.json() : null)
+        .then(led => { if (led) { window._scoreLedger = led; renderCycleAdvisory(); } }).catch(() => {});
       Promise.all([
         fetch('cyclicality_data.json?v=' + Date.now()).then(r => r.ok ? r.json() : null),
         fetch('cor1m_contango_bundle.json?v=' + Date.now()).then(r => r.ok ? r.json() : null).catch(() => null),
