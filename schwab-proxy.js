@@ -9121,6 +9121,14 @@ export default {
         const schwab = schwabRaw ? JSON.parse(schwabRaw) : null;
         const schwabSuccessMs = schwab?.lastSuccess || 0;
         const schwabMinutesSinceSuccess = schwabSuccessMs ? Math.round((now - schwabSuccessMs) / 60000) : null;
+        // Refresh-token countdown (7-day Schwab policy) — dashboard banner fuel
+        let refreshDaysLeft = null;
+        try {
+          const tkRaw2 = await env.SIGNAL_KV.get('schwab_tokens');
+          const exp2 = tkRaw2 ? JSON.parse(tkRaw2).refreshExpiry : null;
+          if (exp2) refreshDaysLeft = Math.round((exp2 - now) / 8640000) / 10;   // 0.1d precision
+        } catch (_) {}
+        if (refreshDaysLeft != null && refreshDaysLeft <= 1.5) alerts.push('schwab_token_expiring');
         if (schwab && schwab.ok === false && (schwab.consecutiveErrors || 0) >= 3) {
           alerts.push('schwab_refresh_degraded');
         }
@@ -9206,8 +9214,9 @@ export default {
             ok: schwab.ok,
             consecutiveErrors: schwab.consecutiveErrors || 0,
             minutesSinceSuccess: schwabMinutesSinceSuccess,
+            refreshDaysLeft,
             msg: schwab.msg,
-          } : { state: 'never_recorded' },
+          } : { state: 'never_recorded', refreshDaysLeft },
           history_mirror: mirror ? {
             ok: mirror.ok,
             consecutiveErrors: mirror.consecutiveErrors || 0,
@@ -9831,6 +9840,25 @@ export default {
             const co = await env.SIGNAL_KV.get(`cor1m_open_${todayP}`);
             health.push(co ? `COR1M ✓ (${JSON.parse(co).cor1m})` : 'COR1M ⚠️ not captured');
           } catch (_) {}
+          // Schwab refresh-token age warning (2026-06-11, user-approved):
+          // tokens die 7 days after re-auth; warn while there's still time
+          // to reconnect instead of discovering a dead dashboard at 8 AM.
+          let tokenWarn = null, tokenDaysLeft = null;
+          try {
+            const tkRaw = await env.SIGNAL_KV.get('schwab_tokens');
+            if (tkRaw) {
+              const tk = JSON.parse(tkRaw);
+              if (tk.refreshExpiry) {
+                tokenDaysLeft = (tk.refreshExpiry - Date.now()) / 86400000;
+                // 3.5d threshold: a Friday-evening warning still covers
+                // weekend expiries (preview only sends on weekdays).
+                if (tokenDaysLeft <= 3.5) {
+                  const when = tokenDaysLeft <= 1 ? 'within 24h' : `in ~${Math.ceil(tokenDaysLeft)} days`;
+                  tokenWarn = `⚠️ Schwab token expires ${when} — open the dashboard and press Connect Schwab (takes 30s)`;
+                }
+              }
+            }
+          } catch (_) {}
           let tiltP = null;
           try { tiltP = await computeTiltLine(env, isoDateET(nextTrade(etP))); } catch (_) {}
           // Retry research persistence (idempotent) — catches EOD-time failures
@@ -9857,10 +9885,18 @@ export default {
               const msg = `🌙 **Tomorrow — ${todayLong(tm)} (${tradeWdLabel(tm)})**\n` +
                 (tags.length ? tags.map(t => `• ${t}`).join('\n') : '• No special days — all strategies on their own merits') +
                 `\n${health.join(' · ')}` +
+                (tokenWarn ? `\n${tokenWarn}` : '') +
                 (tiltP ? `\n${tiltP.replace('   │', ':')}` : '') +
                 (volP ? `\n${volP}` : '') +
                 (scoreLine ? `\n${scoreLine}` : '');
               await sendDiscordDM(env, dc.channelId, msg, dc.proxyUrl);
+              // ≤1 day left → a second, standalone ping so it can't be missed
+              // inside the preview wall of text.
+              if (tokenDaysLeft != null && tokenDaysLeft <= 1) {
+                await sendDiscordDM(env, dc.channelId,
+                  `🚨 **SCHWAB TOKEN DIES WITHIN 24H** — without re-auth the bot cannot trade tomorrow.\nDashboard → Connect Schwab.`,
+                  dc.proxyUrl);
+              }
             }
           }
         }
