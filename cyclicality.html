@@ -98,7 +98,8 @@ td:first-child,th:first-child{text-align:left}
   <p><b style="color:#818cf8">① The prediction line + the cloud around it (agreement band).</b>
   The line is the last 4 same-weekdays mashed together. The cloud shows how much those 4 weeks <i>disagreed</i> — its top is the best of them, its bottom the worst, at every minute.
   <b>Fat cloud covering both sides of zero = the weeks all did different things → the line is noise today, skip it.</b>
-  Skinny cloud all on one side = the weeks actually rhymed — the only kind of day the line deserves a glance. (Rare.)</p>
+  Skinny cloud all on one side = the weeks actually rhymed — the only kind of day the line deserves a glance. (Rare.)
+  <br><b>Why Median is the default method:</b> we tested all four against reality (990 days). Median's predicted day-size missed by ~33 pts on average — the closest; Sum missed by ~70, because Sum stacks the 4 weeks on top of each other and draws the same line ~4× too tall (that's why it never looks like the smooth actual line). Direction is a coin flip on every method, so pick the one with honest scale.</p>
 
   <p><b style="color:#94a3b8">② Ghost lines.</b> Pick a single weekday and you'll see the 4 prior weeks drawn faintly. One glance shows whether the prediction is honest seasonality or just one crazy week dragging the average.</p>
 
@@ -565,7 +566,7 @@ function buildValidation() {
   $('cHitN').textContent = `all weekdays · lookback ${lookback} · vs ${tbase.toFixed(0)}% always-up`;
   const mLab = (METHODS.find(m => m[0] === method) || ['', method])[1];
   $('verdict').innerHTML = (method === 'sum'
-    ? `<b>Note on Sum:</b> summing ${lookback} days draws a curve ~${lookback}× the size of any real day — average Δ error ${avgErr.toFixed(0)} pts vs ${zBase.toFixed(0)} pts if you predicted nothing at all. Use Average for a realistically-scaled curve. `
+    ? `<b>Note on Sum:</b> summing ${lookback} days draws a curve ~${lookback}× the size of any real day — average Δ error ${avgErr.toFixed(0)} pts vs ${zBase.toFixed(0)} pts if you predicted nothing at all. Median (the default) is the realistically-scaled choice. `
     : `<b>${mLab}, lookback ${lookback}:</b> average end-of-day miss ${avgErr.toFixed(1)} pts vs ${zBase.toFixed(1)} pts for predicting zero. `) + (ted >= 3
     ? `Direction edge +${ted.toFixed(1)}pp over drift — possibly something, verify in both halves before trusting.`
     : `Direction: ${thr.toFixed(1)}% vs ${tbase.toFixed(1)}% always-up (${ted >= 0 ? '+' : ''}${ted.toFixed(1)}pp). The curve shows seasonality — it does not predict. (2026-06-10 research: no method/lookback beat the flat-zero baseline on Δ by more than 1%.)`);
