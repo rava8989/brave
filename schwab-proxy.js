@@ -769,6 +769,54 @@ async function persistResearchArtifacts(env, etNow) {
   return results;
 }
 
+// ── COT weekly self-feed (2026-06-12) ───────────────────────────────────
+// CFTC publishes Friday ~15:30 ET (data as of Tuesday). Appends any new
+// weeks for the 9 currency contracts to data/cot_currencies.json on GitHub.
+// Initial backfill: fetch_cot_data.py (2000→). Manual: GET /cot-refresh-now.
+const COT_CODES = { EUR: '099741', JPY: '097741', GBP: '096742', CAD: '090741',
+                    CHF: '092741', AUD: '232741', NZD: '112741', MXN: '095741', DXY: '098662' };
+
+async function cotWeeklyRefresh(env) {
+  const cur = await (await fetch('https://raw.githubusercontent.com/rava8989/brave/main/data/cot_currencies.json',
+    { headers: { 'User-Agent': 'schwab-proxy-worker/1.0' } })).json();
+  const added = {};
+  for (const [key, code] of Object.entries(COT_CODES)) {
+    const rows = cur.series[key] || [];
+    const last = rows.length ? rows[rows.length - 1][0] : '2000-01-01';
+    const q = new URLSearchParams({
+      '$select': 'report_date_as_yyyy_mm_dd,open_interest_all,'
+        + 'noncomm_positions_long_all,noncomm_positions_short_all,'
+        + 'comm_positions_long_all,comm_positions_short_all,'
+        + 'nonrept_positions_long_all,nonrept_positions_short_all',
+      '$where': `cftc_contract_market_code='${code}' AND report_date_as_yyyy_mm_dd>'${last}'`,
+      '$order': 'report_date_as_yyyy_mm_dd ASC', '$limit': '100',
+    });
+    try {
+      const r = await fetch(`https://publicreporting.cftc.gov/resource/6dca-aqww.json?${q}`,
+        { headers: { 'User-Agent': 'schwab-proxy-worker/1.0' } });
+      if (!r.ok) continue;
+      const fresh = await r.json();
+      const newRows = fresh.map(x => [
+        x.report_date_as_yyyy_mm_dd.slice(0, 10), +x.open_interest_all,
+        +x.noncomm_positions_long_all, +x.noncomm_positions_short_all,
+        +x.comm_positions_long_all, +x.comm_positions_short_all,
+        +x.nonrept_positions_long_all, +x.nonrept_positions_short_all,
+      ]).filter(r2 => r2.slice(1).every(Number.isFinite));
+      if (newRows.length) added[key] = newRows;
+    } catch (e) { console.warn('[cot]', key, e.message); }
+  }
+  if (!Object.keys(added).length) return { ok: true, added: 0 };
+  await githubUpsertResearchFile(env, 'data/cot_currencies.json', curF => {
+    for (const [key, rows] of Object.entries(added)) {
+      const have = new Set((curF.series[key] || []).map(r => r[0]));
+      curF.series[key] = (curF.series[key] || []).concat(rows.filter(r => !have.has(r[0])));
+    }
+    return curF;
+  }, `auto: COT ${Object.values(added)[0][Object.values(added)[0].length - 1][0]}`);
+  try { await logEvent(env, 'info', 'research', `COT refreshed: +${Object.values(added).reduce((a, b) => a + b.length, 0)} rows`, {}); } catch (_) {}
+  return { ok: true, added: Object.fromEntries(Object.entries(added).map(([k, v]) => [k, v.length])) };
+}
+
 // ── Auto-Tilt advisory (2026-06-10) — ADVISORY ONLY, no sizing automation ──
 // Ports multi-strategy-tester.html _tiltWindowMAR/_tiltWeightsForDay with the
 // tester defaults (win 60, floor 0.25x, cap 2.0x, minTrades 5, marCap 99).
@@ -4338,6 +4386,10 @@ async function handleScheduled(env) {
     try { await persistResearchArtifacts(env, etNow); } catch (e) { console.warn('[research-persist]', e.message); }
     // Vol-flow: compute today's VIX decomposition (needs the 15:45 surface snap)
     try { await computeVixDecompDaily(env, etNow); } catch (e) { console.warn('[vix-decomp]', e.message); }
+    // COT weekly self-feed — Fridays only (CFTC publishes ~15:30 ET Friday)
+    if (etNow.getDay() === 5) {
+      try { await cotWeeklyRefresh(env); } catch (e) { console.warn('[cot]', e.message); }
+    }
     // CycleLab: append today's SPX session (+ backfill recent gaps) from Schwab
     try { await appendCyclicalityDays(env); } catch (e) { console.warn('[cyclelab]', e.message); }
     return { ...eodResult, discord: discordResult, backfill_wr: backfillWR, backfill_pl: backfillPL, scrape_append: scrapeAppend };
@@ -8720,6 +8772,39 @@ export default {
         spot: snap?.spot ?? null, snapAt: snap?.at ?? null, candidate,
         open: tailOpen,
       }), { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
+    }
+
+    if (url.pathname === '/eod-history' && request.method === 'GET') {
+      // Read-only Schwab daily-candle proxy (2026-06-12, COT edge study +
+      // general research). Public like the other market-data debug routes —
+      // serves OHLC only, no account access. ?symbol=FXE&years=12
+      const sym = (url.searchParams.get('symbol') || '').toUpperCase().replace(/[^A-Z0-9$./]/g, '');
+      const years = Math.min(20, Math.max(1, parseInt(url.searchParams.get('years') || '10', 10)));
+      if (!sym) return new Response('{"error":"symbol required"}',
+        { status: 400, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
+      try {
+        const tk = await getAccessToken(env);
+        const end = Date.now(), start = end - years * 365.25 * 86400000;
+        const data = await fetchSchwabJSON(
+          `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=${encodeURIComponent(sym)}&periodType=year&frequencyType=daily&startDate=${Math.round(start)}&endDate=${end}&needExtendedHoursData=false`,
+          tk, env);
+        const candles = (data.candles || []).filter(c => c.close > 0)
+          .map(c => [isoDateET(toET(new Date(c.datetime))), c.close]);
+        return new Response(JSON.stringify({ symbol: sym, n: candles.length, candles }),
+          { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }),
+          { status: 500, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
+      }
+    }
+
+    if (url.pathname === '/cot-refresh-now' && request.method === 'GET') {
+      // Manual trigger for the weekly COT self-feed (idempotent).
+      let result;
+      try { result = await cotWeeklyRefresh(env); }
+      catch (e) { result = { error: e.message }; }
+      return new Response(JSON.stringify(result, null, 2),
+        { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
     }
 
     if (url.pathname === '/cyclicality-today' && request.method === 'GET') {
