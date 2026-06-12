@@ -7701,6 +7701,21 @@ export default {
     // ── POST /discord-send ── Browser/external endpoint that lets us retire
     // the standalone discord-proxy worker. Same body shape as the legacy
     // worker: { userId, message }. Optionally accepts Bearer PROXY_SECRET.
+    if (url.pathname === '/link-notify' && request.method === 'POST') {
+      // Worker-to-worker Discord note (skipper). LINK_SECRET-gated.
+      if (!env.LINK_SECRET || request.headers.get('X-Link-Secret') !== env.LINK_SECRET) {
+        return jsonResp({ error: 'Unauthorized' }, 401, corsHeaders);
+      }
+      try {
+        const { text } = await request.json();
+        const dcRaw = await env.SIGNAL_KV.get('discord_config');
+        if (!dcRaw) return jsonResp({ ok: false, error: 'no discord_config' }, 200, corsHeaders);
+        const dc = JSON.parse(dcRaw);
+        const r = await sendDiscordDM(env, dc.channelId, String(text).slice(0, 1800), dc.proxyUrl);
+        return jsonResp({ ok: !!r.ok }, 200, corsHeaders);
+      } catch (e) { return jsonResp({ ok: false, error: e.message }, 400, corsHeaders); }
+    }
+
     if (url.pathname === '/discord-send' && request.method === 'POST') {
       const cors = {
         'Access-Control-Allow-Origin': '*',
@@ -9804,7 +9819,9 @@ export default {
       // every client into 401 hell.
       if (url.pathname === '/access-token' && request.method === 'GET') {
         const accTokenSecret = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
-        if (!accTokenSecret || accTokenSecret !== env.SYNC_SECRET) {
+        const linkSecret = request.headers.get('X-Link-Secret');
+        const linkOk = env.LINK_SECRET && linkSecret === env.LINK_SECRET;   // skipper (2026-06-12)
+        if (!linkOk && (!accTokenSecret || accTokenSecret !== env.SYNC_SECRET)) {
           return jsonResp({ error: 'Unauthorized' }, 401, corsHeaders);
         }
         try {

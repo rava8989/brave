@@ -5,7 +5,7 @@
 set -uo pipefail
 
 SIGNAL_NS="be47dd5d2fb34ec79e5a34f0e241f125"     # schwab-proxy SIGNAL_KV
-BOT_NS="a95dc96f256d4e3ebe6dde9cea7bdc8a"        # sigma-3 BOT_KV
+BOT_NS="12a70130968646be93787f9725a15614"        # skipper KV
 OUT=~/Backups/kv/$(date +%Y-%m-%d_%H%M)
 mkdir -p "$OUT"
 cd "$(dirname "$0")/.."
@@ -16,8 +16,7 @@ SIGNAL_KEYS=(
   straddle_open_trade bobf_open_trade gxbf_open_trade diagonal_open_trade
 )
 BOT_KEYS=(
-  kill_switch strategy:bobf strategy:gxbf strategy:m8bf strategy:strad
-  strategy:diag strategy:tail
+  kill cfg:master cfg:bobf cfg:gxbf cfg:m8bf cfg:strad cfg:diag cfg:tail acct
 )
 
 echo "→ $OUT"
