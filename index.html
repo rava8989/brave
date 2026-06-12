@@ -2187,8 +2187,18 @@
     const proxyUrl  = document.getElementById('schwabProxyUrl').value.trim().replace(/\/+$/, '');
     const acctNum   = document.getElementById('schwabAcctNum').value.trim();
     const syncSecret= document.getElementById('schwabSyncSecret').value.trim();
+    // Cloud-only pairing (2026-06-12): proxy URL + sync secret with NO app
+    // key = use the worker's token, skip OAuth entirely. 10-second connect
+    // on any device/profile; nothing stored that can go stale.
+    if(!appKey && proxyUrl && syncSecret){
+      localStorage.setItem('sc_proxyUrl', proxyUrl);
+      localStorage.setItem('sc_syncSecret', syncSecret);
+      document.getElementById('schwabModal').style.display = 'none';
+      schwabInit();
+      return;
+    }
     if(!appKey||!proxyUrl||!acctNum){
-      alert('Please fill in all three fields.');
+      alert('Please fill in all three fields (or just Proxy URL + Sync Secret for cloud-only mode).');
       return;
     }
     SC.set('creds', { appKey, acctNum });
@@ -2385,16 +2395,40 @@
     btn.textContent = origText; btn.disabled = false;
   }
 
+  /* ── Cloud token fallback (2026-06-12) ──────────────────────────────────
+     The WORKER is the canonical Schwab token holder — it rotates the
+     single-use refresh token, so any browser-local copy goes stale the
+     moment the worker rotates (the recurring "Schwab not connected" /
+     weekly re-auth annoyance; different browser profiles have no copy at
+     all). When local tokens are absent or unrefreshable, pull a
+     short-lived access token from the worker's GET /access-token (gated
+     by the sync secret). No OAuth, nothing stored that can go stale. */
+  let _cloudTok = null;   // { access, expiry } — in-memory only
+  async function schwabCloudToken(){
+    const proxy  = (localStorage.getItem('sc_proxyUrl') || '').replace(/\/+$/, '');
+    const secret = localStorage.getItem('sc_syncSecret') || '';
+    if(!proxy || !secret) return null;
+    if(_cloudTok && Date.now() < _cloudTok.expiry - 120000) return _cloudTok.access;
+    try{
+      const r = await fetch(`${proxy}/access-token`, { headers: { 'X-Sync-Secret': secret } });
+      if(!r.ok) return null;
+      const j = await r.json();
+      if(!j.access_token) return null;
+      _cloudTok = { access: j.access_token, expiry: j.expiry || (Date.now() + 25*60*1000) };
+      return _cloudTok.access;
+    }catch(_){ return null; }
+  }
+
   async function schwabGetToken(){
     let t = SC.tokens();
-    if(!t) return null;
-    // Refresh access token if within 2 minutes of expiry
-    if(Date.now() > t.expiry - 120000){
+    if(t){
+      if(Date.now() <= t.expiry - 120000) return t.access || null;
+      // Local refresh — may fail forever once the worker rotated the
+      // refresh token (single-use). Fall through to the cloud token.
       const ok = await schwabRefreshToken();
-      if(!ok) return null;
-      t = SC.tokens();
+      if(ok){ t = SC.tokens(); return t?.access || null; }
     }
-    return t?.access || null;
+    return schwabCloudToken();
   }
 
   /* ── Step 4: Fetch historical VIX data → pre-fill fields ── */
@@ -2886,6 +2920,16 @@
 
     const c = SC.creds(), t = SC.tokens();
     if(!c || !t){
+      // No local OAuth pairing in THIS browser/profile — try the cloud
+      // token (worker-held). Works on any device that has proxy + secret.
+      const cloud = await schwabCloudToken();
+      if(cloud){
+        schwabSetStatus('connected', 'Schwab connected via cloud ✓');
+        await schwabFetchHistorical();
+        schwabScheduleStream();
+        schwabStartHealthPolling();
+        return;
+      }
       schwabSetStatus('', 'Schwab not connected');
       return;
     }
