@@ -1097,6 +1097,135 @@ async function computeM8bfWrLine(env, etNow) {
   return line;
 }
 
+// ── Nightly data-completeness watchdog (2026-06-12, user-approved) ─────
+// Verifies TODAY landed in every self-feeding dataset; auto-heals via the
+// idempotent jobs; Discord only when something needed fixing. Own tick
+// (18:35-18:50) so it can never be starved by other chains (lessons P17).
+async function dataCompletenessCheck(env, etNow) {
+  const todayISO = isoDateET(etNow);
+  // Before ~16:30 ET today's data legitimately doesn't exist yet — checks
+  // would all false-alarm. (The scheduled run is 18:35.)
+  if (etNow.getHours() < 16 || (etNow.getHours() === 16 && etNow.getMinutes() < 30))
+    return { date: todayISO, skipped: 'before EOD — nothing to verify yet' };
+  const ym = todayISO.slice(0, 7);
+  const gh = { headers: { 'User-Agent': 'schwab-proxy-worker/1.0' } };
+  const J = async (u) => { const r = await fetch(u, gh); return r.ok ? r.json() : null; };
+  const healed = [], failed = [], ok = [];
+
+  const checks = [
+    ['cyclicality SPX', async () => {
+      const j = await J('https://raw.githubusercontent.com/rava8989/brave/main/cyclicality_data.json');
+      return !!(j && j.days.some(d => d.d === todayISO));
+    }, () => appendCyclicalityDays(env)],
+    ['cyclicality NDX', async () => {
+      const j = await J('https://raw.githubusercontent.com/rava8989/brave/main/cyclicality_ndx.json');
+      return !!(j && j.days.some(d => d.d === todayISO));
+    }, () => appendCyclicalityDays(env, { symbol: '%24NDX', file: 'cyclicality_ndx.json' })],
+    ['vix decomposition', async () => {
+      const j = await J('https://raw.githubusercontent.com/rava8989/brave/main/data/vix_decomposition.json');
+      return !!(j && j[todayISO]);
+    }, () => computeVixDecompDaily(env, etNow)],
+    ['research persists', async () => {
+      // representative pair: fly marks (captured every RTH day) + vixeq
+      const fm = await J(`https://raw.githubusercontent.com/rava8989/brave/main/data/fly_marks/${ym}.json`);
+      const ve = await J('https://raw.githubusercontent.com/rava8989/brave/main/data/vixeq_daily.json');
+      const kvFm = await env.SIGNAL_KV.get(`fly_marks_${todayISO}`);
+      const fmOk = !kvFm || !!(fm && fm[todayISO]);   // no capture → nothing to persist
+      return fmOk && !!(ve && ve[todayISO]);
+    }, () => persistResearchArtifacts(env, etNow)],
+    ['EOD history fields', async () => {
+      const raw = await env.SIGNAL_KV.get('history_data');
+      if (!raw) return false;
+      const row = JSON.parse(raw).find(r => r.date === todayISO);
+      return !!(row && row.vixClose != null);
+    }, null],   // settle has its own retry path — report only
+  ];
+  if (etNow.getDay() === 5) checks.push(['COT weekly', async () => {
+    const j = await J('https://raw.githubusercontent.com/rava8989/brave/main/data/cot_currencies.json');
+    if (!j) return false;
+    const last = j.series.EUR[j.series.EUR.length - 1][0];
+    return (new Date(todayISO) - new Date(last)) / 86400000 <= 5;
+  }, () => cotWeeklyRefresh(env)]);
+
+  for (const [name, check, heal] of checks) {
+    try {
+      if (await check()) { ok.push(name); continue; }
+      if (!heal) { failed.push(name + ' (no auto-heal)'); continue; }
+      await heal();
+      if (await check()) healed.push(name);
+      else failed.push(name);
+    } catch (e) { failed.push(`${name} (${e.message.slice(0, 60)})`); }
+  }
+  const result = { date: todayISO, ok: ok.length, healed, failed };
+  if (healed.length || failed.length) {
+    try {
+      const dcRaw = await env.SIGNAL_KV.get('discord_config');
+      if (dcRaw) {
+        const dc = JSON.parse(dcRaw);
+        if (dc.channelId) await sendDiscordDM(env, dc.channelId,
+          `🩺 **Data watchdog** (${todayISO})` +
+          (healed.length ? `\n✅ auto-healed: ${healed.join(', ')}` : '') +
+          (failed.length ? `\n❌ NEEDS ATTENTION: ${failed.join(', ')}` : ''),
+          dc.proxyUrl);
+      }
+    } catch (_) {}
+  }
+  try { await logEvent(env, failed.length ? 'error' : 'info', 'watchdog', JSON.stringify(result).slice(0, 200), {}); } catch (_) {}
+  return result;
+}
+
+// ── Weekly digest (2026-06-12, user-approved) — Sundays 18:00 ET ───────
+async function weeklyDigest(env) {
+  const etNow = toET(new Date());
+  const todayISO = isoDateET(etNow);
+  const weekAgo = new Date(etNow); weekAgo.setDate(weekAgo.getDate() - 7);
+  const fromISO = isoDateET(weekAgo);
+  const lines = [`📒 **Weekly digest — week ending ${todayISO}**`];
+  try {
+    const rows = JSON.parse(await env.SIGNAL_KV.get('history_data') || '[]')
+      .filter(r => r.date && r.date > fromISO && r.date <= todayISO);
+    const F = [['M8BF', 'm8bfPL'], ['Strad', 'stradPL'], ['BOBF', 'bobfPL'], ['GXBF', 'gxbfPL'], ['Diag', 'diagPL'], ['Tail', 'tailPL']];
+    let tot = 0;
+    const parts = [];
+    for (const [nm, f] of F) {
+      const v = rows.map(r => r[f]).filter(x => x != null && x !== 0);
+      if (!v.length) continue;
+      const s = v.reduce((a, b) => a + b, 0); tot += s;
+      parts.push(`${nm} ${s >= 0 ? '+' : ''}$${Math.round(s).toLocaleString()} (${v.length})`);
+    }
+    lines.push(`P/L: ${parts.join(' · ') || 'no trades'} → **${tot >= 0 ? '+' : ''}$${Math.round(tot).toLocaleString()}**`);
+  } catch (_) {}
+  try {
+    const led = await (await fetch('https://raw.githubusercontent.com/rava8989/brave/main/data/advisory_scorecard.json',
+      { headers: { 'User-Agent': 'schwab-proxy-worker/1.0' } })).json();
+    let g = [0, 0], d = [0, 0], v = [0, 0];
+    for (const [dt, e] of Object.entries(led)) {
+      if (dt <= fromISO || dt > todayISO) continue;
+      if (e.gex) { g[1]++; if (e.gex.hit) g[0]++; }
+      for (const c of (e.daytype?.cells || [])) { d[1]++; if (c.hit) d[0]++; }
+      for (const c of (e.volflow?.cells || [])) { v[1]++; if (c.hit) v[0]++; }
+    }
+    lines.push(`Scorecard wk: GEX ${g[0]}/${g[1]} · Day-type ${d[0]}/${d[1]} · Vol-flow ${v[0]}/${v[1]}`);
+  } catch (_) {}
+  try {
+    const nxt = [];
+    const horizon = new Date(etNow); horizon.setDate(horizon.getDate() + 7);
+    for (const [label, arr] of [['FED', fedSch], ['CPI', cpiSch], ['OPEX', opexSch]]) {
+      for (const s of arr) {
+        const d2 = parseLong(s);
+        if (d2 && d2 > etNow && d2 <= horizon) nxt.push(`${label} ${isoDateET(d2).slice(5)}`);
+      }
+    }
+    if (nxt.length) lines.push(`Next week: ${nxt.join(' · ')}`);
+  } catch (_) {}
+  const dcRaw = await env.SIGNAL_KV.get('discord_config');
+  if (dcRaw) {
+    const dc = JSON.parse(dcRaw);
+    if (dc.channelId) await sendDiscordDM(env, dc.channelId, lines.join('\n'), dc.proxyUrl);
+  }
+  return { ok: true, lines: lines.length };
+}
+
 // ── Daily total-risk cap (2026-06-09) ──────────────────────────────────
 // On multi-strategy days, Straddle + BOBF + GXBF + Diagonal can all be live
 // at once and nothing checked COMBINED max-loss against the account. Each
@@ -8899,6 +9028,22 @@ export default {
         { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
     }
 
+    if (url.pathname === '/watchdog-now' && request.method === 'GET') {
+      let result;
+      try { result = await dataCompletenessCheck(env, toET(new Date())); }
+      catch (e) { result = { error: e.message }; }
+      return new Response(JSON.stringify(result, null, 2),
+        { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
+    }
+
+    if (url.pathname === '/weekly-digest-now' && request.method === 'GET') {
+      let result;
+      try { result = await weeklyDigest(env); }
+      catch (e) { result = { error: e.message }; }
+      return new Response(JSON.stringify(result, null, 2),
+        { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
+    }
+
     if (url.pathname === '/vix-decomp-now' && request.method === 'GET') {
       // Manual trigger for the daily vol-flow decomposition (idempotent).
       // ?date=YYYY-MM-DD back-heals a missed day from the KV surface snap.
@@ -9940,6 +10085,13 @@ export default {
   async scheduled(event, env, ctx) {
     console.log('[cron] Triggered at', new Date().toISOString());
 
+    // Sunday digest cron runs ONLY the digest — the main tick's guards
+    // assume weekdays and must not run on Sundays.
+    if (event.cron === '0 22 * * 0') {
+      try { await weeklyDigest(env); } catch (e) { console.warn('[digest]', e.message); }
+      return;
+    }
+
     // ── Slow-degradation watchdog: alert Discord if Schwab refresh has been
     //    failing for too long. Without this, a broken refresh chain rots
     //    silently for hours (observed 2026-04-30: 376 errors / 17 hrs before
@@ -10109,6 +10261,20 @@ export default {
         }
       }
     } catch (e) { console.warn('[evening-preview]', e.message); }
+
+    // ── Nightly data watchdog: own 18:35-18:50 window (lessons P17) ──
+    if (etP.getDay() >= 1 && etP.getDay() <= 5 && etP.getHours() === 18
+        && etP.getMinutes() >= 35 && etP.getMinutes() < 50 && !isHol(etP)) {
+      const wdKey = `watchdog_${todayP}`;
+      if (!(await env.SIGNAL_KV.get(wdKey))) {
+        await env.SIGNAL_KV.put(wdKey, 'running', { expirationTtl: 86400 });
+        try {
+          const wd = await dataCompletenessCheck(env, etP);
+          if (!wd.failed.length) await env.SIGNAL_KV.put(wdKey, 'done', { expirationTtl: 86400 });
+          else await env.SIGNAL_KV.delete(wdKey);   // retry within window
+        } catch (e) { await env.SIGNAL_KV.delete(wdKey); console.warn('[watchdog]', e.message); }
+      }
+    }
 
     // ── Tail-bundle staleness watchdog (2026-06-09) ──
     // The Tail Hedge LaunchAgent (5 PM ET) can fail silently — observed today:
