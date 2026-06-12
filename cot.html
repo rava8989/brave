@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Σ3 — COT FX Positioning</title>
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<style>
+  :root{--bg:#0f1117;--bg2:#161a23;--bg3:#1c2230;--border:#2a3344;--text:#e5e7eb;--text2:#9ca3af;--text3:#64748b;
+        --accent:#818cf8;--green:#22c55e;--red:#ef4444;--amber:#f59e0b;--radius:12px;}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:'Inter',-apple-system,system-ui,sans-serif;}
+  .wrap{max-width:1280px;margin:0 auto;padding:18px 22px 60px;}
+  h1{font-family:'JetBrains Mono',monospace;font-size:20px;margin:14px 0 2px;}
+  .sub{color:var(--text3);font-size:12px;margin-bottom:16px;}
+  .card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;margin-bottom:16px;}
+  .card-title{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:var(--text2);margin-bottom:10px;text-transform:uppercase;letter-spacing:.05em;}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;}
+  .chip{background:var(--bg3);border:1px solid var(--border);color:var(--text2);border-radius:8px;padding:6px 14px;cursor:pointer;
+        font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;}
+  .chip.on{background:var(--accent);border-color:var(--accent);color:#fff;}
+  .plot{width:100%;height:380px;}
+  .plot-sm{width:100%;height:200px;}
+  table{border-collapse:collapse;width:100%;font-family:'JetBrains Mono',monospace;font-size:12.5px;}
+  th{color:var(--text3);text-transform:uppercase;font-size:10.5px;text-align:left;padding:6px 12px;border-bottom:1px solid var(--border);}
+  td{padding:7px 12px;border-bottom:1px solid rgba(42,51,68,.5);}
+  .pos{color:var(--green);} .neg{color:var(--red);} .amb{color:var(--amber);}
+  .state{font-weight:700;padding:2px 8px;border-radius:6px;font-size:11px;}
+  .state.long{background:rgba(239,68,68,.15);color:var(--red);}
+  .state.short{background:rgba(34,197,94,.15);color:var(--green);}
+  .state.none{color:var(--text3);}
+  .gauge{font-family:'JetBrains Mono',monospace;font-size:26px;font-weight:700;}
+  .note{font-size:11.5px;color:var(--text3);margin-top:8px;line-height:1.5;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>⚖ COT FX Positioning</h1>
+  <div class="sub" id="subTitle">loading…</div>
+
+  <div class="card">
+    <div class="card-title">Extremes Board — Large Speculators <span style="font-weight:400;color:var(--text3);text-transform:none">(COT Index = where today's net sits vs the last 3 years, 0–100; ≥95 crowded long · ≤5 crowded short — crowded = fuel for a turn)</span></div>
+    <table id="board"><thead>
+      <tr><th>Currency</th><th>Spec net (contracts)</th><th>Δ 4w</th><th>% of OI</th><th>COT idx (3y)</th><th>State</th><th>Weeks in state</th></tr>
+    </thead><tbody></tbody></table>
+    <div style="display:flex;gap:30px;align-items:center;margin-top:14px;flex-wrap:wrap">
+      <div>
+        <div class="card-title" style="margin-bottom:2px">USD Crowding Aggregate</div>
+        <span class="gauge" id="usdGauge">—</span>
+        <span style="color:var(--text3);font-size:11.5px"> 0 = specs max-short USD · 100 = specs max-long USD (avg of 6 majors, inverted)</span>
+      </div>
+    </div>
+    <div class="note">Weekly CFTC legacy report (data as of Tuesday, published Friday 15:30 ET — the worker self-feeds it every Friday). Groups: Large Specs = funds/trend-followers · Commercials = hedgers, usually the other side · Small = retail. INFORMATIONAL — backtest verdict on the extremes edge lives in tasks/ADVISORY_STACK.md once the study lands.</div>
+  </div>
+
+  <div class="card">
+    <div class="chips" id="ccyChips"></div>
+    <div class="card-title" id="netTitle">Net positions</div>
+    <div id="netPlot" class="plot"></div>
+    <div class="card-title" style="margin-top:14px">Large-Spec COT Index (3y window)</div>
+    <div id="idxPlot" class="plot-sm"></div>
+  </div>
+</div>
+
+<script src="nav.js"></script>
+<script>
+let DATA = null, ccy = 'EUR';
+const GROUPS = [['Large Specs', r => r[2] - r[3], '#818cf8'], ['Commercials', r => r[4] - r[5], '#f59e0b'], ['Small', r => r[6] - r[7], '#64748b']];
+const LOOK = 156;   // 3y weekly window for the COT Index
+
+function cotIndex(nets, i, win = LOOK) {
+  const a = Math.max(0, i - win + 1), w = nets.slice(a, i + 1);
+  const mn = Math.min(...w), mx = Math.max(...w);
+  return mx === mn ? 50 : 100 * (nets[i] - mn) / (mx - mn);
+}
+
+fetch('data/cot_currencies.json?v=' + Date.now()).then(r => r.json()).then(j => {
+  DATA = j;
+  const keys = Object.keys(j.series);
+  const last = j.series.EUR[j.series.EUR.length - 1][0];
+  document.getElementById('subTitle').textContent =
+    `${keys.length} currency futures · weekly since 2000 · CFTC legacy report · data through ${last} (self-feeds Fridays)`;
+  document.getElementById('ccyChips').innerHTML = keys.map(k =>
+    `<button class="chip ${k === ccy ? 'on' : ''}" data-k="${k}">${k}</button>`).join('');
+  document.querySelectorAll('#ccyChips .chip').forEach(b => b.onclick = () => {
+    ccy = b.dataset.k;
+    document.querySelectorAll('#ccyChips .chip').forEach(x => x.classList.toggle('on', x.dataset.k === ccy));
+    renderCharts();
+  });
+  renderBoard();
+  renderCharts();
+});
+
+function specSeries(rows) { return rows.map(r => r[2] - r[3]); }
+
+function renderBoard() {
+  const tb = document.querySelector('#board tbody');
+  let html = '', usdParts = [];
+  for (const [k, rows] of Object.entries(DATA.series)) {
+    const n = rows.length - 1;
+    const nets = specSeries(rows);
+    const idx = cotIndex(nets, n);
+    const net = nets[n], d4 = n >= 4 ? net - nets[n - 4] : 0;
+    const pctOI = rows[n][1] ? 100 * net / rows[n][1] : 0;
+    const state = idx >= 95 ? 'CROWDED LONG' : idx <= 5 ? 'CROWDED SHORT' : '—';
+    let weeks = 0;
+    if (state !== '—') {
+      for (let i = n; i >= 0; i--) {
+        const ii = cotIndex(nets, i);
+        if ((idx >= 95 && ii >= 95) || (idx <= 5 && ii <= 5)) weeks++; else break;
+      }
+    }
+    // USD aggregate: majors only, inverted (specs long EUR = specs short USD)
+    if (['EUR', 'JPY', 'GBP', 'CAD', 'CHF', 'AUD'].includes(k)) usdParts.push(100 - idx);
+    const cls = state === 'CROWDED LONG' ? 'long' : state === 'CROWDED SHORT' ? 'short' : 'none';
+    html += `<tr>
+      <td><b>${k}</b> <span style="color:var(--text3);font-size:10.5px">${DATA.meta.contracts[k].name}</span></td>
+      <td class="${net >= 0 ? 'pos' : 'neg'}">${net.toLocaleString()}</td>
+      <td class="${d4 >= 0 ? 'pos' : 'neg'}">${d4 >= 0 ? '+' : ''}${d4.toLocaleString()}</td>
+      <td>${pctOI.toFixed(1)}%</td>
+      <td><b class="${idx >= 90 ? 'neg' : idx <= 10 ? 'pos' : ''}">${idx.toFixed(0)}</b></td>
+      <td><span class="state ${cls}">${state}</span></td>
+      <td>${weeks || '—'}</td>
+    </tr>`;
+  }
+  tb.innerHTML = html;
+  const usd = usdParts.reduce((a, b) => a + b, 0) / usdParts.length;
+  const g = document.getElementById('usdGauge');
+  g.textContent = usd.toFixed(0) + ' / 100';
+  g.style.color = usd >= 80 ? 'var(--red)' : usd <= 20 ? 'var(--green)' : 'var(--text)';
+}
+
+function renderCharts() {
+  const rows = DATA.series[ccy];
+  const x = rows.map(r => r[0]);
+  document.getElementById('netTitle').textContent =
+    `Net positions — ${ccy} (${DATA.meta.contracts[ccy].name}) · contracts, long − short`;
+  const traces = GROUPS.map(([name, fn, color]) => ({
+    type: 'scatter', mode: 'lines', x, y: rows.map(fn),
+    name, line: { color, width: name === 'Large Specs' ? 1.8 : 1.2 },
+    hovertemplate: '%{x}<br>' + name + ' %{y:,}<extra></extra>',
+  }));
+  traces.push({ type: 'scatter', mode: 'lines', x, y: x.map(() => 0),
+    line: { color: '#475569', width: 1, dash: 'dot' }, hoverinfo: 'skip', showlegend: false });
+  const layout = {
+    paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+    font: { color: '#9ca3af', size: 11, family: 'JetBrains Mono' },
+    margin: { t: 10, r: 14, b: 36, l: 60 },
+    xaxis: { gridcolor: '#1c2230', range: [x[Math.max(0, x.length - 261)], x[x.length - 1]] },
+    yaxis: { gridcolor: '#1c2230' },
+    legend: { orientation: 'h', y: 1.1 },
+  };
+  Plotly.newPlot('netPlot', traces, layout, { displayModeBar: false, responsive: true });
+
+  const nets = specSeries(rows);
+  const idxs = nets.map((_, i) => cotIndex(nets, i));
+  Plotly.newPlot('idxPlot', [
+    { type: 'scatter', mode: 'lines', x, y: idxs, name: 'COT idx',
+      line: { color: '#818cf8', width: 1.4 }, hovertemplate: '%{x}<br>idx %{y:.0f}<extra></extra>' },
+    { type: 'scatter', mode: 'lines', x, y: x.map(() => 95), line: { color: '#ef4444', width: 1, dash: 'dot' }, hoverinfo: 'skip', showlegend: false },
+    { type: 'scatter', mode: 'lines', x, y: x.map(() => 5),  line: { color: '#22c55e', width: 1, dash: 'dot' }, hoverinfo: 'skip', showlegend: false },
+  ], {
+    paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+    font: { color: '#9ca3af', size: 11, family: 'JetBrains Mono' },
+    margin: { t: 6, r: 14, b: 36, l: 60 },
+    xaxis: { gridcolor: '#1c2230', range: [x[Math.max(0, x.length - 261)], x[x.length - 1]] },
+    yaxis: { gridcolor: '#1c2230', range: [0, 100] },
+    showlegend: false,
+  }, { displayModeBar: false, responsive: true });
+}
+</script>
+</body>
+</html>
