@@ -71,6 +71,7 @@ td:first-child,th:first-child{text-align:left}
   <div class="card"><div class="k">% of time above zero</div><div class="v" id="cAbove">—</div><div class="n">share of plotted 5-min points &gt; 0</div></div>
   <div class="card"><div class="k">Actual so far</div><div class="v" id="cAct">—</div><div class="n" id="cActN"></div></div>
   <div class="card"><div class="k">Method hit-rate (week direction)</div><div class="v" id="cHit">—</div><div class="n" id="cHitN"></div></div>
+  <div class="card"><div class="k">Expected movement today</div><div class="v" id="cRange">—</div><div class="n">trailing-20-session avg daily range — beats weekday & analog forecasts (validated 2026-06-12)</div></div>
 </div>
 
 <div class="panel">
@@ -154,8 +155,24 @@ fetch('cyclicality_data.json?v=' + Date.now()).then(r => r.json()).then(j => {
   $('selWeek').innerHTML = list.map(w =>
     `<option value="${w}" ${w === weekKey ? 'selected' : ''}>${fmtWeek(w)}${w > todayISO ? ' (next)' : w === weekKey ? ' (current)' : ''}</option>`).join('');
   $('selWeek').onchange = () => { weekKey = $('selWeek').value; render(); };
-  buildSegs(); whenEngineReady(() => { render(); buildValidation(); pollLive(); });
+  buildSegs(); whenEngineReady(() => { render(); buildValidation(); pollLive(); renderExpRange(); });
 });
+
+// "Expected movement today" — trailing-20-session mean daily range. The
+// 2026-06-12 analog study: this dumb baseline beats weekday-based range
+// (-11%, p=2e-5) and analog matching adds nothing beyond it. Direction
+// remains unpredictable; movement size is the one knowable number.
+function renderExpRange() {
+  const done = DATA.days.filter(d => !d._live).slice(-20);
+  if (done.length < 10) return;
+  const ranges = done.map(d => {
+    let c = 0, hi = 0, lo = 0;
+    for (const v of d.m) { c += (v || 0); if (c > hi) hi = c; if (c < lo) lo = c; }
+    return hi - lo;
+  });
+  const avg = ranges.reduce((a, b) => a + b, 0) / ranges.length;
+  $('cRange').textContent = '~' + avg.toFixed(0) + ' pts';
+}
 
 // ── LIVE actual (2026-06-11, user request) ──────────────────────────────
 // The worker snapshots today's session-so-far into KV every 5 min
