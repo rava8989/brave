@@ -4418,17 +4418,32 @@ async function handleScheduled(env) {
     // Append today's raw signals to scraped_signals.csv on GitHub
     let scrapeAppend = {};
     try { scrapeAppend = await appendScrapedSignals(env, etNow); } catch(e) { scrapeAppend = { error: e.message }; }
-    // Fold today\'s research captures (fly marks, put snap) into monthly GitHub files
-    try { await persistResearchArtifacts(env, etNow); } catch (e) { console.warn('[research-persist]', e.message); }
-    // Vol-flow: compute today's VIX decomposition (needs the 15:45 surface snap)
-    try { await computeVixDecompDaily(env, etNow); } catch (e) { console.warn('[vix-decomp]', e.message); }
-    // COT weekly self-feed — Fridays only (CFTC publishes ~15:30 ET Friday)
-    if (etNow.getDay() === 5) {
-      try { await cotWeeklyRefresh(env); } catch (e) { console.warn('[cot]', e.message); }
-    }
-    // CycleLab: append today's SPX session (+ backfill recent gaps) from Schwab
-    try { await appendCyclicalityDays(env); } catch (e) { console.warn('[cyclelab]', e.message); }
+    // Heavy GitHub-write jobs MOVED to their own 16:25 tick (2026-06-12,
+    // lessons P17): bundled here they pushed the EOD invocation past the
+    // subrequest budget — settle succeeded, every later persist silently
+    // died (06-11: fly marks/surface/decomp/cyclicality all missing while
+    // captures sat healthy in KV). See eodAuxJobs().
     return { ...eodResult, discord: discordResult, backfill_wr: backfillWR, backfill_pl: backfillPL, scrape_append: scrapeAppend };
+  }
+
+  // ── 16:25–16:40 ET aux tick (2026-06-12, lessons P17): the GitHub-heavy
+  // research jobs get their own invocation so the settle's subrequest
+  // budget can't starve them. Once per day; evening 18:00 retries remain.
+  if (etHour === 16 && etMin >= 25 && etMin < 40) {
+    const auxKey = `eod_aux_${todayISO}`;
+    if (!(await env.SIGNAL_KV.get(auxKey))) {
+      await env.SIGNAL_KV.put(auxKey, 'running', { expirationTtl: 86400 });
+      let ok = true;
+      try { await persistResearchArtifacts(env, etNow); } catch (e) { ok = false; console.warn('[research-persist]', e.message); }
+      try { await computeVixDecompDaily(env, etNow); } catch (e) { ok = false; console.warn('[vix-decomp]', e.message); }
+      try { await appendCyclicalityDays(env); } catch (e) { ok = false; console.warn('[cyclelab]', e.message); }
+      if (etNow.getDay() === 5) {
+        try { await cotWeeklyRefresh(env); } catch (e) { console.warn('[cot]', e.message); }
+      }
+      if (ok) await env.SIGNAL_KV.put(auxKey, 'done', { expirationTtl: 86400 });
+      else await env.SIGNAL_KV.delete(auxKey);   // retry next tick within the window
+      return { eod_aux: ok ? 'done' : 'partial-retry' };
+    }
   }
 
   // ── Master SPX chain fetch — ONE call per market tick, shared across all
@@ -8756,7 +8771,10 @@ export default {
 
     if (url.pathname === '/research-persist-now' && request.method === 'GET') {
       // Manual trigger for the EOD research persist (idempotent upserts).
-      const etNowR = toET(new Date());
+      // ?date=YYYY-MM-DD back-heals a missed day (KV captures live 90d).
+      let etNowR = toET(new Date());
+      const ovr = url.searchParams.get('date');
+      if (ovr && /^\d{4}-\d{2}-\d{2}$/.test(ovr)) etNowR = toET(new Date(`${ovr}T16:30:00-04:00`));
       let result;
       try { result = await persistResearchArtifacts(env, etNowR); }
       catch (e) { result = { error: e.message }; }
@@ -8856,7 +8874,10 @@ export default {
 
     if (url.pathname === '/vix-decomp-now' && request.method === 'GET') {
       // Manual trigger for the daily vol-flow decomposition (idempotent).
-      const etNowV = toET(new Date());
+      // ?date=YYYY-MM-DD back-heals a missed day from the KV surface snap.
+      let etNowV = toET(new Date());
+      const ovrV = url.searchParams.get('date');
+      if (ovrV && /^\d{4}-\d{2}-\d{2}$/.test(ovrV)) etNowV = toET(new Date(`${ovrV}T16:30:00-04:00`));
       let result;
       try { result = await computeVixDecompDaily(env, etNowV); }
       catch (e) { result = { error: e.message }; }
