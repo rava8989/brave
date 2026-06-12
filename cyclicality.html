@@ -59,6 +59,10 @@ td:first-child,th:first-child{text-align:left}
     <div class="ctl"><label>Days shown (toggle any)</label><div class="seg" id="segDow"></div></div>
     <div class="ctl"><label>Method</label><div class="seg" id="segMethod"></div></div>
     <div class="ctl"><label>Lookback — N prior same-weekdays each (holidays auto-skipped)</label><div class="seg" id="segLb"></div></div>
+    <div class="ctl"><label>Options</label><div style="display:flex;gap:14px;align-items:center;font-size:12px;color:var(--text2);padding:4px 0">
+      <label style="cursor:pointer"><input type="checkbox" id="optClean"> skip FED/CPI/OPEX in lookback</label>
+      <label style="cursor:pointer"><input type="checkbox" id="optGhosts" checked> prior weeks (1 day selected)</label>
+    </div></div>
   </div>
 </div>
 
@@ -76,6 +80,10 @@ td:first-child,th:first-child{text-align:left}
     <span style="color:var(--text2)"><span style="color:var(--red);font-weight:700">━</span> Prediction below zero</span>
     <span class="lg-act">Actual</span>
     <span class="lg-zero">Zero</span>
+    <span style="color:var(--text2)"><span style="color:#818cf8;opacity:.4;font-weight:700">▮</span> Agreement band (prior-week spread — wide = ignore the line)</span>
+    <span style="color:var(--text2)"><span style="color:#22d3ee;font-weight:700">┄</span> Live rest-of-day projection</span>
+    <span style="color:var(--text2)"><span style="color:#ef4444;font-weight:700">▂</span> Movement intensity (bottom strip)</span>
+    <span style="color:var(--text2)">Top ticks: <b>S</b>traddle 9:32 · <b>G</b>XBF 9:36 · <b>T</b>ail 9:45 · <b>D</b>iag 12:30 · shaded = M8BF window</span>
   </div>
   <div class="verdict" id="verdict"></div>
 </div>
@@ -200,16 +208,38 @@ function buildSegs() {
   $('segLb').querySelectorAll('button').forEach(b => b.onclick = () => {
     lookback = +b.dataset.n; buildSegs(); render(); buildValidation();
   });
+  const oc = $('optClean'), og = $('optGhosts');
+  if (oc && !oc._wired) { oc._wired = true; oc.onchange = () => { cleanLB = oc.checked; render(); }; }
+  if (og && !og._wired) { og._wired = true; og.onchange = () => { showGhosts = og.checked; render(); }; }
 }
 
 // prediction for one weekday: last N same-weekday SESSIONS strictly before
 // weekStart — holidays are simply absent from the data, so the window
 // automatically reaches further back (always N real sessions).
+let cleanLB = false, showGhosts = true;
+let _eventISO = null;
+function eventISOset() {
+  if (_eventISO) return _eventISO;
+  _eventISO = new Set();
+  const SE = globalThis.SignalEngine;
+  if (SE && SE.parseLong) {
+    for (const arr of [SE.fedSch, SE.cpiSch, SE.opexSch]) {
+      (arr || []).forEach(s => {
+        const d = SE.parseLong(s);
+        if (d) _eventISO.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+      });
+    }
+  }
+  return _eventISO;
+}
 function predFor(dowW, beforeISO) {
-  // _live (partial, intraday) days never feed predictions — only the chart's actual line
-  const pri = DATA.days.filter(x => x.w === dowW && x.d < beforeISO && !x._live).slice(-lookback);
+  // _live (partial, intraday) days never feed predictions — only the chart's actual line.
+  // cleanLB drops FED/CPI/OPEX days from the pool (window reaches further back instead).
+  const ev = cleanLB ? eventISOset() : null;
+  const pri = DATA.days.filter(x => x.w === dowW && x.d < beforeISO && !x._live
+                                 && (!ev || !ev.has(x.d))).slice(-lookback);
   if (pri.length < Math.min(4, lookback)) return null;
-  return { priors: pri.map(p => p.d), slots: buildSlots(pri.map(p => p.m)) };
+  return { priors: pri.map(p => p.d), ms: pri.map(p => p.m), slots: buildSlots(pri.map(p => p.m)) };
 }
 
 function compute() {
@@ -222,7 +252,7 @@ function compute() {
     if (isHol(iso)) continue;                     // market closed → no column
     const p = predFor(w, weekKey);
     if (!p) continue;
-    days.push({ w, iso, pred: p.slots, priors: p.priors,
+    days.push({ w, iso, pred: p.slots, priors: p.priors, ms: p.ms,
                 act: byDate[iso] ? byDate[iso].m : null });
   }
   // continuous cumulative across the shown days. The ACTUAL series is
@@ -231,16 +261,35 @@ function compute() {
   // truncate the rest of the week (a single partial day used to make every
   // later day look "missing").
   let cp = 0, ca = 0;
-  const predCum = [], actCum = [], marks = [];
+  const predCum = [], actCum = [], marks = [], bandLo = [], bandHi = [], intens = [];
+  const ghosts = [];   // prior-week paths, only when a single weekday is shown
+  const singleDow = days.length >= 1 && activeDows.size === 1 && lookback <= 10;
   days.forEach((d, di) => {
-    marks.push({ x: di * ns, label: `${WD[d.w]} ${d.iso.slice(5)}` });
+    marks.push({ x: di * ns, label: `${WD[d.w]} ${d.iso.slice(5)}`, w: d.w, iso: d.iso });
+    const dayStart = cp;
+    // per-prior cumulative paths (scaled ×N under Sum so they bracket the line)
+    const scale = method === 'sum' ? (d.ms ? d.ms.length : 1) : 1;
+    const paths = (d.ms || []).map(m => {
+      let c = 0; const p = new Array(ns);
+      for (let s = 0; s < ns; s++) { c += m[s] || 0; p[s] = c * scale; }
+      return p;
+    });
+    if (singleDow && showGhosts) for (const p of paths)
+      ghosts.push({ off: di * ns, path: p.map(v => dayStart + v) });
     for (let s = 0; s < ns; s++) {
       cp += d.pred[s] || 0; predCum.push(+cp.toFixed(2));
+      if (paths.length) {
+        let mn = Infinity, mx = -Infinity, asum = 0;
+        for (const p of paths) { if (p[s] < mn) mn = p[s]; if (p[s] > mx) mx = p[s]; }
+        for (const m of d.ms) asum += Math.abs(m[s] || 0);
+        bandLo.push(dayStart + mn); bandHi.push(dayStart + mx);
+        intens.push(asum / d.ms.length);
+      } else { bandLo.push(null); bandHi.push(null); intens.push(null); }
       if (d.act && d.act[s] != null) { ca += d.act[s]; actCum.push(+ca.toFixed(2)); }
       else actCum.push(null);
     }
   });
-  return { days, predCum, actCum, marks, ns };
+  return { days, predCum, actCum, marks, ns, bandLo, bandHi, intens, ghosts };
 }
 
 function render() {
@@ -275,7 +324,7 @@ function draw(r) {
   x.clearRect(0, 0, W, H);
   const N = r.predCum.length;
   let lo = 0, hi = 0;
-  [r.predCum, r.actCum].forEach(s => s.forEach(v => { if (v == null) return; lo = Math.min(lo, v); hi = Math.max(hi, v); }));
+  [r.predCum, r.actCum, r.bandLo, r.bandHi].forEach(s => (s || []).forEach(v => { if (v == null) return; lo = Math.min(lo, v); hi = Math.max(hi, v); }));
   const pad = Math.max(2, (hi - lo) * 0.08); lo -= pad; hi += pad;
   const L = 50, R = 10, T = 10, B = 36;
   const px = i => L + (W - L - R) * i / Math.max(1, N - 1);
@@ -304,6 +353,96 @@ function draw(r) {
     });
     x.stroke();
   };
+  // agreement band — spread of the individual prior weeks behind the line.
+  // Wide band straddling zero = the priors disagreed; the line is noise there.
+  if (r.bandLo && r.bandLo.some(v => v != null)) {
+    x.fillStyle = 'rgba(129,140,248,0.10)';
+    let i0 = null;
+    const flush = (iEnd) => {
+      if (i0 == null) return;
+      x.beginPath();
+      for (let i = i0; i < iEnd; i++) x.lineTo(px(i), py(r.bandHi[i]));
+      for (let i = iEnd - 1; i >= i0; i--) x.lineTo(px(i), py(r.bandLo[i]));
+      x.closePath(); x.fill();
+    };
+    for (let i = 0; i <= r.bandLo.length; i++) {
+      const ok = i < r.bandLo.length && r.bandLo[i] != null;
+      if (ok && i0 == null) i0 = i;
+      if (!ok && i0 != null) { flush(i); i0 = null; }
+    }
+  }
+  // ghost paths (single weekday only) — see whether one outlier week drives the line
+  if (r.ghosts && r.ghosts.length) {
+    x.strokeStyle = 'rgba(148,163,184,0.35)'; x.lineWidth = 1;
+    for (const g of r.ghosts) {
+      x.beginPath();
+      g.path.forEach((v, s) => { const i = g.off + s; if (s === 0) x.moveTo(px(i), py(v)); else x.lineTo(px(i), py(v)); });
+      x.stroke();
+    }
+  }
+  // strategy time markers per day column (slots are 5-min from 9:30)
+  const tIdx = (hhmm) => { const [h, m] = hhmm.split(':').map(Number); return ((h * 60 + m) - 570) / 5; };
+  const MARKS = [['9:32', 'S', '#22d3ee'], ['9:36', 'G', '#818cf8'], ['9:45', 'T', '#ef4444'], ['12:30', 'D', '#fb7185']];
+  const SEm8 = globalThis.SignalEngine && globalThis.SignalEngine.m8Sched;
+  r.marks.forEach(mk => {
+    for (const [tt, lab, col] of MARKS) {
+      const xi = px(mk.x + tIdx(tt));
+      x.strokeStyle = col; x.globalAlpha = 0.7; x.lineWidth = 1;
+      x.beginPath(); x.moveTo(xi, T); x.lineTo(xi, T + 9); x.stroke(); x.globalAlpha = 1;
+      x.fillStyle = col; x.font = '9px JetBrains Mono'; x.fillText(lab, xi - 2, T + 18);
+    }
+    if (SEm8) {
+      const sched = SEm8(mk.w + 1, new Date(+mk.iso.slice(0, 4), +mk.iso.slice(5, 7) - 1, +mk.iso.slice(8, 10), 12));
+      const win = sched && sched.window && sched.window.match(/(\d{1,2}:\d{2})[–-](\d{1,2}:\d{2})/);
+      if (win) {
+        const xa = px(mk.x + tIdx(win[1])), xb = px(mk.x + tIdx(win[2]));
+        x.fillStyle = 'rgba(129,140,248,0.06)'; x.fillRect(xa, T, xb - xa, H - T - B);
+      }
+    }
+    x.font = '11px JetBrains Mono';
+  });
+  // movement-intensity strip (avg |5-min move| of the priors, percentile-colored)
+  if (r.intens && r.intens.some(v => v != null)) {
+    const vals = r.intens.filter(v => v != null).slice().sort((a, b) => a - b);
+    const rank = v => vals.length > 1 ? vals.filter(u => u <= v).length / vals.length : 0.5;
+    const sw = (W - L - R) / Math.max(1, N - 1);
+    for (let i = 0; i < r.intens.length; i++) {
+      const v = r.intens[i]; if (v == null) continue;
+      const t = rank(v);
+      const c = t < 0.5
+        ? `rgba(129,140,248,${(0.08 + t * 0.5).toFixed(2)})`
+        : `rgba(239,68,68,${(0.15 + (t - 0.5) * 0.9).toFixed(2)})`;
+      x.fillStyle = c; x.fillRect(px(i) - sw / 2, H - B + 4, sw + 0.5, 9);
+    }
+  }
+  // live rest-of-day projection: re-anchor the prediction's remaining
+  // increments (and the band's) onto the current live actual value
+  {
+    const liveDi = r.days.findIndex(d => { const rec = DATA.days.find(x => x.d === d.iso); return rec && rec._live; });
+    if (liveDi >= 0) {
+      const a0 = liveDi * r.ns, a1 = a0 + r.ns;
+      let last = -1;
+      for (let i = a1 - 1; i >= a0; i--) if (r.actCum[i] != null) { last = i; break; }
+      if (last >= a0 && last < a1 - 1) {
+        const anchor = r.actCum[last];
+        const proj = [], pLo = [], pHi = [];
+        for (let i = last; i < a1; i++) {
+          proj.push(anchor + (r.predCum[i] - r.predCum[last]));
+          pLo.push(r.bandLo[i] != null && r.bandLo[last] != null ? anchor + (r.bandLo[i] - r.bandLo[last]) : null);
+          pHi.push(r.bandHi[i] != null && r.bandHi[last] != null ? anchor + (r.bandHi[i] - r.bandHi[last]) : null);
+        }
+        if (pLo[1] != null) {
+          x.fillStyle = 'rgba(34,211,238,0.08)'; x.beginPath();
+          pHi.forEach((v, k) => { if (v != null) x.lineTo(px(last + k), py(v)); });
+          for (let k = pLo.length - 1; k >= 0; k--) if (pLo[k] != null) x.lineTo(px(last + k), py(pLo[k]));
+          x.closePath(); x.fill();
+        }
+        x.strokeStyle = '#22d3ee'; x.lineWidth = 1.6; x.setLineDash([5, 4]); x.beginPath();
+        proj.forEach((v, k) => { if (k === 0) x.moveTo(px(last + k), py(v)); else x.lineTo(px(last + k), py(v)); });
+        x.stroke(); x.setLineDash([]);
+      }
+    }
+  }
   // prediction — color-split at zero: indigo above, red below (clip passes)
   const y0 = py(0);
   const clipDraw = (top, bottom, color) => {
