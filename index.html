@@ -3086,6 +3086,10 @@
         const vc = A.volflow.includes('VOL_BID') ? RED : A.volflow.includes('MIXED') ? GRN : DIM;
         inner += `${vc}${A.volflow}${RST}\n`;
       }
+      if (A.m8bfwr) {
+        const wc = A.m8bfwr.includes('✓both halves') ? GRN : A.m8bfwr.includes('COLDEST') ? RED : DIM;
+        inner += `${wc}${A.m8bfwr}${RST}\n`;
+      }
     }
 
     // Pattern notes

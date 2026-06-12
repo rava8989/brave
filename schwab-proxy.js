@@ -1051,6 +1051,37 @@ async function computeVolFlowLine(env, etNow) {
   return line;
 }
 
+// ── M8BF service-WR line (2026-06-12) — INFORMATIONAL ONLY ─────────────
+// Yesterday's whole-day service win rate (history m8bfWR) + cold-streak
+// context. Trailing AVERAGES tested flat — only yesterday's value + the
+// trailing-5 extreme flag are shown. Cached per day.
+async function computeM8bfWrLine(env, etNow) {
+  const todayISO = isoDateET(etNow);
+  const ck = `m8bfwr_line_${todayISO}`;
+  const cached = await env.SIGNAL_KV.get(ck);
+  if (cached) return cached === 'none' ? null : cached;
+  let line = null;
+  try {
+    const raw = await env.SIGNAL_KV.get('history_data');
+    if (raw) {
+      const rows = JSON.parse(raw).filter(r => r.date && r.date < todayISO && r.m8bfWR != null)
+        .sort((a, b) => a.date.localeCompare(b.date));
+      if (rows.length >= 6) {
+        const yWR = rows[rows.length - 1].m8bfWR;
+        const t5 = rows.slice(-5).reduce((s, r) => s + r.m8bfWR, 0) / 5;
+        // percentile of current trailing-5 vs all history
+        const all5 = [];
+        for (let i = 5; i <= rows.length; i++)
+          all5.push(rows.slice(i - 5, i).reduce((s, r) => s + r.m8bfWR, 0) / 5);
+        const pct = 100 * all5.filter(v => v <= t5).length / all5.length;
+        line = m8bfWrAdvisoryLine(yWR, t5, pct);
+      }
+    }
+  } catch (e) { console.warn('[m8bfwr-line]', e.message); }
+  await env.SIGNAL_KV.put(ck, line || 'none', { expirationTtl: 86400 });
+  return line;
+}
+
 // ── Daily total-risk cap (2026-06-09) ──────────────────────────────────
 // On multi-strategy days, Straddle + BOBF + GXBF + Diagonal can all be live
 // at once and nothing checked COMBINED max-loss against the account. Each
@@ -1302,7 +1333,7 @@ import {
   isEarningsDay, isNonAmznTslaEarningsDay, isDayAfterAnyEarnings,
   calculateSignal, computeDiagonalSignal, computeVixPct20d,
   classifyCyclePrediction, cycleAdvisoryLine, regimeGroup, dayTypeAdvisoryLine,
-  volFlowAdvisoryLine,
+  volFlowAdvisoryLine, m8bfWrAdvisoryLine,
 } from './signal-engine.js';
 
 
@@ -1446,6 +1477,11 @@ function buildDiscordMessage(signal, vixValues, tailLine) {
     const vc = signal._volFlowLine.includes('VOL_BID') ? RED
              : signal._volFlowLine.includes('MIXED') ? GRN : DIM;
     inner += `${vc}${signal._volFlowLine}${RST}\n`;
+  }
+  if (signal._m8bfWrLine) {
+    const wc = signal._m8bfWrLine.includes('✓both halves') ? GRN
+             : signal._m8bfWrLine.includes('COLDEST') ? RED : DIM;
+    inner += `${wc}${signal._m8bfWrLine}${RST}\n`;
   }
 
   // VIX values
@@ -5197,6 +5233,7 @@ async function handleScheduled(env) {
   try { signal._gexLine = await computeGexLine(env); } catch (_) { /* advisory only */ }
   try { signal._cycleLine = await computeCycleLine(env, etNow); } catch (_) { /* advisory only */ }
   try { signal._volFlowLine = await computeVolFlowLine(env, etNow); } catch (_) { /* advisory only */ }
+  try { signal._m8bfWrLine = await computeM8bfWrLine(env, etNow); } catch (_) { /* advisory only */ }
   const message = canonBanner + buildDiscordMessage(signal, vixValues, tailLineCanon);
 
   // 7. Slot already claimed at the top of the morning block. Reuse the same key.
@@ -5391,6 +5428,7 @@ async function handleScheduled(env) {
       signalOther._gexLine = signal._gexLine;
       signalOther._cycleLine = signal._cycleLine;
       signalOther._volFlowLine = signal._volFlowLine;
+      signalOther._m8bfWrLine = signal._m8bfWrLine;
       const otherBanner = otherSource === 'schwab' ? '📡 **SCHWAB DATA**\n\n' : '📡 **TASTYTRADE DATA**\n\n';
       const msgOther = otherBanner + buildDiscordMessage(signalOther, { yOpen: vixYOpen, yClose: vixYClose, todayOpen: vixOther }, tailLineCanon);
       await new Promise(r => setTimeout(r, 1500));   // Discord rate-limit safety
@@ -8711,6 +8749,7 @@ export default {
       try { out.gex = await computeGexLine(env); } catch (_) {}
       try { out.daytype = await computeCycleLine(env, etNowA); } catch (_) {}
       try { out.volflow = await computeVolFlowLine(env, etNowA); } catch (_) {}
+      try { out.m8bfwr = await computeM8bfWrLine(env, etNowA); } catch (_) {}
       return new Response(JSON.stringify(out),
         { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
     }
@@ -8966,12 +9005,13 @@ export default {
         // Tail Hedge today (fetched once, cached). Shared between both renders.
         const tailLine = await getTailHedgeStatusLine(env);
         // Advisory lines — keep the preview identical to the real morning message
-        let tiltL = null, gexL = null, cycL = null, volL = null;
+        let tiltL = null, gexL = null, cycL = null, volL = null, wrL = null;
         try { tiltL = await computeTiltLine(env, isoDateET(etNow)); } catch (_) {}
         try { gexL = await computeGexLine(env); } catch (_) {}
         try { cycL = await computeCycleLine(env, etNow); } catch (_) {}
         try { volL = await computeVolFlowLine(env, etNow); } catch (_) {}
-        for (const s of [sigSchwab, sigTasty]) if (s) { s._tiltLine = tiltL; s._gexLine = gexL; s._cycleLine = cycL; s._volFlowLine = volL; }
+        try { wrL = await computeM8bfWrLine(env, etNow); } catch (_) {}
+        for (const s of [sigSchwab, sigTasty]) if (s) { s._tiltLine = tiltL; s._gexLine = gexL; s._cycleLine = cycL; s._volFlowLine = volL; s._m8bfWrLine = wrL; }
 
         function renderMsg(sig, vixVal, source) {
           if (!sig) return null;

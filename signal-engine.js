@@ -487,6 +487,24 @@ export const VOLFLOW_STATS = {
   },
 };
 
+// M8BF service-WR advisory (2026-06-12): the Discord service's whole-day win
+// rate (all their 5-min fly signals — history m8bfWR). Research findings:
+// TRAILING AVERAGES carry no signal (terciles flat). YESTERDAY's value has a
+// monotone gradient; only the >=90 cell replicated both halves ($601/79% vs
+// $427/68% normal). Cold-streak context (trailing-5 <=25%): 10 prior
+// occurrences, 9 wins avg ~$1.1k — crash-aftermath thaws; n tiny, context
+// only. INFORMATIONAL — never gates.
+export function m8bfWrAdvisoryLine(yWR, trail5, trail5Pctile) {
+  if (yWR == null) return null;
+  let line = `M8BF svc   │ yday WR ${yWR}%`;
+  if (yWR >= 90) line += ` — next-day M8BF historically $601 vs $427 normal (79% WR, ✓both halves)`;
+  else if (yWR < 50) line += ` — soft next-day history ($310-350 vs $427), not proven both halves`;
+  else line += ` — neutral zone`;
+  if (trail5 != null && trail5 <= 25)
+    line += ` · COLDEST-STRETCH territory (5d avg ${trail5.toFixed(0)}%${trail5Pctile != null ? `, p${trail5Pctile.toFixed(0)}` : ''}; prior thaws 9/10 wins, n=10 — context only)`;
+  return line;
+}
+
 export function volFlowAdvisoryLine(label) {
   if (!label) return null;
   const head = `Vol flow   │ yday ${label}`;
@@ -854,6 +872,6 @@ if (typeof globalThis !== 'undefined') {
     computeVixPct20d,
     calculateSignal,
     classifyCyclePrediction, CYCLE_SHAPE_STATS, cycleAdvisoryLine,
-    DAYTYPE_STATS, regimeGroup, dayTypeAdvisoryLine,
+    DAYTYPE_STATS, regimeGroup, dayTypeAdvisoryLine, m8bfWrAdvisoryLine,
   };
 }
