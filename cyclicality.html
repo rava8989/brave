@@ -89,6 +89,43 @@ td:first-child,th:first-child{text-align:left}
   <div class="verdict" id="verdict"></div>
 </div>
 
+<details class="panel" style="cursor:pointer">
+  <summary style="font-size:14px;font-weight:700;color:var(--text)">📖 How to read this page — plain English</summary>
+  <div style="font-size:13px;line-height:1.65;color:var(--text2);margin-top:10px;cursor:auto">
+
+  <p><b style="color:var(--text)">First, the honest part:</b> this chart <b>cannot tell you which direction today goes</b>. We tested that four different ways — same-weekday history, every averaging method, look-alike days — and direction is a coin flip every time. What IS knowable: <b>how much the market moves</b> and <b>what hours it usually moves in</b>. Everything below is about using those two things.</p>
+
+  <p><b style="color:#818cf8">① The prediction line + the cloud around it (agreement band).</b>
+  The line is the last 4 same-weekdays mashed together. The cloud shows how much those 4 weeks <i>disagreed</i> — its top is the best of them, its bottom the worst, at every minute.
+  <b>Fat cloud covering both sides of zero = the weeks all did different things → the line is noise today, skip it.</b>
+  Skinny cloud all on one side = the weeks actually rhymed — the only kind of day the line deserves a glance. (Rare.)</p>
+
+  <p><b style="color:#94a3b8">② Ghost lines.</b> Pick a single weekday and you'll see the 4 prior weeks drawn faintly. One glance shows whether the prediction is honest seasonality or just one crazy week dragging the average.</p>
+
+  <p><b style="color:var(--text)">③ "Expected movement today" (the card above).</b>
+  Take the last 20 days, measure each day's total travel (high to low), average them. That's the most accurate movement forecast we found — it beat every fancy method. Two rules make it useful:</p>
+  <ul style="margin:4px 0 8px 18px;padding:0">
+    <li><b>The market finishes about HALF as far as it travels.</b> Card says 72 → expect to <i>end</i> ~36 pts from the open. A straddle pays on the finish, not the travel.</li>
+    <li><b>Compare the 9:32 straddle price to half the card.</b> Straddle quote below half-the-card = movement is on sale. Above = you're overpaying.</li>
+  </ul>
+  <table style="border-collapse:collapse;font-family:'JetBrains Mono',monospace;font-size:12px;margin:4px 0 8px">
+    <tr style="color:var(--text3)"><td style="padding:2px 14px 2px 0">CARD READS</td><td style="padding:2px 14px">DAYS FINISH &gt;32 PTS AWAY</td><td style="padding:2px 0">WEATHER</td></tr>
+    <tr><td style="padding:2px 14px 2px 0">under 55</td><td style="padding:2px 14px">31%</td><td style="color:#818cf8">butterfly weather — movement overpriced</td></tr>
+    <tr><td style="padding:2px 14px 2px 0">55 – 75</td><td style="padding:2px 14px">44%</td><td style="color:var(--text2)">coin flip — your signal is the boss</td></tr>
+    <tr><td style="padding:2px 14px 2px 0">over 75</td><td style="padding:2px 14px">57%</td><td style="color:#22c55e">straddle weather — movement cheap</td></tr>
+  </table>
+  <p style="font-size:11.5px;color:var(--text3);margin:0 0 8px">(26 years of data, 1,010 days. "32" = the $32 straddle cap; scale to the actual quote.)</p>
+
+  <p><b style="color:#ef4444">④ The colored strip at the bottom (movement intensity).</b>
+  Red cells = the hours these same weekdays usually moved hardest; blue = usually dead. Check it against the tick marks on top — <b>S</b>traddle 9:32, <b>G</b>XBF 9:36, <b>T</b>ail 9:45, <b>D</b>iagonal 12:30, and the shaded box = your M8BF window for that weekday. If the red hours come right after your fly entry, that's the storm your tent must survive. If the morning is red and afternoon blue, a straddle that hasn't moved by noon probably won't.</p>
+
+  <p><b style="color:#22d3ee">⑤ The dashed cyan cone (live days only).</b>
+  During market hours it takes today's actual price and shows how the typical same-weekday finishes <i>from here</i>, with its spread. Holding a fly into the close? Cone inside your tent = normal script. Cone edge far outside your wings = the typical finish breaks your trade — a watch-it flag, not an order.</p>
+
+  <p><b style="color:var(--text)">Bottom line:</b> this page is a weather report — how much wind and when, never which direction. Entry decisions stay with your actual signals (VIX rules, GEX, the morning message). Use this to decide if you're paying list price or clearance for movement, and what hours to brace for.</p>
+  </div>
+</details>
+
 <div class="panel">
   <b style="font-size:14px">Honest validation — does this method predict?</b>
   <div class="note">For every historical day: build the prediction from the prior N same-weekdays, check whether its
