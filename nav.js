@@ -13,7 +13,6 @@
     ['cor1m_contango.html',        '▼ Tail Hedge'],
     ['cyclicality.html',           '◐ CycleLab'],
     ['gex.html',                   'Γ GEX'],
-    ['cot.html',                   '⚖ COT FX'],
   ];
   function build() {
     const here = (location.pathname.split('/').pop() || 'index.html');
