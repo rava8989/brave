@@ -151,7 +151,7 @@ td:first-child,th:first-child{text-align:left}
 </div>
 
 <script>
-let DATA = null, lookback = 4, weekKey = null, method = 'sum';
+let DATA = null, lookback = 4, weekKey = null, method = 'med';   // Median default (2026-06-12: lowest size error 33.5 vs Sum 69.8; Sum = same shape ×4)
 const METHODS = [['sum','Sum'],['avg','Average'],['med','Median'],['wavg','Weighted']];
 function buildSlots(priMoves) {
   const n = priMoves.length, ns = DATA.slots.length, out = new Array(ns);
