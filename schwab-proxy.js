@@ -8691,11 +8691,34 @@ export default {
         candidate = snap.puts.filter(p => p.e === e0)
           .sort((a, b) => Math.abs(a.d + 0.20) - Math.abs(b.d + 0.20))[0] || null;
       }
+      // Frozen bot-tradeable open (2026-06-12, sigma-3 6th strategy): the
+      // FIRST poll at/after 9:45 ET on an active+tradeable day freezes the
+      // candidate as today's canonical trade; every later poll returns the
+      // identical object (idempotent, mirrors the other *-today routes).
+      // Hold-to-settlement — no close object ever.
+      let tailOpen = null;
+      try {
+        const frozenRaw = await env.SIGNAL_KV.get(`tail_open_trade_${todayT}`);
+        if (frozenRaw) {
+          tailOpen = JSON.parse(frozenRaw);
+        } else {
+          const hT = etNowT.getHours(), mT = etNowT.getMinutes();
+          const pastEntry = hT > 9 || (hT === 9 && mT >= 45);
+          if (line.includes('▶ TRADE') && pastEntry && hT < 16 && candidate) {
+            tailOpen = { openDate: todayT, openTimeET: '09:45', strike: candidate.k,
+                         expDate: candidate.e, entryBid: candidate.b, entryAsk: candidate.a,
+                         contracts: 1 };
+            await env.SIGNAL_KV.put(`tail_open_trade_${todayT}`, JSON.stringify(tailOpen),
+              { expirationTtl: 7 * 86400 });
+          }
+        }
+      } catch (_) { /* open exposure is best-effort */ }
       return new Response(JSON.stringify({
         date: todayT, line,
         active: line.includes('▶ TRADE'), skip: line.includes('SKIP today'),
         state: st, cor1m: openRec?.cor1m ?? null, vvix: openRec?.vvix ?? null,
         spot: snap?.spot ?? null, snapAt: snap?.at ?? null, candidate,
+        open: tailOpen,
       }), { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
     }
 
