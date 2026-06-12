@@ -461,26 +461,40 @@ async function captureCycTodaySlots(env, etNow, token) {
   await env.SIGNAL_KV.put('cyc_today', JSON.stringify(
     { d: todayISO, w: wd, m: moves, at: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}` }),
     { expirationTtl: 86400 });
+  // NDX live slots (2026-06-12) — same cadence, own KV key
+  try {
+    const histN = await fetchSchwabJSON(
+      `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24NDX&periodType=day&frequencyType=minute&frequency=1&startDate=${start}&endDate=${end}&needExtendedHoursData=false`,
+      token, env);
+    const rN = _cycMovesFromCandles(histN.candles || [], todayISO, slots, slotIdx);
+    if (rN.filled) await env.SIGNAL_KV.put('cyc_today_ndx', JSON.stringify(
+      { d: todayISO, w: wd, m: rN.moves, at: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}` }),
+      { expirationTtl: 86400 });
+  } catch (e) { console.warn('[cyc-live-ndx]', e.message); }
 }
 
 // CycleLab daily feed (2026-06-10): append today\'s (and any recent missing)
 // SPX session to cyclicality_data.json from Schwab 1-min pricehistory —
 // 5-min slot net moves, the format build_cyclicality_data.py produces.
 // ThetaData-free; the page self-updates daily. Runs at EOD + manual route.
-async function appendCyclicalityDays(env) {
+async function appendCyclicalityDays(env, opts = {}) {
   const token = await getAccessToken(env);
+  const symbol = opts.symbol || '%24SPX';                 // '%24SPX' | '%24NDX'
+  const file = opts.file || 'cyclicality_data.json';      // NDX → cyclicality_ndx.json
+  const backDays = Math.min(45, opts.backDays || 12);
   const slots = _cycSlots();
   const slotIdx = Object.fromEntries(slots.map((s, i) => [s, i]));
 
   // current file (raw — cheaper than contents API for a 450KB read)
-  const cur = await (await fetch('https://raw.githubusercontent.com/rava8989/brave/main/cyclicality_data.json',
-    { headers: { 'User-Agent': 'schwab-proxy-worker/1.0' } })).json();
+  const curResp = await fetch(`https://raw.githubusercontent.com/rava8989/brave/main/${file}`,
+    { headers: { 'User-Agent': 'schwab-proxy-worker/1.0' } });
+  const cur = curResp.ok ? await curResp.json() : { slots, days: [] };
   const have = new Set(cur.days.map(x => x.d));
 
-  // candidate days: last 12 calendar days, weekdays, non-holiday, missing
+  // candidate days: last N calendar days, weekdays, non-holiday, missing
   const etNow = toET(new Date());
   const todo = [];
-  for (let back = 0; back <= 12; back++) {
+  for (let back = 0; back <= backDays; back++) {
     const d = new Date(etNow); d.setDate(d.getDate() - back);
     if (d.getDay() === 0 || d.getDay() === 6 || isHol(d)) continue;
     const iso = isoDateET(d);
@@ -497,7 +511,7 @@ async function appendCyclicalityDays(env) {
     let hist;
     try {
       hist = await fetchSchwabJSON(
-        `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24SPX&periodType=day&frequencyType=minute&frequency=1&startDate=${start}&endDate=${end}&needExtendedHoursData=false`,
+        `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=${symbol}&periodType=day&frequencyType=minute&frequency=1&startDate=${start}&endDate=${end}&needExtendedHoursData=false`,
         token, env);
     } catch (e) { console.warn('[cyclelab] pricehistory failed', iso, e.message); continue; }
     const { moves, filled } = _cycMovesFromCandles(hist.candles || [], iso, slots, slotIdx);
@@ -507,7 +521,8 @@ async function appendCyclicalityDays(env) {
   }
   if (!appended.length) return { ok: true, appended: [] };
 
-  await githubUpsertResearchFile(env, 'cyclicality_data.json', curObj => {
+  await githubUpsertResearchFile(env, file, curObj => {
+    if (!curObj.days) { curObj.slots = slots; curObj.days = []; }
     const haveNow = new Set(curObj.days.map(x => x.d));
     for (const rec of appended) if (!haveNow.has(rec.d)) curObj.days.push(rec);
     curObj.days.sort((a, b) => a.d.localeCompare(b.d));
@@ -4437,6 +4452,7 @@ async function handleScheduled(env) {
       try { await persistResearchArtifacts(env, etNow); } catch (e) { ok = false; console.warn('[research-persist]', e.message); }
       try { await computeVixDecompDaily(env, etNow); } catch (e) { ok = false; console.warn('[vix-decomp]', e.message); }
       try { await appendCyclicalityDays(env); } catch (e) { ok = false; console.warn('[cyclelab]', e.message); }
+      try { await appendCyclicalityDays(env, { symbol: '%24NDX', file: 'cyclicality_ndx.json' }); } catch (e) { console.warn('[cyclelab-ndx]', e.message); }
       if (etNow.getDay() === 5) {
         try { await cotWeeklyRefresh(env); } catch (e) { console.warn('[cot]', e.message); }
       }
@@ -8743,7 +8759,7 @@ export default {
 
     if (url.pathname === '/cyclicality-append-now' && request.method === 'GET') {
       let result;
-      try { result = await appendCyclicalityDays(env); } catch (e) { result = { error: e.message }; }
+      try { result = await appendCyclicalityDays(env, { symbol: url.searchParams.get('symbol') === 'ndx' ? '%24NDX' : '%24SPX', file: url.searchParams.get('symbol') === 'ndx' ? 'cyclicality_ndx.json' : 'cyclicality_data.json', backDays: parseInt(url.searchParams.get('backDays') || '12', 10) }); } catch (e) { result = { error: e.message }; }
       return new Response(JSON.stringify(result, null, 2),
         { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
     }
@@ -8841,6 +8857,17 @@ export default {
         { status: 400, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
       try {
         const tk = await getAccessToken(env);
+        // ?minuteDay=YYYY-MM-DD probes 1-min depth: returns that day's 1-min count
+        const md = url.searchParams.get('minuteDay');
+        if (md && /^\d{4}-\d{2}-\d{2}$/.test(md)) {
+          const s = Date.parse(`${md}T08:00:00Z`), e = Date.parse(`${md}T23:00:00Z`);
+          const dd = await fetchSchwabJSON(
+            `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=${encodeURIComponent(sym)}&periodType=day&frequencyType=minute&frequency=1&startDate=${s}&endDate=${e}&needExtendedHoursData=false`,
+            tk, env);
+          const cc = (dd.candles || []).filter(c => c.close > 0);
+          return new Response(JSON.stringify({ symbol: sym, minuteDay: md, n: cc.length,
+            first: cc[0]?.datetime ?? null }), { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
+        }
         const end = Date.now(), start = end - years * 365.25 * 86400000;
         const data = await fetchSchwabJSON(
           `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=${encodeURIComponent(sym)}&periodType=year&frequencyType=daily&startDate=${Math.round(start)}&endDate=${end}&needExtendedHoursData=false`,
@@ -8867,7 +8894,7 @@ export default {
     if (url.pathname === '/cyclicality-today' && request.method === 'GET') {
       // CycleLab live actual — today's session-so-far (KV, written by the
       // cron every 5 min during RTH). Pure KV read: zero Schwab calls.
-      const raw = await env.SIGNAL_KV.get('cyc_today');
+      const raw = await env.SIGNAL_KV.get(url.searchParams.get('symbol') === 'ndx' ? 'cyc_today_ndx' : 'cyc_today');
       return new Response(raw || 'null',
         { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
     }

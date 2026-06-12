@@ -59,6 +59,9 @@ td:first-child,th:first-child{text-align:left}
     <div class="ctl"><label>Days shown (toggle any)</label><div class="seg" id="segDow"></div></div>
     <div class="ctl"><label>Method</label><div class="seg" id="segMethod"></div></div>
     <div class="ctl"><label>Lookback — N prior same-weekdays each (holidays auto-skipped)</label><div class="seg" id="segLb"></div></div>
+    <div class="ctl"><label>Index</label><div class="seg" id="segSym">
+      <button data-s="spx" class="on">SPX</button><button data-s="ndx">NDX</button>
+    </div></div>
     <div class="ctl"><label>Options</label><div style="display:flex;gap:14px;align-items:center;font-size:12px;color:var(--text2);padding:4px 0">
       <label style="cursor:pointer"><input type="checkbox" id="optClean"> skip FED/CPI/OPEX in lookback</label>
       <label style="cursor:pointer"><input type="checkbox" id="optGhosts" checked> prior weeks (1 day selected)</label>
@@ -191,10 +194,13 @@ function fmtWeek(mon) {
   return 'Week of ' + d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 }
 
-fetch('cyclicality_data.json?v=' + Date.now()).then(r => r.json()).then(j => {
+let symbol = 'spx';
+function dataFile() { return symbol === 'ndx' ? 'cyclicality_ndx.json' : 'cyclicality_data.json'; }
+function loadData() {
+  return fetch(dataFile() + '?v=' + Date.now()).then(r => r.json()).then(j => {
   DATA = j;
   $('subTitle').textContent =
-    `${j.days.length} SPX sessions · ${j.days[0].d} → ${j.days[j.days.length - 1].d} · 5-minute candles · built ${j.built}`;
+    `${j.days.length} ${symbol.toUpperCase()} sessions · ${j.days[0].d} → ${j.days[j.days.length - 1].d} · 5-minute candles · built ${j.built}` + (symbol === 'ndx' ? ' · NDX since 2026-04-28 (Schwab limit) — longer lookbacks unlock as it self-grows' : '');
   // week list: every Monday from data + the current (possibly future) week, newest first
   const weeks = new Set(j.days.map(x => mondayOf(x.d)));
   const today = new Date();
@@ -207,7 +213,9 @@ fetch('cyclicality_data.json?v=' + Date.now()).then(r => r.json()).then(j => {
     `<option value="${w}" ${w === weekKey ? 'selected' : ''}>${fmtWeek(w)}${w > todayISO ? ' (next)' : w === weekKey ? ' (current)' : ''}</option>`).join('');
   $('selWeek').onchange = () => { weekKey = $('selWeek').value; render(); };
   buildSegs(); whenEngineReady(() => { render(); buildValidation(); pollLive(); renderExpRange(); });
-});
+  });
+}
+loadData();
 
 // "Expected movement today" — trailing-20-session mean daily range. The
 // 2026-06-12 analog study: this dumb baseline beats weekday-based range
@@ -245,7 +253,7 @@ function mergeLive(rec) {
 }
 function pollLive() {
   if (document.visibilityState === 'hidden') return;
-  fetch(WORKER_URL + '/cyclicality-today', { cache: 'no-store' })
+  fetch(WORKER_URL + '/cyclicality-today' + (symbol === 'ndx' ? '?symbol=ndx' : ''), { cache: 'no-store' })
     .then(r => r.ok ? r.json() : null)
     .then(rec => { if (rec && mergeLive(rec)) render(); })
     .catch(() => {});
@@ -275,6 +283,12 @@ function buildSegs() {
     `<button data-n="${n}" class="${n === lookback ? 'on' : ''}">${n}</button>`).join('');
   $('segLb').querySelectorAll('button').forEach(b => b.onclick = () => {
     lookback = +b.dataset.n; buildSegs(); render(); buildValidation();
+  });
+  document.querySelectorAll('#segSym button').forEach(b2 => b2.onclick = () => {
+    if (b2.dataset.s === symbol) return;
+    symbol = b2.dataset.s;
+    document.querySelectorAll('#segSym button').forEach(x => x.classList.toggle('on', x.dataset.s === symbol));
+    loadData();
   });
   const oc = $('optClean'), og = $('optGhosts');
   if (oc && !oc._wired) { oc._wired = true; oc.onchange = () => { cleanLB = oc.checked; render(); }; }
