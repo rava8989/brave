@@ -1643,7 +1643,7 @@ function buildDiscordMessage(signal, vixValues, tailLine) {
     inner += `${DIM}SPX Gap         │ ${dir}${Math.abs(signal.spxGapPct).toFixed(2)}%${RST}\n`;
   }
 
-  return `\`\`\`ansi\n${inner}\`\`\`\n*Not financial advice. For informational purposes only.*`;
+  return `\`\`\`ansi\n${inner}\`\`\`\n📈 Trades are posted live here: <https://rava8989.github.io/brave/live.html>\n*Not financial advice. For informational purposes only.*`;
 }
 
 // ════════════════════════════════════════════════════════════════════
