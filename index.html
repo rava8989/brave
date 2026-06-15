@@ -1437,7 +1437,7 @@
     inner += `Diagonal │ ${diag}\n`;
 
     // Wrap in Discord code block — renders in monospace, stands out from regular text
-    const txt = `\`\`\`\n${inner}\`\`\`\n*Not financial advice. For informational purposes only.*`;
+    const txt = `\`\`\`\n${inner}\`\`\`\n📈 Trades are posted live here: <https://rava8989.github.io/brave/live.html>\n*Not financial advice. For informational purposes only.*`;
 
     navigator.clipboard.writeText(txt).then(()=>{
       const btns = document.querySelectorAll('.btn-s');
@@ -3127,7 +3127,7 @@
       inner += `${forced?RED:DIM}SPX Gap         │ ${dir}${Math.abs(gap).toFixed(2)}%${forced ? ' ⚠️ Straddle cancelled' : ''}${RST}\n`;
     }
 
-    return `\`\`\`ansi\n${inner}\`\`\`\n*Not financial advice. For informational purposes only.*`;
+    return `\`\`\`ansi\n${inner}\`\`\`\n📈 Trades are posted live here: <https://rava8989.github.io/brave/live.html>\n*Not financial advice. For informational purposes only.*`;
   }
 
   /* Build Option E embed (rich Discord card) — mirrors worker buildSigma3Embed */
