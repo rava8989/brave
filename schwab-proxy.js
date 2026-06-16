@@ -9995,7 +9995,7 @@ export default {
         // forever (the bot's upLookup only ever sees today's open). Most
         // recent date < today with m8bfPL non-null. Same-day open + close
         // because M8BF is 0DTE. See lessons.md P6. ──
-        let lastClosedM8bf = null;
+        let lastClosedM8bf = null, todaySettled = null;
         try {
           const _hist = await getHistory(env);
           if (Array.isArray(_hist)) {
@@ -10010,6 +10010,15 @@ export default {
                 pnl: parseFloat(_prior[0].m8bfPL),
                 status: 'settled',
               };
+            }
+            // Today's settled row (2026-06-15): once EOD writes m8bfPL +
+            // spxClose, the live trade is DONE — serve the settled value so
+            // the page stops marking 0DTE to a possibly-stale intraday spot
+            // (live page showed +$1,774 @ a frozen 7549 vs +$1,181 @ the real
+            // 7555 close).
+            const _td = _hist.find(r => r.date === todayT);
+            if (_td && _td.m8bfPL != null && _td.spxClose != null) {
+              todaySettled = { pnl: parseFloat(_td.m8bfPL), spxClose: parseFloat(_td.spxClose) };
             }
           }
         } catch { /* if history fetch fails, lastClosed stays null */ }
@@ -10090,6 +10099,17 @@ export default {
             }
           }
         } catch { /* fall back to intrinsic on the client */ }
+        // Settled override: EOD has the day's real m8bfPL @ the actual close.
+        // Set currentValue so the client's (currentValue − premium) yields the
+        // settled P/L exactly, and flag it so the page labels it "Final".
+        if (todaySettled) {
+          resp.status = 'settled';
+          resp.settled = true;
+          resp.spxClose = todaySettled.spxClose;
+          resp.currentSpot = todaySettled.spxClose;
+          resp.currentPnl = todaySettled.pnl;
+          resp.currentValue = parseFloat((resp.premium + todaySettled.pnl / 100).toFixed(2));
+        }
         return jsonResp(resp, 200, corsHeaders);
       }
 

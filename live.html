@@ -2105,9 +2105,9 @@ function render() {
 
       <div class="diag-grid">
         <div class="diag-stat">
-          <div class="diag-stat-label">${trade.status === 'closed' ? 'Final' : 'Live'} P&amp;L</div>
+          <div class="diag-stat-label">${(trade.status === 'closed' || trade.settled) ? 'Final' : 'Live'} P&amp;L</div>
           <div class="diag-stat-value ${plCls}" id="statPL">${currentPL != null ? fmt$(currentPL) : '—'}</div>
-          <div class="diag-stat-sub" id="statPLSub">${currentPL == null ? '' : currentPL >= 0 ? 'Profit' : 'Loss'}</div>
+          <div class="diag-stat-sub" id="statPLSub">${currentPL == null ? '' : trade.settled ? 'Settled at close' : currentPL >= 0 ? 'Profit' : 'Loss'}</div>
         </div>
         <div class="diag-stat">
           <div class="diag-stat-label">SPX</div>
