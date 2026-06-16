@@ -91,7 +91,7 @@ async function recordMirrorHealth(env, ok, msg = null) {
 //   cor1m_open_<date>   {cor1m, vvix, at}         — first sample ≥ 9:30 ET
 //   cor1m_series_<date> [["HH:MM", value], ...]   — ~5-min samples, cap 120
 //   tail_trigger_state  {state:'TRIGGERED', since, value, detectedAt}
-const COR1M_TRIGGER_THRESHOLD = 7.75;   // Sweet Spot preset (cor1m_contango.html)
+const COR1M_TRIGGER_THRESHOLD = 7.75;   // Balanced (recommended) preset (cor1m_contango.html)
 
 async function captureCor1mVvix(env, etNow, token) {
   const h = etNow.getHours(), m = etNow.getMinutes();
@@ -1503,7 +1503,7 @@ import {
 
 
 // ════════════════════════════════════════════════════════════════════
-// TAIL HEDGE — fetch today's signal from the Sweet Spot bundle.
+// TAIL HEDGE — fetch today's signal from the default (Balanced) preset in the bundle.
 // Bundle is auto-refreshed daily by scripts/refresh_tail_hedge.sh.
 // Returns a short status string for the Discord message.
 //
@@ -1544,7 +1544,8 @@ async function getTailHedgeStatusLine(env = null) {
       if (vvix == null)  vvix  = dailyToday?.vvix ?? null;
       const daily = b.daily || [];
       bundleLastDay = daily.length ? daily[daily.length - 1].date : null;
-      const triggers = b.preset_results?.sweet_spot?.triggers || [];
+      const defId = b.default_preset || 'balanced';
+      const triggers = b.preset_results?.[defId]?.triggers || [];
       const last = triggers[triggers.length - 1];
       bundleTriggered = !!(last && last.exit_reason !== 'profitable');
     }
@@ -1721,7 +1722,7 @@ function buildSigma3Embed(signal, vixValues, vixSource) {
     blocked.push(`• **Diagonal** — ${stripPrefix(signal.diagText, 'No Diagonal')}`);
   }
 
-  // Tail Hedge (Sweet Spot) — passed in via tailLine (already a formatted string).
+  // Tail Hedge (Balanced) — passed in via tailLine (already a formatted string).
   // Detect which bucket to put it in based on the keyword.
   if (signal._tailLine) {
     const tl = signal._tailLine;
@@ -8977,7 +8978,7 @@ export default {
       try { st = JSON.parse(await env.SIGNAL_KV.get('tail_trigger_state') || 'null'); } catch (_) {}
       try { snap = JSON.parse(await env.SIGNAL_KV.get(`tail_put_snap_${todayT}`) || 'null'); } catch (_) {}
       try { openRec = JSON.parse(await env.SIGNAL_KV.get(`cor1m_open_${todayT}`) || 'null'); } catch (_) {}
-      // candidate = nearest-expiry put closest to Δ-0.20 from the ~9:40 snapshot
+      // candidate = nearest-expiry put closest to Δ-0.10 from the ~9:40 snapshot
       let candidate = null;
       if (snap && Array.isArray(snap.puts) && snap.puts.length) {
         const e0 = snap.puts[0].e;

@@ -146,13 +146,13 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);font-
 </div>
 
 <div class="banner">
-  <div class="banner-title">TAIL HEDGE — SWEET SPOT (DEFAULT)</div>
+  <div class="banner-title">TAIL HEDGE — BALANCED (DEFAULT)</div>
   <div class="banner-desc">
-    <strong>The strategy:</strong> Buy a cheap 0DTE SPX put at 9:45 AM ET whenever stock correlation (COR1M) crashes below <strong>7.75</strong> — but only if VVIX is under <strong>110</strong>. Hold to 4 PM close. Most days you lose $100-500 (the put expires worthless). A few days print <strong>$5k-$15k</strong> when the market shocks. Over 4 years: <strong>+$50,880 across 59 trades</strong>, worst single loss only <strong>−$520</strong>.
+    <strong>The strategy:</strong> Buy a cheap 0DTE SPX put at 9:45 AM ET whenever stock correlation (COR1M) crashes below <strong>7.75</strong> — but only if VVIX is under <strong>110</strong>. Hold to 4 PM close. Most days you lose $100-500 (the put expires worthless). A few days print <strong>$5k-$15k</strong> when the market shocks. Over 4 years: <strong>+$47,040 across 68 trades</strong>, worst single loss only <strong>−$320</strong>.
     <br>
     <strong>The trigger (catches EVERY cross):</strong> Watch COR1M's hourly bars. The moment it transitions from above 7.75 to at-or-below 7.75 — overnight OR intraday — you're in buying mode. If the cross is on the 9:30 bar → trade same day at 9:45. If it's at 10:30 or later → trade next trading day. Keep buying every morning until the first profitable day, then back to waiting for the next cross.
     <br>
-    <strong>The page:</strong> All numbers are NO-LOOK-AHEAD (uses only 9:30 opens) with conservative fills (entry mid rounded UP to $0.10, P/L floored to $10 for commissions + slippage). Pick any preset above to compare — Sweet Spot is the default and recommended baseline.
+    <strong>The page:</strong> All numbers are NO-LOOK-AHEAD (uses only 9:30 opens) with conservative fills (entry mid rounded UP to $0.10, P/L floored to $10 for commissions + slippage). Pick any preset above to compare — Balanced is the default and recommended baseline.
   </div>
 </div>
 
@@ -365,7 +365,10 @@ function buildPresetCards() {
   const strip = document.getElementById('preset-strip');
   // Keep the label
   strip.innerHTML = '<div class="preset-strip-label">Preset</div>';
-  bundle.presets.forEach(p => {
+  // Default preset renders first (leftmost); the rest keep their bundle order.
+  const _def = bundle.default_preset;
+  const _ordered = bundle.presets.slice().sort((a,b) => (b.id === _def) - (a.id === _def));
+  _ordered.forEach(p => {
     const r = bundle.preset_results[p.id];
     if (!r) return;
     const card = document.createElement('div');
