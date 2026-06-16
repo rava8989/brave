@@ -650,7 +650,7 @@ function renderTail() {
     : `<span class="diag-badge open">TRIGGER ACTIVE</span>`;
   const body = tail.skip
     ? `<div style="font-size:13px;color:var(--text2);">${tail.line.replace('Tail Hedge │ ', '')} — sequence stays open; check again tomorrow.</div>`
-    : `<div style="font-size:13px;color:var(--text);font-weight:600;">Buy ONE 0DTE SPXW put, Δ −0.20, at <u>9:45 ET</u> — repeat daily until the first profitable day.</div>
+    : `<div style="font-size:13px;color:var(--text);font-weight:600;">Buy ONE 0DTE SPXW put, Δ −0.10, at <u>9:45 ET</u> — repeat daily until the first profitable day.</div>
        ${candRow}
        <div style="font-size:11.5px;color:var(--text3);margin-top:6px;">Skip rule: no entry when VVIX ≥ 110 (now ${tail.vvix ?? '—'}). COR1M ${tail.cor1m ?? '—'}${since}.</div>`;
   sec.innerHTML = `

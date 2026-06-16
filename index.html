@@ -659,7 +659,7 @@
     </div>
 
     <!-- CARD 6: Tail Hedge (companion — added 2026-06-08) -->
-    <div class="scard" id="cardTail" title="Tail Hedge (Sweet Spot — DEFAULT). Watch COR1M hourly bars; whenever it crosses from above to at-or-below 7.75 (intraday or overnight), enter at the next 9:45 AM ET. VVIX gate: block when VVIX_open ≥ 110. Buy 0DTE SPXW put delta -0.20, hold to 4 PM. Keep buying daily until first profitable day. 59 trades over 4 years, +$50,880 total, MAR 9.56, worst trade only -$520. Full backtester: cor1m_contango.html.">
+    <div class="scard" id="cardTail" title="Tail Hedge (Convex Tail — DEFAULT, Δ-0.10). Watch COR1M hourly bars; whenever it crosses from above to at-or-below 7.75 (intraday or overnight), enter at the next 9:45 AM ET. VVIX gate: block when VVIX_open ≥ 110. Buy 0DTE SPXW put delta -0.10, hold to 4 PM. Keep buying daily until first profitable day. Recommended preset (2026-06-16 sweep): +$46,990, MAR 10.3, max DD $4,560, worst day -$320 — the cheaper 10-delta wing beats -0.20 on return AND drawdown. Full backtester: cor1m_contango.html.">
       <div class="scard-header">
         <span class="scard-label">Tail Hedge <span style="font-weight:400;font-size:10px;opacity:.7;letter-spacing:normal;text-transform:none">· companion · Sweet Spot</span></span>
         <span class="today-trade-pill" id="pillTail" style="display:none;">▶ TODAY'S TRADE</span>
@@ -922,7 +922,7 @@
         </ul>
       </li>
       <li><strong>VVIX gate:</strong> on the trade day morning, check <code>$VVIX</code> open. If VVIX ≥ <strong>110</strong>, skip the trade that day (puts too expensive). Stay in buying-mode for tomorrow.</li>
-      <li>If both checks pass, at <strong>9:45 AM ET</strong> buy <strong>1 contract</strong> of a 0DTE SPXW put with delta closest to <strong>−0.20</strong> (typically 1-2% OTM, around $1-5 premium).</li>
+      <li>If both checks pass, at <strong>9:45 AM ET</strong> buy <strong>1 contract</strong> of a 0DTE SPXW put with delta closest to <strong>−0.10</strong> (further OTM, ~$1-2.50 premium — cheaper wing, ~2× the risk-adjusted return of −0.20).</li>
       <li>Hold to <strong>4:00 PM close</strong>. Put settles to intrinsic value (or expires worthless if SPX stayed above strike).</li>
     </ul>
 
@@ -3070,7 +3070,7 @@
     if (diag && notCalc(diag)) {
       inner += `${sigColor(diag)}Diagonal │ ${diag}${RST}\n`;
     }
-    // Tail Hedge (Sweet Spot — thr 7.75, delta -0.20, VVIX<110). Reads cached
+    // Tail Hedge (Convex Tail — thr 7.75, delta -0.10, VVIX<110; 2026-06-16). Reads cached
     // state populated by updateTailHedgeStatus() on page load.
     if (_tailHedgeState?.text) {
       const tl = `Tail Hedge │ ${_tailHedgeState.text}`;
@@ -3645,11 +3645,11 @@
           _tailHedgeState = { state: 'SKIP', cor1m: cor1mOpen, vvix: vvixOpen,
                               text: `SKIP today (VVIX ${vvixOpen.toFixed(2)} ≥ 110)` };
         } else {
-          rec.innerHTML = `<span style="color:var(--accent);">TRADE today @ 9:45 ET</span> — buy 0DTE SPXW put delta −0.20, hold to 4 PM. <span style="color:var(--text3);font-weight:400">VVIX ${vvixOpen?.toFixed(2) ?? '—'} &lt; 110 ✓</span>`;
+          rec.innerHTML = `<span style="color:var(--accent);">TRADE today @ 9:45 ET</span> — buy 0DTE SPXW put delta −0.10, hold to 4 PM. <span style="color:var(--text3);font-weight:400">VVIX ${vvixOpen?.toFixed(2) ?? '—'} &lt; 110 ✓</span>`;
           if (pill)  pill.style.display = '';
           if (badge) badge.textContent = 'TRADE';
           _tailHedgeState = { state: 'TRADE', cor1m: cor1mOpen, vvix: vvixOpen,
-                              text: `▶ TRADE @ 9:45 — buy 0DTE SPXW put Δ-0.20  (VVIX ${vvixOpen?.toFixed(2) ?? '—'})` };
+                              text: `▶ TRADE @ 9:45 — buy 0DTE SPXW put Δ-0.10  (VVIX ${vvixOpen?.toFixed(2) ?? '—'})` };
         }
       } else {
         // WAITING — no active trigger.
