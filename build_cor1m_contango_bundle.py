@@ -33,6 +33,22 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 from backtest_cor1m_put import load_cor1m_daily, trading_dates, load_spx_close, HALF_DAYS
+import csv as _csv
+from backtest_cor1m_put import SPX_DIR as _SPX_DIR
+
+def _spx_at_945(date_iso: str):
+    """Authoritative SPX at 09:45 ET from the 1-min bars (the close of the
+    09:45 bar). Used to override the unreliable snapshot 'spot' field."""
+    p = _SPX_DIR / f"SPX_{date_iso.replace('-', '')}.csv"
+    if not p.exists():
+        return None
+    try:
+        for row in _csv.DictReader(open(p)):
+            if row['timestamp'][11:16] == '09:45':
+                return float(row['close'])
+    except Exception:
+        return None
+    return None
 from regime_classifier import (
     load_vix_term, classify_series, RegimeThresholds, REGIMES,
     load_cor1m_open_and_close, load_cor1m_hourly_bars,
@@ -222,6 +238,15 @@ def main():
                   f'days_done={len(per_day)}  with_picks={n_with_picks}')
         spx_cls = load_spx_close(d)
         snap = load_snapshot(d, '0945')
+        # SPOT-OVERRIDE (2026-06-15 bug fix): the snapshot 'spot' field is
+        # time-mismatched with its option quotes on ~22 recent (ThetaData-era)
+        # days — off by up to 132 pts — corrupting BS-delta strike selection
+        # (06-05 picked a ~5Δ 7400 put as if 20Δ). The authoritative 9:45
+        # price is the data/spx 1-min bar; use it as spot.
+        if snap is not None:
+            _rs = _spx_at_945(d)
+            if _rs and _rs > 0:
+                snap['spot'] = _rs
         if snap is None:
             n_missing_snap += 1
             if spx_cls is not None:

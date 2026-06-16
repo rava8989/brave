@@ -92,16 +92,41 @@ def load_vix_intraday_at(date_iso: str, hhmm: str) -> float | None:
     return last
 
 
-def load_snapshot(date_iso: str, time_tag: str) -> dict | None:
-    """Try requested time_tag first, fall back to 0945 if missing."""
-    yyyymmdd = date_iso.replace('-', '')
-    primary = POLY_DIR / f'SPX_{yyyymmdd}_{time_tag}.json'
-    if primary.exists():
-        return json.loads(primary.read_text())
-    fallback = POLY_DIR / f'SPX_{yyyymmdd}_0945.json'
-    if fallback.exists():
-        return json.loads(fallback.read_text())
+def _authoritative_spot_at(date_iso: str, time_tag: str):
+    """SPX from the 1-min bars at the snapshot's intent time (e.g. '0945' →
+    09:45 bar close). The snapshot's own 'spot' field is time-mismatched with
+    its option quotes on ~22 recent days (off up to 132 pts) — corrupting
+    BS-delta strike selection. The 1-min bar is authoritative. (2026-06-15)"""
+    hhmm = f'{time_tag[:2]}:{time_tag[2:]}' if len(time_tag) == 4 and time_tag.isdigit() else '09:45'
+    p = SPX_DIR / f"SPX_{date_iso.replace('-', '')}.csv"
+    if not p.exists():
+        return None
+    try:
+        for row in csv.DictReader(open(p)):
+            if row['timestamp'][11:16] == hhmm:
+                return float(row['close'])
+    except Exception:
+        return None
     return None
+
+
+def load_snapshot(date_iso: str, time_tag: str) -> dict | None:
+    """Try requested time_tag first, fall back to 0945 if missing. Overrides
+    the unreliable 'spot' field with the authoritative 1-min bar."""
+    yyyymmdd = date_iso.replace('-', '')
+    snap = None
+    primary = POLY_DIR / f'SPX_{yyyymmdd}_{time_tag}.json'
+    fallback = POLY_DIR / f'SPX_{yyyymmdd}_0945.json'
+    if primary.exists():
+        snap = json.loads(primary.read_text())
+    elif fallback.exists():
+        snap = json.loads(fallback.read_text())
+        time_tag = '0945'
+    if snap is not None:
+        rs = _authoritative_spot_at(date_iso, time_tag)
+        if rs and rs > 0:
+            snap['spot'] = rs
+    return snap
 
 
 DELTA_TOLERANCE = 0.10  # require |actual_delta - target_delta| ≤ this, else SKIP
