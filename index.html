@@ -3257,15 +3257,27 @@
 
   /* ── Signal subscribers (2026-06-15) — manage extra DM recipients ── */
   function _subBase(){
-    const px = (localStorage.getItem('sc_proxyUrl')||'').replace(/\/+$/,'');
-    const sec = localStorage.getItem('sc_syncSecret')||'';
+    // Default the proxy to the known worker so the panel works even if the
+    // user connected Schwab a way that never saved sc_proxyUrl.
+    let px = (localStorage.getItem('sc_proxyUrl')||'').replace(/\/+$/,'');
+    if(!px){ px = 'https://schwab-proxy.ravamt4.workers.dev'; localStorage.setItem('sc_proxyUrl', px); }
+    let sec = localStorage.getItem('sc_syncSecret')||'';
     return {px, sec};
   }
   async function _subApi(body){
-    const {px, sec} = _subBase();
-    if(!px || !sec){ document.getElementById('subNote').textContent = '⚠️ Connect Schwab (need proxy URL + sync secret) first.'; return null; }
-    const r = await fetch(px+'/subscribers', { method:'POST', headers:{'Content-Type':'application/json','X-Sync-Secret':sec}, body:JSON.stringify(body) });
-    return r.json();
+    let {px, sec} = _subBase();
+    if(!sec){
+      // Prompt once, save — instead of failing silently.
+      sec = (prompt('One-time: paste your worker Sync Secret (same one the dashboard uses to talk to the worker).')||'').trim();
+      if(!sec){ document.getElementById('subNote').innerHTML = '⚠️ Need the sync secret to manage subscribers.'; return null; }
+      localStorage.setItem('sc_syncSecret', sec);
+    }
+    try{
+      const r = await fetch(px+'/subscribers', { method:'POST', headers:{'Content-Type':'application/json','X-Sync-Secret':sec}, body:JSON.stringify(body) });
+      const j = await r.json();
+      if(r.status===401){ localStorage.removeItem('sc_syncSecret'); document.getElementById('subNote').innerHTML = '✗ Wrong sync secret — cleared it, press Add again to re-enter.'; return null; }
+      return j;
+    }catch(e){ document.getElementById('subNote').textContent = '✗ '+e.message; return null; }
   }
   function _subRender(subs){
     const el = document.getElementById('subsList');
