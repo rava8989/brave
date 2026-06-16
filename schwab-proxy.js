@@ -5475,9 +5475,10 @@ async function handleScheduled(env) {
   // Mark morning signal as fully sent
   await env.SIGNAL_KV.put(msDoneKey, 'sent', { expirationTtl: 86400 });
   globalThis.__morningSentDay = todayISO;   // isolate-local guard (KV-lag immune)
-  // Fan out the same signal to any subscribers (2026-06-15) — best-effort,
-  // never blocks or fails the owner's send.
-  try { await fanoutSubscribers(env, message.slice(0, 2000)); } catch (e) { console.warn('[fanout]', e.message); }
+  // NOTE: subscriber fan-out was MOVED to live trade EXECUTIONS (2026-06-16,
+  // user: "send the actual trade each time it fills, not the morning signal").
+  // See the /link-notify route + skipper's fill handler (fanoutText). The
+  // morning signal is intentionally NOT fanned out to subscribers anymore.
   await logEvent(env, 'info', 'morning', 'canonical signal posted', {
     source: vixSource,   // 'schwab' or 'tastytrade' — which won the VIX race
     rec: signal.rec, badge: signal.badge, theme: signal.theme,
@@ -7748,12 +7749,22 @@ export default {
         return jsonResp({ error: 'Unauthorized' }, 401, corsHeaders);
       }
       try {
-        const { text } = await request.json();
+        const { text, fanoutText } = await request.json();
         const dcRaw = await env.SIGNAL_KV.get('discord_config');
         if (!dcRaw) return jsonResp({ ok: false, error: 'no discord_config' }, 200, corsHeaders);
         const dc = JSON.parse(dcRaw);
         const r = await sendDiscordDM(env, dc.channelId, String(text).slice(0, 1800), dc.proxyUrl);
-        return jsonResp({ ok: !!r.ok }, 200, corsHeaders);
+        // fanoutText (optional) = subscriber-facing trade message. Set ONLY for
+        // LIVE EXECUTED trades by skipper (not submits/cancels/morning signal),
+        // so each fill is relayed to Discord subscribers. Best-effort.
+        let fanned = 0;
+        if (fanoutText) {
+          try {
+            const o = await fanoutSubscribers(env, String(fanoutText).slice(0, 1800));
+            fanned = o.filter(x => x.ok).length;
+          } catch (e) { console.warn('[link-notify/fanout]', e.message); }
+        }
+        return jsonResp({ ok: !!r.ok, fanned }, 200, corsHeaders);
       } catch (e) { return jsonResp({ ok: false, error: e.message }, 400, corsHeaders); }
     }
 
