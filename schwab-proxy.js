@@ -1406,6 +1406,27 @@ async function sendDiscordDM(env, userId, message, proxyUrl = null) {
   return { ok: false, error: 'no Discord transport available (no DISCORD_TOKEN/DISCORD_PROXY/proxyUrl)' };
 }
 
+// ── Signal subscribers (2026-06-15) — extra Discord user IDs that get a DM
+// copy of each morning signal. KV `signal_subscribers` = [{id,label,paused}].
+// Discord rule: the bot can only DM a user who shares a server with it AND
+// allows server-member DMs; otherwise the API 403s (surfaced to the UI).
+async function getSubscribers(env) {
+  try { const raw = await env.SIGNAL_KV.get('signal_subscribers'); return raw ? JSON.parse(raw) : []; }
+  catch { return []; }
+}
+async function fanoutSubscribers(env, message) {
+  const subs = (await getSubscribers(env)).filter(s => s && s.id && !s.paused);
+  const out = [];
+  for (const s of subs) {
+    try {
+      const r = await sendDiscordDM(env, s.id, message);
+      out.push({ id: s.id, ok: !!r.ok, status: r.status, error: r.error });
+    } catch (e) { out.push({ id: s.id, ok: false, error: e.message }); }
+  }
+  if (out.length) { try { await logEvent(env, 'info', 'fanout', `signal → ${out.filter(x=>x.ok).length}/${out.length} subscribers`, {}); } catch {} }
+  return out;
+}
+
 // ── Centralized event logger ──
 // Appends to daily_log_<isoDateET> KV. Cap 200 newest entries per day, 7-day
 // TTL. FIRE-AND-FORGET: failures are swallowed so logging never breaks the
@@ -5438,6 +5459,9 @@ async function handleScheduled(env) {
   // Mark morning signal as fully sent
   await env.SIGNAL_KV.put(msDoneKey, 'sent', { expirationTtl: 86400 });
   globalThis.__morningSentDay = todayISO;   // isolate-local guard (KV-lag immune)
+  // Fan out the same signal to any subscribers (2026-06-15) — best-effort,
+  // never blocks or fails the owner's send.
+  try { await fanoutSubscribers(env, message.slice(0, 2000)); } catch (e) { console.warn('[fanout]', e.message); }
   await logEvent(env, 'info', 'morning', 'canonical signal posted', {
     source: vixSource,   // 'schwab' or 'tastytrade' — which won the VIX race
     rec: signal.rec, badge: signal.badge, theme: signal.theme,
@@ -9033,6 +9057,47 @@ export default {
       catch (e) { result = { error: e.message }; }
       return new Response(JSON.stringify(result, null, 2),
         { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
+    }
+
+    if (url.pathname === '/subscribers') {
+      // Manage signal-DM recipients. Gated by the sync secret. CORS-open for
+      // the dashboard (which sends the secret in the body / query).
+      const sCors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' };
+      if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: sCors });
+      const body = request.method === 'POST' ? await request.json().catch(() => ({})) : {};
+      const secret = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret') || body.secret;
+      if (!secret || secret !== env.SYNC_SECRET) return jsonResp({ error: 'Unauthorized' }, 401, sCors);
+
+      let subs = await getSubscribers(env);
+      if (request.method === 'GET') return jsonResp({ subscribers: subs }, 200, sCors);
+
+      const act = body.action;
+      if (act === 'add') {
+        const id = String(body.id || '').trim();
+        if (!/^\d{15,21}$/.test(id)) return jsonResp({ error: 'id must be a 15-21 digit Discord user ID' }, 400, sCors);
+        if (!subs.find(s => s.id === id)) subs.push({ id, label: (body.label || '').slice(0, 40), paused: false });
+        await env.SIGNAL_KV.put('signal_subscribers', JSON.stringify(subs));
+        return jsonResp({ ok: true, subscribers: subs }, 200, sCors);
+      }
+      if (act === 'remove') {
+        subs = subs.filter(s => s.id !== String(body.id));
+        await env.SIGNAL_KV.put('signal_subscribers', JSON.stringify(subs));
+        return jsonResp({ ok: true, subscribers: subs }, 200, sCors);
+      }
+      if (act === 'pause') {
+        subs = subs.map(s => s.id === String(body.id) ? { ...s, paused: !s.paused } : s);
+        await env.SIGNAL_KV.put('signal_subscribers', JSON.stringify(subs));
+        return jsonResp({ ok: true, subscribers: subs }, 200, sCors);
+      }
+      if (act === 'test') {
+        // DM one recipient a test, surfacing Discord's exact error (e.g. 403
+        // = not in a mutual server / DMs closed).
+        const r = await sendDiscordDM(env, String(body.id),
+          '🔔 Test from Σ3 Signals — you are set to receive trade signals here. (If you got this, delivery works.)');
+        return jsonResp({ ok: !!r.ok, status: r.status, error: r.error,
+          hint: !r.ok && r.status === 403 ? 'This user must share a server with the bot AND allow DMs from server members.' : undefined }, 200, sCors);
+      }
+      return jsonResp({ error: 'unknown action' }, 400, sCors);
     }
 
     if (url.pathname === '/cyclicality-today' && request.method === 'GET') {

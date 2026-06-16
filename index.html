@@ -400,6 +400,17 @@
       <button class="schwab-btn" id="discordTestBtn" onclick="discordTest()" style="display:none;">Test Post</button>
       <button class="schwab-btn" id="discordDisconnectBtn" onclick="discordDisconnect()" style="display:none;">Disconnect</button>
     </div>
+
+    <!-- Signal subscribers — extra people who get a DM of each morning signal -->
+    <div style="width:100%;height:1px;background:var(--border);margin:8px 0;"></div>
+    <div style="font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;">📨 Signal subscribers <span style="text-transform:none;color:var(--text3);font-weight:400;">— DM each morning signal to other Discord users</span></div>
+    <div id="subsList" style="font-size:12px;color:var(--text2);margin-bottom:6px;font-family:'JetBrains Mono',monospace;">—</div>
+    <div class="schwab-actions" style="gap:6px;flex-wrap:wrap;">
+      <input id="subId" placeholder="Discord user ID (right-click → Copy User ID)" style="flex:2;min-width:200px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:7px 9px;font-size:12px;">
+      <input id="subLabel" placeholder="name (optional)" style="flex:1;min-width:90px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:7px 9px;font-size:12px;">
+      <button class="schwab-btn primary" onclick="subAdd()">Add</button>
+    </div>
+    <div id="subNote" style="font-size:11px;color:var(--text3);margin-top:5px;">Recipient must share a server with the bot &amp; allow DMs from members.</div>
   </div>
 
   <!-- SCHWAB SETUP MODAL -->
@@ -3244,6 +3255,51 @@
     if(ok) discordSetStatus('connected', 'Discord bot configured ✓ · Test posted!');
   }
 
+  /* ── Signal subscribers (2026-06-15) — manage extra DM recipients ── */
+  function _subBase(){
+    const px = (localStorage.getItem('sc_proxyUrl')||'').replace(/\/+$/,'');
+    const sec = localStorage.getItem('sc_syncSecret')||'';
+    return {px, sec};
+  }
+  async function _subApi(body){
+    const {px, sec} = _subBase();
+    if(!px || !sec){ document.getElementById('subNote').textContent = '⚠️ Connect Schwab (need proxy URL + sync secret) first.'; return null; }
+    const r = await fetch(px+'/subscribers', { method:'POST', headers:{'Content-Type':'application/json','X-Sync-Secret':sec}, body:JSON.stringify(body) });
+    return r.json();
+  }
+  function _subRender(subs){
+    const el = document.getElementById('subsList');
+    if(!subs || !subs.length){ el.textContent = 'no subscribers — only you get the signal.'; return; }
+    el.innerHTML = subs.map(s=>`<div style="display:flex;align-items:center;gap:8px;margin:2px 0;${s.paused?'opacity:.5':''}">
+      <span style="flex:1">${s.label?s.label+' · ':''}${s.id}${s.paused?' (paused)':''}</span>
+      <button class="schwab-btn" style="padding:2px 8px;font-size:11px" onclick="subTest('${s.id}')">Test</button>
+      <button class="schwab-btn" style="padding:2px 8px;font-size:11px" onclick="subPause('${s.id}')">${s.paused?'Resume':'Pause'}</button>
+      <button class="schwab-btn" style="padding:2px 8px;font-size:11px;color:var(--red,#ef4444)" onclick="subRemove('${s.id}')">Remove</button>
+    </div>`).join('');
+  }
+  async function subLoad(){
+    const {px, sec} = _subBase(); if(!px||!sec) return;
+    try{ const r = await fetch(px+'/subscribers?secret='+encodeURIComponent(sec)); const j = await r.json(); if(j.subscribers) _subRender(j.subscribers); }catch(_){}
+  }
+  async function subAdd(){
+    const id = document.getElementById('subId').value.trim();
+    const label = document.getElementById('subLabel').value.trim();
+    const j = await _subApi({action:'add', id, label});
+    if(!j) return;
+    if(j.error){ document.getElementById('subNote').textContent = '✗ '+j.error; return; }
+    document.getElementById('subId').value=''; document.getElementById('subLabel').value='';
+    document.getElementById('subNote').textContent = '✓ added — hit Test to confirm delivery.';
+    _subRender(j.subscribers);
+  }
+  async function subRemove(id){ const j=await _subApi({action:'remove', id}); if(j&&j.subscribers) _subRender(j.subscribers); }
+  async function subPause(id){ const j=await _subApi({action:'pause', id}); if(j&&j.subscribers) _subRender(j.subscribers); }
+  async function subTest(id){
+    document.getElementById('subNote').textContent = 'sending test DM…';
+    const j = await _subApi({action:'test', id});
+    if(!j) return;
+    document.getElementById('subNote').innerHTML = j.ok ? '✓ test DM delivered.' : `✗ ${j.error||'failed'} ${j.hint?'— '+j.hint:''}`;
+  }
+
   /* Auto-post after calculate — called by calculateStrategy when Schwab auto-fills */
   async function discordAutoPost(){
     const c = DC.get('config');
@@ -3633,6 +3689,7 @@
     }
     loadInputs(); // #7: restore today's inputs if available
     schwabInit(); // Schwab integration
+    try { subLoad(); } catch(_){} // signal subscribers list
     loadVix20dFromHistory(); // VIX 20-day from history_data.json (no Schwab — works for all visitors)
     loadM8BFPatternNotes();
     discordStatus(); // Discord bot status
