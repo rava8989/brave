@@ -2070,18 +2070,33 @@ async function tastyGetVix(env) {
   // Tasty exposes today's open as a stable field (mirrors how /Index/SPX does
   // it). Use this for the morning signal — matches Schwab pricehistory 9:30
   // candle.open. The `last`/`mid` fields are CURRENT tick (drifts after open).
-  const open = d?.open ?? d?.['open-price'] ?? null;
+  const openRaw = d?.open ?? d?.['open-price'] ?? null;
+  const openNum = openRaw != null ? parseFloat(openRaw) : null;
+  // VALUE-STALENESS GUARD (2026-06-16): Tasty's `open` carries the prior CLOSE
+  // as a pre-open placeholder while `updated-at` keeps ticking fresh on every
+  // mark — so a timestamp gate alone (lesson 2026-05-21) lets the stale value
+  // through. A real session open ~never equals the prior close to the penny;
+  // equality is the signature of "open not published yet". Null it so no caller
+  // mistakes it for today's open — they fall back to Schwab (the trusted source)
+  // or keep polling. Bug: 2026-06-16 posted VIX open 16.2 == prevClose 16.2.
+  const prevCloseRaw = d?.['prev-close'] ?? d?.['close-price'] ?? null;
+  const prevCloseNum = prevCloseRaw != null ? parseFloat(prevCloseRaw) : null;
+  const openStale = openNum != null && prevCloseNum != null &&
+                    Math.abs(openNum - prevCloseNum) < 0.005;
+  const open = openStale ? null : openNum;
   // `last`/`mid` kept for callers that want current price (e.g. vixClose path).
-  // Fall back to `open` as last resort for backward compat with existing callers
-  // that rely on `.price` always being a number.
-  const priceRaw = d?.last ?? d?.['last-price'] ?? d?.mid ?? d?.mark ?? d?.bid ?? open;
+  // Fall back to the RAW open (pre-guard) as last resort so `.price` is always
+  // a number for backward-compat callers.
+  const priceRaw = d?.last ?? d?.['last-price'] ?? d?.mid ?? d?.mark ?? d?.bid ?? openNum;
   const asOf  = d?.['updated-at'] || d?.['quote-time'] || d?.timestamp;
   if (priceRaw == null) {
     throw new Error(`Tastytrade VIX: no usable price field in payload: ${JSON.stringify(d).slice(0, 250)}`);
   }
   return {
     price: parseFloat(priceRaw),
-    open:  open != null ? parseFloat(open) : null,
+    open,                 // validated today's open — null if stale pre-open snapshot
+    openStale,
+    prevClose: prevCloseNum,
     asOf, source: 'tastytrade', endpoint: '/market-data/Index/VIX', raw: d,
   };
 }
@@ -5068,7 +5083,7 @@ async function handleScheduled(env) {
     const pollIntervalMs = 500;
     const deadlineMs = Date.now() + maxWaitMs;
     const startedAt = Date.now();
-    const state = { vixToday: null, source: null };
+    const state = { schwab: null, tasty: null };  // separate slots — Schwab is always preferred
 
     async function pollSchwab() {
       // CANONICAL VIX OPEN — matches dashboard's schwabFetchHistorical() exactly:
@@ -5081,7 +5096,7 @@ async function handleScheduled(env) {
       // signal divergence (Discord said 90% dead-zone, Dashboard said 95% edge).
       // See user feedback 2026-06-08.
       let attempt = 0;
-      while (Date.now() < deadlineMs && state.vixToday === null) {
+      while (Date.now() < deadlineMs && state.schwab === null) {
         attempt++;
         try {
           // 5-day window matches dashboard for cache parity
@@ -5103,14 +5118,13 @@ async function handleScheduled(env) {
             if (open930 && open930.open != null) {
               const price = parseFloat(open930.open.toFixed(2));
               const tET = toET(new Date(open930.datetime));
-              state.vixToday = price;
-              state.source = 'schwab';
+              state.schwab = price;
               console.log(`[proxy] SCHWAB 9:30 candle.open captured: ${price} @ ${tET.toTimeString().slice(0,8)} ET (attempt ${attempt}, ${Math.round((Date.now()-startedAt)/1000)}s)`);
               return;
             }
           }
         } catch (e) { /* keep trying — candle may not exist yet at 9:30:00 */ }
-        if (state.vixToday !== null) return;  // other source won
+        if (state.schwab !== null) return;
         await new Promise(r => setTimeout(r, pollIntervalMs));
       }
     }
@@ -5128,11 +5142,11 @@ async function handleScheduled(env) {
       // STALE VIX BEFORE Cboe's first regular-session publication.
       // Matches Schwab's candle filter at line ~3568 and _isFreshTick below.
       let attempt = 0;
-      while (Date.now() < deadlineMs && state.vixToday === null) {
+      while (Date.now() < deadlineMs && state.tasty === null && state.schwab === null) {
         attempt++;
         try {
           const result = await tastyGetVix(env);  // { open, price, asOf, raw }
-          if (result.open != null && state.vixToday === null) {
+          if (result.open != null && state.tasty === null) {
             // Sanity: only accept if updated-at timestamp is from today's
             // REGULAR-SESSION (date matches AND time >= 9:30 ET) — defends
             // against stale prior-session cache AND pre-market cache.
@@ -5146,15 +5160,14 @@ async function handleScheduled(env) {
               fresh = sameDay && postOpen;
             }
             if (fresh) {
-              state.vixToday = parseFloat(result.open.toFixed(2));
-              state.source = 'tastytrade';
-              console.log(`[proxy] TASTY captured 9:30 open from /Index/VIX.open: ${state.vixToday} @ ${ts} (attempt ${attempt}, ${Math.round((Date.now()-startedAt)/1000)}s)`);
+              state.tasty = parseFloat(result.open.toFixed(2));
+              console.log(`[proxy] TASTY captured 9:30 open from /Index/VIX.open: ${state.tasty} @ ${ts} (attempt ${attempt}, ${Math.round((Date.now()-startedAt)/1000)}s)`);
               return;
             }
             // open present but stale (pre-market or yesterday) — keep polling.
           }
         } catch (e) { /* keep trying — Tasty may not have today's open yet */ }
-        if (state.vixToday !== null) return;
+        if (state.tasty !== null || state.schwab !== null) return;
         await new Promise(r => setTimeout(r, pollIntervalMs));
       }
     }
@@ -5167,8 +5180,10 @@ async function handleScheduled(env) {
     // Both methodologies match the dashboard's schwabFetchHistorical() now.
     // CLAUDE.md rule 11 satisfied: worker + dashboard agree on vix_today_open.
     await Promise.all([pollSchwab(), pollTasty()]);
-    vixToday = state.vixToday;
-    vixSource = state.source;
+    // Schwab is canonical (user rule: Schwab only). Tasty is fallback-only —
+    // used solely when Schwab produced nothing in the window.
+    vixToday = state.schwab ?? state.tasty;
+    vixSource = state.schwab != null ? 'schwab' : (state.tasty != null ? 'tastytrade' : null);
     if (vixToday !== null) {
       console.log(`[proxy] VIX OPEN ${vixToday} captured via ${vixSource} after ${Math.round((Date.now()-startedAt)/1000)}s of polling`);
     } else {
@@ -5517,10 +5532,11 @@ async function handleScheduled(env) {
         if (vixOther == null) {
           try {
             const r = await tastyGetVix(env);
-            // Prefer the `open` field (today's session open, matches Schwab
-            // pricehistory 9:30 candle.open). Falls back to `price` only if
-            // open is absent. _isFreshTick gates regardless of which we use.
-            const v = r.open ?? r.price;
+            // Use the `open` field ONLY (today's session open, matches Schwab
+            // pricehistory 9:30 candle.open) — never `price` (current tick),
+            // same as the SPX 2nd-source branch. tastyGetVix null-guards a
+            // stale pre-open `open`, so v stays null until a real open prints.
+            const v = r.open;
             const ts = r.raw?.['updated-at'] || r.asOf;
             if (v != null) { lastVixVal = parseFloat(v.toFixed(2)); lastVixTs = ts; }
             if (v != null && _isFreshTick(ts)) { vixOther = lastVixVal; vixOtherTs = ts; }
