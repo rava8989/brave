@@ -593,7 +593,7 @@ function preserveDetailsState(secId, render) {
 let bobf = null;
 // ── ThinkOrSwim copy-trade (2026-06-12, user request) ────────────────────
 // Each card stores its TOS order string in window._tos[key]; the button
-// copies it. Format: BUY +1 BUTTERFLY SPX 100 (Weeklys) 12 JUN 26 7405/7445/7485 CALL @15.30 LMT
+// copies it. Format: BUY +1 BUTTERFLY SPXW 100 (Weeklys) 12 JUN 26 7405/7445/7485 CALL @15.30 LMT
 const _TOS_MON = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
 function tosDate(iso) { return `${+iso.slice(8, 10)} ${_TOS_MON[+iso.slice(5, 7) - 1]} ${iso.slice(2, 4)}`; }
 const _tk = v => String(+v);
@@ -636,7 +636,7 @@ function renderTail() {
   const cand = tail.candidate;
   const tOpen = tail.open || (cand ? { strike: cand.k, expDate: cand.e, entryAsk: cand.a } : null);
   if (tOpen && tOpen.strike != null) {
-    window._tos.tail = `BUY +1 SPX 100 (Weeklys) ${tosDate(tOpen.expDate)} ${_tk(tOpen.strike)} PUT @${(tOpen.entryAsk)?.toFixed(2)} LMT`;
+    window._tos.tail = `BUY +1 SPXW 100 (Weeklys) ${tosDate(tOpen.expDate)} ${_tk(tOpen.strike)} PUT @${(tOpen.entryAsk)?.toFixed(2)} LMT`;
   }
   const candRow = cand
     ? `<div style="font-family:'JetBrains Mono',monospace;font-size:15px;margin:10px 0 4px;">
@@ -774,7 +774,7 @@ function renderBobf() {
   html.push(`<div class="diag-title"><span>${t.label || 'BOBF'}</span> · ${t.openTimeET || windowET} ET</div>`);
   html.push(`<span class="diag-badge ${badgeClass}">${badge}</span>`);
   if (t.lowerStrike != null && t.expDate) {
-    window._tos.bobf = `BUY +1 BUTTERFLY SPX 100 (Weeklys) ${tosDate(t.expDate)} ${_tk(t.lowerStrike)}/${_tk(t.bodyStrike)}/${_tk(t.upperStrike)} CALL @${(t.fillDebit ?? t.entryDebit)?.toFixed(2)} LMT`;
+    window._tos.bobf = `BUY +1 BUTTERFLY SPXW 100 (Weeklys) ${tosDate(t.expDate)} ${_tk(t.lowerStrike)}/${_tk(t.bodyStrike)}/${_tk(t.upperStrike)} CALL @${(t.fillDebit ?? t.entryDebit)?.toFixed(2)} LMT`;
     html.push(tosBtn('bobf'));
   }
   html.push(`<div style="flex:1"></div>`);
@@ -935,7 +935,7 @@ function renderGxbf() {
   html.push(`<div class="diag-title"><span>${t.label || 'GXBF'}</span> · ${t.openTimeET || windowET} ET</div>`);
   html.push(`<span class="diag-badge ${badgeClass}">${badge}</span>`);
   if (t.centerStrike != null && t.wing != null && t.expDate) {
-    window._tos.gxbf = `BUY +1 BUTTERFLY SPX 100 (Weeklys) ${tosDate(t.expDate)} ${_tk(t.centerStrike - t.wing)}/${_tk(t.centerStrike)}/${_tk(t.centerStrike + t.wing)} CALL @${(t.fillDebit ?? t.netDebit)?.toFixed(2)} LMT`;
+    window._tos.gxbf = `BUY +1 BUTTERFLY SPXW 100 (Weeklys) ${tosDate(t.expDate)} ${_tk(t.centerStrike - t.wing)}/${_tk(t.centerStrike)}/${_tk(t.centerStrike + t.wing)} CALL @${(t.fillDebit ?? t.netDebit)?.toFixed(2)} LMT`;
     html.push(tosBtn('gxbf'));
   }
   html.push(`<div style="flex:1"></div>`);
@@ -1107,7 +1107,7 @@ function renderStraddle() {
   html.push(`<div class="diag-title"><span>${t.badge || 'Straddle'}</span> · ${t.openTimeET || '9:32'} ET</div>`);
   html.push(`<span class="diag-badge ${badgeClass}">${badge}</span>`);
   if (t.strike != null && t.expDate) {
-    window._tos.strad = `BUY +1 STRADDLE SPX 100 (Weeklys) ${tosDate(t.expDate)} ${_tk(t.strike)} @${(t.fillDebit ?? t.entryDebit ?? t.maxDebit)?.toFixed(2)} LMT`;
+    window._tos.strad = `BUY +1 STRADDLE SPXW 100 (Weeklys) ${tosDate(t.expDate)} ${_tk(t.strike)} @${(t.fillDebit ?? t.entryDebit ?? t.maxDebit)?.toFixed(2)} LMT`;
     html.push(tosBtn('strad'));
   }
   html.push(`<div style="flex:1"></div>`);
@@ -1231,7 +1231,7 @@ function _renderDiagPanel(which, trade, status, ctx) {
   html.push(`<span class="diag-badge ${status.badgeClass}">${status.badge}</span>`);
   if (trade && trade.shortStrike != null && trade.longExp) {
     const dKey = `diag_${which}`;
-    window._tos[dKey] = `BUY +1 DIAGONAL SPX 100 (Weeklys) ${tosDate(trade.longExp)}/${tosDate(trade.shortExp)} ${_tk(trade.longStrike)}/${_tk(trade.shortStrike)} PUT @${(trade.entryDebit)?.toFixed(2)} LMT`;
+    window._tos[dKey] = `BUY +1 DIAGONAL SPXW 100 (Weeklys) ${tosDate(trade.longExp)}/${tosDate(trade.shortExp)} ${_tk(trade.longStrike)}/${_tk(trade.shortStrike)} PUT @${(trade.entryDebit)?.toFixed(2)} LMT`;
     html.push(tosBtn(dKey));
   }
   html.push(`<div style="flex:1"></div>`);
@@ -2098,7 +2098,7 @@ function render() {
       <div class="diag-header">
         <div class="diag-title"><span>M8BF</span> · ${trade.signal_time || trade.window || '—'} ET</div>
         <span class="diag-badge ${badgeClass}">${badge}</span>
-        ${(window._tos.m8bf = trade.bf_lower ? `BUY +1 BUTTERFLY SPX 100 (Weeklys) ${tosDate(trade.date)} ${_tk(trade.bf_lower)}/${_tk(trade.center)}/${_tk(trade.bf_upper)} ${trade.cp ? 'PUT' : 'CALL'} @${trade.premium?.toFixed(2)} LMT` : null) ? tosBtn('m8bf') : ''}
+        ${(window._tos.m8bf = trade.bf_lower ? `BUY +1 BUTTERFLY SPXW 100 (Weeklys) ${tosDate(trade.date)} ${_tk(trade.bf_lower)}/${_tk(trade.center)}/${_tk(trade.bf_upper)} ${trade.cp ? 'PUT' : 'CALL'} @${trade.premium?.toFixed(2)} LMT` : null) ? tosBtn('m8bf') : ''}
         <div style="flex:1"></div>
         ${trade.t1 != null ? `<span style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;">T1 ${trade.t1} · spread ${trade.center - trade.bf_lower} · max +$${maxProfit}</span>` : ''}
       </div>
