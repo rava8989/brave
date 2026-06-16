@@ -271,7 +271,7 @@ async function captureTailPutSnap(env, etNow, masterChain) {
       const c = Array.isArray(arr) ? arr[0] : arr;
       if (!c || c.delta == null) continue;
       const d = Number(c.delta);
-      if (!(d <= -0.08 && d >= -0.35)) continue;
+      if (!(d <= -0.05 && d >= -0.35)) continue;
       puts.push({ e: exp.split(':')[0], k: parseFloat(strike), d: parseFloat(d.toFixed(3)),
                   b: c.bid ?? null, a: c.ask ?? null });
     }
@@ -1508,7 +1508,7 @@ import {
 // Returns a short status string for the Discord message.
 //
 // 3 possible states:
-//   TRADE today @ 9:45 — buy 0DTE SPXW put delta -0.20, hold to 4 PM
+//   TRADE today @ 9:45 — buy 0DTE SPXW put delta -0.10, hold to 4 PM
 //   SKIP today (VVIX X.XX ≥ 110, puts too expensive). Stay TRIGGERED.
 //   No Tail Hedge today (COR1M X.XX, need cross below 7.75)
 let _tailHedgeCache = { value: null, fetchedAt: 0 };
@@ -1569,7 +1569,7 @@ async function getTailHedgeStatusLine(env = null) {
       if (vvix != null && vvix >= 110) {
         line = `Tail Hedge │ SKIP today (VVIX ${vvix.toFixed(2)} ≥ 110)`;
       } else {
-        line = `Tail Hedge │ ▶ TRADE @ 9:45 — buy 0DTE SPXW put Δ-0.20  (VVIX ${vvix?.toFixed(2) ?? '—'})`;
+        line = `Tail Hedge │ ▶ TRADE @ 9:45 — buy 0DTE SPXW put Δ-0.10  (VVIX ${vvix?.toFixed(2) ?? '—'})`;
       }
     } else {
       const c = cor1m != null ? cor1m.toFixed(2) : '—';
@@ -1617,7 +1617,7 @@ function buildDiscordMessage(signal, vixValues, tailLine) {
     inner += `${sigColor(signal.diagText)}Diagonal │ ${signal.diagText}${RST}\n`;
   }
 
-  // Tail Hedge (companion — Sweet Spot preset, thr 7.75 / delta -0.20 / VVIX<110)
+  // Tail Hedge (companion — recommended preset thr 7.75 / delta -0.10 / VVIX<110; 2026-06-16 sweep: 2× return, half drawdown of -0.20)
   if (tailLine) {
     const tc = tailLine.includes('TRADE') ? GRN : tailLine.includes('SKIP') ? RED : DIM;
     inner += `${tc}${tailLine}${RST}\n`;
@@ -1726,7 +1726,7 @@ function buildSigma3Embed(signal, vixValues, vixSource) {
   if (signal._tailLine) {
     const tl = signal._tailLine;
     if (tl.includes('TRADE')) {
-      fires.push(`• **Tail Hedge** — buy 0DTE SPXW put Δ-0.20 @ 9:45 ET`);
+      fires.push(`• **Tail Hedge** — buy 0DTE SPXW put Δ-0.10 @ 9:45 ET`);
     } else if (tl.includes('SKIP')) {
       blocked.push(`• **Tail Hedge** — ${tl.split('│')[1]?.trim() || 'skip today'}`);
     } else {
@@ -8982,7 +8982,7 @@ export default {
       if (snap && Array.isArray(snap.puts) && snap.puts.length) {
         const e0 = snap.puts[0].e;
         candidate = snap.puts.filter(p => p.e === e0)
-          .sort((a, b) => Math.abs(a.d + 0.20) - Math.abs(b.d + 0.20))[0] || null;
+          .sort((a, b) => Math.abs(a.d + 0.10) - Math.abs(b.d + 0.10))[0] || null;
       }
       // Frozen bot-tradeable open (2026-06-12, sigma-3 6th strategy): the
       // FIRST poll at/after 9:45 ET on an active+tradeable day freezes the

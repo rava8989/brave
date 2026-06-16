@@ -75,18 +75,18 @@ PRESETS = [
     {
         'id': 'total_champ',
         'name': 'Total Champion',
-        'desc': 'Most absolute return. thr 9.0, delta -0.20, VVIX<110. 134 trades, +$57.2k, MAR 9.55. Catches every cross.',
+        'desc': 'Most trades. thr 9.0, delta -0.20, VVIX<110 (corrected 2026-06-16: +$48.7k, n=103, MAR ~3). Higher bleed than the -0.10 wing.',
         'threshold': 9.0, 'delta': -0.20, 'time': '0945',
         'regimes': [], 'vvix_max': 110,
-        'recommended': True,
+        'recommended': False,
     },
     {
         'id': 'sweet_spot',
         'name': 'Sweet Spot',
-        'desc': 'Cleanest profile. thr 7.75, delta -0.20, VVIX<110. 59 trades, +$50.9k, MAR 9.56. Worst trade only -$520. Half the activity of Total Champion.',
+        'desc': 'Old default (thr 7.75, delta -0.20, VVIX<110). Corrected 2026-06-16: only +$23.8k, MAR 2.44 — the -0.20 wing bleeds too much. Superseded by Convex Tail.',
         'threshold': 7.75, 'delta': -0.20, 'time': '0945',
         'regimes': [], 'vvix_max': 110,
-        'recommended': True,
+        'recommended': False,
     },
     {
         'id': 'mar_champ',
@@ -99,10 +99,10 @@ PRESETS = [
     {
         'id': 'balanced',
         'name': 'Balanced',
-        'desc': 'Middle ground. thr 7.75, delta -0.10, VVIX<110. 87 trades, +$30.6k, MAR 12.91. Worst trade -$280.',
+        'desc': '★ RECOMMENDED (sweep winner 2026-06-16). thr 7.75, delta -0.10, VVIX<110. +$46,990, MAR 10.30, max DD $4,560, worst day -$320. Cheaper 10-delta wing = half the bleed, ~90% of crash payoff. Best total AND best risk-adjusted; robust both halves (7 separate selloffs).',
         'threshold': 7.75, 'delta': -0.10, 'time': '0945',
         'regimes': [], 'vvix_max': 110,
-        'recommended': False,
+        'recommended': True,
     },
     {
         'id': 'wide_champ',
@@ -312,7 +312,7 @@ def main():
         'daily': daily,
         'presets': PRESETS,
         'preset_results': preset_results,
-        'default_preset': 'sweet_spot',
+        'default_preset': 'balanced',
         'sandbox': sandbox,
     }
 
