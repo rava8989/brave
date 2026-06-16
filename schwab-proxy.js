@@ -5682,8 +5682,14 @@ async function handleScheduled(env) {
         // abort with skip reason instead of opening a phantom trade.
         let validatorAborted = false;
         try {
-          const freshVix = await tastyGetVix(env);
-          if (freshVix != null) {
+          // tastyGetVix returns an OBJECT — extract a NUMERIC cross-check VIX:
+          // prefer the validated session open, fall back to the current tick.
+          // (Bug fix 2026-06-16: this used the object directly → drift was NaN
+          //  and freshVix.toFixed() threw, so the validator silently aborted /
+          //  no-op'd every live straddle. Now it compares real numbers.)
+          const fresh = await tastyGetVix(env);
+          const freshVix = fresh.open ?? fresh.price;
+          if (freshVix != null && Number.isFinite(freshVix)) {
             const drift = Math.abs(freshVix - vixToday);
             // Recompute signal with the fresh VIX
             const freshSig = calculateSignal({
@@ -5708,6 +5714,12 @@ async function handleScheduled(env) {
             } else if (drift > 0.5) {
               console.log(`[strad-validate] drift ${drift.toFixed(2)} but theme=strad — proceeding`);
             }
+          } else {
+            // No usable fresh VIX (Tasty `open` still the stale pre-open snapshot
+            // and no tick) — do NOT abort on a missing cross-check. A degraded
+            // open beats a phantom skip; the morning signal already gated entry.
+            console.log('[strad-validate] no usable fresh VIX — skipping validation, proceeding with open');
+            try { await logEvent(env, 'info', 'strad-validate', 'validation skipped (no usable fresh VIX)', { morningVix: vixToday }); } catch (_) {}
           }
         } catch (vErr) {
           console.warn('[strad-validate] fresh VIX fetch failed (proceeding):', vErr.message);
