@@ -5,12 +5,24 @@ export default {
   async fetch(request, env) {
     const cors = {
       "Access-Control-Allow-Origin": env.ALLOWED_ORIGIN || "*",
-      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type, Authorization",
     };
 
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: cors });
+    }
+
+    // GET /info — bot identity + servers it's in (for invite-link building)
+    if (request.method === "GET") {
+      try {
+        const T = env.DISCORD_TOKEN;
+        const me = await (await fetch("https://discord.com/api/v10/users/@me", { headers: { Authorization: `Bot ${T}` } })).json();
+        const guilds = await (await fetch("https://discord.com/api/v10/users/@me/guilds", { headers: { Authorization: `Bot ${T}` } })).json();
+        const inviteUrl = `https://discord.com/oauth2/authorize?client_id=${me.id}&scope=bot&permissions=274877974528`;
+        return new Response(JSON.stringify({ bot: `${me.username} (${me.id})`, clientId: me.id, inviteUrl,
+          guilds: Array.isArray(guilds) ? guilds.map(g => g.name) : guilds }, null, 1), { headers: { ...cors, "Content-Type": "application/json" } });
+      } catch (e) { return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { ...cors, "Content-Type": "application/json" } }); }
     }
 
     if (request.method !== "POST") {

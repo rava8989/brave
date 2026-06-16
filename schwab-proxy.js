@@ -9100,6 +9100,20 @@ export default {
       return jsonResp({ error: 'unknown action' }, 400, sCors);
     }
 
+    if (url.pathname === '/bot-info' && request.method === 'GET') {
+      // Diagnostic: which servers (guilds) the bot is in + its identity.
+      // The bot can DM anyone who shares one of these guilds with it.
+      if (!env.DISCORD_TOKEN) return jsonResp({ error: 'no DISCORD_TOKEN (bot uses a proxy path)' }, 200, corsHeaders);
+      try {
+        const meR = await fetch('https://discord.com/api/v10/users/@me', { headers: { Authorization: `Bot ${env.DISCORD_TOKEN}` } });
+        const me = await meR.json();
+        const gR = await fetch('https://discord.com/api/v10/users/@me/guilds', { headers: { Authorization: `Bot ${env.DISCORD_TOKEN}` } });
+        const guilds = await gR.json();
+        return jsonResp({ bot: `${me.username}#${me.discriminator} (${me.id})`,
+          guilds: Array.isArray(guilds) ? guilds.map(g => ({ name: g.name, id: g.id })) : guilds }, 200, corsHeaders);
+      } catch (e) { return jsonResp({ error: e.message }, 500, corsHeaders); }
+    }
+
     if (url.pathname === '/cyclicality-today' && request.method === 'GET') {
       // CycleLab live actual — today's session-so-far (KV, written by the
       // cron every 5 min during RTH). Pure KV read: zero Schwab calls.
