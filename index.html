@@ -3273,7 +3273,7 @@
       localStorage.setItem('sc_syncSecret', sec);
     }
     try{
-      const r = await fetch(px+'/subscribers', { method:'POST', headers:{'Content-Type':'application/json','X-Sync-Secret':sec}, body:JSON.stringify(body) });
+      const r = await fetch(px+'/subscribers', { method:'POST', headers:{'Content-Type':'application/json','X-Sync-Secret':sec}, body:JSON.stringify({...body, secret:sec}) });
       const j = await r.json();
       if(r.status===401){ localStorage.removeItem('sc_syncSecret'); document.getElementById('subNote').innerHTML = '✗ Wrong sync secret — cleared it, press Add again to re-enter.'; return null; }
       return j;

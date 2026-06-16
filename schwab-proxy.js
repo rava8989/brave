@@ -9062,7 +9062,7 @@ export default {
     if (url.pathname === '/subscribers') {
       // Manage signal-DM recipients. Gated by the sync secret. CORS-open for
       // the dashboard (which sends the secret in the body / query).
-      const sCors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' };
+      const sCors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, X-Sync-Secret' };
       if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: sCors });
       const body = request.method === 'POST' ? await request.json().catch(() => ({})) : {};
       const secret = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret') || body.secret;
