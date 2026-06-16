@@ -129,7 +129,9 @@ def load_snapshot(date_iso: str, time_tag: str) -> dict | None:
     return snap
 
 
-DELTA_TOLERANCE = 0.10  # require |actual_delta - target_delta| ≤ this, else SKIP
+DELTA_TOLERANCE = 0.15  # accept nearest put within ±0.15 of target (so a 20Δ
+                        # target takes ~10–35Δ "nearby" — user 2026-06-15: don't
+                        # be strict, just trade the nearest available strike).
 
 # ────────── Real-world fill assumptions ──────────
 import math as _math
@@ -144,13 +146,40 @@ def round_pnl_down(pnl: float) -> int:
     return int(_math.floor(pnl / 10) * 10)
 
 
+def _bs_put_price(S, K, T, sigma, r=0.05):
+    if T <= 0 or sigma <= 0:
+        return max(0.0, K - S)
+    d1 = (math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * math.sqrt(T))
+    d2 = d1 - sigma * math.sqrt(T)
+    return K * math.exp(-r * T) * _norm_cdf(-d2) - S * _norm_cdf(-d1)
+
+
+def _implied_vol_put(S, K, T, price, r=0.05):
+    """Back-solve each put's OWN implied vol from its mid (bisection). 0DTE
+    options don't price off the 30-day VIX — using the strike's market-implied
+    vol gives a delta consistent with the real chain (2026-06-15)."""
+    intrinsic = max(0.0, K - S)
+    if price <= intrinsic + 1e-6 or T <= 0:
+        return None
+    lo, hi = 0.001, 3.0
+    if _bs_put_price(S, K, T, hi, r) < price:
+        return None
+    for _ in range(60):
+        mid = 0.5 * (lo + hi)
+        if _bs_put_price(S, K, T, mid, r) > price:
+            hi = mid
+        else:
+            lo = mid
+    return 0.5 * (lo + hi)
+
+
 def pick_put_by_delta(snapshot: dict, target_exp: str, target_delta: float,
                        sigma: float, T: float,
                        tolerance: float = DELTA_TOLERANCE) -> dict | None:
-    """Find OTM put with BS delta within `tolerance` of `target_delta`.
-
-    Returns None if no valid put is within tolerance — caller must skip the
-    trade (don't fall back to a junk strike, that's how the prior bug crept in).
+    """Find OTM put whose MARKET-IMPLIED delta is within `tolerance` of
+    `target_delta`. Each put's vol is back-solved from its own mid (smile-aware,
+    matches the live Schwab deltas) — falling back to `sigma` only if the solve
+    fails. Returns None if none qualify (no junk-strike fallback).
     """
     quotes = snapshot.get('quotes', {})
     spot = snapshot.get('spot', 0) or 0
@@ -169,7 +198,9 @@ def pick_put_by_delta(snapshot: dict, target_exp: str, target_delta: float,
         ask = q.get('ask', 0) or 0
         if bid <= 0 or ask <= 0 or ask < bid:
             continue
-        d = put_delta(spot, K, T, sigma)
+        mid_for_iv = (bid + ask) / 2
+        iv = _implied_vol_put(spot, K, T, mid_for_iv)
+        d = put_delta(spot, K, T, iv if iv else sigma)
         diff = abs(d - target_delta)
         if diff > tolerance:
             continue   # outside tolerance — skip, don't grab as fallback
