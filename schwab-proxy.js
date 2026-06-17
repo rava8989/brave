@@ -1498,7 +1498,7 @@ import {
   isEarningsDay, isNonAmznTslaEarningsDay, isDayAfterAnyEarnings,
   calculateSignal, computeDiagonalSignal, computeVixPct20d,
   classifyCyclePrediction, cycleAdvisoryLine, regimeGroup, dayTypeAdvisoryLine,
-  volFlowAdvisoryLine, m8bfWrAdvisoryLine,
+  volFlowAdvisoryLine, m8bfWrAdvisoryLine, computeSkewReading,
 } from './signal-engine.js';
 
 
@@ -1583,6 +1583,26 @@ async function getTailHedgeStatusLine(env = null) {
   }
 }
 
+// SPX options-skew advisory line for the morning message (informational).
+// Fetches the daily VIX-smile decomposition (put_skew/call_skew) from GitHub,
+// builds the net-skew series, and returns computeSkewReading().line — or null.
+// Context only, never gates. See signal-engine.js computeSkewReading().
+async function computeSkewLine() {
+  try {
+    const r = await fetch('https://raw.githubusercontent.com/rava8989/brave/main/data/vix_decomposition.json',
+      { cf: { cacheTtl: 600, cacheEverything: true }, headers: { 'User-Agent': 'schwab-proxy-worker/1.0' } });
+    if (!r.ok) return null;
+    const all = await r.json();
+    const series = Object.keys(all).sort().map(dt => {
+      const o = all[dt];
+      return (o && o.spot && o.put_skew != null && o.call_skew != null)
+        ? { date: dt, net: o.put_skew - o.call_skew, spot: o.spot } : null;
+    }).filter(Boolean);
+    const reading = computeSkewReading(series);
+    return reading ? reading.line : null;
+  } catch (_) { return null; }
+}
+
 // ════════════════════════════════════════════════════════════════════
 // DISCORD MESSAGE BUILDER (ported from index.html discordBuildMessage)
 // ════════════════════════════════════════════════════════════════════
@@ -1643,6 +1663,11 @@ function buildDiscordMessage(signal, vixValues, tailLine) {
     const vc = signal._volFlowLine.includes('VOL_BID') ? RED
              : signal._volFlowLine.includes('MIXED') ? GRN : DIM;
     inner += `${vc}${signal._volFlowLine}${RST}\n`;
+  }
+  if (signal._skewLine) {
+    const kc = signal._skewLine.includes('Distribution') ? RED
+             : (signal._skewLine.includes('Healthy') || signal._skewLine.includes('Capitulation')) ? GRN : DIM;
+    inner += `${kc}${signal._skewLine}${RST}\n`;
   }
   if (signal._m8bfWrLine) {
     const wc = signal._m8bfWrLine.includes('✓both halves') ? GRN
@@ -5431,6 +5456,7 @@ async function handleScheduled(env) {
   try { signal._cycleLine = await computeCycleLine(env, etNow); } catch (_) { /* advisory only */ }
   try { signal._volFlowLine = await computeVolFlowLine(env, etNow); } catch (_) { /* advisory only */ }
   try { signal._m8bfWrLine = await computeM8bfWrLine(env, etNow); } catch (_) { /* advisory only */ }
+  try { signal._skewLine = await computeSkewLine(); } catch (_) { /* advisory only */ }
   const message = canonBanner + buildDiscordMessage(signal, vixValues, tailLineCanon);
 
   // 7. Slot already claimed at the top of the morning block. Reuse the same key.

@@ -514,6 +514,38 @@ export function volFlowAdvisoryLine(label) {
   return `${head} — ` + parts.join(' · ');
 }
 
+// ── SPX options-skew reading (informational gauge, 2026-06-16) ──
+// `series` = ascending-by-date array of { date, net, spot }, where
+// net = put_skew − call_skew from the daily VIX-smile decomposition
+// (data/vix_decomposition.json). Returns the LATEST day's reading, or null.
+//   pct    = trailing-120d percentile of today's net skew (0 = complacent, 100 = max fear)
+//   regime = price-trend(10d) × skew-change(5d). The cell with edge is "Distribution":
+//            Healthy = rally + skew falling · Distribution = rally + skew RISING (caution)
+//            Capitulation = selloff + skew rising · Drift = soft + skew falling
+// INFORMATIONAL CONTEXT ONLY — never gates a trade. Research 2026-06-16:
+// Distribution ~64% up at 20d vs ~77% for Healthy; extremes (pct) mark turns.
+export function computeSkewReading(series, opts = {}) {
+  const W = opts.window || 120;
+  if (!Array.isArray(series) || series.length < W + 11) return null;
+  const i = series.length - 1;
+  const net = series.map(s => (s ? s.net : null));
+  const spot = series.map(s => (s ? s.spot : null));
+  const cur = net[i];
+  if (cur == null || spot[i] == null || spot[i - 10] == null) return null;
+  const hist = net.slice(i - W, i).filter(x => x != null);
+  if (hist.length < W * 0.6) return null;
+  const pct = Math.round(100 * hist.filter(x => x < cur).length / hist.length);
+  const d5 = net[i - 5] == null ? 0 : +(cur - net[i - 5]).toFixed(2);
+  const mom10 = +((spot[i] / spot[i - 10] - 1) * 100).toFixed(2);
+  const up = mom10 > 0, skewUp = d5 > 0;
+  const regime = up && skewUp ? 'Distribution'
+               : up && !skewUp ? 'Healthy'
+               : !up && skewUp ? 'Capitulation' : 'Drift';
+  const zone = pct <= 20 ? 'complacent' : pct >= 80 ? 'elevated fear' : 'normal';
+  const line = `Skew     │ ${pct}%ile (${zone}) · ${regime}`;
+  return { date: series[i].date, net: +cur.toFixed(2), pct, d5, mom10, regime, zone, line };
+}
+
 export function dayTypeAdvisoryLine(group, cycInfo) {
   if (!cycInfo || !cycInfo.cls) return null;
   const shape = { BULLISH: 'BULL', BEARISH: 'BEAR', CHOPPY: 'CHOP', MIXED: 'MIX' }[cycInfo.cls];
@@ -873,5 +905,6 @@ if (typeof globalThis !== 'undefined') {
     calculateSignal,
     classifyCyclePrediction, CYCLE_SHAPE_STATS, cycleAdvisoryLine,
     DAYTYPE_STATS, regimeGroup, dayTypeAdvisoryLine, m8bfWrAdvisoryLine,
+    computeSkewReading,
   };
 }
