@@ -684,6 +684,13 @@
     <div style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;">SPX options skew</div>
     <div style="font-size:11.5px;color:var(--text3);margin:2px 0 10px;">How much more the market pays for downside puts vs upside calls, vs its own 6-month range. <b>Information only</b>, not a trade signal — the one cell with edge is <span style="color:var(--red,#ef4444)">Distribution</span> (a rally on rising hedging).</div>
     <div id="skewGaugeBody"></div>
+    <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:5px 16px;font-size:11px;color:var(--text2);line-height:1.45;">
+      <div><span style="color:var(--green,#22c55e)">&#9679;</span> <b>Healthy</b> — rally, hedging falling</div>
+      <div><span style="color:var(--red,#ef4444)">&#9679;</span> <b>Distribution</b> — rally + hedging rising (caution)</div>
+      <div><span style="color:var(--green,#22c55e)">&#9679;</span> <b>Capitulation</b> — selloff + hedging surge (bottom?)</div>
+      <div><span style="color:var(--text2)">&#9679;</span> <b>Drift</b> — soft, hedging fading (no edge)</div>
+    </div>
+    <div style="font-size:10.5px;color:var(--text3);margin-top:8px;line-height:1.4;">Needle = today's skew vs its own 6-month range (left = complacent / low hedging, right = elevated fear). The regime tag combines price trend with how skew is moving. Context only — not a trade trigger.</div>
   </div>
 
   <!-- copy/print row -->
