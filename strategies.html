@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Σ3 — Strategy Playbook</title>
+<style>
+  :root{--bg:#16171a;--card:#1e1f22;--tile:#2a2c30;--text:#f2f3f5;--sub:#b5bac1;--mute:#80848e;--green:#4ade80;--red:#f87171;--amber:#fbbf24;--bd:#2f3136;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased;}
+  header{max-width:780px;margin:0 auto;padding:24px 20px 6px;}
+  header h1{font-size:22px;font-weight:600;margin:0;}
+  header .sub{color:var(--mute);font-size:13px;margin-top:2px;}
+  header a{color:var(--green);text-decoration:none;font-size:13px;}
+  main{max-width:780px;margin:0 auto;padding:14px 16px 70px;display:flex;flex-direction:column;gap:18px;}
+  .card{background:var(--card);border:0.5px solid var(--bd);border-radius:16px;padding:20px;}
+  .chead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block;}
+  .chead h2{font-size:19px;font-weight:600;margin:0;}
+  .chead .tag{font-size:11px;color:var(--sub);background:var(--tile);padding:3px 9px;border-radius:20px;}
+  .oneliner{color:var(--sub);font-size:14px;margin:10px 0 14px;}
+  .payoff{background:var(--tile);border-radius:12px;padding:12px 8px 6px;margin-bottom:14px;}
+  .payoff svg{display:block;width:100%;height:auto;}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  @media(max-width:560px){.cols{grid-template-columns:1fr;}}
+  .cols h3,.bet h3{font-size:11px;letter-spacing:.5px;color:var(--mute);margin:0 0 8px;}
+  .cols ul{margin:0;padding-left:16px;}
+  .cols li{font-size:13px;color:var(--sub);margin-bottom:6px;}
+  .bet{margin-top:14px;background:var(--tile);border-radius:12px;padding:14px 16px;}
+  .bet p{margin:0;font-size:13.5px;color:#dadde1;}
+  details.params{margin-top:12px;}
+  details.params summary{cursor:pointer;font-size:12px;color:var(--mute);list-style:none;}
+  details.params summary::-webkit-details-marker{display:none}
+  details.params summary::before{content:"▸ ";}
+  details.params[open] summary::before{content:"▾ ";}
+  details.params p{font-size:12px;color:var(--sub);margin:9px 0 0;line-height:1.55;}
+  .pl{font-size:11px;fill:var(--sub);} .plm{font-size:10px;fill:var(--mute);}
+  .plg{font-size:11px;font-weight:600;fill:var(--green);} .plr{font-size:10px;fill:var(--red);}
+  .zero{stroke:#4a4d52;stroke-width:1;stroke-dasharray:4 4;}
+  .line{fill:none;stroke:var(--green);stroke-width:2.5;stroke-linejoin:round;stroke-linecap:round;}
+  .tick{stroke:#6b7280;stroke-width:1;} .tickd{stroke:#6b7280;stroke-width:1;stroke-dasharray:3 3;}
+</style>
+</head>
+<body>
+<header>
+  <h1>Σ3 — Strategy Playbook</h1>
+  <div class="sub">How each strategy works, when it fires, and what you're betting. <a href="index.html">← Dashboard</a></div>
+</header>
+<main>
+
+  <!-- M8BF -->
+  <section class="card">
+    <div class="chead"><span class="dot" style="background:var(--green)"></span><h2>M8BF</h2><span class="tag">Call butterfly · follows a signal</span></div>
+    <p class="oneliner">A 0DTE call butterfly that copies the first non-banned flow signal inside its day-of-week window and holds to the close.</p>
+    <div class="payoff">
+      <svg viewBox="0 0 480 170" role="img" aria-label="Call butterfly payoff: small loss below the lower strike, max profit at the center, small loss above the upper strike">
+        <polygon points="179,120 240,30 301,120" fill="rgba(74,222,128,0.12)"/>
+        <line class="zero" x1="40" y1="120" x2="440" y2="120"/><text class="plm" x="44" y="116">$0</text>
+        <polyline class="line" points="40,148 160,148 240,30 320,148 440,148"/>
+        <line class="tick" x1="160" y1="120" x2="160" y2="156"/><line class="tickd" x1="240" y1="30" x2="240" y2="156"/><line class="tick" x1="320" y1="120" x2="320" y2="156"/>
+        <text class="pl" x="160" y="168" text-anchor="middle">lower</text><text class="pl" x="240" y="168" text-anchor="middle" style="fill:var(--text)">center</text><text class="pl" x="320" y="168" text-anchor="middle">upper</text>
+        <text class="plg" x="240" y="22" text-anchor="middle">MAX PROFIT (pins center)</text>
+        <text class="plr" x="95" y="144" text-anchor="middle">max loss = debit</text>
+      </svg>
+    </div>
+    <div class="cols">
+      <div><h3>WHEN IT FIRES</h3><ul>
+        <li>Day-of-week window: Mon 11:00–11:30, Tue 13:30–14:00, Wed 12:00–12:30, Thu 11:00–11:30 (2nd Thu → 13:30–14:00), Fri 13:00–13:30 ET</li>
+        <li>Takes the <b>first non-banned flow signal</b> posted in that window</li>
+        <li>Center skipped if center%100 ∈ {10,25,35,40,65,80}, plus combo bans (t1%100 → 0→95, 20→15, 55→50, 65→60, 85→90)</li>
+        <li>Prior-day WR ≥ 90% forces it through a block; WR = 0% forces a Straddle next day instead</li>
+      </ul></div>
+      <div><h3>BLOCKED WHEN</h3><ul>
+        <li>EOM &amp; EOM-1 (last two days of month)</li>
+        <li>Day before OPEX</li>
+        <li>VIX-expiry day after OPEX</li>
+        <li>Single-name (non-AMZN/TSLA) earnings day</li>
+        <li>New-month non-Monday → converts to a Straddle</li>
+        <li>CPI day (hard block, never overridden)</li>
+      </ul></div>
+    </div>
+    <div class="bet"><h3>THE BET</h3><p>SPX drifts toward the center strike by the 4 PM close → max payoff. Runs past either wing or sits too far → you lose only the small debit. Risk capped at premium, reward capped at wing width − premium.</p></div>
+    <details class="params"><summary>Key parameters</summary><p>Per-DOW windows are load-bearing (OOS-validated 2026-06-10). One trade/day = first non-banned signal. Strikes/center come from the flow post (not computed in-house). 0DTE SPX, settled at the 4:15 close intrinsic − premium. WR overrides exclude CPI and can't cancel a firing GXBF.</p></details>
+  </section>
+
+  <!-- Straddle -->
+  <section class="card">
+    <div class="chead"><span class="dot" style="background:var(--green)"></span><h2>Straddle</h2><span class="tag">Long ATM straddle · big-move bet</span></div>
+    <p class="oneliner">Buys an ATM call + put at the open on quiet-overnight-VIX days, betting the day makes a big move in either direction.</p>
+    <div class="payoff">
+      <svg viewBox="0 0 480 170" role="img" aria-label="Long straddle payoff: a V — max loss at the strike, profit on a big move either way">
+        <polygon points="40,30 40,95 148,95" fill="rgba(74,222,128,0.12)"/><polygon points="440,30 440,95 332,95" fill="rgba(74,222,128,0.12)"/>
+        <line class="zero" x1="40" y1="95" x2="440" y2="95"/><text class="plm" x="44" y="91">$0</text>
+        <polyline class="line" points="40,30 240,150 440,30"/>
+        <line class="tick" x1="240" y1="150" x2="240" y2="160"/>
+        <text class="pl" x="240" y="168" text-anchor="middle" style="fill:var(--text)">strike (ATM)</text>
+        <text class="plg" x="110" y="44" text-anchor="middle">profit ↓</text><text class="plg" x="372" y="44" text-anchor="middle">profit ↑</text>
+        <text class="plr" x="240" y="120" text-anchor="middle">max loss = debit</text>
+      </svg>
+    </div>
+    <div class="cols">
+      <div><h3>WHEN IT FIRES</h3><ul>
+        <li>Small overnight VIX <b>drop</b>: 0 &lt; (prior VIX close − today's VIX) ≤ 0.65 (a bigger drop belongs to GXBF)</li>
+        <li>Calm tape: SPX overnight gap &lt; 0.9% AND VIX open-to-open ≤ 1.4</li>
+        <li>Enters ~9:32 AM as a long ATM call+put (strike = SPX open snapped to 5)</li>
+        <li>EOM forces an "EOM Straddle"; new-month non-Monday forces an "NM Straddle"</li>
+      </ul></div>
+      <div><h3>BLOCKED WHEN</h3><ul>
+        <li>CPI day</li>
+        <li>OPEX day</li>
+        <li>VIX rose overnight, or dropped &gt; 0.65</li>
+        <li>SPX gap ≥ 0.9%</li>
+        <li>VIX open-to-open &gt; 1.4</li>
+      </ul></div>
+    </div>
+    <div class="bet"><h3>THE BET</h3><p>SPX travels far from the strike by 4 PM in <b>either</b> direction → the in-the-money leg beats the combined premium. A quiet day that closes near the strike → both legs decay and you lose the debit (capped ~$3,200, or ~$3,500 on EOM).</p></div>
+    <details class="params"><summary>Key parameters</summary><p>Debit caps: regular/NM $32, EOM $35. If entry mid ≤ cap → fill now; else rest a working limit at the cap until the 13:30 ET cutoff, then expire (no trade). Held to the 4 PM cash close; P/L = (|SPX close − strike| − debit) × 100.</p></details>
+  </section>
+
+  <!-- GXBF -->
+  <section class="card">
+    <div class="chead"><span class="dot" style="background:var(--green)"></span><h2>GXBF</h2><span class="tag">Gamma-center call butterfly</span></div>
+    <p class="oneliner">A 0DTE call butterfly pinned on the live volume-weighted dealer-gamma peak, fired ~9:36 AM on big overnight-VIX-drop days.</p>
+    <div class="payoff">
+      <svg viewBox="0 0 480 170" role="img" aria-label="Call butterfly payoff centered on the dealer gamma strike">
+        <polygon points="179,120 240,30 301,120" fill="rgba(74,222,128,0.12)"/>
+        <line class="zero" x1="40" y1="120" x2="440" y2="120"/><text class="plm" x="44" y="116">$0</text>
+        <polyline class="line" points="40,148 160,148 240,30 320,148 440,148"/>
+        <line class="tick" x1="160" y1="120" x2="160" y2="156"/><line class="tickd" x1="240" y1="30" x2="240" y2="156"/><line class="tick" x1="320" y1="120" x2="320" y2="156"/>
+        <text class="pl" x="160" y="168" text-anchor="middle">K − W</text><text class="pl" x="240" y="168" text-anchor="middle" style="fill:var(--text)">gamma peak (K)</text><text class="pl" x="320" y="168" text-anchor="middle">K + W</text>
+        <text class="plg" x="240" y="22" text-anchor="middle">MAX PROFIT (pins K)</text>
+        <text class="plr" x="95" y="144" text-anchor="middle">max loss = debit</text>
+      </svg>
+    </div>
+    <div class="cols">
+      <div><h3>WHEN IT FIRES</h3><ul>
+        <li>Overnight VIX drop &gt; 0.65 pts — <b>or</b> it's the day after OPEX</li>
+        <li>Fires once ~9:36 AM (window opens 9:35 so the gamma chain can settle)</li>
+        <li>Center = the volume-weighted dealer-gamma peak, read live from the 0DTE call chain</li>
+        <li>Wing W chosen as the widest 5–100 where debit &gt; 0 and risk ≤ reward</li>
+        <li>Independent — fires regardless of M8BF/Straddle; allowed on CPI days</li>
+      </ul></div>
+      <div><h3>BLOCKED WHEN</h3><ul>
+        <li>VIX open ≥ 25</li>
+        <li>Last trading day of month (EOM)</li>
+        <li>OPEX+1 where VIX gapped up ≥ 2% overnight</li>
+        <li>No &gt;0.65 VIX drop and not OPEX+1 (trigger just never fires)</li>
+      </ul></div>
+    </div>
+    <div class="bet"><h3>THE BET</h3><p>SPX drifts toward and pins the dealer-gamma strike K by the close → max payoff at exactly K. A clean trend day away from the pin (closes outside K ± W) → you lose the net debit. Risk capped at ≤ W/2 per contract (~$5,000 max).</p></div>
+    <details class="params"><summary>Key parameters</summary><p>Center = argmax(γ × volume × S² × 100 × 0.01) over strikes ±5% of spot, snapped to 5 (always volume-weighted since 2026-06-10). BS gamma R=0.043, Q=0.013. Wing ∈ {5..100} step 5, widest with debit ≤ W/2. Hold to 4 PM cash close (1 PM half-days). Block: VIX_MAX_GXBF = 25.</p></details>
+  </section>
+
+  <!-- BOBF -->
+  <section class="card">
+    <div class="chead"><span class="dot" style="background:var(--green)"></span><h2>BOBF</h2><span class="tag">Broken-wing call butterfly · above market</span></div>
+    <p class="oneliner">A 0DTE call butterfly placed <i>above</i> the market that profits if SPX grinds up into a target zone by the close — only on up-trending mornings.</p>
+    <div class="payoff">
+      <svg viewBox="0 0 480 170" role="img" aria-label="Broken-wing call butterfly placed above current spot; profits if SPX rises into the body zone">
+        <polygon points="219,120 280,30 341,120" fill="rgba(74,222,128,0.12)"/>
+        <line class="zero" x1="40" y1="120" x2="440" y2="120"/><text class="plm" x="44" y="116">$0</text>
+        <polyline class="line" points="40,148 200,148 280,30 360,148 440,148"/>
+        <line class="tickd" x1="150" y1="96" x2="150" y2="156" style="stroke:var(--amber)"/><text class="pl" x="150" y="168" text-anchor="middle" style="fill:var(--amber)">spot now</text>
+        <line class="tickd" x1="280" y1="30" x2="280" y2="156"/><text class="pl" x="300" y="168" text-anchor="middle" style="fill:var(--text)">body (+15–25)</text>
+        <text class="plg" x="280" y="22" text-anchor="middle">MAX PROFIT (drift up)</text>
+        <text class="plr" x="110" y="144" text-anchor="middle">max loss = debit</text>
+      </svg>
+    </div>
+    <div class="cols">
+      <div><h3>WHEN IT FIRES</h3><ul>
+        <li>Window: first qualifying minute 10:29–12:15 ET, one trade/day</li>
+        <li>Type: Fri = "Friday RSI"; Mon–Thu = VIX-up or VIX-down by overnight VIX move</li>
+        <li>Must be <b>up-trending</b>: SPX above its 5-day SMA <i>and</i> up from the open</li>
+        <li>RSI(14) gate (Fri 40–65, VIX-down ≤70), VIX ≤ 23</li>
+      </ul></div>
+      <div><h3>BLOCKED WHEN</h3><ul>
+        <li>CPI day, OPEX, OPEX-1</li>
+        <li>New-month Monday, VIX expiry</li>
+        <li>EOM-1 &amp; EOM-2</li>
+        <li>Earnings day</li>
+        <li>VIX &gt; 23, or flat overnight VIX (Mon–Thu)</li>
+      </ul></div>
+    </div>
+    <div class="bet"><h3>THE BET</h3><p>SPX grinds higher into the profit zone (body ≈ spot +15–25) by the close → the structure outvalues the small debit. Stalls/drops below the lower wing, or rips far past the upper → you lose the debit. Broken-wing keeps max loss = the net debit.</p></div>
+    <details class="params"><summary>Key parameters</summary><p>Body = round-to-5 of spot +15 (Friday) / +25 (VIX types); wings symmetric ±30 from body. Move-from-open: Fri ≥0.10%, VIX-up ≥0.20%, VIX-down 0.20–0.70%. VIX cap 23 (rechecked live). Friday-only premium cap $12. Held to the 4 PM SPX close.</p></details>
+  </section>
+
+  <!-- Diagonal -->
+  <section class="card">
+    <div class="chead"><span class="dot" style="background:var(--amber)"></span><h2>Diagonal</h2><span class="tag">1/25 put diagonal · ~24h hold</span></div>
+    <p class="oneliner">Sells a near-term slightly-ITM put and buys a longer-dated put just below it, held ~24 hours — profiting as the short decays faster than the long.</p>
+    <div class="payoff">
+      <svg viewBox="0 0 480 170" role="img" aria-label="Put diagonal payoff: small steady gain on calm/up days, sharp loss on a hard drop">
+        <line class="zero" x1="40" y1="108" x2="440" y2="108"/><text class="plm" x="44" y="104">$0</text>
+        <polyline class="line" points="40,162 120,130 200,100 280,88 360,98 440,104"/>
+        <text class="plg" x="330" y="80" text-anchor="middle">small steady gain</text>
+        <text class="plr" x="95" y="150" text-anchor="middle">sharp drop ↓ → loss</text>
+        <text class="plm" x="240" y="166" text-anchor="middle">← SPX lower      higher →</text>
+      </svg>
+    </div>
+    <div class="cols">
+      <div><h3>WHEN IT FIRES</h3><ul>
+        <li>Weekday entry anchored ~12:30 ET; exits same clock time next day (one diagonal live at a time)</li>
+        <li>VIX 20-day percentile ≤ 50 (calm) <b>or</b> &gt; 80 (panic)</li>
+        <li>COR1M ≥ 10</li>
+        <li>All four calendar filters clear</li>
+      </ul></div>
+      <div><h3>BLOCKED WHEN</h3><ul>
+        <li>OPEX-1, EOM, EOM-1, NM (new month)</li>
+        <li>COR1M &lt; 10 (decorrelated, whippy tape)</li>
+        <li>VIX percentile in the (50, 80] dead-zone</li>
+        <li>Missing VIX-percentile or COR1M data</li>
+      </ul></div>
+    </div>
+    <div class="bet"><h3>THE BET</h3><p>Calm/orderly overnight → the near-term short put bleeds a full day of theta faster than the long, so you buy the spread back for more than you paid. A hard gap down through both strikes inverts it — worst-case loss ≈ debit + width (~$6.6k typical, up to ~$14.5k on a 1987/2020-class tail).</p></div>
+    <details class="params"><summary>Key parameters</summary><p>Short put +10 ITM (1 DTE), long put −20 below short (~10 OTM, width 20), long ≈ 25 calendar DTE (±5). Window 12:30–15:00 ET, entry time = exit time, ~24h hold. VIX dead-zone (50, 80]; COR1M floor 10. Filter priority OPEX-1 &gt; EOM &gt; EOM-1 &gt; NM &gt; COR1M_LOW &gt; VIX_MID. Retuned 2026-06-09.</p></details>
+  </section>
+
+  <!-- Tail Hedge -->
+  <section class="card">
+    <div class="chead"><span class="dot" style="background:var(--red)"></span><h2>Tail Hedge</h2><span class="tag">Long put · crash insurance</span></div>
+    <p class="oneliner">A long OTM 0DTE put bought as crash insurance when stock correlation (COR1M) crashes below 7.75 and vol-of-vol (VVIX) is calm. Bleeds small, pays big in a spike.</p>
+    <div class="payoff">
+      <svg viewBox="0 0 480 170" role="img" aria-label="Long put payoff: large profit on a crash, small fixed premium loss otherwise">
+        <polygon points="40,30 40,128 257,128" fill="rgba(74,222,128,0.12)"/>
+        <line class="zero" x1="40" y1="128" x2="440" y2="128"/><text class="plm" x="44" y="124">$0</text>
+        <polyline class="line" points="40,30 300,150 440,150"/>
+        <line class="tickd" x1="300" y1="128" x2="300" y2="158"/><text class="pl" x="300" y="168" text-anchor="middle" style="fill:var(--text)">put strike (≈Δ −0.10)</text>
+        <text class="plg" x="120" y="50" text-anchor="middle">big payoff on a crash ↓</text>
+        <text class="plr" x="380" y="146" text-anchor="middle">−premium (most days)</text>
+      </svg>
+    </div>
+    <div class="cols">
+      <div><h3>WHEN IT FIRES</h3><ul>
+        <li>COR1M crosses from above <b>7.75</b> down to ≤ 7.75 — arms "buying mode"</li>
+        <li>Then buy a put <b>every</b> morning at 9:45 ET until the first profitable day, then wait for the next cross</li>
+        <li>Strike = Black-Scholes delta nearest −0.10 (the "Balanced" preset)</li>
+      </ul></div>
+      <div><h3>BLOCKED WHEN</h3><ul>
+        <li>VVIX ≥ 110 at the open (puts too rich) — skip, stay armed</li>
+        <li>COR1M hasn't crossed below 7.75 (no trigger)</li>
+        <li>No valid strike within ±0.10 of −0.10 delta</li>
+        <li>Missing intraday VIX / option snapshot</li>
+      </ul></div>
+    </div>
+    <div class="bet"><h3>THE BET</h3><p>Cheap insurance during complacent, low-correlation regimes that historically precede correlated selloffs. Most days the put expires worthless (lose ~$100–500; worst single day −$320). When a vol spike hits while you hold, one day can print $5k–$15k. Many small bleeds funded by rare large convex payoffs.</p></div>
+    <details class="params"><summary>Key parameters</summary><p>Trigger COR1M cross-down through 7.75 (prev ≥ 7.75 AND now ≤ 7.75). VVIX skip ≥ 110. Delta target −0.10 (Balanced), ±0.10 tolerance. Entry 9:45 ET, 0DTE SPXW put, 1 contract, σ = VIX-at-entry/100. Hold to 4 PM close (1 PM half-days). 4-yr backtest ≈ +$47k over ~68 trades — low win rate, high MAR.</p></details>
+  </section>
+
+  <p style="color:var(--mute);font-size:12px;text-align:center;margin-top:8px;">Payoff diagrams are illustrative shapes, not to scale. Informational only — not financial advice.</p>
+</main>
+</body>
+</html>
