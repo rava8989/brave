@@ -1609,6 +1609,11 @@ async function computeSkewLine() {
 // DISCORD MESSAGE BUILDER (ported from index.html discordBuildMessage)
 // ════════════════════════════════════════════════════════════════════
 
+// Shared footer — used by both the text message and the image-card `content`
+// so the live.html link is clickable text instead of being baked into the PNG.
+// <URL> suppresses Discord's embed preview; *…* italicizes the disclaimer.
+const DISCORD_FOOTER = '📈 Trades are posted live here: <https://rava8989.github.io/brave/live.html>\n*Not financial advice. For informational purposes only.*';
+
 function buildDiscordMessage(signal, vixValues, tailLine) {
   const GRN = '\x1b[32m', RED = '\x1b[31m', DIM = '\x1b[2m', RST = '\x1b[0m';
 
@@ -1692,7 +1697,7 @@ function buildDiscordMessage(signal, vixValues, tailLine) {
     inner += `${DIM}SPX Gap         │ ${dir}${Math.abs(signal.spxGapPct).toFixed(2)}%${RST}\n`;
   }
 
-  return `\`\`\`ansi\n${inner}\`\`\`\n📈 Trades are posted live here: <https://rava8989.github.io/brave/live.html>\n*Not financial advice. For informational purposes only.*`;
+  return `\`\`\`ansi\n${inner}\`\`\`\n${DISCORD_FOOTER}`;
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -5493,7 +5498,7 @@ async function handleScheduled(env) {
   try {
     const cardData = buildMorningCardData(signal, vixValues, tailLineCanon);
     const png = await renderMorningCardPng(cardData);
-    result = await sendDiscordImage(env, dc.channelId, png, dc.proxyUrl);
+    result = await sendDiscordImage(env, dc.channelId, png, dc.proxyUrl, 'morning.png', DISCORD_FOOTER);
   } catch (e) {
     await logEvent(env, 'warn', 'morning', 'card image failed — text fallback', { msg: e && (e.message || String(e)) });
     result = null;
@@ -7511,7 +7516,7 @@ function _b64FromBytes(bytes) {
   for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
   return btoa(bin);
 }
-async function sendDiscordImage(env, userId, pngBytes, proxyUrl = null, filename = 'morning.png') {
+async function sendDiscordImage(env, userId, pngBytes, proxyUrl = null, filename = 'morning.png', content = '') {
   // Path 1: direct bot token (multipart) if this worker has it.
   if (env.DISCORD_TOKEN) {
     try {
@@ -7522,7 +7527,7 @@ async function sendDiscordImage(env, userId, pngBytes, proxyUrl = null, filename
       if (!dmResp.ok) return { ok: false, status: dmResp.status, error: `dm-chan ${dmResp.status}` };
       const dm = await dmResp.json();
       const fd = new FormData();
-      fd.append('payload_json', JSON.stringify({ attachments: [{ id: 0, filename }] }));
+      fd.append('payload_json', JSON.stringify({ content, attachments: [{ id: 0, filename }] }));
       fd.append('files[0]', new Blob([pngBytes], { type: 'image/png' }), filename);
       const r = await fetch(`https://discord.com/api/v10/channels/${dm.id}/messages`, {
         method: 'POST', headers: { Authorization: `Bot ${env.DISCORD_TOKEN}` }, body: fd,
@@ -7532,7 +7537,7 @@ async function sendDiscordImage(env, userId, pngBytes, proxyUrl = null, filename
     } catch (e) { return { ok: false, error: 'image-direct: ' + e.message }; }
   }
   // Paths 2/3: base64 → discord-proxy (which holds the bot token) decodes + uploads.
-  const payload = JSON.stringify({ userId, imageB64: _b64FromBytes(pngBytes), filename });
+  const payload = JSON.stringify({ userId, imageB64: _b64FromBytes(pngBytes), filename, content });
   const hdrs = { 'Content-Type': 'application/json' };
   if (env.PROXY_SECRET) hdrs['Authorization'] = `Bearer ${env.PROXY_SECRET}`;
   if (env.DISCORD_PROXY) {
@@ -7723,7 +7728,7 @@ export default {
         if (!dcRaw) return new Response('no discord_config', { status: 500 });
         const dc = JSON.parse(dcRaw);
         const png = await renderMorningCardPng(SAMPLE_MORNING_CARD);
-        const r = await sendDiscordImage(env, dc.channelId, png, dc.proxyUrl);
+        const r = await sendDiscordImage(env, dc.channelId, png, dc.proxyUrl, 'morning.png', DISCORD_FOOTER);
         return new Response(JSON.stringify({ image: r.ok, status: r.status, error: r.error || null }), { headers: { 'content-type': 'application/json' } });
       } catch (e) {
         return new Response('test-card-discord failed: ' + (e && (e.stack || e.message) || e), { status: 500 });
