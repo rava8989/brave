@@ -5498,19 +5498,15 @@ async function handleScheduled(env) {
   try {
     const cardData = buildMorningCardData(signal, vixValues, tailLineCanon);
     const png = await renderMorningCardPng(cardData);
-    result = await sendDiscordImage(env, dc.channelId, png, dc.proxyUrl);
+    // Footer rides as the message content (renders ABOVE the image in Discord)
+    // so the live link + disclaimer sit on top of the card, link clickable.
+    result = await sendDiscordImage(env, dc.channelId, png, dc.proxyUrl, 'morning.png', DISCORD_FOOTER);
   } catch (e) {
     await logEvent(env, 'warn', 'morning', 'card image failed — text fallback', { msg: e && (e.message || String(e)) });
     result = null;
   }
   if (!result || !result.ok) {
     result = await sendDiscordDM(env, dc.channelId, message.slice(0, 2000), dc.proxyUrl);
-  } else {
-    // Footer goes BELOW the card as its own message — Discord renders a message's
-    // content ABOVE its attachment, so it can't sit under the image in one message.
-    // (Text fallback above already ends with DISCORD_FOOTER, so only add it here.)
-    await new Promise(r => setTimeout(r, 800));
-    await sendDiscordDM(env, dc.channelId, DISCORD_FOOTER, dc.proxyUrl);
   }
   let dcData = result.data || {};
   if (!result.ok) {
@@ -7734,8 +7730,7 @@ export default {
         if (!dcRaw) return new Response('no discord_config', { status: 500 });
         const dc = JSON.parse(dcRaw);
         const png = await renderMorningCardPng(SAMPLE_MORNING_CARD);
-        const r = await sendDiscordImage(env, dc.channelId, png, dc.proxyUrl);
-        if (r && r.ok) { await new Promise(res => setTimeout(res, 800)); await sendDiscordDM(env, dc.channelId, DISCORD_FOOTER, dc.proxyUrl); }
+        const r = await sendDiscordImage(env, dc.channelId, png, dc.proxyUrl, 'morning.png', DISCORD_FOOTER);
         return new Response(JSON.stringify({ image: r.ok, status: r.status, error: r.error || null }), { headers: { 'content-type': 'application/json' } });
       } catch (e) {
         return new Response('test-card-discord failed: ' + (e && (e.stack || e.message) || e), { status: 500 });
