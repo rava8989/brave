@@ -1500,6 +1500,8 @@ import {
   classifyCyclePrediction, cycleAdvisoryLine, regimeGroup, dayTypeAdvisoryLine,
   volFlowAdvisoryLine, m8bfWrAdvisoryLine, computeSkewReading,
 } from './signal-engine.js';
+import { Resvg, initWasm } from '@resvg/resvg-wasm';
+import resvgWasm from '@resvg/resvg-wasm/index_bg.wasm';
 
 
 // ════════════════════════════════════════════════════════════════════
@@ -5204,11 +5206,15 @@ async function handleScheduled(env) {
     // 2nd Discord message still posts the OTHER vendor's data for cross-check.
     // Both methodologies match the dashboard's schwabFetchHistorical() now.
     // CLAUDE.md rule 11 satisfied: worker + dashboard agree on vix_today_open.
-    await Promise.all([pollSchwab(), pollTasty()]);
-    // Schwab is canonical (user rule: Schwab only). Tasty is fallback-only —
-    // used solely when Schwab produced nothing in the window.
-    vixToday = state.schwab ?? state.tasty;
-    vixSource = state.schwab != null ? 'schwab' : (state.tasty != null ? 'tastytrade' : null);
+    // VIX OPEN = the first print at/after 9:30:00 ET = the open of the first
+    // 9:30 1-min candle (pollSchwab). SCHWAB ONLY. Tasty's /Index/VIX `.open`
+    // is the spiky auction open, NOT the first print, so it must never set the
+    // displayed open. If Schwab's candle is slow, the quote-advancing-tick
+    // fallback below (also first-print) covers it — we never fall to Tasty.open.
+    // (user, 2026-06-18, settled for good: "first print after 9:30 ... today 16.67")
+    await pollSchwab();
+    vixToday = state.schwab;
+    vixSource = state.schwab != null ? 'schwab' : null;
     if (vixToday !== null) {
       console.log(`[proxy] VIX OPEN ${vixToday} captured via ${vixSource} after ${Math.round((Date.now()-startedAt)/1000)}s of polling`);
     } else {
@@ -5479,7 +5485,22 @@ async function handleScheduled(env) {
     return { status: 'duplicate_avoided_presend', time: `${etHour}:${String(etMin).padStart(2, '0')} ET` };
   }
 
-  const result = await sendDiscordDM(env, dc.channelId, message.slice(0, 2000), dc.proxyUrl);
+  // MORNING CARD IMAGE (2026-06-18) — render the forecast card to a PNG and post
+  // it; the M8BF skip/combo "strikes" go as a small (-#) subtext BELOW the image.
+  // ANY failure (render/font/upload) falls back to the original text message so
+  // the morning signal can never go silent.
+  let result = null;
+  try {
+    const cardData = buildMorningCardData(signal, vixValues, tailLineCanon);
+    const png = await renderMorningCardPng(cardData);
+    result = await sendDiscordImage(env, dc.channelId, png, dc.proxyUrl);
+  } catch (e) {
+    await logEvent(env, 'warn', 'morning', 'card image failed — text fallback', { msg: e && (e.message || String(e)) });
+    result = null;
+  }
+  if (!result || !result.ok) {
+    result = await sendDiscordDM(env, dc.channelId, message.slice(0, 2000), dc.proxyUrl);
+  }
   let dcData = result.data || {};
   if (!result.ok) {
     // Retry once on 429 (rate limit) after Retry-After delay
@@ -5512,17 +5533,14 @@ async function handleScheduled(env) {
     spxOpen: spxTodayOpen, spxGapPct,
   });
 
-  // ── 8b. SECOND signal message from the OTHER data source — for cross-check.
-  // The canonical message above is built from whichever source won the VIX
-  // race (Schwab vs Tasty). Here we independently pull the *other* source
-  // and compute the same signal — so disagreement between feeds is visible.
-  //
-  // CRITICAL: must verify the 2nd source has published a FRESH tick (post-
-  // 9:30 ET today), not yesterday's stale snapshot. Without this check, a
-  // slow-to-publish 2nd source returns its previous-session value and we'd
-  // post a message with the wrong VIX. Poll up to ~15s for freshness.
-  // Wrapped in try/catch: any failure MUST NOT undo the canonical post.
-  try {
+  // ── 8b. (DISABLED 2026-06-18) Dual-source "2nd message from the OTHER vendor".
+  //    Removed because the open is Schwab first-print ONLY. Tasty's `.open` is
+  //    the wrong field (spiky auction open, not the first 9:30 print), so
+  //    posting it as a peer message only ever showed a conflicting number and
+  //    caused endless confusion. ONE Schwab morning message now, period.
+  //    The block below is gated off (safe to delete in a future cleanup).
+  //    (user req 2026-06-18 — "first print after 9:30 ... today was 16.67")
+  if (false) try {
     const otherSource = vixSource === 'schwab' ? 'tastytrade' : 'schwab';
     let vixOther = null, spxOther = null;
     let vixOtherTs = null, spxOtherTs = null;
@@ -7312,6 +7330,347 @@ async function appendTradesToBacktester(env, todayISO, etNow, signals, spxClose,
 // WORKER EXPORT
 // ════════════════════════════════════════════════════════════════════
 
+// ════════════════════════════════════════════════════════════════════
+// MORNING CARD IMAGE — forecast-only card rendered SVG → PNG (resvg-wasm).
+// wasm is bundled; fonts are fetched from CDN once and cached per isolate.
+// Any failure here is caught by the caller, which falls back to text.
+// ════════════════════════════════════════════════════════════════════
+let _resvgReady = null;
+async function ensureResvg() {
+  if (!_resvgReady) _resvgReady = initWasm(resvgWasm);
+  await _resvgReady;
+}
+let _cardFonts = null;
+async function getCardFonts() {
+  if (_cardFonts) return _cardFonts;
+  const SETS = [
+    ['https://cdn.jsdelivr.net/npm/@expo-google-fonts/inter/Inter_400Regular.ttf',
+     'https://cdn.jsdelivr.net/npm/@expo-google-fonts/inter/Inter_600SemiBold.ttf'],
+    ['https://cdn.jsdelivr.net/npm/dejavu-fonts-ttf@2.37.3/ttf/DejaVuSans.ttf',
+     'https://cdn.jsdelivr.net/npm/dejavu-fonts-ttf@2.37.3/ttf/DejaVuSans-Bold.ttf'],
+  ];
+  let lastErr = null;
+  for (const set of SETS) {
+    try {
+      const bufs = await Promise.all(set.map(async u => {
+        const r = await fetch(u, { cf: { cacheTtl: 604800, cacheEverything: true } });
+        if (!r.ok) throw new Error(`font ${r.status} ${u}`);
+        return new Uint8Array(await r.arrayBuffer());
+      }));
+      _cardFonts = bufs;
+      return _cardFonts;
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr || new Error('no fonts');
+}
+function _cardEsc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+// data: { title, date, vix, vixSub, rows:[{n,det,yes}], tiles:[[label,val,color]], stats:[[label,val]] }
+function buildMorningCardSvg(d) {
+  const W = 460, P = 18;
+  const C = { card: '#1e1f22', yesBg: '#2a2c30', noBg: '#26282c', text: '#f2f3f5',
+    sub: '#b5bac1', mute: '#80848e', nameNo: '#dadde1', green: '#4ade80', red: '#f87171' };
+  const F = 'Inter, DejaVu Sans, sans-serif';
+  let s = '';
+  s += `<text x="${P}" y="36" font-family="${F}" font-size="17" font-weight="600" fill="${C.text}">${_cardEsc(d.title)}</text>`;
+  s += `<text x="${P}" y="53" font-family="${F}" font-size="12" fill="${C.mute}">${_cardEsc(d.date)}</text>`;
+  s += `<text x="${W - P}" y="36" text-anchor="end" font-family="${F}" font-size="21" font-weight="600" fill="${C.text}">${_cardEsc(d.vix)}</text>`;
+  s += `<text x="${W - P}" y="53" text-anchor="end" font-family="${F}" font-size="11" fill="${C.mute}">${_cardEsc(d.vixSub)}</text>`;
+  const innerW = W - 2 * P, y0 = 72, rowH = 38, step = 44;
+  d.rows.forEach((r, i) => {
+    const top = y0 + i * step, bg = r.yes ? C.yesBg : C.noBg, bar = r.yes ? C.green : C.red;
+    const tag = r.yes ? 'YES' : 'NO', pillW = r.yes ? 42 : 34, pillX = P + innerW - 10 - pillW;
+    s += `<rect x="${P}" y="${top}" width="${innerW}" height="${rowH}" rx="8" fill="${bg}"/>`;
+    s += `<rect x="${P}" y="${top + 1}" width="4" height="${rowH - 2}" rx="2" fill="${bar}"/>`;
+    s += `<text x="${P + 14}" y="${top + 24}" font-family="${F}" font-size="14"><tspan font-weight="600" fill="${r.yes ? C.text : C.nameNo}">${_cardEsc(r.n)}</tspan><tspan font-size="13" fill="${C.sub}">  ${_cardEsc(r.det)}</tspan></text>`;
+    s += `<rect x="${pillX}" y="${top + 10}" width="${pillW}" height="18" rx="6" fill="${r.yes ? 'rgba(74,222,128,0.14)' : 'rgba(248,113,113,0.13)'}"/>`;
+    s += `<text x="${pillX + pillW / 2}" y="${top + 23}" text-anchor="middle" font-family="${F}" font-size="11" font-weight="600" fill="${bar}">${tag}</text>`;
+  });
+  const tileY = y0 + d.rows.length * step + 4, tileH = 38, gap = 7, tileW = (innerW - (d.tiles.length - 1) * gap) / d.tiles.length;
+  d.tiles.forEach((t, i) => {
+    const x = P + i * (tileW + gap);
+    s += `<rect x="${x}" y="${tileY}" width="${tileW}" height="${tileH}" rx="8" fill="${C.yesBg}"/>`;
+    s += `<text x="${x + tileW / 2}" y="${tileY + 15}" text-anchor="middle" font-family="${F}" font-size="10" fill="${C.mute}">${_cardEsc(t[0])}</text>`;
+    s += `<text x="${x + tileW / 2}" y="${tileY + 31}" text-anchor="middle" font-family="${F}" font-size="13" font-weight="600" fill="${t[2]}">${_cardEsc(t[1])}</text>`;
+  });
+  const statLabelY = tileY + tileH + 22;
+  s += `<text x="${P}" y="${statLabelY}" font-family="${F}" font-size="11" letter-spacing="0.5" fill="${C.mute}">STATS</text>`;
+  const sy0 = statLabelY + 18;
+  d.stats.forEach((st, i) => {
+    const y = sy0 + i * 20;
+    s += `<text x="${P}" y="${y}" font-family="${F}" font-size="12"><tspan fill="${C.mute}">${_cardEsc(st[0])}</tspan><tspan fill="${C.sub}">   ${_cardEsc(st[1])}</tspan></text>`;
+  });
+  let H = sy0 + d.stats.length * 20 + 6;
+  // Optional M8BF strikes block — INSIDE the card, small + muted, only when armed.
+  if (d.m8bfStrikes) {
+    const sepY = H + 2;
+    s += `<line x1="${P}" y1="${sepY}" x2="${W - P}" y2="${sepY}" stroke="#34363c" stroke-width="1"/>`;
+    const l1 = sepY + 19;
+    s += `<text x="${P}" y="${l1}" font-family="${F}" font-size="11"><tspan fill="${C.mute}">M8BF skip-ends</tspan><tspan fill="${C.sub}">   ${_cardEsc(d.m8bfStrikes.skip)}</tspan></text>`;
+    const l2 = l1 + 18;
+    s += `<text x="${P}" y="${l2}" font-family="${F}" font-size="11"><tspan fill="${C.mute}">combo bans</tspan><tspan fill="${C.sub}">   ${_cardEsc(d.m8bfStrikes.combos)}</tspan></text>`;
+    H = l2 + 8;
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><rect x="0" y="0" width="${W}" height="${H}" rx="16" fill="${C.card}"/>${s}</svg>`;
+}
+async function renderMorningCardPng(d) {
+  await ensureResvg();
+  const fonts = await getCardFonts();
+  const r = new Resvg(buildMorningCardSvg(d), {
+    fitTo: { mode: 'width', value: 920 },
+    font: { fontBuffers: fonts, defaultFontFamily: 'Inter', loadSystemFonts: false },
+  });
+  return r.render().asPng();
+}
+// Map the live `signal` (same object the text builder uses) → card data.
+// Faithful: reuses the exact status strings + the active/blocked rule (a status
+// starting with "No " = blocked = red/NO). M8BF is shown as CONDITIONAL
+// ("watching … on flow signal") because it only fires if a flow signal lands
+// in its window — it is NOT a scheduled trade.
+function buildMorningCardData(signal, vixValues, tailLine) {
+  const isNo = t => !t || /^No\s/i.test(String(t).trim());
+  const strip = (t, name) => {
+    let d = String(t || '').trim();
+    d = d.replace(new RegExp('^(No\\s+)?' + name + '\\b\\s*', 'i'), '');
+    d = d.replace(/^[—\-:│|@]\s*/, '').trim();
+    const pm = d.match(/^\((.*)\)$/); if (pm) d = pm[1];
+    return d.trim();
+  };
+  const rows = [];
+  rows.push({ n: 'GXBF', det: strip(signal.gxbfText, 'GXBF') || '—', yes: !isNo(signal.gxbfText) });
+  {
+    const m8Active = !isNo(signal.m8bfText) && /^M8BF/i.test(String(signal.m8bfText || '').trim());
+    let det;
+    if (m8Active) {
+      const win = (String(signal.m8bfText).match(/(\d{1,2}:\d{2}\s*[–-]\s*\d{1,2}:\d{2})/) || [])[1];
+      det = win ? `watching ${win} · on flow signal` : 'watching · on flow signal';
+    } else { det = strip(signal.m8bfText, 'M8BF') || '—'; }
+    rows.push({ n: 'M8BF', det, yes: m8Active });
+  }
+  rows.push({ n: 'Straddle', det: strip(signal.stradText, 'Straddle') || '—', yes: !isNo(signal.stradText) });
+  rows.push({ n: 'BOBF', det: strip(signal.bobfRec, 'BOBF') || '—', yes: !isNo(signal.bobfRec) });
+  if (signal.diagText) rows.push({ n: 'Diagonal', det: strip(signal.diagText, 'Diagonal') || '—', yes: !isNo(signal.diagText) });
+  if (tailLine) {
+    const tl = String(tailLine);
+    const tYes = /\bTRADE\b/.test(tl) && !/No trade|\bSKIP\b/i.test(tl);
+    rows.push({ n: 'Tail Hedge', det: strip(tl.replace(/^Tail\s*Hedge\s*[│|]?\s*/i, ''), 'Tail Hedge') || (tYes ? 'trade' : 'no trade'), yes: tYes });
+  }
+  const vix = (vixValues.todayOpen != null) ? String(vixValues.todayOpen) : '—';
+  const drop = (typeof signal.oNight === 'number' && isFinite(signal.oNight)) ? signal.oNight.toFixed(2) : null;
+  const vixSub = drop != null ? `VIX open · −${drop}` : 'VIX open';
+  const gapStr = (signal.spxGapPct != null) ? `${signal.spxGapPct > 0 ? '+' : ''}${signal.spxGapPct.toFixed(2)}%` : '—';
+  const tiles = [
+    ['SPX GAP', gapStr, (signal.spxGapPct != null && signal.spxGapPct < 0) ? '#f87171' : '#4ade80'],
+  ];
+  const statLine = (line) => {
+    if (!line) return null;
+    let s = String(line).replace(/\x1b\[[0-9;]*m/g, '').trim();
+    let m = s.match(/^([^│|—]+?)\s*[│|—]\s*(.+)$/);
+    if (m) return [m[1].trim(), m[2].trim()];
+    m = s.match(/^(\S+(?:\s\S+)?)\s{2,}(.+)$/);
+    if (m) return [m[1].trim(), m[2].trim()];
+    return [s, ''];
+  };
+  const stats = [signal._cycleLine, signal._volFlowLine, signal._m8bfWrLine]
+    .map(statLine).filter(Boolean).slice(0, 6);
+  let m8bfStrikes = null;
+  {
+    const si = signal.m8bfStrikeInfo;
+    const m8on = signal.m8bfText && /^M8BF/i.test(String(signal.m8bfText).trim());
+    if (m8on && si && Array.isArray(si.blocked) && si.blocked.length) {
+      m8bfStrikes = {
+        skip: si.blocked.join(' · '),
+        combos: Object.entries(si.comboBans || {}).map(([k, v]) => `${k}→${v}`).join(' · '),
+      };
+    }
+  }
+  return {
+    title: 'Σ3 — Today’s Plan',
+    date: `${signal.dateStr || ''}${signal.dayLabel ? ' · ' + signal.dayLabel : ''}`.trim(),
+    vix, vixSub, rows, tiles, stats, m8bfStrikes,
+  };
+}
+// The M8BF skip-list / combo-bans → Discord small (-#) subtext, posted BELOW
+// the image. Only when M8BF is actually armed today.
+function buildM8bfSubtext(signal) {
+  const si = signal.m8bfStrikeInfo;
+  const active = signal.m8bfText && /^M8BF/i.test(String(signal.m8bfText).trim());
+  if (!active || !si || !si.blocked) return null;
+  const skip = (si.blocked || []).join(' · ');
+  const combos = Object.entries(si.comboBans || {}).map(([k, v]) => `${k}→${v}`).join(' · ');
+  let line = `-# M8BF · skip center-ends: ${skip}`;
+  if (combos) line += `  |  combo bans: ${combos}`;
+  return line.slice(0, 1900);
+}
+// Post a PNG as a Discord attachment (multipart). Image upload requires the
+// bot token path; the legacy proxies can't pass files, so callers fall back to
+// text when this returns !ok.
+function _b64FromBytes(bytes) {
+  let bin = ''; const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  return btoa(bin);
+}
+async function sendDiscordImage(env, userId, pngBytes, proxyUrl = null, filename = 'morning.png') {
+  // Path 1: direct bot token (multipart) if this worker has it.
+  if (env.DISCORD_TOKEN) {
+    try {
+      const dmResp = await fetch('https://discord.com/api/v10/users/@me/channels', {
+        method: 'POST', headers: { Authorization: `Bot ${env.DISCORD_TOKEN}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ recipient_id: userId }),
+      });
+      if (!dmResp.ok) return { ok: false, status: dmResp.status, error: `dm-chan ${dmResp.status}` };
+      const dm = await dmResp.json();
+      const fd = new FormData();
+      fd.append('payload_json', JSON.stringify({ attachments: [{ id: 0, filename }] }));
+      fd.append('files[0]', new Blob([pngBytes], { type: 'image/png' }), filename);
+      const r = await fetch(`https://discord.com/api/v10/channels/${dm.id}/messages`, {
+        method: 'POST', headers: { Authorization: `Bot ${env.DISCORD_TOKEN}` }, body: fd,
+      });
+      let data; try { data = await r.json(); } catch { data = {}; }
+      return { ok: r.ok, status: r.status, data, source: 'image-direct', ...(r.ok ? {} : { error: `img ${r.status}` }) };
+    } catch (e) { return { ok: false, error: 'image-direct: ' + e.message }; }
+  }
+  // Paths 2/3: base64 → discord-proxy (which holds the bot token) decodes + uploads.
+  const payload = JSON.stringify({ userId, imageB64: _b64FromBytes(pngBytes), filename });
+  const hdrs = { 'Content-Type': 'application/json' };
+  if (env.PROXY_SECRET) hdrs['Authorization'] = `Bearer ${env.PROXY_SECRET}`;
+  if (env.DISCORD_PROXY) {
+    try {
+      const r = await env.DISCORD_PROXY.fetch(new Request('https://dummy/', { method: 'POST', headers: hdrs, body: payload }));
+      let data; try { data = await r.json(); } catch { data = {}; }
+      const ok = r.ok && data.ok !== false;
+      return { ok, status: r.status, data, source: 'image-binding', ...(ok ? {} : { error: `proxy-img ${r.status} ${data.error || ''}` }) };
+    } catch (e) { return { ok: false, error: 'image-binding: ' + e.message }; }
+  }
+  if (proxyUrl && proxyUrl.startsWith('https://')) {
+    try {
+      const r = await fetch(proxyUrl, { method: 'POST', headers: hdrs, body: payload });
+      let data; try { data = await r.json(); } catch { data = {}; }
+      const ok = r.ok && data.ok !== false;
+      return { ok, status: r.status, data, source: 'image-http', ...(ok ? {} : { error: `proxy-img ${r.status} ${data.error || ''}` }) };
+    } catch (e) { return { ok: false, error: 'image-http: ' + e.message }; }
+  }
+  return { ok: false, error: 'no image transport (no DISCORD_TOKEN/DISCORD_PROXY/proxyUrl)' };
+}
+// M8BF conditional context notes — worker port of index.html's dashboard block
+// (kept byte-identical so the card matches the dashboard). history rows:
+// { date, m8bfWR, vixOpen, vixClose, spxOpen, spxClose }. etNow must be ET.
+function computeM8bfContextNotes(history, etNow, todayVixOpen) {
+  const rows = (history || [])
+    .filter(r => r.m8bfWR != null)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  if (rows.length < 2) return [];
+  const notes = [];
+  const last = rows[rows.length - 1];
+  const daysDiff = (etNow.getTime() - new Date(last.date + 'T12:00:00').getTime()) / 86400000;
+  function longToISO(s) { const d = new Date(s + ' 12:00:00'); if (isNaN(d)) return null; return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+  function dateToISO(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+  const twISO = new Set();
+  for (let y = 2024; y <= 2027; y++) for (const m of [2, 5, 8, 11]) { let count = 0; for (let d = 1; d <= 31; d++) { const dt = new Date(y, m, d); if (dt.getMonth() !== m) break; if (dt.getDay() === 5 && ++count === 3) { twISO.add(dateToISO(dt)); break; } } }
+  const todayLongStr = dateLong(etNow);
+  const isOpex = () => opexSch.includes(todayLongStr);
+  const isFed = () => fedSch.includes(todayLongStr);
+  const isVixExp = () => vixSch.includes(todayLongStr);
+  const isLastTradeMoToday = () => isLastTradeMo(etNow);
+  const isTodayBeforeTW = () => twISO.has(dateToISO(nextTrade(etNow)));
+  const isTodayAfterTW = () => twISO.has(dateToISO(prevTrade(etNow)));
+  const isNMplus1 = () => isFirstTradeMo(prevTrade(etNow));
+  const byDateISO = Object.fromEntries(rows.map(r => [r.date, r]));
+  const isoDates = rows.map(r => r.date);
+  const isoIdx = Object.fromEntries(isoDates.map((d, i) => [d, i]));
+  const prevTradeISO = d => { const i = isoIdx[d]; return (i != null && i > 0) ? isoDates[i - 1] : null; };
+  const nextTradeISO = d => { const i = isoIdx[d]; return (i != null && i < isoDates.length - 1) ? isoDates[i + 1] : null; };
+  const isFirstTradeMoISO = d => { const p = prevTradeISO(d); return !p || p.slice(0, 7) !== d.slice(0, 7); };
+  const isLastTradeMoISO = d => { const n = nextTradeISO(d); return !n || n.slice(0, 7) !== d.slice(0, 7); };
+  const isNM1ISO = d => { const p = prevTradeISO(d); return p && isFirstTradeMoISO(p); };
+  const opexISO = new Set(opexSch.map(longToISO).filter(Boolean));
+  const fedISO = new Set(fedSch.map(longToISO).filter(Boolean));
+  const vixExpISO = new Set(vixSch.map(longToISO).filter(Boolean));
+  const earnISO = {};
+  earningsSchedule.forEach(e => { const iso = longToISO(e.date); if (!iso) return; if (!earnISO[e.ticker]) earnISO[e.ticker] = new Set(); earnISO[e.ticker].add(iso); });
+  const allWR = rows.map(r => parseFloat(r.m8bfWR)).filter(w => !isNaN(w));
+  const baselineWR = allWR.length ? allWR.reduce((a, b) => a + b, 0) / allWR.length : 55;
+  const NOTE_DELTA_MIN_PP = 10;
+  function wrOn(predicate) {
+    const wrs = [];
+    for (const r of rows) { if (!predicate(r)) continue; const w = parseFloat(r.m8bfWR); if (!isNaN(w)) wrs.push(w); }
+    if (wrs.length < 3) return null;
+    const avg = wrs.reduce((a, b) => a + b, 0) / wrs.length;
+    const delta = avg - baselineWR;
+    if (Math.abs(delta) < NOTE_DELTA_MIN_PP) return null;
+    return { wr: avg.toFixed(1), delta: (delta >= 0 ? '+' : '') + delta.toFixed(1), n: wrs.length };
+  }
+  const tag = s => s ? `${s.wr}% (${s.delta}pp vs avg, n=${s.n})` : null;
+  const pOpex = r => opexISO.has(r.date);
+  const pFed = r => fedISO.has(r.date);
+  const pVixExp = r => vixExpISO.has(r.date);
+  const pEom = r => isLastTradeMoISO(r.date);
+  const pNM1 = r => isNM1ISO(r.date);
+  const pEarn = t => r => earnISO[t] && earnISO[t].has(r.date);
+  const pDayAfter = pred => r => { const p = prevTradeISO(r.date); return p && pred(byDateISO[p]); };
+  const pDayBefore = pred => r => { const n = nextTradeISO(r.date); return n && pred(byDateISO[n]); };
+  const todayVix = parseFloat(todayVixOpen);
+  if (isOpex()) {
+    if (!isNaN(todayVix) && todayVix < 18) { const s = wrOn(r => pOpex(r) && r.vixOpen != null && parseFloat(r.vixOpen) < 18); if (s) notes.push(`Today is OPEX with VIX below 18 — M8BF historically averages ${tag(s)}.`); }
+    else { const s = wrOn(pOpex); if (s) notes.push(`Today is OPEX — M8BF historically averages ${tag(s)}.`); }
+  }
+  { const s = wrOn(pFed); if (isFed() && s) notes.push(`Today is a FED day — M8BF historically averages ${tag(s)}.`); }
+  { const s = wrOn(pEom); if (isLastTradeMoToday() && s) notes.push(`Today is EOM (last trading day of month) — M8BF historically averages ${tag(s)}.`); }
+  { const s = wrOn(pVixExp); if (isVixExp() && s) notes.push(`Today is VIX expiry — M8BF historically averages ${tag(s)}.`); }
+  { const s = wrOn(pNM1); if (isNMplus1() && s) notes.push(`Today is the 2nd trading day of the month — M8BF historically averages ${tag(s)}.`); }
+  earningsSchedule.filter(e => e.date === todayLongStr).forEach(e => { const s = wrOn(pEarn(e.ticker)); if (s) notes.push(`Today is ${e.company} earnings — M8BF historically averages ${tag(s)} on ${e.ticker} earnings days.`); });
+  if (!isNaN(todayVix)) {
+    if (todayVix >= 30) { const s = wrOn(r => r.vixOpen != null && parseFloat(r.vixOpen) >= 30); if (s) notes.push(`VIX opened at ${todayVix.toFixed(1)} today — M8BF averages ${tag(s)} when VIX opens ≥30.`); }
+    else if (todayVix >= 25) { const s = wrOn(r => r.vixOpen != null && parseFloat(r.vixOpen) >= 25 && parseFloat(r.vixOpen) < 30); if (s) notes.push(`VIX opened at ${todayVix.toFixed(1)} today — M8BF averages ${tag(s)} when VIX opens 25-30.`); }
+  }
+  { const s = wrOn(pDayBefore(pFed)); if (fedSch.some(ds => isTodayBefore(ds, etNow)) && s) notes.push(`Tomorrow is a FED day — M8BF averages ${tag(s)} the day before Fed decisions.`); }
+  { const s = wrOn(pDayBefore(pOpex)); if (opexSch.some(ds => isTodayBefore(ds, etNow)) && s) notes.push(`Tomorrow is OPEX — M8BF averages ${tag(s)} the day before OPEX.`); }
+  { const s = wrOn(pDayBefore(r => twISO.has(r.date))); if (isTodayBeforeTW() && s) notes.push(`Tomorrow is Triple Witching — M8BF averages ${tag(s)} the day before TW.`); }
+  earningsSchedule.filter(e => isTodayBefore(e.date, etNow)).forEach(e => { const s = wrOn(pDayBefore(pEarn(e.ticker))); if (s) notes.push(`Tomorrow is ${e.company} earnings — M8BF averages ${tag(s)} the day before ${e.ticker} earnings.`); });
+  if (daysDiff <= 3) {
+    { const s = wrOn(pDayAfter(r => twISO.has(r.date))); if (isTodayAfterTW() && s) notes.push(`Yesterday was Triple Witching — M8BF averages ${tag(s)} the day after TW.`); }
+    { const s = wrOn(pDayAfter(pOpex)); if (opexSch.some(ds => isTodayAfter(ds, etNow)) && s) notes.push(`Yesterday was OPEX — M8BF averages ${tag(s)} the day after OPEX.`); }
+    earningsSchedule.filter(e => longToISO(e.date) === last.date).forEach(e => { const s = wrOn(pDayAfter(pEarn(e.ticker))); if (s) notes.push(`Yesterday was ${e.company} earnings — M8BF averages ${tag(s)} the day after ${e.ticker} earnings.`); });
+    if (parseFloat(last.m8bfWR) === 0) { const s = wrOn(pDayAfter(r => parseFloat(r.m8bfWR) === 0)); if (s) notes.push(`Last session (${last.date}) was 0% win rate — next-day average is ${tag(s)}.`); }
+    if (last.vixClose) {
+      const vc = parseFloat(last.vixClose);
+      if (vc >= 30) { const s = wrOn(pDayAfter(r => r.vixClose != null && parseFloat(r.vixClose) >= 30)); if (s) notes.push(`VIX closed at ${vc.toFixed(1)} last session — next-day M8BF averages ${tag(s)} when prior VIX close ≥30.`); }
+      else if (vc >= 25) { const s = wrOn(pDayAfter(r => r.vixClose != null && parseFloat(r.vixClose) >= 25 && parseFloat(r.vixClose) < 30)); if (s) notes.push(`VIX closed at ${vc.toFixed(1)} last session — next-day M8BF averages ${tag(s)} when prior VIX close 25-30.`); }
+    }
+    const vixIntra = r => { if (!r || r.vixOpen == null || r.vixClose == null) return null; const vo = parseFloat(r.vixOpen), vc = parseFloat(r.vixClose); return (vc - vo) / vo * 100; };
+    if (last.vixOpen && last.vixClose) {
+      const vi = vixIntra(last);
+      if (vi >= 10) { const s = wrOn(pDayAfter(r => { const v = vixIntra(r); return v != null && v >= 10; })); if (s) notes.push(`VIX spiked ${vi.toFixed(1)}% intraday last session — next-day M8BF averages ${tag(s)} when VIX rises 10%+.`); }
+      else if (vi >= 5) { const s = wrOn(pDayAfter(r => { const v = vixIntra(r); return v != null && v >= 5 && v < 10; })); if (s) notes.push(`VIX rose ${vi.toFixed(1)}% intraday last session — next-day M8BF averages ${tag(s)} when VIX rises 5-10%.`); }
+      else if (vi <= -10) { const s = wrOn(pDayAfter(r => { const v = vixIntra(r); return v != null && v <= -10; })); if (s) notes.push(`VIX dropped ${Math.abs(vi).toFixed(1)}% intraday last session — next-day M8BF averages ${tag(s)} when VIX drops 10%+.`); }
+    }
+    const spxRet = r => { if (!r || r.spxOpen == null || r.spxClose == null) return null; const so = parseFloat(r.spxOpen), sc = parseFloat(r.spxClose); return (sc - so) / so * 100; };
+    if (last.spxOpen && last.spxClose) {
+      const sr = spxRet(last);
+      if (sr <= -2) { const s = wrOn(pDayAfter(r => { const x = spxRet(r); return x != null && x <= -2; })); if (s) notes.push(`SPX fell ${Math.abs(sr).toFixed(1)}% last session — next-day M8BF averages ${tag(s)} after a 2%+ SPX down day.`); }
+      else if (sr <= -1) { const s = wrOn(pDayAfter(r => { const x = spxRet(r); return x != null && x > -2 && x <= -1; })); if (s) notes.push(`SPX fell ${Math.abs(sr).toFixed(1)}% last session — next-day M8BF averages ${tag(s)} after a 1-2% SPX down day.`); }
+      else if (sr >= 1 && sr < 2) { const s = wrOn(pDayAfter(r => { const x = spxRet(r); return x != null && x >= 1 && x < 2; })); if (s) notes.push(`SPX rose ${sr.toFixed(1)}% last session — next-day M8BF averages ${tag(s)} after a 1-2% SPX up day.`); }
+    }
+  }
+  return notes;
+}
+const SAMPLE_MORNING_CARD = {
+  title: 'Σ3 — Today’s Plan', date: 'Thu · Jun 18 2026 · OPEX', vix: '16.67', vixSub: 'VIX open · −1.77',
+  rows: [
+    { n: 'GXBF', det: 'fires 9:36 AM', yes: true }, { n: 'M8BF', det: 'window 11:00–11:30', yes: true },
+    { n: 'Straddle', det: 'overnight VIX drop > 0.65', yes: false }, { n: 'BOBF', det: 'OPEX', yes: false },
+    { n: 'Diagonal', det: 'COR1M 8.60 < 10', yes: false }, { n: 'Tail Hedge', det: 'COR1M 8.60, need < 7.75', yes: false },
+  ],
+  tiles: [['SPX GAP', '+0.91%', '#4ade80']],
+  stats: [
+    ['Day-type', 'NEUTRAL/BULL · Strad below norm ($695 vs $1091)'],
+    ['Vol-flow', 'VOL_BID · M8BF $149 vs $434 · Strad $1902 vs $1091'],
+    ['M8BF WR', '6% yday · soft ($310–350 vs $427)'],
+  ],
+  m8bfStrikes: { skip: '10 · 25 · 35 · 40 · 65 · 80', combos: '0→95 · 20→15 · 55→50 · 65→60 · 85→90' },
+};
+
 export default {
   async fetch(request, env, ctx) {
     const origin = request.headers.get('Origin') || '';
@@ -7349,6 +7708,28 @@ export default {
     }
 
     // ── GET /raw-discord?date=YYYY-MM-DD ── Show raw Discord messages for debugging
+    if (url.pathname === '/test-card' && request.method === 'GET') {
+      try {
+        const png = await renderMorningCardPng(SAMPLE_MORNING_CARD);
+        return new Response(png, { headers: { 'content-type': 'image/png', 'cache-control': 'no-store' } });
+      } catch (e) {
+        return new Response('card render failed: ' + (e && (e.stack || e.message) || e), { status: 500 });
+      }
+    }
+
+    if (url.pathname === '/test-card-discord' && request.method === 'GET') {
+      try {
+        const dcRaw = await env.SIGNAL_KV.get('discord_config');
+        if (!dcRaw) return new Response('no discord_config', { status: 500 });
+        const dc = JSON.parse(dcRaw);
+        const png = await renderMorningCardPng(SAMPLE_MORNING_CARD);
+        const r = await sendDiscordImage(env, dc.channelId, png, dc.proxyUrl);
+        return new Response(JSON.stringify({ image: r.ok, status: r.status, error: r.error || null }), { headers: { 'content-type': 'application/json' } });
+      } catch (e) {
+        return new Response('test-card-discord failed: ' + (e && (e.stack || e.message) || e), { status: 500 });
+      }
+    }
+
     if (url.pathname === '/raw-discord' && request.method === 'GET') {
       if (request.headers.get('X-Sync-Secret') !== env.SYNC_SECRET) {
         return jsonResp({ error: 'Unauthorized' }, 401, {});

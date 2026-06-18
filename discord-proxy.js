@@ -45,8 +45,9 @@ export default {
     }
 
     try {
-      const { userId, message } = await request.json();
-      if (!userId || !message) throw new Error("Missing userId or message");
+      const { userId, message, imageB64, filename, content } = await request.json();
+      if (!userId) throw new Error("Missing userId");
+      if (!message && !imageB64) throw new Error("Missing message or imageB64");
 
       const TOKEN = env.DISCORD_TOKEN;
       if (!TOKEN) throw new Error("DISCORD_TOKEN not configured");
@@ -63,7 +64,24 @@ export default {
       if (!dmResp.ok) throw new Error(`DM channel failed: ${dmResp.status}`);
       const dm = await dmResp.json();
 
-      // Step 2: Send message
+      // Step 2: Send. imageB64 (base64 PNG) → multipart attachment; else text.
+      if (imageB64) {
+        const bin = atob(imageB64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        const fname = filename || "card.png";
+        const fd = new FormData();
+        fd.append("payload_json", JSON.stringify({ content: content || "", attachments: [{ id: 0, filename: fname }] }));
+        fd.append("files[0]", new Blob([bytes], { type: "image/png" }), fname);
+        const imgResp = await fetch(`https://discord.com/api/v10/channels/${dm.id}/messages`, {
+          method: "POST",
+          headers: { Authorization: `Bot ${TOKEN}` },
+          body: fd,
+        });
+        if (!imgResp.ok) throw new Error(`Image send failed: ${imgResp.status} ${(await imgResp.text()).slice(0, 160)}`);
+        return new Response(JSON.stringify({ ok: true, kind: "image" }), { headers: { ...cors, "Content-Type": "application/json" } });
+      }
+
       const msgResp = await fetch(`https://discord.com/api/v10/channels/${dm.id}/messages`, {
         method: "POST",
         headers: {
