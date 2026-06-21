@@ -1853,6 +1853,21 @@
       cor1m:     window._cloudCor1m ?? window._histLastCor1m ?? null,
     });
 
+    // Stash a card payload for the manual "Send Card" button — the worker renders
+    // it server-side from the calculator's OWN signal, so it works any time (no
+    // live re-pull). spxGapPct/oNight guarded so a missing var can't throw.
+    try {
+      window.__cardPayload = {
+        signal: Object.assign({}, sig, {
+          spxGapPct: (typeof spxGapPct === 'number' ? spxGapPct : null),
+          oNight:    (typeof oNight === 'number' ? oNight : null),
+          dateStr:   (document.getElementById('todayDate')||{}).textContent || '',
+          dayLabel:  (document.getElementById('dayLabel')||{}).textContent || '',
+        }),
+        vixValues: { todayOpen: vToday, yOpen: isNaN(vYOpen) ? null : vYOpen, yClose: isNaN(vYClose) ? null : vYClose },
+      };
+    } catch (_) {}
+
     /* ====== RENDER 5 CARDS ====== */
 
     const cardM8bf   = document.getElementById('cardM8bf');
@@ -3302,17 +3317,23 @@
 
   /* Test post */
   async function discordTest(){
-    // Sends the REAL morning card (picture format) via the worker, which renders
-    // it server-side and posts image-first with a text fallback — the same
-    // pipeline as the 9:31 auto-send. Manual fallback if the cron ever misses.
+    // Posts the morning card as a PICTURE, built from the calculator's OWN signal
+    // (works any time — no live re-pull). Always-works fallback: the old text.
     discordSetStatus('connected', 'Rendering & posting card…');
     const px = (localStorage.getItem('sc_proxyUrl')||'https://schwab-proxy.ravamt4.workers.dev').replace(/\/+$/,'');
+    const p = window.__cardPayload;
     try{
-      const r = await fetch(px + '/debug-morning-dual?send=card');
-      const j = await r.json();
-      if(j && j.send && j.send.ok) discordSetStatus('connected', 'Card posted ✓ ('+(j.send.kind||'image')+')');
-      else discordSetStatus('error', 'Card send failed: '+((j.send&&j.send.error)||'unknown'));
-    }catch(e){ discordSetStatus('error', 'Send failed: '+e.message); }
+      if(p){
+        const r = await fetch(px + '/send-card', { method:'POST', body: JSON.stringify(p) });
+        const j = await r.json();
+        if(j && j.ok){ discordSetStatus('connected', 'Card posted ✓ ('+(j.kind||'image')+')'); return; }
+      }
+      const ok = await discordPost(discordBuildMessage());   // fallback: text (always works)
+      discordSetStatus(ok?'connected':'error', ok ? 'Posted (text fallback) ✓' : 'Send failed');
+    }catch(e){
+      const ok = await discordPost(discordBuildMessage());
+      discordSetStatus(ok?'connected':'error', ok ? 'Posted (text fallback) ✓' : 'Send failed: '+e.message);
+    }
   }
 
   /* ── Signal subscribers (2026-06-15) — manage extra DM recipients ── */
