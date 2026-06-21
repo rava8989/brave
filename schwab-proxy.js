@@ -3305,10 +3305,12 @@ async function fetchSpxFullChain(token, expDate, env) {
 }
 
 // Master SPX chain — fetched ONCE per cron tick and passed to every handler
-// (GEX, straddle, BOBF, diagonal). strikeCount=80 covers ±$200 around spot
-// which is wide enough for every strategy's strikes (deepest is diagonal's
-// 30-ITM short = spot+30, well within range). No date range = Schwab returns
-// all available expiries, covering 0DTE through ~30+ DTE.
+// (GEX, straddle, BOBF, diagonal). strikeCount=80 — UNCHANGED shared trading
+// chain. Every strategy picks specific near-money strikes well within this band,
+// so this is the live trade-execution feed and must not move for a GEX display
+// tweak. (GEX's wider ±8% window/curve operate on whatever strikes this chain
+// provides; a dedicated wide GEX fetch can be added later if needed.)
+// No date range = Schwab returns all available expiries, 0DTE through ~30+ DTE.
 async function fetchMasterSpxChain(token, env) {
   if (token) {
     try {
@@ -5859,6 +5861,48 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
     return normPdf(d1) * Math.exp(-Q * T) / (S * sigma * Math.sqrt(T));
   }
 
+  // ── VANNA / CHARM greeks (information-only, same R/Q/MULT/normPdf/d1 convention as bsGamma) ──
+  // Vanna = dDelta/dSigma = dVega/dSpot. Per 1.00 (=100 vol-pt) sigma move.
+  function bsVanna(S, K, T, sigma) {
+    if (T <= 0 || sigma <= 0 || S <= 0) return 0;
+    const sqrtT = Math.sqrt(T);
+    const d1 = (Math.log(S / K) + (R - Q + 0.5 * sigma * sigma) * T) / (sigma * sqrtT);
+    const d2 = d1 - sigma * sqrtT;
+    return -Math.exp(-Q * T) * normPdf(d1) * d2 / sigma;
+  }
+
+  // normCdf — Abramowitz-Stegun 7.1.26, needed for the charm carry-drift term.
+  function normCdf(x) {
+    const t = 1 / (1 + 0.2316419 * Math.abs(x));
+    const d = 0.3989422804014327 * Math.exp(-0.5 * x * x); // = N'(x)
+    const p = d * t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 +
+            t * (-1.821255978 + t * 1.330274429))));
+    return x >= 0 ? 1 - p : p;
+  }
+
+  // helper: carry-drift term = (2(R-Q)T - d2*sigma*sqrtT) / (2 T sigma sqrtT)
+  function N_carryDriftHelper(d1, d2, sigma, sqrtT, T) {
+    return (2 * (R - Q) * T - d2 * sigma * sqrtT) / (2 * T * sigma * sqrtT);
+  }
+
+  // Charm = -dDelta/dT (delta change as time PASSES). isCall picks the carry term.
+  // Per 1 YEAR of T; the CEX scaler converts to 1 calendar day.
+  function bsCharm(S, K, T, sigma, isCall) {
+    if (T <= 0 || sigma <= 0 || S <= 0) return 0;
+    const sqrtT = Math.sqrt(T);
+    const d1 = (Math.log(S / K) + (R - Q + 0.5 * sigma * sigma) * T) / (sigma * sqrtT);
+    const d2 = d1 - sigma * sqrtT;
+    const Nd1 = isCall ? normCdf(d1) : (normCdf(d1) - 1);
+    const inner = N_carryDriftHelper(d1, d2, sigma, sqrtT, T);
+    const dDelta_dT = -Q * Math.exp(-Q * T) * Nd1
+                    + Math.exp(-Q * T) * normPdf(d1) * inner;
+    return -dDelta_dT;
+  }
+
+  // Greek-exposure unit scalers (mirror the gex `* S*S*MULT*0.01` base).
+  const VOL_PT   = 0.01;      // 1 implied-vol POINT = 0.01 in sigma
+  const DAY_FRAC = 1 / 365;   // 1 calendar day as fraction of a year
+
   const callMap = chainData.callExpDateMap || {};
   const putMap = chainData.putExpDateMap || {};
   const S = spot;
@@ -5878,9 +5922,11 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
   }
 
   // Accumulate per-strike across selected expirations
-  const strikeAccum = {}; // strike → { callGex, putGex, callOI, putOI }
+  const strikeAccum = {}; // strike → { callGex, putGex, callOI, putOI, callVex, putVex, callCex, putCex }
   let totalCallGex = 0, totalPutGex = 0;
   let nearestDte = Infinity;
+  // Per-contract gamma inputs (OI>0 rows that fed gex) — reused for the spot-shifted curve.
+  const gammaInputs = [];
 
   for (const expKey of expiriesToUse) {
     const dteParts = expKey.split(':');
@@ -5897,7 +5943,7 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
       const K = parseFloat(strikeStr);
       if (isNaN(K)) continue;
 
-      if (!strikeAccum[strikeStr]) strikeAccum[strikeStr] = { strike: K, callGex: 0, putGex: 0, callOI: 0, putOI: 0 };
+      if (!strikeAccum[strikeStr]) strikeAccum[strikeStr] = { strike: K, callGex: 0, putGex: 0, callOI: 0, putOI: 0, callVex: 0, putVex: 0, callCex: 0, putCex: 0 };
       const acc = strikeAccum[strikeStr];
 
       const callContracts = calls[strikeStr] || [];
@@ -5909,10 +5955,18 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
         // Standard GEX: use open interest only (volume is turnover, not dealer inventory)
         if (oi === 0) continue;
         acc.callOI += oi;
-        const gamma = bsGamma(S, K, T_years, iv > 0 ? iv : 0.2);
+        const sig = iv > 0 ? iv : 0.2;
+        const gamma = bsGamma(S, K, T_years, sig);
         const gex = gamma * oi * S * S * MULT * 0.01;
         acc.callGex += gex;
         totalCallGex += gex;
+        // VEX (per +1 vol-pt) / CEX (delta drift over REMAINING life to expiry) — same base & dealer sign as gex.
+        // CEX uses × T_years (not per-day): bounded + interpretable, avoids the 0DTE per-day 1/T charm blow-up.
+        const vex = bsVanna(S, K, T_years, sig) * oi * S * S * MULT * 0.01 * VOL_PT;
+        acc.callVex += vex;
+        const cex = bsCharm(S, K, T_years, sig, true) * oi * S * S * MULT * 0.01 * T_years;
+        acc.callCex += cex;
+        gammaInputs.push({ K, T: T_years, iv: sig, oi, isCall: true });
       }
 
       for (const p of putContracts) {
@@ -5920,20 +5974,27 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
         const iv = (p.volatility || 0) / 100;
         if (oi === 0) continue;
         acc.putOI += oi;
-        const gamma = bsGamma(S, K, T_years, iv > 0 ? iv : 0.2);
+        const sig = iv > 0 ? iv : 0.2;
+        const gamma = bsGamma(S, K, T_years, sig);
         const gex = gamma * oi * S * S * MULT * 0.01;
         acc.putGex -= gex; // puts negative
         totalPutGex -= gex;
+        // Dealer short puts → subtract
+        const vexP = bsVanna(S, K, T_years, sig) * oi * S * S * MULT * 0.01 * VOL_PT;
+        acc.putVex -= vexP;
+        const cexP = bsCharm(S, K, T_years, sig, false) * oi * S * S * MULT * 0.01 * T_years;
+        acc.putCex -= cexP;
+        gammaInputs.push({ K, T: T_years, iv: sig, oi, isCall: false });
       }
     }
   }
 
-  // Filter strikes to ±5% from spot to keep chart focused
-  const rangePct = 0.05;
+  // Filter strikes to ±8% from spot (widened 2026-06-21 from ±5% to include far walls)
+  const rangePct = 0.08;
   const lo = S * (1 - rangePct), hi = S * (1 + rangePct);
 
   const strikeResults = Object.values(strikeAccum)
-    .map(s => ({ ...s, netGex: s.callGex + s.putGex }))
+    .map(s => ({ ...s, netGex: s.callGex + s.putGex, netVex: s.callVex + s.putVex, netCex: s.callCex + s.putCex }))
     .filter(s => (s.callOI > 0 || s.putOI > 0) && s.strike >= lo && s.strike <= hi)
     .sort((a, b) => a.strike - b.strike);
 
@@ -5941,9 +6002,12 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
 
   // Compute totalGex from filtered strikes only (matches what the chart displays)
   let totalCallGexFiltered = 0, totalPutGexFiltered = 0;
+  let totalVex = 0, totalCex = 0; // net VEX / CEX over the same filtered strikes as gex
   for (const r of strikeResults) {
     totalCallGexFiltered += r.callGex;
     totalPutGexFiltered += r.putGex;
+    totalVex += r.netVex;
+    totalCex += r.netCex;
   }
   const totalGex = totalCallGexFiltered + totalPutGexFiltered;
 
@@ -6009,6 +6073,26 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
       direction: w.netGex >= 0 ? 'stabilizing' : 'amplifying',
     }));
 
+  // ── Spot-shifted gamma curve: net dealer GEX if spot were S', book (IV/OI/T) fixed.
+  //    ±rangePct in 25 steps. Re-evaluates bsGamma at each simulated spot.
+  //    Emitted as [{shift, gamma}] where shift = S'−spot, gamma = netGex at S'
+  //    (UI plots x = data.spot + shift, y = gamma).
+  const gammaCurve = [];
+  {
+    const steps = 25;
+    for (let i = 0; i < steps; i++) {
+      const frac = -rangePct + (2 * rangePct) * (i / (steps - 1));
+      const Sp = S * (1 + frac);
+      let netGex = 0;
+      for (const g of gammaInputs) {
+        let gex = bsGamma(Sp, g.K, g.T, g.iv) * g.oi * Sp * Sp * MULT * 0.01;
+        if (!g.isCall) gex = -gex; // dealer short puts → negative
+        netGex += gex;
+      }
+      gammaCurve.push({ shift: parseFloat((Sp - S).toFixed(2)), gamma: Math.round(netGex) });
+    }
+  }
+
   const regime = totalGex > 0 ? 'PIN' : 'BREAKOUT';
 
   return {
@@ -6023,6 +6107,12 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
     maxPosGex: Math.round(maxPosGex),
     maxNegStrike,
     maxNegGex: Math.round(maxNegGex),
+    // Information-only greek scalars (net dealer exposure over the filtered band)
+    vanna: Math.round(totalVex),
+    charm: Math.round(totalCex),
+    gammaCurve,
+    windowPct: parseFloat((rangePct * 100).toFixed(2)),
+    windowWidened: true,
     pctChange1m: null, // filled in by history comparison
     pctChange5m: null,
     walls,
@@ -6049,7 +6139,8 @@ async function handleGEXUpdate(env, token, preChain = null) {
     chainData = { callExpDateMap: preChain.callExpDateMap, putExpDateMap: preChain.putExpDateMap };
     spot = preChain.spot;
   } else {
-    const baseParams = 'symbol=%24SPX&strikeCount=80&includeUnderlyingQuote=true&strategy=SINGLE';
+    // GEX wants a wide strike window (±8% band + far walls) → strikeCount=150.
+    const baseParams = 'symbol=%24SPX&strikeCount=150&includeUnderlyingQuote=true&strategy=SINGLE';
     const [callData, putData] = await Promise.all([
       fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/chains?${baseParams}&contractType=CALL`, token),
       fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/chains?${baseParams}&contractType=PUT`, token),

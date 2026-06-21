@@ -37,6 +37,10 @@
     .gex-data{display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
     .total-gex{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:600;color:var(--text);}
     .total-gex .label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);display:block;}
+    .stat-tile.pos > .val{color:var(--green);}
+    .stat-tile.neg > .val{color:var(--red);}
+    .stat-tile.neutral > .val{color:var(--text2);}
+    .stat-tile .tag{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);margin-left:5px;}
     .pct-change{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;}
     .pct-change.up{color:var(--green);} .pct-change.dn{color:var(--red);}
     .timestamp{font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;}
@@ -176,6 +180,12 @@
   <div class="gex-data" id="gexDataBar">
     <span class="spx-price" id="spxPrice">--</span>
     <span class="regime-badge pin" id="regimeBadge" style="display:none;">--</span>
+    <div class="total-gex stat-tile neutral" id="vannaTile" title="Vanna: how dealer gamma shifts as implied vol changes.">
+      <span class="label">Vanna</span><span class="val">--</span><span class="tag" id="vannaTag"></span>
+    </div>
+    <div class="total-gex stat-tile neutral" id="charmTile" title="Charm: how dealer gamma decays as time passes toward expiry.">
+      <span class="label">Charm</span><span class="val">--</span><span class="tag" id="charmTag"></span>
+    </div>
     <div class="total-gex" id="totalGex"><span class="label">Total GEX</span>--</div>
     <span class="pct-change" id="pctChange1m"></span>
     <span class="pct-change" id="pctChange5m"></span>
@@ -223,6 +233,17 @@
     </div>
     <div class="chart-wrap">
       <canvas id="gexChart"></canvas>
+    </div>
+  </div>
+
+  <!-- Spot-shifted Gamma Curve -->
+  <div class="chart-section" id="gammaCurveSection" style="display:none;">
+    <h2><span>Gamma</span> Curve — Dealer Gamma vs Simulated Spot</h2>
+    <div class="chart-wrap" style="height:300px;">
+      <canvas id="gammaCurveChart"></canvas>
+    </div>
+    <div class="bottom-info" style="text-align:left;padding:8px 0 0;">
+      Net dealer gamma if spot moved. Zero-cross marks the flip; sign tells you stabilizing (+) vs amplifying (−) at each price.
     </div>
   </div>
 
@@ -288,6 +309,7 @@ const STALE_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
 let triggerAttempted = false; // only try once per page load
 
 let gexChart = null;
+let gammaCurveChart = null;
 let pollTimer = null;
 // ── Event log: server-persisted in KV, available on any device ──
 let eventLog = [];
@@ -349,6 +371,31 @@ function renderTopBar(data) {
   regimeEl.style.display = regime !== '--' ? 'inline-block' : 'none';
 
   document.getElementById('totalGex').innerHTML = '<span class="label">Total GEX</span>' + (totalGex != null ? fmtGex(totalGex) : '--');
+
+  // Vanna / Charm stat tiles (graceful-degrade to '--' if absent)
+  function setStatTile(tileId, tagId, value, posTag, negTag, tipPos, tipNeg) {
+    const tile = document.getElementById(tileId);
+    const valEl = tile.querySelector('.val');
+    const tagEl = document.getElementById(tagId);
+    if (value == null || isNaN(value)) {
+      tile.className = 'total-gex stat-tile neutral';
+      valEl.textContent = '--'; tagEl.textContent = '';
+      return;
+    }
+    const pos = value >= 0;
+    tile.className = 'total-gex stat-tile ' + (pos ? 'pos' : 'neg');
+    valEl.textContent = fmtGex(value);
+    tagEl.textContent = pos ? posTag : negTag;
+    tile.title = (pos ? tipPos : tipNeg);
+  }
+  setStatTile('vannaTile','vannaTag', data.vanna,
+    'VOL-UP+','VOL-UP-',
+    'Vanna +: dealers buy into rising IV (vol-up supportive, vol-down adds pressure).',
+    'Vanna -: dealers sell into rising IV (rising vol amplifies moves).');
+  setStatTile('charmTile','charmTag', data.charm,
+    'PIN+','PIN-',
+    'Charm +: long-gamma decays toward expiry — pin tends to firm into the close.',
+    'Charm -: short-gamma builds toward expiry — instability into the close.');
 
   // % changes
   const pct1m = document.getElementById('pctChange1m');
@@ -567,6 +614,85 @@ function renderChart(data) {
   });
 }
 
+// ── Spot-shifted gamma curve (graceful-degrade: hide if server omits data.gammaCurve) ──
+function renderGammaCurve(data) {
+  const section = document.getElementById('gammaCurveSection');
+  const curve = data.gammaCurve; // [{shift:Number, gamma:Number}, ...]
+  if (!curve || curve.length === 0) {
+    section.style.display = 'none';
+    if (gammaCurveChart) { gammaCurveChart.destroy(); gammaCurveChart = null; }
+    return;
+  }
+  section.style.display = 'block';
+  const ctx = document.getElementById('gammaCurveChart').getContext('2d');
+  // x = simulated spot price = data.spot + shift (curve in price space)
+  const labels = curve.map(p => (data.spot + p.shift).toFixed(0));
+  const values = curve.map(p => p.gamma);
+  // Segment color: green where gamma>=0 (stabilizing), red where <0 (amplifying)
+  const segColor = (c) => (c.p0.parsed.y >= 0 && c.p1.parsed.y >= 0) ? 'rgba(34,197,94,0.9)'
+                        : (c.p0.parsed.y <  0 && c.p1.parsed.y <  0) ? 'rgba(239,68,68,0.9)'
+                        : 'rgba(129,140,248,0.9)'; // crossing segment
+
+  const zeroIdx = labels.findIndex(l => parseFloat(l) >= data.spot); // spot marker
+  const annotations = {
+    zeroGamma: { type: 'line', yMin: 0, yMax: 0,
+      borderColor: 'rgba(148,163,184,0.6)', borderWidth: 1, borderDash: [4,4] },
+  };
+  if (zeroIdx >= 0) {
+    annotations.spotLine = {
+      type: 'line', xMin: zeroIdx, xMax: zeroIdx,
+      borderColor: '#22d3ee', borderWidth: 2,
+      label: { display: true, content: 'SPX ' + data.spot.toFixed(0), position: 'start',
+        backgroundColor: 'rgba(34,211,238,0.9)', color: '#0f172a',
+        font: { family: 'JetBrains Mono', size: 10, weight: 'bold' },
+        padding: { top: 2, bottom: 2, left: 6, right: 6 }, borderRadius: 4 }
+    };
+  }
+
+  if (gammaCurveChart) {
+    gammaCurveChart.data.labels = labels;
+    gammaCurveChart.data.datasets[0].data = values;
+    gammaCurveChart.options.plugins.annotation.annotations = annotations;
+    gammaCurveChart.update('none');
+    return;
+  }
+  gammaCurveChart = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets: [{
+      data: values, borderWidth: 2, pointRadius: 0, tension: 0.25, fill: false,
+      borderColor: 'rgba(129,140,248,0.9)',
+      segment: { borderColor: segColor },
+    }]},
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#1e293b', borderColor: '#2d3f55', borderWidth: 1,
+          titleFont: { family: 'JetBrains Mono', size: 12, weight: 'bold' },
+          bodyFont:  { family: 'JetBrains Mono', size: 11 },
+          titleColor: '#e2e8f0', bodyColor: '#94a3b8', padding: 10, cornerRadius: 8,
+          callbacks: {
+            title: (items) => 'Spot ' + items[0].label,
+            label: (item) => 'Net Gamma: ' + fmtGex(item.raw),
+          }
+        },
+        annotation: { annotations },
+      },
+      scales: {
+        x: { grid: { color: 'rgba(45,63,85,0.3)', drawBorder: false },
+             ticks: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 10 },
+                      maxRotation: 45, autoSkip: true, maxTicksLimit: 20 } },
+        y: { grid: { color: 'rgba(45,63,85,0.3)', drawBorder: false },
+             ticks: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 10 },
+                      callback: v => fmtGex(v) } }
+      },
+      animation: { duration: 300 },
+    }
+  });
+}
+
 function renderTable(data) {
   if (!data.walls) return;
   const body = document.getElementById('wallsBody');
@@ -706,6 +832,7 @@ async function tryLoadCached() {
     renderTopBar(data);
     renderCards(data);
     renderChart(data);
+    renderGammaCurve(data);
     renderTable(data);
     renderEvents(data);
     document.getElementById('mainContent').style.display = 'block';
@@ -743,6 +870,7 @@ async function fetchAndRender() {
                 if (retry.ok) {
                   const data = await retry.json();
                   renderTopBar(data); renderCards(data); renderChart(data);
+                  renderGammaCurve(data);
                   renderTable(data); renderEvents(data);
                   document.getElementById('mainContent').style.display = 'block';
                   document.getElementById('loadingOverlay').classList.add('hidden');
@@ -772,9 +900,27 @@ async function fetchAndRender() {
       }
     } else if (modeWarn) { modeWarn.remove(); }
 
+    // Window-widened note (server widened the ±band to include far walls)
+    const widenNote = document.getElementById('gexWindowNote');
+    if (data.windowWidened) {
+      const pct = data.windowPct != null ? data.windowPct : null;
+      if (!widenNote) {
+        const w = document.createElement('span');
+        w.id = 'gexWindowNote';
+        w.style.cssText = 'font-size:10px;color:var(--yellow);font-weight:600;';
+        w.textContent = '(window widened' + (pct != null ? ' to ±' + pct + '%' : '') + ' to include walls)';
+        document.getElementById('gexModeToggle').after(w);
+      } else if (pct != null) {
+        widenNote.textContent = '(window widened to ±' + pct + '% to include walls)';
+      }
+    } else if (widenNote) {
+      widenNote.remove();
+    }
+
     renderTopBar(data);
     renderCards(data);
     renderChart(data);
+    renderGammaCurve(data);
     renderTable(data);
     renderEvents(data);
 
@@ -845,6 +991,7 @@ document.getElementById('gexModeToggle').addEventListener('click', async (e) => 
   gexMode = btn.dataset.mode;
   // Force chart rebuild for clean axis transition
   if (gexChart) { gexChart.destroy(); gexChart = null; }
+  if (gammaCurveChart) { gammaCurveChart.destroy(); gammaCurveChart = null; }
   await guardedFetch();
 });
 
