@@ -398,7 +398,7 @@
     </div>
     <div class="schwab-actions">
       <button class="schwab-btn primary" id="discordSetupBtn" onclick="discordSetup()">Setup Discord Bot</button>
-      <button class="schwab-btn" id="discordTestBtn" onclick="discordTest()" style="display:none;">Test Post</button>
+      <button class="schwab-btn" id="discordTestBtn" onclick="discordTest()" style="display:none;">Send Card</button>
       <button class="schwab-btn" id="discordDisconnectBtn" onclick="discordDisconnect()" style="display:none;">Disconnect</button>
     </div>
 
@@ -3302,10 +3302,17 @@
 
   /* Test post */
   async function discordTest(){
-    discordSetStatus('connected', 'Posting test message…');
-    const msg = discordBuildMessage();
-    const ok  = await discordPost(msg);
-    if(ok) discordSetStatus('connected', 'Discord bot configured ✓ · Test posted!');
+    // Sends the REAL morning card (picture format) via the worker, which renders
+    // it server-side and posts image-first with a text fallback — the same
+    // pipeline as the 9:31 auto-send. Manual fallback if the cron ever misses.
+    discordSetStatus('connected', 'Rendering & posting card…');
+    const px = (localStorage.getItem('sc_proxyUrl')||'https://schwab-proxy.ravamt4.workers.dev').replace(/\/+$/,'');
+    try{
+      const r = await fetch(px + '/debug-morning-dual?send=card');
+      const j = await r.json();
+      if(j && j.send && j.send.ok) discordSetStatus('connected', 'Card posted ✓ ('+(j.send.kind||'image')+')');
+      else discordSetStatus('error', 'Card send failed: '+((j.send&&j.send.error)||'unknown'));
+    }catch(e){ discordSetStatus('error', 'Send failed: '+e.message); }
   }
 
   /* ── Signal subscribers (2026-06-15) — manage extra DM recipients ── */
