@@ -9768,6 +9768,41 @@ export default {
           message: renderMsg(sigTasty, vixTasty, 'tastytrade'),
         } : null;
 
+        // ── Manual card send (dashboard "Send Card" / fallback) ─────────────
+        // Renders the REAL morning card and posts it, so the calculator can push
+        // the picture format on demand if the 9:31 auto-send ever fails. Image
+        // first, text fallback — identical to the morning cron. Gated to the
+        // dashboard Origin so it can't be triggered anonymously.
+        if (url.searchParams.get('send') === 'card') {
+          if ((request.headers.get('Origin') || '') !== 'https://rava8989.github.io') {
+            out.send = { ok: false, error: 'forbidden — dashboard only' };
+          } else {
+            try {
+              const dcRaw = await env.SIGNAL_KV.get('discord_config');
+              const dc = dcRaw ? JSON.parse(dcRaw) : null;
+              const sig = sigSchwab || sigTasty;
+              const vixVal = sigSchwab ? vixSchwab : vixTasty;
+              if (!dc || !dc.channelId) out.send = { ok: false, error: 'no discord_config in KV' };
+              else if (!sig) out.send = { ok: false, error: 'no signal — no fresh market data' };
+              else {
+                const vv = { yOpen: vixYOpen, yClose: vixYClose, todayOpen: vixVal };
+                let r = null;
+                try {
+                  const png = await renderMorningCardPng(buildMorningCardData(sig, vv, tailLine));
+                  r = await sendDiscordImage(env, dc.channelId, png, dc.proxyUrl, 'morning.png', DISCORD_FOOTER);
+                } catch (e) { r = { ok: false, error: 'card render: ' + e.message }; }
+                if (!r || !r.ok) {
+                  const txt = buildDiscordMessage(sig, vv, tailLine);
+                  const rt = await sendDiscordDM(env, dc.channelId, txt.slice(0, 2000), dc.proxyUrl);
+                  out.send = { ok: !!(rt && rt.ok), kind: 'text-fallback', imgErr: r && r.error };
+                } else {
+                  out.send = { ok: true, kind: 'image' };
+                }
+              }
+            } catch (e) { out.send = { ok: false, error: e.message }; }
+          }
+        }
+
         // Summary signals
         out.summary = {
           schwabMessageBuilt: !!out.schwab,
