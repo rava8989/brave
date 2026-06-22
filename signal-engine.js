@@ -809,10 +809,16 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
   // Straddle own status — strategy-independent. Range: 0 < oNight ≤ DROP_GXBF.
   // When in range and not 90%-WR-suppressed and not its own block (gap/o2o/OPEX),
   // Straddle WOULD fire even if another strategy claimed the primary `rec` slot.
+  // WR≥90% cancels the Straddle on its OWN merits, independent of whether the
+  // rec-level 90% rule actually fired. The rec-level rule is skipped on GXBF days
+  // (its `!rec.includes("GXBF")` guard protects GXBF) — which previously let the
+  // Straddle leak through on an OPEX+1 GXBF day even with WR≥90%. This flag closes
+  // that gap: 90%→cancel-Straddle no longer depends on the GXBF guard.
+  const wr90Suppress = (prevWR != null && prevWR >= 90 && !cpiDay);
   const stradOwnText = () => {
     if (oNight <= 0)              return `No Straddle (overnight VIX up)`;
     if (oNight > T.DROP_GXBF)     return `No Straddle (overnight VIX drop > ${T.DROP_GXBF})`;
-    if (blockT === '90%rule')     return `No Straddle (WR ≥ 90%)`;
+    if (blockT === '90%rule' || wr90Suppress) return `No Straddle (WR ≥ 90%)`;
     if (spxGapCancelsStrad)       return `No Straddle (SPX gap ${spxGapPct >= 0 ? '▲' : '▼'}${Math.abs(spxGapPct).toFixed(2)}%)`;
     if (o2o > T.O2O_M8BF)         return `No Straddle (o2o ${o2o.toFixed(1)} > ${T.O2O_M8BF})`;
     if (opexDay)                  return `No Straddle (OPEX day)`;
