@@ -7731,12 +7731,12 @@ function buildMorningCardData(signal, vixValues, tailLine) {
   // Overnight VIX direction in plain words. oNight = priorClose − todayOpen:
   // positive = VIX FELL overnight ("down"); negative = VIX ROSE ("up").
   const on = (typeof signal.oNight === 'number' && isFinite(signal.oNight)) ? signal.oNight : null;
-  let vixSub = 'VIX open', vixSubUp = false;
+  let vixSub = 'VIX', vixSubUp = false;
   if (on != null) {
     const mag = Math.abs(on).toFixed(2);
-    if (on > 0.005) vixSub = `VIX open · down ${mag}`;
-    else if (on < -0.005) { vixSub = `VIX open · up ${mag}`; vixSubUp = true; }
-    else vixSub = 'VIX open · flat';
+    if (on > 0.005) vixSub = `VIX down ${mag}`;
+    else if (on < -0.005) { vixSub = `VIX up ${mag}`; vixSubUp = true; }
+    else vixSub = 'VIX flat';
   }
   // Audit line (small/subtle): prior-day VIX close + open so the overnight-gate
   // inputs are verifiable on the card itself (prior close − today open = drop above).
@@ -7942,7 +7942,7 @@ function computeM8bfContextNotes(history, etNow, todayVixOpen) {
   return notes;
 }
 const SAMPLE_MORNING_CARD = {
-  title: 'Σ3 — Today’s Plan', date: 'Mon · Jun 22 2026 · OPEX+1', vix: '16.67', vixSub: 'VIX open · up 0.27', vixSubUp: true, vixPrior: 'prev 16.40 cls · 16.32 opn',
+  title: 'Σ3 — Today’s Plan', date: 'Mon · Jun 22 2026 · OPEX+1', vix: '16.67', vixSub: 'VIX up 0.27', vixSubUp: true, vixPrior: 'prev 16.40 cls · 16.32 opn',
   rows: [
     { n: 'GXBF', det: 'fires 9:36 AM', yes: true }, { n: 'M8BF', det: 'window 11:00–11:30', yes: true },
     { n: 'Straddle', det: 'overnight VIX drop > 0.65', yes: false }, { n: 'BOBF', det: 'OPEX', yes: false },
