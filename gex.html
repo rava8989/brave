@@ -247,6 +247,20 @@
     </div>
   </div>
 
+  <!-- Call vs Put Flow — Today -->
+  <div class="chart-section" id="flowSection" style="display:none;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
+      <h2 style="margin-bottom:0;"><span>Call vs Put</span> Flow — Today</h2>
+      <span id="flowReadout" style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--text2);"></span>
+    </div>
+    <div class="chart-wrap" style="height:300px;">
+      <canvas id="flowChart"></canvas>
+    </div>
+    <div class="bottom-info" style="text-align:left;padding:8px 0 0;">
+      Per-tick share of new traded volume: green = calls, red = puts. Lines sum to 100% and cross at 50% when flow flips from put-buying to call-buying.
+    </div>
+  </div>
+
   <!-- GEX Walls Table -->
   <div class="table-section">
     <h2><span>GEX</span> Walls -- Top 10 Strikes</h2>
@@ -310,6 +324,7 @@ let triggerAttempted = false; // only try once per page load
 
 let gexChart = null;
 let gammaCurveChart = null;
+let flowChart = null;
 let pollTimer = null;
 // ── Event log: server-persisted in KV, available on any device ──
 let eventLog = [];
@@ -693,6 +708,107 @@ function renderGammaCurve(data) {
   });
 }
 
+// ── Call vs Put Flow — Today (graceful-degrade: hide if server omits/empties data.flowSeries) ──
+function renderFlowChart(data) {
+  const section = document.getElementById('flowSection');
+  const series = data.flowSeries; // [{ts:Number(epoch s), cv:Number, pv:Number}, ...]
+  if (!series || series.length < 2) {
+    section.style.display = 'none';
+    if (flowChart) { flowChart.destroy(); flowChart = null; }
+    return;
+  }
+  section.style.display = 'block';
+
+  // Per-tick increments: new volume since the previous snapshot (clamp negatives,
+  // which happen at the day boundary / a fresh series). First tick has no delta.
+  const rawCall = [];   // raw call share % per delta-tick
+  const labels = [];
+  for (let i = 1; i < series.length; i++) {
+    const dCall = Math.max(0, (series[i].cv || 0) - (series[i - 1].cv || 0));
+    const dPut  = Math.max(0, (series[i].pv || 0) - (series[i - 1].pv || 0));
+    const tot = dCall + dPut;
+    rawCall.push(tot > 0 ? 100 * dCall / tot : 50);
+    const d = _toETSafe(new Date((series[i].ts || 0) * 1000));
+    labels.push(String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'));
+  }
+
+  // Light 3-point moving average on call share to de-noise; put = 100 − call.
+  const callShare = rawCall.map((v, i) => {
+    const a = rawCall[i - 1], b = rawCall[i], c = rawCall[i + 1];
+    const win = [a, b, c].filter(x => typeof x === 'number');
+    return win.reduce((s, x) => s + x, 0) / win.length;
+  });
+  const putShare = callShare.map(v => 100 - v);
+
+  // Header readout: P/C ratio + heaviness tag (graceful if null)
+  const readout = document.getElementById('flowReadout');
+  if (data.pcRatio == null) {
+    readout.textContent = 'P/C —';
+    readout.style.color = 'var(--text2)';
+  } else {
+    const pc = data.pcRatio;
+    let tag, col;
+    if (pc < 0.95)      { tag = 'CALL-HEAVY'; col = 'var(--green)'; }
+    else if (pc > 1.05) { tag = 'PUT-HEAVY';  col = 'var(--red)'; }
+    else                { tag = 'BALANCED';   col = 'var(--text2)'; }
+    readout.textContent = 'P/C ' + pc.toFixed(2) + ' · ' + tag;
+    readout.style.color = col;
+  }
+
+  const annotations = {
+    midLine: { type: 'line', yMin: 50, yMax: 50,
+      borderColor: 'rgba(148,163,184,0.6)', borderWidth: 1, borderDash: [4, 4] },
+  };
+
+  if (flowChart) {
+    flowChart.data.labels = labels;
+    flowChart.data.datasets[0].data = callShare;
+    flowChart.data.datasets[1].data = putShare;
+    flowChart.options.plugins.annotation.annotations = annotations;
+    flowChart.update('none');
+    return;
+  }
+
+  const ctx = document.getElementById('flowChart').getContext('2d');
+  flowChart = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets: [
+      { label: 'Call %', data: callShare, borderColor: getComputedStyle(document.documentElement).getPropertyValue('--green').trim() || '#22c55e',
+        backgroundColor: 'rgba(34,197,94,0.08)', borderWidth: 2, pointRadius: 0, tension: 0.25, fill: true },
+      { label: 'Put %', data: putShare, borderColor: getComputedStyle(document.documentElement).getPropertyValue('--red').trim() || '#ef4444',
+        backgroundColor: 'rgba(239,68,68,0.08)', borderWidth: 2, pointRadius: 0, tension: 0.25, fill: true },
+    ]},
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: true, labels: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 11 }, boxWidth: 12 } },
+        tooltip: {
+          backgroundColor: '#1e293b', borderColor: '#2d3f55', borderWidth: 1,
+          titleFont: { family: 'JetBrains Mono', size: 12, weight: 'bold' },
+          bodyFont:  { family: 'JetBrains Mono', size: 11 },
+          titleColor: '#e2e8f0', bodyColor: '#94a3b8', padding: 10, cornerRadius: 8,
+          callbacks: {
+            title: (items) => items[0].label + ' ET',
+            label: (item) => item.dataset.label + ': ' + item.raw.toFixed(1) + '%',
+          }
+        },
+        annotation: { annotations },
+      },
+      scales: {
+        x: { grid: { color: 'rgba(45,63,85,0.3)', drawBorder: false },
+             ticks: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 10 },
+                      maxRotation: 45, autoSkip: true, maxTicksLimit: 14 } },
+        y: { min: 0, max: 100,
+             grid: { color: 'rgba(45,63,85,0.3)', drawBorder: false },
+             ticks: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 10 },
+                      callback: v => v + '%' } }
+      },
+      animation: { duration: 300 },
+    }
+  });
+}
+
 function renderTable(data) {
   if (!data.walls) return;
   const body = document.getElementById('wallsBody');
@@ -833,6 +949,7 @@ async function tryLoadCached() {
     renderCards(data);
     renderChart(data);
     renderGammaCurve(data);
+    renderFlowChart(data);
     renderTable(data);
     renderEvents(data);
     document.getElementById('mainContent').style.display = 'block';
@@ -871,6 +988,7 @@ async function fetchAndRender() {
                   const data = await retry.json();
                   renderTopBar(data); renderCards(data); renderChart(data);
                   renderGammaCurve(data);
+                  renderFlowChart(data);
                   renderTable(data); renderEvents(data);
                   document.getElementById('mainContent').style.display = 'block';
                   document.getElementById('loadingOverlay').classList.add('hidden');
@@ -921,6 +1039,7 @@ async function fetchAndRender() {
     renderCards(data);
     renderChart(data);
     renderGammaCurve(data);
+    renderFlowChart(data);
     renderTable(data);
     renderEvents(data);
 
@@ -992,6 +1111,7 @@ document.getElementById('gexModeToggle').addEventListener('click', async (e) => 
   // Force chart rebuild for clean axis transition
   if (gexChart) { gexChart.destroy(); gexChart = null; }
   if (gammaCurveChart) { gammaCurveChart.destroy(); gammaCurveChart = null; }
+  if (flowChart) { flowChart.destroy(); flowChart = null; }
   await guardedFetch();
 });
 

@@ -5924,6 +5924,9 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
   // Accumulate per-strike across selected expirations
   const strikeAccum = {}; // strike → { callGex, putGex, callOI, putOI, callVex, putVex, callCex, putCex }
   let totalCallGex = 0, totalPutGex = 0;
+  // INFO-ONLY flow: total traded VOLUME (not OI) across all selected expirations.
+  // Volume is the day's flow → summed unconditionally (even when oi===0), not gated on OI.
+  let totalCallVol = 0, totalPutVol = 0;
   let nearestDte = Infinity;
   // Per-contract gamma inputs (OI>0 rows that fed gex) — reused for the spot-shifted curve.
   const gammaInputs = [];
@@ -5952,6 +5955,8 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
       for (const c of callContracts) {
         const oi = Math.max(c.openInterest || 0, 0);
         const iv = (c.volatility || 0) / 100;
+        // INFO-ONLY flow: sum traded volume for ALL contracts (count it even when oi===0).
+        totalCallVol += Math.max(c.totalVolume || 0, 0);
         // Standard GEX: use open interest only (volume is turnover, not dealer inventory)
         if (oi === 0) continue;
         acc.callOI += oi;
@@ -5972,6 +5977,8 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
       for (const p of putContracts) {
         const oi = Math.max(p.openInterest || 0, 0);
         const iv = (p.volatility || 0) / 100;
+        // INFO-ONLY flow: sum traded volume for ALL contracts (count it even when oi===0).
+        totalPutVol += Math.max(p.totalVolume || 0, 0);
         if (oi === 0) continue;
         acc.putOI += oi;
         const sig = iv > 0 ? iv : 0.2;
@@ -6110,6 +6117,10 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
     // Information-only greek scalars (net dealer exposure over the filtered band)
     vanna: Math.round(totalVex),
     charm: Math.round(totalCex),
+    // Information-only traded-volume flow (all expirations, all contracts w/ volume)
+    callVol: totalCallVol,
+    putVol: totalPutVol,
+    pcRatio: totalCallVol > 0 ? +(totalPutVol / totalCallVol).toFixed(2) : null,
     gammaCurve,
     windowPct: parseFloat((rangePct * 100).toFixed(2)),
     windowWidened: true,
@@ -6285,6 +6296,22 @@ async function handleGEXUpdate(env, token, preChain = null) {
       gexData.commentary = prevParsed.commentary;
       gexData.commentaryAt = prevParsed.commentaryAt || null;
     }
+  }
+
+  // 5c. Append today's traded-volume snapshot to a daily intraday flow series.
+  //     INFO-ONLY (powers the "Call vs Put Flow — Today" chart). Wrapped so a
+  //     flow-capture failure can NEVER break the GEX update.
+  if (typeof gexData.callVol === 'number' && gexData.callVol >= 0 &&
+      typeof gexData.putVol === 'number' && gexData.putVol >= 0) {
+    try {
+      const etNowFlow = toET(new Date());
+      const flowKey = `gex_flow_${isoDateET(etNowFlow)}`;
+      const flowRaw = await env.SIGNAL_KV.get(flowKey);
+      let flow = flowRaw ? JSON.parse(flowRaw) : [];
+      flow.push({ ts: Math.floor(Date.now() / 1000), cv: gexData.callVol, pv: gexData.putVol });
+      if (flow.length > 250) flow = flow.slice(-250);
+      await env.SIGNAL_KV.put(flowKey, JSON.stringify(flow), { expirationTtl: 172800 }); // ~2 days
+    } catch (e) { console.warn('[gex] flow series capture failed:', e.message); }
   }
 
   // 6. Store current snapshot in KV
@@ -10411,6 +10438,9 @@ export default {
           if (logRaw) parsed.eventLog = JSON.parse(logRaw);
           const cLogRaw = await env.SIGNAL_KV.get(`gex_commentary_${todayISO2}`);
           if (cLogRaw) parsed.commentaryLog = JSON.parse(cLogRaw);
+          // Intraday call-vs-put flow series for the "Call vs Put Flow — Today" chart
+          const flowRaw = await env.SIGNAL_KV.get(`gex_flow_${todayISO2}`);
+          parsed.flowSeries = flowRaw ? JSON.parse(flowRaw) : [];
           data = JSON.stringify(parsed);
         } catch (e) { /* serve without full logs if parse fails */ }
 
