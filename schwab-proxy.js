@@ -9810,15 +9810,21 @@ export default {
             `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=${encodeURIComponent(sym)}&periodType=day&frequencyType=minute&frequency=1&startDate=${s}&endDate=${e}&needExtendedHoursData=false`,
             tk, env);
           const cc = (dd.candles || []).filter(c => c.close > 0);
+          const bars = cc.map(c => { const d = toET(new Date(c.datetime)); return { t: `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`, o: c.open, c: c.close }; });
+          const at = hhmm => bars.find(b => b.t === hhmm) || null;
           return new Response(JSON.stringify({ symbol: sym, minuteDay: md, n: cc.length,
-            first: cc[0]?.datetime ?? null }), { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
+            open0930: at('09:30'), close1559: at('15:59'), close1600: at('16:00'), close1615: at('16:15'), last: bars[bars.length - 1] ?? null }),
+            { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
         }
         const end = Date.now(), start = end - years * 365.25 * 86400000;
         const data = await fetchSchwabJSON(
           `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=${encodeURIComponent(sym)}&periodType=year&frequencyType=daily&startDate=${Math.round(start)}&endDate=${end}&needExtendedHoursData=false`,
           tk, env);
+        const ohlc = url.searchParams.get('ohlc') === '1';
         const candles = (data.candles || []).filter(c => c.close > 0)
-          .map(c => [isoDateET(toET(new Date(c.datetime))), c.close]);
+          .map(c => ohlc
+            ? [isoDateET(toET(new Date(c.datetime))), c.open, c.high, c.low, c.close]
+            : [isoDateET(toET(new Date(c.datetime))), c.close]);
         return new Response(JSON.stringify({ symbol: sym, n: candles.length, candles }),
           { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
       } catch (e) {
