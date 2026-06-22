@@ -618,8 +618,10 @@ async function loadBobf() {
   } catch (e) { console.warn('[live] /bobf-today fetch failed:', e); }
 }
 
-// ─── Tail Hedge (MANUAL strategy — user 2026-06-11: must appear among
-// today's live trades whenever the COR1M trigger sequence is active) ────
+// ─── Tail Hedge (AUTO strategy — 2026-06-22: full parity with the others.
+// Cron freezes the 9:45 put, refreshes intraday P&L, settles tailPL at close,
+// and stops the campaign on the first profitable day. Skipper auto-places it
+// when its Tail Hedge toggle is on/live, same as every other strategy.) ────
 let tail = null;
 async function loadTail() {
   try {
@@ -630,38 +632,90 @@ async function loadTail() {
 
 function renderTail() {
   const sec = document.getElementById('tailSection');
-  if (!tail || (!tail.active && !tail.skip)) { sec.style.display = 'none'; return; }
+  if (!tail) { sec.style.display = 'none'; return; }
+  const today = tail.date;
+  const openT   = (tail.open && tail.open.openDate === today && tail.open.status !== 'closed') ? tail.open : null;
+  const closedT = (tail.lastClosed && tail.lastClosed.closeDate === today) ? tail.lastClosed : null;
+  const t = openT || closedT;
+  if (!tail.active && !tail.skip && !t) { sec.style.display = 'none'; return; }
   sec.style.display = '';
+
   const since = tail.state && tail.state.since ? ` · trigger since ${tail.state.since}` : '';
   const cand = tail.candidate;
-  const tOpen = tail.open || (cand ? { strike: cand.k, expDate: cand.e, entryAsk: cand.a } : null);
+
+  // TOS copy string (from the live trade or the candidate)
+  const tOpen = t || (cand ? { strike: cand.k, expDate: cand.e, entryAsk: cand.a } : null);
   if (tOpen && tOpen.strike != null) {
-    window._tos.tail = `BUY +1 SPXW 100 (Weeklys) ${tosDate(tOpen.expDate)} ${_tk(tOpen.strike)} PUT @${(tOpen.entryAsk)?.toFixed(2)} LMT`;
+    const px = (tOpen.entryAsk ?? cand?.a);
+    window._tos.tail = `BUY +1 SPXW 100 (Weeklys) ${tosDate(tOpen.expDate)} ${_tk(tOpen.strike)} PUT @${px?.toFixed(2)} LMT`;
   }
+
+  // Header badge — live-trade status if we have a trade today, else trigger state
+  let badge, badgeClass, statusText = '';
+  if (t) {
+    switch (t.status) {
+      case 'filled':
+        badge = 'FILLED · LIVE'; badgeClass = 'open';
+        statusText = `SPXW ${t.strike}P · entered $${(t.entryMid ?? t.entryAsk)?.toFixed(2)} mid @ 9:45 ET`;
+        break;
+      case 'closed':
+        badge = 'CLOSED'; badgeClass = t.pnl >= 0 ? 'open' : 'error';
+        statusText = `SPXW ${t.strike}P · settled SPX ${t.spxClose?.toFixed(2)} · final P&L ${fmt$(t.pnl)}`;
+        break;
+      default:
+        badge = (t.status || 'OPEN').toUpperCase(); badgeClass = 'pending';
+        statusText = `SPXW ${t.strike}P`;
+    }
+  } else {
+    badge = tail.skip ? 'SKIP TODAY' : 'TRIGGER ACTIVE';
+    badgeClass = tail.skip ? 'skip' : 'open';
+  }
+
+  const livePnl = t ? (t.status === 'filled' ? t.currentPnl : t.status === 'closed' ? t.pnl : null) : null;
+  const plClass = livePnl == null ? '' : livePnl > 0 ? 'diag-pl-pos' : livePnl < 0 ? 'diag-pl-neg' : '';
+
   const candRow = cand
-    ? `<div style="font-family:'JetBrains Mono',monospace;font-size:15px;margin:10px 0 4px;">
-         Candidate: <b>SPXW ${cand.k}P</b> (Δ ${cand.d}) — bid ${cand.b ?? '—'} / ask ${cand.a ?? '—'}
+    ? `<div style="font-family:'JetBrains Mono',monospace;font-size:14px;margin:8px 0 4px;">
+         Put: <b>SPXW ${cand.k}P</b> (Δ ${cand.d}) — bid ${cand.b ?? '—'} / ask ${cand.a ?? '—'}
          <span style="font-size:11px;color:var(--text3)"> @ ${tail.snapAt ?? '9:40'} snap, exp ${cand.e}</span>
          ${window._tos.tail ? tosBtn('tail') : ''}
        </div>`
-    : `<div style="font-size:12px;color:var(--text3);margin:10px 0 4px;">Candidate put appears here after the ~9:40 chain snapshot.</div>`;
-  const badge = tail.skip
-    ? `<span class="diag-badge skip">SKIP TODAY</span>`
-    : `<span class="diag-badge open">TRIGGER ACTIVE</span>`;
-  const body = tail.skip
-    ? `<div style="font-size:13px;color:var(--text2);">${tail.line.replace('Tail Hedge │ ', '')} — sequence stays open; check again tomorrow.</div>`
-    : `<div style="font-size:13px;color:var(--text);font-weight:600;">Buy ONE 0DTE SPXW put, Δ −0.10, at <u>9:45 ET</u> — repeat daily until the first profitable day.</div>
-       ${candRow}
-       <div style="font-size:11.5px;color:var(--text3);margin-top:6px;">Skip rule: no entry when VVIX ≥ 110 (now ${tail.vvix ?? '—'}). COR1M ${tail.cor1m ?? '—'}${since}.</div>`;
-  sec.innerHTML = `
-    <div class="diag-card">
-      <div class="diag-header">
-        <div class="diag-title">▼ <span>Tail Hedge</span></div>
-        ${badge}
-        <span class="diag-badge pending" title="No bot for this one — you place it yourself">MANUAL</span>
-      </div>
-      ${body}
-    </div>`;
+    : '';
+
+  const html = [];
+  html.push(`<div class="diag-card">`);
+  html.push(`<div class="diag-header">`);
+  html.push(`<div class="diag-title">▼ <span>Tail Hedge</span></div>`);
+  html.push(`<span class="diag-badge ${badgeClass}">${badge}</span>`);
+  html.push(`<div style="flex:1"></div>`);
+  html.push(`<span style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;">COR1M ${tail.cor1m ?? '—'} · VVIX ${tail.vvix ?? '—'}</span>`);
+  html.push(`</div>`);
+
+  if (tail.skip && !t) {
+    html.push(`<div style="font-size:13px;color:var(--text2);">${tail.line.replace('Tail Hedge │ ', '')} — sequence stays open; check again tomorrow.${since}</div>`);
+  } else if (t) {
+    html.push(`<div style="font-size:12.5px;color:var(--text2);margin-bottom:4px;">${statusText}</div>`);
+    html.push(`<div class="diag-grid">`);
+    if (livePnl != null) {
+      html.push(`<div class="diag-stat"><div class="diag-stat-label">${t.status === 'closed' ? 'Final' : 'Live'} P&L</div><div class="diag-stat-value ${plClass}">${fmt$(livePnl)}</div><div class="diag-stat-sub">${t.contracts || 1} contract</div></div>`);
+    } else {
+      html.push(`<div class="diag-stat"><div class="diag-stat-label">P&L</div><div class="diag-stat-value">—</div><div class="diag-stat-sub">awaiting quote</div></div>`);
+    }
+    html.push(`<div class="diag-stat"><div class="diag-stat-label">SPX</div><div class="diag-stat-value">${t.currentSpot?.toFixed(2) ?? t.spxClose?.toFixed(2) ?? '—'}</div><div class="diag-stat-sub">Strike ${t.strike}</div></div>`);
+    const entryPx = t.entryMid ?? t.entryAsk;
+    html.push(`<div class="diag-stat"><div class="diag-stat-label">Entry</div><div class="diag-stat-value">$${entryPx != null ? (entryPx*100).toFixed(0) : '—'}</div><div class="diag-stat-sub">$${entryPx?.toFixed(2) ?? '—'} mid</div></div>`);
+    if (t.currentValue != null && t.status !== 'closed') {
+      html.push(`<div class="diag-stat"><div class="diag-stat-label">Current</div><div class="diag-stat-value">$${(t.currentValue*100).toFixed(0)}</div><div class="diag-stat-sub">$${t.currentValue?.toFixed(2)} mid</div></div>`);
+    }
+    html.push(`</div>`);
+    html.push(candRow);
+  } else {
+    html.push(`<div style="font-size:13px;color:var(--text);font-weight:600;">Buy ONE 0DTE SPXW put, Δ −0.10, at <u>9:45 ET</u> — auto-placed, repeat daily until the first profitable day.</div>`);
+    html.push(candRow);
+    html.push(`<div style="font-size:11.5px;color:var(--text3);margin-top:6px;">Skip rule: no entry when VVIX ≥ 110 (now ${tail.vvix ?? '—'}). COR1M ${tail.cor1m ?? '—'}${since}.</div>`);
+  }
+  html.push(`</div>`);
+  sec.innerHTML = html.join('');
 }
 
 function renderBobf() {

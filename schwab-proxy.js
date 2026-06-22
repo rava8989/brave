@@ -1554,7 +1554,9 @@ async function getTailHedgeStatusLine(env = null) {
 
     // Cloud-detected cross SINCE the bundle's last day also counts as
     // triggered (covers PC-off stretches where the bundle goes stale).
-    let cloudTriggered = false;
+    // A cloud RESOLVED (first profitable day, set by settleTailEOD) newer than
+    // the bundle STOPS the campaign even if a stale bundle still shows active.
+    let cloudTriggered = false, cloudResolved = false;
     if (env) {
       try {
         const stRaw = await env.SIGNAL_KV.get('tail_trigger_state');
@@ -1562,11 +1564,13 @@ async function getTailHedgeStatusLine(env = null) {
           const st = JSON.parse(stRaw);
           cloudTriggered = st.state === 'TRIGGERED'
             && (!bundleLastDay || st.since > bundleLastDay);
+          cloudResolved = st.state === 'RESOLVED' && st.resolvedOn
+            && (!bundleLastDay || st.resolvedOn > bundleLastDay);
         }
       } catch (_) {}
     }
 
-    const isTriggered = bundleTriggered || cloudTriggered;
+    const isTriggered = cloudResolved ? false : (bundleTriggered || cloudTriggered);
     let line;
     if (isTriggered) {
       if (vvix != null && vvix >= 110) {
@@ -2654,6 +2658,10 @@ async function handleEOD(env, etNow) {
       const gxbfResult = await settleGxbfEOD(env, etNow, spxClose);
       console.log('[gxbf] EOD settle:', JSON.stringify(gxbfResult));
     } catch (e) { console.warn('[gxbf] EOD settle failed:', e.message); }
+    try {
+      const tailResult = await settleTailEOD(env, etNow, spxClose);
+      console.log('[tail] EOD settle:', JSON.stringify(tailResult));
+    } catch (e) { console.warn('[tail] EOD settle failed:', e.message); }
   }
 
   // Append today's signals to TRADES database in backtester.html (reuse cached fullSigs)
@@ -4585,6 +4593,124 @@ async function settleGxbfEOD(env, etNow, spxClose) {
            debit: trade.netDebit, intrinsic };
 }
 
+// ════════════════════════════════════════════════════════════════════
+// TAIL HEDGE — live-trade parity (2026-06-22). Brings Tail Hedge onto the
+// SAME conveyor as strad/bobf/gxbf: cron freezes the open → intraday P&L →
+// EOD settle writes tailPL → first profitable day STOPS the campaign.
+// Entry cost basis = candidate MID (matches the backtest that produced the
+// historical tailPL column; skipper tracks its own real fill separately).
+// ────────────────────────────────────────────────────────────────────
+
+// Freeze today's tail open from the ~9:40 put snapshot once we're past 9:45 ET
+// on a TRADE day. Idempotent (first call wins). Called by BOTH the cron (robust,
+// no page-poll needed) and GET /tail-today.
+async function freezeTailOpenIfDue(env, etNow, line = null) {
+  const todayISO = isoDateET(etNow);
+  const existing = await env.SIGNAL_KV.get(`tail_open_trade_${todayISO}`);
+  if (existing) return JSON.parse(existing);
+  const statusLine = line || await getTailHedgeStatusLine(env);
+  const h = etNow.getHours(), m = etNow.getMinutes();
+  const pastEntry = h > 9 || (h === 9 && m >= 45);
+  if (!(statusLine.includes('▶ TRADE') && pastEntry && h < 16)) return null;
+  const snapRaw = await env.SIGNAL_KV.get(`tail_put_snap_${todayISO}`);
+  const snap = snapRaw ? JSON.parse(snapRaw) : null;
+  if (!snap || !Array.isArray(snap.puts) || !snap.puts.length) return null;
+  const e0 = snap.puts[0].e;
+  const candidate = snap.puts.filter(p => p.e === e0)
+    .sort((a, b) => Math.abs(a.d + 0.10) - Math.abs(b.d + 0.10))[0] || null;
+  if (!candidate) return null;
+  const entryMid = (candidate.b != null && candidate.a != null)
+    ? parseFloat(((candidate.b + candidate.a) / 2).toFixed(2))
+    : (candidate.a ?? candidate.b ?? null);
+  const tailOpen = {
+    openDate: todayISO, openTimeET: '09:45', strike: candidate.k, expDate: candidate.e,
+    entryBid: candidate.b, entryAsk: candidate.a, entryMid, contracts: 1, status: 'filled',
+    label: 'Tail Hedge', currentSpot: snap.spot ?? null,
+  };
+  await env.SIGNAL_KV.put(`tail_open_trade_${todayISO}`, JSON.stringify(tailOpen), { expirationTtl: 7 * 86400 });
+  return tailOpen;
+}
+
+// Refresh intraday mid + live P&L on today's open tail put (mirrors
+// refreshBobfLiveQuotes). Single long put: currentPnl = (mid − entryMid)×100×qty.
+async function refreshTailLiveQuotes(env, etNow, preChain = null) {
+  const todayISO = isoDateET(etNow);
+  const raw = await env.SIGNAL_KV.get(`tail_open_trade_${todayISO}`);
+  if (!raw) return null;
+  const trade = JSON.parse(raw);
+  if (trade.status === 'closed') return trade;
+  try {
+    if (!preChain || !preChain.putExpDateMap) return trade;
+    const put = pickContractFromChain(preChain.putExpDateMap, trade.expDate, trade.strike);
+    if (!put || put.mid == null) return trade;
+    const entryCost = trade.entryMid != null ? trade.entryMid
+      : (trade.entryBid != null && trade.entryAsk != null) ? (trade.entryBid + trade.entryAsk) / 2
+      : (trade.entryAsk ?? trade.entryBid);
+    trade.currentSpot  = preChain.spot ? parseFloat(preChain.spot.toFixed(2)) : trade.currentSpot;
+    trade.currentMid   = parseFloat(put.mid.toFixed(2));
+    trade.currentValue = parseFloat(put.mid.toFixed(2));
+    trade.currentPnl   = Math.round((put.mid - entryCost) * 100 * (trade.contracts || 1));
+    trade.lastQuoteAt  = new Date().toISOString();
+    await env.SIGNAL_KV.put(`tail_open_trade_${todayISO}`, JSON.stringify(trade), { expirationTtl: 7 * 86400 });
+  } catch (e) { console.warn('[tail] refresh failed:', e.message); }
+  return trade;
+}
+
+// Settle Tail Hedge at SPX close. Single long 0DTE SPXW put:
+//   intrinsic = max(0, strike − spxClose);  pnl = (intrinsic − entryMid) × 100 × contracts
+// (mirrors research_tail_hedge.py; same ×100×contracts + Math.round as the other settles)
+// On the first PROFITABLE day, flip tail_trigger_state → RESOLVED so the campaign
+// stops signalling TRADE until COR1M crosses below 7.75 again.
+async function settleTailEOD(env, etNow, spxClose) {
+  const todayISO = isoDateET(etNow);
+  const raw = await env.SIGNAL_KV.get(`tail_open_trade_${todayISO}`);
+  if (!raw) return { status: 'no-trade' };
+  const trade = JSON.parse(raw);
+  if (trade.openDate !== todayISO) return { status: 'wrong-date', openDate: trade.openDate };
+  if (trade.status === 'closed') return { status: 'already-closed', pnl: trade.pnl };
+
+  let S = spxClose;
+  if (S == null) { try { S = await getSpxCloseForDate(todayISO); } catch (_) {} }
+  if (S == null) return { status: 'no-close' };
+
+  const contracts = trade.contracts || 1;
+  const entryCost = trade.entryMid != null ? trade.entryMid
+    : (trade.entryBid != null && trade.entryAsk != null) ? (trade.entryBid + trade.entryAsk) / 2
+    : (trade.entryAsk ?? trade.entryBid);
+  const intrinsic = Math.max(0, trade.strike - S);
+  const pnl = Math.round((intrinsic - entryCost) * 100 * contracts);
+
+  trade.status = 'closed';
+  trade.closeDate = todayISO;
+  trade.spxClose = parseFloat(S.toFixed(2));
+  trade.closeIntrinsic = parseFloat(intrinsic.toFixed(2));
+  trade.entryMid = parseFloat(Number(entryCost).toFixed(2));
+  trade.pnl = pnl;
+  await env.SIGNAL_KV.put(`tail_open_trade_${todayISO}`, JSON.stringify(trade), { expirationTtl: 7 * 86400 });
+
+  const logRaw = await env.SIGNAL_KV.get('tail_closed_log');
+  const log = logRaw ? JSON.parse(logRaw) : [];
+  log.unshift(trade);
+  await env.SIGNAL_KV.put('tail_closed_log', JSON.stringify(log.slice(0, 30)));
+
+  await upsertHistoryGitHub(env, todayISO, { tailPL: pnl });
+
+  // First profitable day STOPS the campaign (previously only the offline bundle
+  // did this via exit_reason='profitable'; now the live worker ends it too).
+  if (pnl > 0) {
+    try {
+      const stRaw = await env.SIGNAL_KV.get('tail_trigger_state');
+      const st = stRaw ? JSON.parse(stRaw) : null;
+      if (st && st.state === 'TRIGGERED') {
+        st.state = 'RESOLVED'; st.resolvedOn = todayISO; st.exitReason = 'profitable'; st.exitPnl = pnl;
+        await env.SIGNAL_KV.put('tail_trigger_state', JSON.stringify(st));
+        _tailHedgeCache = { value: null, fetchedAt: 0 };  // bust the 5-min status cache
+      }
+    } catch (_) { /* campaign-stop is best-effort */ }
+  }
+  return { status: 'settled', pnl, strike: trade.strike, entryMid: entryCost, intrinsic, spxClose: S };
+}
+
 async function handleScheduled(env) {
   const etNow = toET();
   const dow = etNow.getDay();
@@ -4722,6 +4848,10 @@ async function handleScheduled(env) {
     } catch (e) { console.warn('[gex-daily]', e.message); }
     // Research capture: 9:45-ish SPX put snapshot (Tail Hedge dataset, ThetaData-free)
     try { await captureTailPutSnap(env, etNow, masterChain); } catch (e) { console.warn('[tail-snap]', e.message); }
+    // Tail Hedge live-trade parity: freeze today's open at/after 9:45 (robust —
+    // no page-poll needed) and refresh its intraday P&L every tick.
+    try { await freezeTailOpenIfDue(env, etNow); } catch (e) { console.warn('[tail-freeze]', e.message); }
+    try { await refreshTailLiveQuotes(env, etNow, masterChain); } catch (e) { console.warn('[tail-refresh]', e.message); }
     // Research capture: Diagonal 12:30 put chain + GXBF 9:35 call chain
     // (with these all three bt datasets grow Schwab-only — ThetaData optional)
     try { await captureDiagChainSnap(env, etNow, masterChain); } catch (e) { console.warn('[diag-snap]', e.message); }
@@ -9595,35 +9725,58 @@ export default {
         candidate = snap.puts.filter(p => p.e === e0)
           .sort((a, b) => Math.abs(a.d + 0.10) - Math.abs(b.d + 0.10))[0] || null;
       }
-      // Frozen bot-tradeable open (2026-06-12, sigma-3 6th strategy): the
-      // FIRST poll at/after 9:45 ET on an active+tradeable day freezes the
-      // candidate as today's canonical trade; every later poll returns the
-      // identical object (idempotent, mirrors the other *-today routes).
-      // Hold-to-settlement — no close object ever.
+      // Frozen bot-tradeable open: cron freezes it at/after 9:45 (this is a
+      // fallback that freezes if a client polls first). After settleTailEOD it
+      // carries status='closed' + pnl and is surfaced as `lastClosed`.
       let tailOpen = null;
+      try { tailOpen = await freezeTailOpenIfDue(env, etNowT, line); } catch (_) {}
+      // Settled days → Final P&L card on the live page (mirrors bobf/gxbf lastClosed).
+      let lastClosed = null;
       try {
-        const frozenRaw = await env.SIGNAL_KV.get(`tail_open_trade_${todayT}`);
-        if (frozenRaw) {
-          tailOpen = JSON.parse(frozenRaw);
-        } else {
-          const hT = etNowT.getHours(), mT = etNowT.getMinutes();
-          const pastEntry = hT > 9 || (hT === 9 && mT >= 45);
-          if (line.includes('▶ TRADE') && pastEntry && hT < 16 && candidate) {
-            tailOpen = { openDate: todayT, openTimeET: '09:45', strike: candidate.k,
-                         expDate: candidate.e, entryBid: candidate.b, entryAsk: candidate.a,
-                         contracts: 1 };
-            await env.SIGNAL_KV.put(`tail_open_trade_${todayT}`, JSON.stringify(tailOpen),
-              { expirationTtl: 7 * 86400 });
-          }
-        }
-      } catch (_) { /* open exposure is best-effort */ }
+        const lcRaw = await env.SIGNAL_KV.get('tail_closed_log');
+        const lc = lcRaw ? JSON.parse(lcRaw) : [];
+        lastClosed = lc[0] || null;
+      } catch (_) {}
+      // A settled (closed) open is shown as lastClosed, not as an active open.
+      if (tailOpen && tailOpen.status === 'closed') tailOpen = null;
       return new Response(JSON.stringify({
         date: todayT, line,
         active: line.includes('▶ TRADE'), skip: line.includes('SKIP today'),
         state: st, cor1m: openRec?.cor1m ?? null, vvix: openRec?.vvix ?? null,
         spot: snap?.spot ?? null, snapAt: snap?.at ?? null, candidate,
-        open: tailOpen,
+        open: tailOpen, lastClosed,
       }), { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
+    }
+
+    if (url.pathname === '/settle-tail' && request.method === 'POST') {
+      // Manual/backfill trigger for the Tail Hedge EOD settle + safety fallback
+      // if the EOD cron missed it. Origin-gated (mirrors /send-card). Idempotent:
+      // settleTailEOD flips status→'closed' and upsertHistoryGitHub won't
+      // overwrite an existing tailPL. Optional ?spxClose=NNNN overrides the close.
+      const originS = request.headers.get('Origin') || '';
+      if (originS !== 'https://rava8989.github.io') {
+        return new Response(JSON.stringify({ error: 'forbidden' }),
+          { status: 403, headers: { 'Content-Type': 'application/json' } });
+      }
+      const etNowS = toET(new Date());
+      let spxCloseS = null;
+      const qpS = url.searchParams.get('spxClose');
+      if (qpS && !isNaN(parseFloat(qpS))) spxCloseS = parseFloat(qpS);
+      if (spxCloseS == null) {
+        // Use the CANONICAL EOD close already in history (1-min candle ≤16:15,
+        // the exact value the other strategies settled against) so tail P&L is
+        // consistent — NOT quote.closePrice (that's a prior/quote field).
+        try {
+          const histS = await getHistory(env);
+          const rowS = (histS || []).find(r => r.date === isoDateET(etNowS));
+          if (rowS && rowS.spxClose != null) spxCloseS = parseFloat(rowS.spxClose);
+        } catch (_) {}
+      }
+      let resultS;
+      try { resultS = await settleTailEOD(env, etNowS, spxCloseS); }
+      catch (e) { resultS = { error: e.message }; }
+      return new Response(JSON.stringify({ date: isoDateET(etNowS), spxClose: spxCloseS, result: resultS }, null, 2),
+        { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': 'https://rava8989.github.io' } });
     }
 
     if (url.pathname === '/eod-history' && request.method === 'GET') {
