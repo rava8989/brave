@@ -7654,7 +7654,8 @@ function buildMorningCardSvg(d) {
     const tag = r.yes ? 'YES' : 'NO', pillW = r.yes ? 42 : 34, pillX = P + innerW - 10 - pillW;
     s += `<rect x="${P}" y="${top}" width="${innerW}" height="${rowH}" rx="8" fill="${bg}"/>`;
     s += `<rect x="${P}" y="${top + 1}" width="4" height="${rowH - 2}" rx="2" fill="${bar}"/>`;
-    s += `<text x="${P + 14}" y="${top + 24}" font-family="${F}" font-size="14"><tspan font-weight="600" fill="${r.yes ? C.text : C.nameNo}">${_cardEsc(r.n)}</tspan><tspan font-size="13" fill="${C.sub}">  ${_cardEsc(r.det)}</tspan></text>`;
+    s += `<clipPath id="rc${i}"><rect x="${P + 10}" y="${top}" width="${pillX - 8 - (P + 10)}" height="${rowH}"/></clipPath>`;
+    s += `<text x="${P + 14}" y="${top + 24}" clip-path="url(#rc${i})" font-family="${F}" font-size="14"><tspan font-weight="600" fill="${r.yes ? C.text : C.nameNo}">${_cardEsc(r.n)}</tspan><tspan font-size="13" fill="${C.sub}">  ${_cardEsc(r.det)}</tspan></text>`;
     s += `<rect x="${pillX}" y="${top + 10}" width="${pillW}" height="18" rx="6" fill="${r.yes ? 'rgba(74,222,128,0.14)' : 'rgba(248,113,113,0.13)'}"/>`;
     s += `<text x="${pillX + pillW / 2}" y="${top + 23}" text-anchor="middle" font-family="${F}" font-size="11" font-weight="600" fill="${bar}">${tag}</text>`;
   });
@@ -7725,7 +7726,16 @@ function buildMorningCardData(signal, vixValues, tailLine) {
   if (tailLine) {
     const tl = String(tailLine);
     const tYes = /\bTRADE\b/.test(tl) && !/No trade|\bSKIP\b/i.test(tl);
-    rows.push({ n: 'Tail Hedge', det: strip(tl.replace(/^Tail\s*Hedge\s*[│|]?\s*/i, ''), 'Tail Hedge') || (tYes ? 'trade' : 'no trade'), yes: tYes });
+    let tdet;
+    if (tYes) {                                  // concise — the full line overflowed the row
+      const dm = tl.match(/Δ\s*-?[\d.]+/);
+      tdet = `9:45 · 0DTE put ${dm ? dm[0].replace(/\s+/g, '') : 'Δ-0.10'}`;
+    } else if (/\bSKIP\b/i.test(tl)) {
+      tdet = 'SKIP · VVIX ≥ 110';
+    } else {
+      tdet = strip(tl.replace(/^Tail\s*Hedge\s*[│|]?\s*/i, ''), 'Tail Hedge') || 'no trade';
+    }
+    rows.push({ n: 'Tail Hedge', det: tdet, yes: tYes });
   }
   const vix = (vixValues.todayOpen != null) ? String(vixValues.todayOpen) : '—';
   // Overnight VIX direction in plain words. oNight = priorClose − todayOpen:
@@ -7946,7 +7956,7 @@ const SAMPLE_MORNING_CARD = {
   rows: [
     { n: 'GXBF', det: 'fires 9:36 AM', yes: true }, { n: 'M8BF', det: 'window 11:00–11:30', yes: true },
     { n: 'Straddle', det: 'overnight VIX drop > 0.65', yes: false }, { n: 'BOBF', det: 'OPEX', yes: false },
-    { n: 'Diagonal', det: 'COR1M 8.60 < 10', yes: false }, { n: 'Tail Hedge', det: 'COR1M 8.60, need < 7.75', yes: false },
+    { n: 'Diagonal', det: 'COR1M 6.79 < 10', yes: false }, { n: 'Tail Hedge', det: '9:45 · 0DTE put Δ-0.10', yes: true },
   ],
   tiles: [['SPX GAP', '+0.91%', '#4ade80']],
   stats: [
