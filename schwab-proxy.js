@@ -5213,12 +5213,20 @@ async function handleScheduled(env) {
     if (closeCandle) vixYClose = parseFloat(closeCandle.close.toFixed(2));
   }
 
-  // Override yClose with quote's closePrice (official previous close)
-  try {
-    const qData = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`, token, env);
-    const qClose = qData?.['$VIX']?.quote?.closePrice;
-    if (qClose) vixYClose = parseFloat(qClose.toFixed(2));
-  } catch (e) { console.warn('[proxy]', e.message || e); }
+  // FALLBACK ONLY (2026-06-22 fix). quote.closePrice is NOT holiday-aware:
+  // after a market holiday it returns the HOLIDAY's phantom close instead of the
+  // real prior-session close (Juneteenth 2026-06-19 → 16.78 vs the true 6-18
+  // close 16.40), which flips the overnight-VIX sign and mis-fires the Straddle
+  // /GXBF gate. The minute-candle path above already skips holidays (no intraday
+  // bars on a closed day), so trust it; only use quote.closePrice when the
+  // candle yielded nothing.
+  if (vixYClose === null) {
+    try {
+      const qData = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24VIX&fields=quote`, token, env);
+      const qClose = qData?.['$VIX']?.quote?.closePrice;
+      if (qClose) vixYClose = parseFloat(qClose.toFixed(2));
+    } catch (e) { console.warn('[proxy]', e.message || e); }
+  }
 
   if (vixYClose === null) throw new Error('Could not determine yesterday VIX close');
 
