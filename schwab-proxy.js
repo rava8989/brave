@@ -7647,7 +7647,8 @@ function buildMorningCardSvg(d) {
   s += `<text x="${P}" y="53" font-family="${F}" font-size="12" fill="${C.mute}">${_cardEsc(d.date)}</text>`;
   s += `<text x="${W - P}" y="36" text-anchor="end" font-family="${F}" font-size="21" font-weight="600" fill="${C.text}">${_cardEsc(d.vix)}</text>`;
   s += `<text x="${W - P}" y="53" text-anchor="end" font-family="${F}" font-size="11" fill="${C.mute}">${_cardEsc(d.vixSub)}</text>`;
-  const innerW = W - 2 * P, y0 = 72, rowH = 38, step = 44;
+  if (d.vixPrior) s += `<text x="${W - P}" y="65" text-anchor="end" font-family="${F}" font-size="9.5" fill="#6b7078">${_cardEsc(d.vixPrior)}</text>`;
+  const innerW = W - 2 * P, y0 = 76, rowH = 38, step = 44;
   d.rows.forEach((r, i) => {
     const top = y0 + i * step, bg = r.yes ? C.yesBg : C.noBg, bar = r.yes ? C.green : C.red;
     const tag = r.yes ? 'YES' : 'NO', pillW = r.yes ? 42 : 34, pillX = P + innerW - 10 - pillW;
@@ -7729,6 +7730,13 @@ function buildMorningCardData(signal, vixValues, tailLine) {
   const vix = (vixValues.todayOpen != null) ? String(vixValues.todayOpen) : '—';
   const drop = (typeof signal.oNight === 'number' && isFinite(signal.oNight)) ? signal.oNight.toFixed(2) : null;
   const vixSub = drop != null ? `VIX open · −${drop}` : 'VIX open';
+  // Audit line (small/subtle): prior-day VIX close + open so the overnight-gate
+  // inputs are verifiable on the card itself (prior close − today open = drop above).
+  const _yc = vixValues.yClose != null ? Number(vixValues.yClose).toFixed(2) : null;
+  const _yo = vixValues.yOpen  != null ? Number(vixValues.yOpen).toFixed(2)  : null;
+  const vixPrior = (_yc || _yo)
+    ? `prev${_yc ? ' ' + _yc + ' cls' : ''}${_yc && _yo ? ' ·' : ''}${_yo ? ' ' + _yo + ' opn' : ''}`
+    : null;
   const gapStr = (signal.spxGapPct != null) ? `${signal.spxGapPct > 0 ? '+' : ''}${signal.spxGapPct.toFixed(2)}%` : '—';
   const tiles = [
     ['SPX GAP', gapStr, (signal.spxGapPct != null && signal.spxGapPct < 0) ? '#f87171' : '#4ade80'],
@@ -7758,7 +7766,7 @@ function buildMorningCardData(signal, vixValues, tailLine) {
   return {
     title: 'Σ3 — Today’s Plan',
     date: `${signal.dateStr || ''}${signal.dayLabel ? ' · ' + signal.dayLabel : ''}`.trim(),
-    vix, vixSub, rows, tiles, stats, m8bfStrikes,
+    vix, vixSub, vixPrior, rows, tiles, stats, m8bfStrikes,
   };
 }
 // The M8BF skip-list / combo-bans → Discord small (-#) subtext, posted BELOW
@@ -7926,7 +7934,7 @@ function computeM8bfContextNotes(history, etNow, todayVixOpen) {
   return notes;
 }
 const SAMPLE_MORNING_CARD = {
-  title: 'Σ3 — Today’s Plan', date: 'Thu · Jun 18 2026 · OPEX', vix: '16.67', vixSub: 'VIX open · −1.77',
+  title: 'Σ3 — Today’s Plan', date: 'Thu · Jun 18 2026 · OPEX', vix: '16.67', vixSub: 'VIX open · −1.77', vixPrior: 'prev 18.44 cls · 16.32 opn',
   rows: [
     { n: 'GXBF', det: 'fires 9:36 AM', yes: true }, { n: 'M8BF', det: 'window 11:00–11:30', yes: true },
     { n: 'Straddle', det: 'overnight VIX drop > 0.65', yes: false }, { n: 'BOBF', det: 'OPEX', yes: false },
