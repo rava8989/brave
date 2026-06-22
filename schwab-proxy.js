@@ -175,6 +175,7 @@ async function captureCor1mVvix(env, etNow, token) {
         state: 'TRIGGERED', since: todayISO, value: cor,
         detectedAt: new Date().toISOString(), source: 'cloud-quote',
       }));
+      _tailHedgeCache = { value: null, fetchedAt: 0 };  // re-arm: drop stale 'No trade' line (mirrors settle path)
       try {
         const dcRaw = await env.SIGNAL_KV.get('discord_config');
         if (dcRaw) {
@@ -1564,8 +1565,14 @@ async function getTailHedgeStatusLine(env = null) {
           const st = JSON.parse(stRaw);
           cloudTriggered = st.state === 'TRIGGERED'
             && (!bundleLastDay || st.since > bundleLastDay);
+          // >= (not >): the worker's RESOLVED is authoritative for any day the
+          // bundle has not progressed BEYOND. At resolvedOn === bundleLastDay the
+          // worker (raw-mid pnl) and the bundle (ceil-mid/floor-$10) can disagree
+          // on a marginal profit; trusting the bundle there would re-open a
+          // campaign the worker already stopped. Re-arm overwrites state to
+          // 'TRIGGERED' (no resolvedOn) so this never blocks a fresh cross.
           cloudResolved = st.state === 'RESOLVED' && st.resolvedOn
-            && (!bundleLastDay || st.resolvedOn > bundleLastDay);
+            && (!bundleLastDay || st.resolvedOn >= bundleLastDay);
         }
       } catch (_) {}
     }
