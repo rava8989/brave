@@ -8466,10 +8466,15 @@ export default {
         const dcRaw = await env.SIGNAL_KV.get('discord_config');
         if (!dcRaw) return jsonResp({ ok: false, error: 'no discord_config' }, 200, corsHeaders);
         const dc = JSON.parse(dcRaw);
-        const r = await sendDiscordDM(env, dc.channelId, String(text).slice(0, 1800), dc.proxyUrl);
-        // fanoutText (optional) = subscriber-facing trade message. Set ONLY for
-        // LIVE EXECUTED trades by skipper (not submits/cancels/morning signal),
-        // so each fill is relayed to Discord subscribers. Best-effort.
+        // Channel post is OPTIONAL — skip it when no text (fanout-only mode), so
+        // paper trades can relay to subscribers WITHOUT cluttering the channel.
+        let r = { ok: true };
+        if (text && String(text).trim()) {
+          r = await sendDiscordDM(env, dc.channelId, String(text).slice(0, 1800), dc.proxyUrl);
+        }
+        // fanoutText (optional) = subscriber-facing trade message, relayed to the
+        // signal_subscribers DM list. Set for EVERY skipper trade entry (paper or
+        // live fill) so subscribers get each trade regardless of our exec mode.
         let fanned = 0;
         if (fanoutText) {
           try {
