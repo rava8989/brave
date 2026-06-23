@@ -3709,12 +3709,15 @@
     try {
       const r = await fetch('cor1m_contango_bundle.json', {cache:'no-store'});
       const b = await r.json();
-      const todayISO = new Date().toISOString().slice(0,10);
+      const _e = _toETSafe(new Date());   // ET date (iPhone-safe); UTC slice rolled the date wrong in the evening
+      const todayISO = `${_e.getFullYear()}-${String(_e.getMonth()+1).padStart(2,'0')}-${String(_e.getDate()).padStart(2,'0')}`;
       const dailyToday = b.daily?.find(d => d.date === todayISO);
       const cor1mOpen = dailyToday?.cor1m;
       const vvixOpen  = dailyToday?.vvix;
-      // State machine from Sweet Spot triggers — TRIGGERED if last trigger has no profitable exit.
-      const triggers = b.preset_results?.sweet_spot?.triggers || [];
+      // State machine from the worker's AUTHORITATIVE preset (default_preset = 'balanced'),
+      // NOT 'sweet_spot' — so this card + the Test-Post preview match getTailHedgeStatusLine
+      // and the real scheduled morning post (audit 2026-06-22).
+      const triggers = b.preset_results?.[b.default_preset || 'balanced']?.triggers || [];
       const last = triggers[triggers.length - 1];
       const isTriggered = last && last.exit_reason !== 'profitable';
       if (isTriggered) {

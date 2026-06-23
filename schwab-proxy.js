@@ -1539,7 +1539,7 @@ async function getTailHedgeStatusLine(env = null) {
 
     const r = await fetch('https://raw.githubusercontent.com/rava8989/brave/main/cor1m_contango_bundle.json',
       { cf: { cacheTtl: 300, cacheEverything: true } });
-    let bundleTriggered = false, bundleLastDay = null;
+    let bundleTriggered = false, bundleLastDay = null, bundleLastTriggerDate = null;
     if (r.ok) {
       const b = await r.json();
       const dailyToday = (b.daily || []).find(d => d.date === todayISO);
@@ -1551,6 +1551,7 @@ async function getTailHedgeStatusLine(env = null) {
       const triggers = b.preset_results?.[defId]?.triggers || [];
       const last = triggers[triggers.length - 1];
       bundleTriggered = !!(last && last.exit_reason !== 'profitable');
+      bundleLastTriggerDate = last?.trigger_date ?? null;   // START of the bundle's latest episode
     }
 
     // Cloud-detected cross SINCE the bundle's last day also counts as
@@ -1565,14 +1566,16 @@ async function getTailHedgeStatusLine(env = null) {
           const st = JSON.parse(stRaw);
           cloudTriggered = st.state === 'TRIGGERED'
             && (!bundleLastDay || st.since > bundleLastDay);
-          // >= (not >): the worker's RESOLVED is authoritative for any day the
-          // bundle has not progressed BEYOND. At resolvedOn === bundleLastDay the
-          // worker (raw-mid pnl) and the bundle (ceil-mid/floor-$10) can disagree
-          // on a marginal profit; trusting the bundle there would re-open a
-          // campaign the worker already stopped. Re-arm overwrites state to
-          // 'TRIGGERED' (no resolvedOn) so this never blocks a fresh cross.
+          // The worker's RESOLVED is authoritative for the CURRENT trigger episode.
+          // Compare resolvedOn to the bundle's last TRIGGER-START (NOT bundleLastDay,
+          // the data clock): if the worker resolved on/after the bundle's latest
+          // episode started, it's the SAME episode → stay stopped, even when a freshly
+          // rebuilt bundle (bundleLastDay advanced past resolvedOn) still shows it
+          // active and disagrees on the marginal profit. Only a bundle trigger that
+          // STARTED after resolvedOn is a genuinely new episode — and a real cloud
+          // cross re-arms anyway via state→TRIGGERED (which carries no resolvedOn).
           cloudResolved = st.state === 'RESOLVED' && st.resolvedOn
-            && (!bundleLastDay || st.resolvedOn >= bundleLastDay);
+            && (!bundleLastTriggerDate || st.resolvedOn >= bundleLastTriggerDate);
         }
       } catch (_) {}
     }
@@ -7079,19 +7082,10 @@ async function backfillMissingWR(env, force = false, targetDates = null) {
   const channelId = '1048242197029458040';
   if (!token) throw new Error('DISCORD_USER_TOKEN not set');
 
-  // 1. Fetch history_data.json from GitHub
-  const apiUrl = 'https://api.github.com/repos/rava8989/brave/contents/history_data.json';
-  const ghHeaders = {
-    'Authorization': `Bearer ${env.GITHUB_TOKEN}`,
-    'Accept': 'application/vnd.github+json',
-    'User-Agent': 'schwab-proxy-worker/1.0',
-    'X-GitHub-Api-Version': '2022-11-28',
-  };
-  const getResp = await fetch(apiUrl, { headers: ghHeaders });
-  if (!getResp.ok) throw new Error(`GitHub GET failed: ${getResp.status}`);
-  const meta = await getResp.json();
-  const sha = meta.sha;
-  const content = JSON.parse(atob(meta.content.replace(/\n/g, '')));
+  // 1. Read history from KV (source of truth). The old path read+PUT GitHub directly,
+  //    which the next KV→GitHub mirror reverted → perpetual backfill/null churn. Now
+  //    KV-first: read KV, mutate, setHistory + mirror once (audit 2026-06-22).
+  const content = await getHistory(env);
 
   // 2. Find entries to process
   const today = new Date().toISOString().slice(0, 10);
@@ -7135,21 +7129,10 @@ async function backfillMissingWR(env, force = false, targetDates = null) {
     }
   }
 
-  // 3. Push back to GitHub if anything changed
+  // 3. Persist KV-first (source of truth), then mirror ONCE to GitHub.
   if (filled.length > 0) {
-    const putResp = await fetch(apiUrl, {
-      method: 'PUT',
-      headers: { ...ghHeaders, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message: `auto: backfill m8bfWR for ${filled.map(f => f.date).join(', ')}`,
-        content: btoa(JSON.stringify(content, null, 0)),
-        sha,
-      }),
-    });
-    if (!putResp.ok) {
-      const err = await putResp.text();
-      throw new Error(`GitHub PUT failed: ${putResp.status} — ${err}`);
-    }
+    await setHistory(env, content, { dateStr: 'backfill-wr' });
+    await mirrorHistoryToGitHub(env, content, `auto: backfill m8bfWR for ${filled.map(f => f.date).join(', ')}`);
   }
 
   return { filled, failed, total_missing: missing.length };
@@ -7303,19 +7286,9 @@ async function backfillMissingPL(env, targetDates = null) {
   const channelId = '1048242197029458040';
   if (!token) throw new Error('DISCORD_USER_TOKEN not set');
 
-  const apiUrl = 'https://api.github.com/repos/rava8989/brave/contents/history_data.json';
-  const ghHeaders = {
-    'Authorization': `Bearer ${env.GITHUB_TOKEN}`,
-    'Accept': 'application/vnd.github+json',
-    'User-Agent': 'schwab-proxy-worker/1.0',
-    'X-GitHub-Api-Version': '2022-11-28',
-  };
-
-  const getResp = await fetch(apiUrl, { headers: ghHeaders });
-  if (!getResp.ok) throw new Error(`GitHub GET failed: ${getResp.status}`);
-  const meta = await getResp.json();
-  const sha = meta.sha;
-  const content = JSON.parse(atob(meta.content.replace(/\n/g, '')));
+  // KV-first read (source of truth) — the old GitHub read+PUT path was reverted by
+  // the next KV→GitHub mirror, causing perpetual backfill/null churn (audit 2026-06-22).
+  const content = await getHistory(env);
 
   const etNow = toET(new Date());
   const todayISO = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
@@ -7411,19 +7384,9 @@ async function backfillMissingPL(env, targetDates = null) {
   }
 
   if (filled.length > 0) {
-    const putResp = await fetch(apiUrl, {
-      method: 'PUT',
-      headers: { ...ghHeaders, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message: `auto: backfill m8bfPL for ${filled.map(f => f.date).join(', ')}`,
-        content: btoa(JSON.stringify(content, null, 0)),
-        sha,
-      }),
-    });
-    if (!putResp.ok) {
-      const err = await putResp.text();
-      throw new Error(`GitHub PUT failed: ${putResp.status} — ${err}`);
-    }
+    // KV-first (source of truth), then mirror ONCE to GitHub.
+    await setHistory(env, content, { dateStr: 'backfill-pl' });
+    await mirrorHistoryToGitHub(env, content, `auto: backfill m8bfPL for ${filled.map(f => f.date).join(', ')}`);
   }
 
   return { filled, failed, total_missing: missing.length };
@@ -9710,6 +9673,17 @@ export default {
       catch (e) { result = { error: e.message }; }
       return new Response(JSON.stringify({ sym, ...result }, null, 2),
         { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
+    }
+
+    // Manual "*-now" trigger routes hit Schwab / GitHub / Discord. Gate them with
+    // SYNC_SECRET (header or ?secret=), like the other trigger routes, so they can't
+    // be invoked anonymously (audit 2026-06-22). Cron calls the underlying functions
+    // directly — not these HTTP routes — so scheduled runs are unaffected.
+    if (request.method !== 'OPTIONS' &&
+        ['/cyclicality-append-now', '/score-advisories-now', '/research-persist-now',
+         '/cot-refresh-now', '/watchdog-now', '/weekly-digest-now', '/vix-decomp-now'].includes(url.pathname)) {
+      const s = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
+      if (!s || s !== env.SYNC_SECRET) return jsonResp({ error: 'Unauthorized' }, 401, corsHeaders);
     }
 
     if (url.pathname === '/cyclicality-append-now' && request.method === 'GET') {

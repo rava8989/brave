@@ -1808,12 +1808,21 @@ function renderLiveTotal() {
   }
   // else: diagOpen.openDate === today → brand-new open today, excluded
 
+  // Tail Hedge — now a real auto-traded strategy; include it like the others
+  // (filled → live currentPnl; settled today → realized pnl). (audit 2026-06-22)
+  let tailPL = null;
+  const tOpen = (tail?.open && tail.open.openDate === today && tail.open.status === 'filled') ? tail.open : null;
+  const tClosed = (tail?.lastClosed && tail.lastClosed.closeDate === today) ? tail.lastClosed : null;
+  if (tClosed && tClosed.pnl != null) tailPL = tClosed.pnl;
+  else if (tOpen && tOpen.currentPnl != null) tailPL = tOpen.currentPnl;
+
   const parts = [
     { name: 'M8BF',     pl: m8bfPL },
     { name: 'BOBF',     pl: bobfPL },
     { name: 'GXBF',     pl: gxbfPL },
     { name: 'Straddle', pl: stradPL },
     { name: 'Diagonal', pl: diagPL  },
+    { name: 'Tail',     pl: tailPL  },
   ];
   const total = parts.reduce((s, p) => s + (p.pl ?? 0), 0);
   const anyData = parts.some(p => p.pl != null);

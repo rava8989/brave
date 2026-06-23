@@ -707,8 +707,12 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
       // 2026-06-09 audit: added `!rec.includes("GXBF")` guard to match the
       // 90% rule's GXBF exclusion at the next branch.
       // 2026-05-28: removed an erroneous `!fedDay` clause.
-      rec = "Straddle @ 9:32 AM"; theme = "strad"; crossed = false;
-      blockT = "0%rule"; entryT = "9:32 AM"; badge = "STRADDLE"; strikeInfo = null;
+      // 2026-06-22 audit fix: PRESERVE the EOM/NM straddle badge (and its higher
+      // max-debit cap). The old code hardcoded badge="STRADDLE", which on an EOM day
+      // with prior WR=0 silently cut the live max-debit cap from $35 to $32.
+      rec = eomDay ? "Straddle @ 9:32 AM (EOM)" : (nmDay && !isMon) ? "NM Straddle @ 9:32 AM" : "Straddle @ 9:32 AM";
+      theme = "strad"; crossed = false; blockT = "0%rule"; entryT = "9:32 AM";
+      badge = eomDay ? "EOM STRADDLE" : (nmDay && !isMon) ? "NM STRADDLE" : "STRADDLE"; strikeInfo = null;
     } else if (prevWR >= 90 && !cpiDay && !rec.includes("GXBF")) {
       // 90% rule cannot cancel GXBF — GXBF is independent (overnight VIX drop).
       // For everything else (Straddle, NM Straddle, gap/o2o blocks, M8BF bans
@@ -761,10 +765,15 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
       bobfBlocks.push(`RSI ${rsi14.toFixed(1)} outside 40-65 band`);
     }
   } else if (dow >= 1 && dow <= 4) {
-    const oNightDelta = vixToday - vixYClose;  // positive = VIX up overnight
-    if (oNightDelta >= 0.01)       bobfType = 'vix_up';
-    else if (oNightDelta <= -0.01) bobfType = 'vix_down';
-    if (!bobfType) {
+    // FAIL-SAFE: a null prior VIX close coerces to 0 in subtraction
+    // (vixToday - null = vixToday → would falsely fire 'vix_up'); block on
+    // missing data instead, like the RSI/gap fail-safes above.
+    const oNightDelta = (vixToday == null || vixYClose == null) ? null : vixToday - vixYClose;  // + = VIX up overnight
+    if (oNightDelta != null && oNightDelta >= 0.01)       bobfType = 'vix_up';
+    else if (oNightDelta != null && oNightDelta <= -0.01) bobfType = 'vix_down';
+    if (oNightDelta == null) {
+      bobfBlocks.push('Waiting for VIX data (overnight type)');
+    } else if (!bobfType) {
       bobfBlocks.push('flat overnight VIX (no qualifying type)');
     } else if (bobfType === 'vix_down') {
       // FAIL-SAFE: vix-down BOBF type also needs RSI to evaluate. Block
