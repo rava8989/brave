@@ -86,6 +86,7 @@ td:first-child,th:first-child{text-align:left}
     <span class="lg-act">Actual</span>
     <span class="lg-zero">Zero</span>
     <span style="color:var(--text2)"><span style="color:#818cf8;opacity:.4;font-weight:700">▮</span> Agreement band (prior-week spread — wide = ignore the line)</span>
+    <span style="color:var(--text2)"><span style="color:#22c55e;font-weight:700">▮</span> ✓ green day = the 4 weeks agreed (cloud stayed one side of the open → the line is tradeable)</span>
     <span style="color:var(--text2)"><span style="color:#22d3ee;font-weight:700">┄</span> Live rest-of-day projection</span>
     <span style="color:var(--text2)"><span style="color:#ef4444;font-weight:700">▂</span> Movement intensity (bottom strip)</span>
     <span style="color:var(--text2)">Top ticks: <b>S</b>traddle 9:32 · <b>G</b>XBF 9:36 · <b>T</b>ail 9:45 · <b>D</b>iag 12:30 · shaded = M8BF window</span>
@@ -348,8 +349,10 @@ function compute() {
   const ghosts = [];   // prior-week paths, only when a single weekday is shown
   const singleDow = days.length >= 1 && activeDows.size === 1 && lookback <= 10;
   days.forEach((d, di) => {
-    marks.push({ x: di * ns, label: `${WD[d.w]} ${d.iso.slice(5)}`, w: d.w, iso: d.iso });
+    const mk = { x: di * ns, label: `${WD[d.w]} ${d.iso.slice(5)}`, w: d.w, iso: d.iso };
+    marks.push(mk);
     const dayStart = cp;
+    let oneSided = 0, bandSlots = 0, widthSum = 0;   // cloud-agreement quality per day
     // per-prior cumulative paths (scaled ×N under Sum so they bracket the line)
     const scale = method === 'sum' ? (d.ms ? d.ms.length : 1) : 1;
     const paths = (d.ms || []).map(m => {
@@ -367,10 +370,16 @@ function compute() {
         for (const m of d.ms) asum += Math.abs(m[s] || 0);
         bandLo.push(dayStart + mn); bandHi.push(dayStart + mx);
         intens.push(asum / d.ms.length);
+        if (s > 0) { bandSlots++; widthSum += (mx - mn); if (mn >= 0 || mx <= 0) oneSided++; }
       } else { bandLo.push(null); bandHi.push(null); intens.push(null); }
       if (d.act && d.act[s] != null) { ca += d.act[s]; actCum.push(+ca.toFixed(2)); }
       else actCum.push(null);
     }
+    // cloud read: fraction of the day the band stayed on ONE side of the open
+    // (priors agreed on direction). High = tradeable line; low = noise. Rare.
+    mk.q = bandSlots ? oneSided / bandSlots : null;
+    mk.avgW = bandSlots ? widthSum / bandSlots : null;
+    mk.cls = mk.q == null ? null : (mk.q >= 0.70 ? 'good' : mk.q <= 0.40 ? 'noise' : 'mixed');
   });
   return { days, predCum, actCum, marks, ns, bandLo, bandHi, intens, ghosts };
 }
@@ -412,6 +421,15 @@ function draw(r) {
   const L = 50, R = 10, T = 10, B = 36;
   const px = i => L + (W - L - R) * i / Math.max(1, N - 1);
   const py = v => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
+  // cloud-quality day shading (bottom layer): green where the 4 prior weeks
+  // agreed (cloud stays one side of the open → tradeable line), faint red where
+  // the cloud straddles the open (the weeks disagreed → noise, skip).
+  r.marks.forEach((mk, di) => {
+    if (!mk.cls || mk.cls === 'mixed') return;
+    const x0 = px(mk.x), x1 = (di + 1 < r.marks.length) ? px(r.marks[di + 1].x) : (W - R);
+    x.fillStyle = mk.cls === 'good' ? 'rgba(34,197,94,0.11)' : 'rgba(239,68,68,0.05)';
+    x.fillRect(x0, T, x1 - x0, H - T - B);
+  });
   x.font = '11px JetBrains Mono'; x.lineWidth = 1;
   const step = Math.max(5, Math.round((hi - lo) / 7 / 5) * 5);
   for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) {
@@ -421,7 +439,8 @@ function draw(r) {
   // day separators + labels
   r.marks.forEach(mk => {
     x.strokeStyle = '#2d3f55'; x.beginPath(); x.moveTo(px(mk.x), T); x.lineTo(px(mk.x), H - B); x.stroke();
-    x.fillStyle = '#94a3b8'; x.fillText(mk.label, px(mk.x) + 4, H - 16);
+    x.fillStyle = mk.cls === 'good' ? '#22c55e' : mk.cls === 'noise' ? '#9ca3af' : '#94a3b8';
+    x.fillText((mk.cls === 'good' ? '✓ ' : '') + mk.label, px(mk.x) + 4, H - 16);
   });
   x.strokeStyle = '#475569'; x.setLineDash([4, 4]);
   x.beginPath(); x.moveTo(L, py(0)); x.lineTo(W - R, py(0)); x.stroke(); x.setLineDash([]);
