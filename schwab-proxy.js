@@ -259,7 +259,7 @@ async function archiveFlyMarks(env, etNow) {
 
 async function captureTailPutSnap(env, etNow, masterChain) {
   const h = etNow.getHours(), m = etNow.getMinutes();
-  if (!(h === 9 && m >= 40 && m <= 59)) return;   // shortly after the 9:45 tail entry time
+  if (!(h === 9 && m >= 45 && m <= 59)) return;   // AT the 9:45 tail entry time (quote == entry)
   if (!masterChain || !masterChain.putExpDateMap) return;
   const todayISO = isoDateET(etNow);
   const k = `tail_put_snap_${todayISO}`;
@@ -4611,7 +4611,7 @@ async function settleGxbfEOD(env, etNow, spxClose) {
 // historical tailPL column; skipper tracks its own real fill separately).
 // ────────────────────────────────────────────────────────────────────
 
-// Freeze today's tail open from the ~9:40 put snapshot once we're past 9:45 ET
+// Freeze today's tail open from the 9:45 put snapshot once we're past 9:45 ET
 // on a TRADE day. Idempotent (first call wins). Called by BOTH the cron (robust,
 // no page-poll needed) and GET /tail-today.
 async function freezeTailOpenIfDue(env, etNow, line = null) {
@@ -9760,7 +9760,7 @@ export default {
       try { st = JSON.parse(await env.SIGNAL_KV.get('tail_trigger_state') || 'null'); } catch (_) {}
       try { snap = JSON.parse(await env.SIGNAL_KV.get(`tail_put_snap_${todayT}`) || 'null'); } catch (_) {}
       try { openRec = JSON.parse(await env.SIGNAL_KV.get(`cor1m_open_${todayT}`) || 'null'); } catch (_) {}
-      // candidate = nearest-expiry put closest to Δ-0.10 from the ~9:40 snapshot
+      // candidate = nearest-expiry put closest to Δ-0.10 from the 9:45 snapshot
       let candidate = null;
       if (snap && Array.isArray(snap.puts) && snap.puts.length) {
         const e0 = snap.puts[0].e;
