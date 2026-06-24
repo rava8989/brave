@@ -6280,6 +6280,7 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
       netGex: Math.round(s.netGex),
       callGex: Math.round(s.callGex),
       putGex: Math.round(s.putGex),
+      cex: Math.round(s.netCex),   // per-strike charm exposure (time-decay hedging pressure)
     })),
     events: [],
     commentary: null,
@@ -6456,7 +6457,8 @@ async function handleGEXUpdate(env, token, preChain = null) {
       const flowKey = `gex_flow_${isoDateET(etNowFlow)}`;
       const flowRaw = await env.SIGNAL_KV.get(flowKey);
       let flow = flowRaw ? JSON.parse(flowRaw) : [];
-      flow.push({ ts: Math.floor(Date.now() / 1000), cv: gexData.callVol, pv: gexData.putVol });
+      flow.push({ ts: Math.floor(Date.now() / 1000), cv: gexData.callVol, pv: gexData.putVol,
+                  ch: (typeof gexData.charm === 'number' ? gexData.charm : null) });   // intraday charm → into-the-close drift chart
       if (flow.length > 250) flow = flow.slice(-250);
       await env.SIGNAL_KV.put(flowKey, JSON.stringify(flow), { expirationTtl: 172800 }); // ~2 days
     } catch (e) { console.warn('[gex] flow series capture failed:', e.message); }
