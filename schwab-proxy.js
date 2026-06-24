@@ -6707,37 +6707,58 @@ async function mirrorHistoryToGitHub(env, contentArray, message) {
   // Async GitHub mirror — preserves git history but doesn't block writes.
   // Errors logged but never thrown (mirroring failure must not break trades).
   if (!env.GITHUB_TOKEN) return { skipped: 'no GITHUB_TOKEN' };
-  try {
-    const apiUrl = 'https://api.github.com/repos/rava8989/brave/contents/history_data.json';
-    const ghHeaders = {
-      'Authorization': `Bearer ${env.GITHUB_TOKEN}`,
-      'Accept': 'application/vnd.github+json',
-      'User-Agent': 'schwab-proxy-worker/1.0',
-      'X-GitHub-Api-Version': '2022-11-28',
-    };
-    const getResp = await fetch(apiUrl, { headers: ghHeaders });
-    if (!getResp.ok) throw new Error(`GH GET ${getResp.status}`);
-    const meta = await getResp.json();
-    const putResp = await fetch(apiUrl, {
-      method: 'PUT',
-      headers: { ...ghHeaders, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message: message || 'auto: KV mirror',
-        content: btoa(JSON.stringify(contentArray, null, 0)),
-        sha: meta.sha,
-      }),
-    });
-    if (!putResp.ok) {
-      const err = await putResp.text();
-      throw new Error(`GH PUT ${putResp.status}: ${err.slice(0, 200)}`);
+  const apiUrl = 'https://api.github.com/repos/rava8989/brave/contents/history_data.json';
+  const ghHeaders = {
+    'Authorization': `Bearer ${env.GITHUB_TOKEN}`,
+    'Accept': 'application/vnd.github+json',
+    'User-Agent': 'schwab-proxy-worker/1.0',
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
+  // Retry on sha conflict (409/422) + transient errors. Two near-simultaneous
+  // settles (e.g. m8bf + tail at EOD) each do GET-sha→PUT; GitHub's sha lags
+  // briefly so the second PUT 409s. The old code swallowed that with NO retry
+  // → KV had tailPL but GitHub never did (2026-06-23 tail-PL drift). On each
+  // retry we re-GET a fresh sha AND re-read the latest KV, so the GitHub copy
+  // converges to current KV regardless of which mirror lands last.
+  const maxAttempts = 4;
+  let lastErr = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      let body = contentArray;
+      if (attempt > 1) {
+        await new Promise(r => setTimeout(r, 250 * (attempt - 1)));
+        try { const fresh = await getHistory(env); if (Array.isArray(fresh) && fresh.length) body = fresh; } catch (_) {}
+      }
+      const getResp = await fetch(apiUrl, { headers: ghHeaders });
+      if (!getResp.ok) throw new Error(`GH GET ${getResp.status}`);
+      const meta = await getResp.json();
+      const putResp = await fetch(apiUrl, {
+        method: 'PUT',
+        headers: { ...ghHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: message || 'auto: KV mirror',
+          content: btoa(JSON.stringify(body, null, 0)),
+          sha: meta.sha,
+        }),
+      });
+      if (putResp.status === 409 || putResp.status === 422) {
+        lastErr = `GH PUT ${putResp.status} (sha conflict)`;
+        continue; // sha raced — re-GET + retry
+      }
+      if (!putResp.ok) {
+        const err = await putResp.text();
+        throw new Error(`GH PUT ${putResp.status}: ${err.slice(0, 200)}`);
+      }
+      await recordMirrorHealth(env, true);
+      return { ok: true, attempts: attempt };
+    } catch (e) {
+      lastErr = e.message;
+      if (attempt === maxAttempts) break;
     }
-    await recordMirrorHealth(env, true);
-    return { ok: true };
-  } catch (e) {
-    console.warn('[history-mirror] failed (KV state still good):', e.message);
-    await recordMirrorHealth(env, false, e.message);
-    return { ok: false, error: e.message };
   }
+  console.warn('[history-mirror] failed after retries (KV state still good):', lastErr);
+  await recordMirrorHealth(env, false, lastErr);
+  return { ok: false, error: lastErr };
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -9681,7 +9702,8 @@ export default {
     // directly — not these HTTP routes — so scheduled runs are unaffected.
     if (request.method !== 'OPTIONS' &&
         ['/cyclicality-append-now', '/score-advisories-now', '/research-persist-now',
-         '/cot-refresh-now', '/watchdog-now', '/weekly-digest-now', '/vix-decomp-now'].includes(url.pathname)) {
+         '/cot-refresh-now', '/watchdog-now', '/weekly-digest-now', '/vix-decomp-now',
+         '/remirror-history'].includes(url.pathname)) {
       const s = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
       if (!s || s !== env.SYNC_SECRET) return jsonResp({ error: 'Unauthorized' }, 401, corsHeaders);
     }
@@ -9918,6 +9940,22 @@ export default {
       catch (e) { result = { error: e.message }; }
       return new Response(JSON.stringify(result, null, 2),
         { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
+    }
+
+    // GET /remirror-history — Repair: force-push current KV history → GitHub.
+    // KV is the source of truth; this re-mirrors it to the GitHub copy the
+    // dashboard reads, healing any silent mirror drift (e.g. a settle whose
+    // KV→GitHub PUT lost a sha race, as 2026-06-23 tailPL did). Read-only on
+    // KV — never the reverse. Auth: SYNC_SECRET via the guard above.
+    if (url.pathname === '/remirror-history' && request.method === 'GET') {
+      let result;
+      try {
+        const content = await getHistory(env);
+        const r = await mirrorHistoryToGitHub(env, content, 'manual: re-mirror KV→GitHub (repair drift)');
+        result = { ok: r.ok, entries: Array.isArray(content) ? content.length : null, mirror: r };
+      } catch (e) { result = { ok: false, error: e.message }; }
+      return new Response(JSON.stringify(result, null, 2),
+        { status: result.ok ? 200 : 502, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
     }
 
     if (url.pathname === '/weekly-digest-now' && request.method === 'GET') {
