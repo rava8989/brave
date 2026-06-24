@@ -695,6 +695,20 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
     rec = `No Straddle (o2o ${o2o.toFixed(1)} > ${T.O2O_M8BF})`; theme = "block"; crossed = true; blockT = "o2o"; blockD = `Open-to-open ${o2o.toFixed(1)} > ${T.O2O_M8BF}`; badge = "BLOCKED"; strikeInfo = null;
   }
 
+  // ── Regular-Wednesday straddle cancel (user rule, restored 2026-06-24) ──
+  // The SPX 0DTE straddle is NOT taken on a plain Wednesday. Fed days, EOM
+  // (last trading day) and NM (first trading day) still straddle — those are
+  // exempt via the !fedDay/!eomDay/!nmDay guards (their recs are "(EOM)" /
+  // "NM Straddle" anyway). theme === 'strad' here means a live straddle that
+  // survived the gap/o2o blocks. Placed BEFORE the WR overrides so a prior-day
+  // 0% win-rate STILL force-fires the straddle through (WR rules ignore the
+  // weekday gate, exactly as they ignore Fed days).
+  if (theme === "strad" && dow === 3 && !fedDay && !eomDay && !nmDay) {
+    rec = "No Straddle (Wednesday)"; theme = "block"; crossed = true;
+    blockT = "wed"; blockD = "No straddle on a regular Wednesday (Fed / EOM / NM exempt)";
+    badge = "BLOCKED"; strikeInfo = null;
+  }
+
   // WR=0% and WR>=90% overrides
   if (prevWR != null) {
     if (prevWR === 0 && !cpiDay && !rec.includes("GXBF")) {
