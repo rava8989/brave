@@ -5223,6 +5223,10 @@ async function handleScheduled(env) {
     if (closeCandle) vixYClose = parseFloat(closeCandle.close.toFixed(2));
   }
 
+  // Keep the minute-candle close as an INDEPENDENT second opinion before the
+  // authoritative override, so the two can be cross-checked below.
+  const _vixYCloseCandle = vixYClose;
+
   // AUTHORITATIVE: prefer the SETTLED prior-day VIX from history_data.json.
   // The minute-candle "close" above can latch a stale late-session 1-min bar
   // (2026-06-24: candle 19.44 vs the true settled close 18.63), flipping the
@@ -5241,6 +5245,23 @@ async function handleScheduled(env) {
       if (_last.vixOpen  != null) vixYOpen  = parseFloat(_last.vixOpen);
     }
   } catch (e) { console.warn('[proxy] history prior-VIX lookup failed, using candle:', e.message); }
+
+  // CROSS-CHECK GUARD (2026-06-25): the prior VIX close gates GXBF↔Straddle, so
+  // two INDEPENDENT derivations (settled history + minute-candle) must agree.
+  // If they diverge > 0.40 VIX pts the gate is in doubt → fire a Discord alert
+  // NOW (signal lands ~9:30, GXBF entry 9:36 → time to react) and keep the
+  // settled-history value. This SCREAMS instead of silently trading a bad gate —
+  // it would have caught 6/24 (history 18.63 vs candle 19.44, Δ0.81). No single
+  // source is trusted blindly. See [[feedback_quote_closeprice_holiday]].
+  if (vixYClose != null && _vixYCloseCandle != null && Math.abs(vixYClose - _vixYCloseCandle) > 0.40) {
+    const _msg = `⚠️ VIX PRIOR-CLOSE MISMATCH — settled history ${vixYClose} vs minute-candle ${_vixYCloseCandle} (Δ${(vixYClose - _vixYCloseCandle).toFixed(2)}). Using history (${vixYClose}). Overnight-VIX gates GXBF↔Straddle — VERIFY before the 9:36 entry.`;
+    console.warn('[proxy]', _msg);
+    try {
+      const _dcRaw = await env.SIGNAL_KV.get('discord_config');
+      const _dc = _dcRaw ? JSON.parse(_dcRaw) : null;
+      if (_dc && _dc.channelId) await sendDiscordDM(env, _dc.channelId, _msg, _dc.proxyUrl);
+    } catch (_) {}
+  }
 
   // FALLBACK ONLY (2026-06-22 fix). quote.closePrice is NOT holiday-aware:
   // after a market holiday it returns the HOLIDAY's phantom close instead of the
