@@ -5223,6 +5223,25 @@ async function handleScheduled(env) {
     if (closeCandle) vixYClose = parseFloat(closeCandle.close.toFixed(2));
   }
 
+  // AUTHORITATIVE: prefer the SETTLED prior-day VIX from history_data.json.
+  // The minute-candle "close" above can latch a stale late-session 1-min bar
+  // (2026-06-24: candle 19.44 vs the true settled close 18.63), flipping the
+  // overnight-VIX drop + the GXBF/Straddle gate and showing a wrong prev-close
+  // on the card. The EOD settle wrote the real close last night and it's the
+  // same value the dashboard uses — trust it; candle/quote stay as fallback.
+  try {
+    const _hist = await getHistory(env);
+    const _todayISO = isoDateET(etNow);
+    const _prior = (_hist || [])
+      .filter(r => r && r.date && r.date < _todayISO && r.vixClose != null)
+      .sort((a, b) => (a.date < b.date ? -1 : 1));
+    if (_prior.length) {
+      const _last = _prior[_prior.length - 1];
+      if (_last.vixClose != null) vixYClose = parseFloat(_last.vixClose);
+      if (_last.vixOpen  != null) vixYOpen  = parseFloat(_last.vixOpen);
+    }
+  } catch (e) { console.warn('[proxy] history prior-VIX lookup failed, using candle:', e.message); }
+
   // FALLBACK ONLY (2026-06-22 fix). quote.closePrice is NOT holiday-aware:
   // after a market holiday it returns the HOLIDAY's phantom close instead of the
   // real prior-session close (Juneteenth 2026-06-19 → 16.78 vs the true 6-18
