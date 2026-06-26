@@ -274,6 +274,20 @@
     </div>
   </div>
 
+  <!-- 0DTE Same-Day Flow (trade-side / signed) -->
+  <div class="chart-section" id="flow0dteSection" style="display:none;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
+      <h2 style="margin-bottom:0;"><span>0DTE</span> Same-Day Flow — buy vs sell</h2>
+      <span id="flow0dteReadout" style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--text2);"></span>
+    </div>
+    <div class="chart-wrap" style="height:300px;">
+      <canvas id="flow0dteChart"></canvas>
+    </div>
+    <div class="bottom-info" style="text-align:left;padding:8px 0 0;">
+      Cumulative net directional pressure since the open, side-classified from each 0DTE contract's prints (buyers lifting the ask vs sellers hitting the bid). Up / green = bullish (buying calls + selling puts); down / red = bearish (buying puts + selling calls). Snapshot proxy, info-only — builds through the session.
+    </div>
+  </div>
+
   <!-- Charm by Strike -->
   <div class="chart-section" id="charmStrikeSection" style="display:none;">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
@@ -367,6 +381,7 @@ let triggerAttempted = false; // only try once per page load
 let gexChart = null;
 let gammaCurveChart = null;
 let flowChart = null;
+let flow0dteChart = null;
 let charmStrikeChart = null;
 let charmTimeChart = null;
 let gammaLevelMapDrawn = false; // SVG is rebuilt from scratch each render; this flag is informational only
@@ -824,6 +839,90 @@ function renderFlowChart(data) {
           callbacks: {
             title: (items) => items[0].label + ' ET',
             label: (item) => { const v = Math.round(item.raw); return 'Net ' + (v >= 0 ? '+' : '−') + Math.abs(v).toLocaleString() + (v >= 0 ? ' call' : ' put'); },
+          }
+        },
+        annotation: { annotations },
+      },
+      scales: {
+        x: { grid: { color: 'rgba(45,63,85,0.3)', drawBorder: false },
+             ticks: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 10 },
+                      maxRotation: 45, autoSkip: true, maxTicksLimit: 14 } },
+        y: { grid: { color: 'rgba(45,63,85,0.3)', drawBorder: false },
+             ticks: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 10 },
+                      callback: v => (v >= 0 ? '+' : '−') + Math.abs(v).toLocaleString() } }
+      },
+      animation: { duration: 300 },
+    }
+  });
+}
+
+// ── 0DTE Same-Day Flow (trade-side) — cumulative net directional pressure from signed deltas.
+//    Hidden until the worker has written signed fields (cb/cs/pb/ps) to flowSeries. ──
+function renderFlow0dteChart(data) {
+  const section = document.getElementById('flow0dteSection');
+  const series = Array.isArray(data.flowSeries) ? data.flowSeries : [];
+  const hasSided = series.length >= 2 && series.some(b => b && typeof b.cb === 'number');
+  if (!hasSided) {
+    section.style.display = 'none';
+    if (flow0dteChart) { flow0dteChart.destroy(); flow0dteChart = null; }
+    return;
+  }
+  section.style.display = 'block';
+
+  // cb/cs/pb/ps are PER-BAR sided deltas (contracts). Net directional pressure per bar =
+  // (call buys − call sells) − (put buys − put sells); > 0 = bullish. Cumulative since open.
+  const cumNet = [];
+  const labels = [];
+  let run = 0;
+  for (let i = 0; i < series.length; i++) {
+    const b = series[i];
+    run += ((b.cb || 0) - (b.cs || 0)) - ((b.pb || 0) - (b.ps || 0));
+    cumNet.push(run);
+    const d = _toETSafe(new Date((b.ts || 0) * 1000));
+    labels.push(String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'));
+  }
+  const netNow = cumNet.length ? cumNet[cumNet.length - 1] : 0;
+
+  const readout = document.getElementById('flow0dteReadout');
+  readout.textContent = (netNow >= 0 ? '+' : '−') + Math.abs(Math.round(netNow)).toLocaleString()
+    + (netNow >= 0 ? ' net bullish (buy calls / sell puts)' : ' net bearish (buy puts / sell calls)');
+  readout.style.color = netNow > 0 ? 'var(--green)' : netNow < 0 ? 'var(--red)' : 'var(--text2)';
+
+  const annotations = {
+    zeroLine: { type: 'line', yMin: 0, yMax: 0,
+      borderColor: 'rgba(148,163,184,0.6)', borderWidth: 1, borderDash: [4, 4] },
+  };
+
+  if (flow0dteChart) {
+    flow0dteChart.data.labels = labels;
+    flow0dteChart.data.datasets[0].data = cumNet;
+    flow0dteChart.options.plugins.annotation.annotations = annotations;
+    flow0dteChart.update('none');
+    return;
+  }
+
+  const ctx = document.getElementById('flow0dteChart').getContext('2d');
+  flow0dteChart = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets: [
+      { label: 'Net 0DTE directional flow (buy calls / sell puts = +)', data: cumNet,
+        borderColor: '#22c55e', borderWidth: 2, pointRadius: 0, tension: 0.25,
+        segment: { borderColor: c => (c.p1.parsed.y >= 0 ? '#22c55e' : '#ef4444') },
+        fill: { target: 'origin', above: 'rgba(34,197,94,0.10)', below: 'rgba(239,68,68,0.10)' } },
+    ]},
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: true, labels: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 11 }, boxWidth: 12 } },
+        tooltip: {
+          backgroundColor: '#1e293b', borderColor: '#2d3f55', borderWidth: 1,
+          titleFont: { family: 'JetBrains Mono', size: 12, weight: 'bold' },
+          bodyFont:  { family: 'JetBrains Mono', size: 11 },
+          titleColor: '#e2e8f0', bodyColor: '#94a3b8', padding: 10, cornerRadius: 8,
+          callbacks: {
+            title: (items) => items[0].label + ' ET',
+            label: (item) => { const v = Math.round(item.raw); return 'Net ' + (v >= 0 ? '+' : '−') + Math.abs(v).toLocaleString() + (v >= 0 ? ' bullish' : ' bearish'); },
           }
         },
         annotation: { annotations },
@@ -1378,7 +1477,7 @@ async function tryLoadCached() {
     renderCards(data);
     renderChart(data);
     renderGammaCurve(data);
-    renderFlowChart(data);
+    renderFlowChart(data); renderFlow0dteChart(data);
     renderCharmStrikeChart(data);
     renderCharmTimeChart(data);
     renderGammaLevelMap(data);
@@ -1420,7 +1519,7 @@ async function fetchAndRender() {
                   const data = await retry.json();
                   renderTopBar(data); renderCards(data); renderChart(data);
                   renderGammaCurve(data);
-                  renderFlowChart(data);
+                  renderFlowChart(data); renderFlow0dteChart(data);
                   renderCharmStrikeChart(data);
                   renderCharmTimeChart(data);
                   renderGammaLevelMap(data);
@@ -1474,7 +1573,7 @@ async function fetchAndRender() {
     renderCards(data);
     renderChart(data);
     renderGammaCurve(data);
-    renderFlowChart(data);
+    renderFlowChart(data); renderFlow0dteChart(data);
     renderCharmStrikeChart(data);
     renderCharmTimeChart(data);
     renderGammaLevelMap(data);
@@ -1550,6 +1649,7 @@ document.getElementById('gexModeToggle').addEventListener('click', async (e) => 
   if (gexChart) { gexChart.destroy(); gexChart = null; }
   if (gammaCurveChart) { gammaCurveChart.destroy(); gammaCurveChart = null; }
   if (flowChart) { flowChart.destroy(); flowChart = null; }
+  if (flow0dteChart) { flow0dteChart.destroy(); flow0dteChart = null; }
   if (charmStrikeChart) { charmStrikeChart.destroy(); charmStrikeChart = null; }
   if (charmTimeChart) { charmTimeChart.destroy(); charmTimeChart = null; }
   await guardedFetch();

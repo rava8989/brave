@@ -6391,8 +6391,11 @@ async function handleGEXUpdate(env, token, preChain = null) {
   if (!gexData) throw new Error('GEX calculation returned null (no expirations)');
 
   // Pull the internal per-contract snapshot off before gexData is persisted / sent /
-  // committed to GitHub. Used only by the trade-side flow classifier in step 5c.
-  const flowContracts = Array.isArray(gexData._flowContracts) ? gexData._flowContracts : [];
+  // committed. Used only by the trade-side flow classifier (step 5c). 0DTE-ONLY —
+  // same-day flow is the edge (0DTE OI is born + dies today → today's tape = the book);
+  // falls back to all-expiry only if there is no 0DTE expiry.
+  const flowContracts = Array.isArray(gex0dte?._flowContracts) ? gex0dte._flowContracts
+                      : (Array.isArray(gexData._flowContracts) ? gexData._flowContracts : []);
   delete gexData._flowContracts;
   if (gex0dte) delete gex0dte._flowContracts;
 
