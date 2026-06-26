@@ -247,6 +247,19 @@
     </div>
   </div>
 
+  <!-- Gamma Level Map (vertical price ladder — summarizes GEX profile + gamma curve) -->
+  <div class="chart-section" id="gammaLevelMapSection" style="display:none;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
+      <h2 style="margin-bottom:0;"><span>Gamma</span> Level Map</h2>
+      <span id="gammaLevelMapBanner" style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--text2);"></span>
+    </div>
+    <div id="gammaLevelMapWrap" style="width:100%;"></div>
+    <div id="gammaLevelMapCharm" style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text2);padding:10px 0 0;"></div>
+    <div class="bottom-info" style="text-align:left;padding:8px 0 0;">
+      Price ladder of the gamma map: escape hatch (reclaim to stabilize), trapdoor (biggest negative-gamma wall), and the air-pocket floor (deepest neg-gamma on the curve). Zones color by regime around where spot sits relative to the flip.
+    </div>
+  </div>
+
   <!-- Call vs Put Flow — Today -->
   <div class="chart-section" id="flowSection" style="display:none;">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
@@ -356,6 +369,7 @@ let gammaCurveChart = null;
 let flowChart = null;
 let charmStrikeChart = null;
 let charmTimeChart = null;
+let gammaLevelMapDrawn = false; // SVG is rebuilt from scratch each render; this flag is informational only
 let pollTimer = null;
 // ── Event log: server-persisted in KV, available on any device ──
 let eventLog = [];
@@ -1016,6 +1030,212 @@ function renderCharmTimeChart(data) {
   });
 }
 
+// ── Gamma Level Map (vertical price ladder — pure inline SVG, clear+redraw each refresh, never throws) ──
+function renderGammaLevelMap(data) {
+  const section = document.getElementById('gammaLevelMapSection');
+  const wrap = document.getElementById('gammaLevelMapWrap');
+  const bannerEl = document.getElementById('gammaLevelMapBanner');
+  const charmEl = document.getElementById('gammaLevelMapCharm');
+  if (!section || !wrap) return;
+
+  try {
+    // Strict finite-number coercion: null/undefined/'' → null (avoids the
+    // Number(null)===0 trap that would draw a phantom "0" level/wall).
+    const num = (v) => { if (v == null || v === '') return null; const n = Number(v); return Number.isFinite(n) ? n : null; };
+
+    // ---- Core data + graceful degrade ----
+    const spot = num(data && data.spot);
+    if (spot == null) { section.style.display = 'none'; wrap.innerHTML = ''; return; }
+    section.style.display = 'block';
+
+    const flip = num(data.flipStrike);
+    const maxPos = num(data.maxPosStrike);
+    const maxNeg = num(data.maxNegStrike);
+    const maxNegGex = num(data.maxNegGex);
+    const regime = data.regime || '';
+    const charm = num(data.charm);
+
+    // Escape hatch: flip if present, else max-positive strike (one-sided book).
+    const hasFlip = flip != null;
+    const escapeLevel = hasFlip ? flip : maxPos; // may be null if neither exists
+
+    // Air-pocket floor: deepest-negative point of gammaCurve → price = spot + shift_at_min_gamma.
+    let floorLevel = null;
+    const curve = Array.isArray(data.gammaCurve) ? data.gammaCurve : null;
+    if (curve && curve.length) {
+      let minG = Infinity, minShift = null;
+      for (const p of curve) {
+        if (!p || !Number.isFinite(Number(p.gamma)) || !Number.isFinite(Number(p.shift))) continue;
+        const g = Number(p.gamma);
+        if (g < minG) { minG = g; minShift = Number(p.shift); }
+      }
+      if (minShift != null && minG < 0) floorLevel = spot + minShift; // only a floor if it's genuinely negative-gamma
+    }
+
+    // Orient by where spot sits relative to the flip (or escape level when no flip).
+    // PIN / long-gamma: spot at/above flip. BREAKOUT / short-gamma: spot below flip.
+    const isPin = regime ? (regime === 'PIN') : (hasFlip && spot >= flip);
+    const isBreakout = !isPin; // covers BREAKOUT + one-sided/short-gamma books
+
+    // ---- Geometry ----
+    const W = 760, H = 380, PAD_T = 18, PAD_B = 18;
+    const axisX = 150;               // vertical axis position
+    const labelX = axisX + 18;       // level labels start here
+    const plotTop = PAD_T, plotBot = H - PAD_B;
+
+    // Build the set of plotted prices to compute a padded price range.
+    const prices = [spot];
+    if (Number.isFinite(escapeLevel)) prices.push(escapeLevel);
+    if (Number.isFinite(maxNeg)) prices.push(maxNeg);
+    if (Number.isFinite(floorLevel)) prices.push(floorLevel);
+    let pMin = Math.min.apply(null, prices), pMax = Math.max.apply(null, prices);
+    if (pMax === pMin) { pMax = pMin + 1; pMin = pMin - 1; }
+    const span = pMax - pMin;
+    pMin -= span * 0.12; pMax += span * 0.12; // headroom so labels don't clip
+
+    // Higher price at top → invert.
+    const yOf = (price) => plotBot - ((price - pMin) / (pMax - pMin)) * (plotBot - plotTop);
+
+    const C = { green: '#16a34a', amber: '#f59e0b', red: '#dc2626', cyan: '#06b6d4',
+                darkred: '#7f1d1d', text: '#e2e8f0', text2: '#94a3b8', grid: 'rgba(45,63,85,0.6)' };
+    const FONT = "font-family:'JetBrains Mono',monospace";
+    const esc2 = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+    const parts = [];
+    parts.push('<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" preserveAspectRatio="xMidYMid meet" ' +
+               'style="display:block;max-height:420px;" role="img" aria-label="Gamma level map price ladder">');
+
+    // ---- Zone bands (drawn first, behind everything) ----
+    const bandX = axisX - 110, bandW = 104;
+    const band = (yTop, yBot, fill, opacity, label, labelColor) => {
+      if (yBot <= yTop) return;
+      parts.push('<rect x="' + bandX + '" y="' + yTop.toFixed(1) + '" width="' + bandW +
+                 '" height="' + (yBot - yTop).toFixed(1) + '" fill="' + fill + '" opacity="' + opacity + '" rx="3"/>');
+      const cy = (yTop + yBot) / 2;
+      if (label && (yBot - yTop) > 26) {
+        parts.push('<text x="' + (bandX + bandW / 2) + '" y="' + (cy - 5).toFixed(1) + '" text-anchor="middle" ' +
+                   FONT + ';font-size:9px;font-weight:700;fill:' + labelColor + '">' + esc2(label.l1) + '</text>');
+        if (label.l2) parts.push('<text x="' + (bandX + bandW / 2) + '" y="' + (cy + 7).toFixed(1) + '" text-anchor="middle" ' +
+                   FONT + ';font-size:8px;fill:' + C.text2 + '">' + esc2(label.l2) + '</text>');
+      }
+    };
+
+    const ySpot = yOf(spot);
+    const yEscape = Number.isFinite(escapeLevel) ? yOf(escapeLevel) : null;
+    const yTrap = Number.isFinite(maxNeg) ? yOf(maxNeg) : null;
+    const yFloor = Number.isFinite(floorLevel) ? yOf(floorLevel) : null;
+
+    if (isBreakout) {
+      // SHORT GAMMA / BREAKOUT
+      // green ABOVE escape (long gamma · dampens), amber spot→escape (short gamma · unstable),
+      // red BELOW trapdoor (air pocket · amplifies, no support).
+      if (yEscape != null) {
+        band(plotTop, yEscape, C.green, 0.16, { l1: 'LONG GAMMA', l2: 'dampens' }, C.green);
+        // amber meets the air-pocket with no gap: extend down to the trapdoor when present.
+        const amberBot = (yTrap != null) ? yTrap : ((ySpot > yEscape) ? ySpot : plotBot);
+        band(yEscape, amberBot, C.amber, 0.15, { l1: 'SHORT GAMMA', l2: 'unstable' }, C.amber);
+      }
+      const redTop = (yTrap != null) ? yTrap : (ySpot != null ? ySpot : plotTop);
+      band(redTop, plotBot, C.red, 0.16, { l1: 'AIR POCKET', l2: 'no support' }, C.red);
+    } else {
+      // LONG GAMMA / PIN
+      // green around spot/pin (dampens toward pin), red far downside below flip/trapdoor (amplify zone).
+      const pinTxt = Number.isFinite(maxPos) ? ('toward pin ' + Math.round(maxPos)) : 'dampens';
+      // green/red split at the FLIP — below the flip is short gamma even on a PIN day.
+      const greenBot = (yEscape != null) ? yEscape : ((yTrap != null) ? yTrap : plotBot);
+      band(plotTop, greenBot, C.green, 0.16, { l1: 'LONG GAMMA', l2: pinTxt }, C.green);
+      const redTop = (yEscape != null) ? yEscape : ((yTrap != null) ? yTrap : ySpot);
+      band(redTop, plotBot, C.red, 0.16, { l1: 'AIR POCKET', l2: 'amplifies' }, C.red);
+    }
+
+    // ---- Vertical axis ----
+    parts.push('<line x1="' + axisX + '" y1="' + plotTop + '" x2="' + axisX + '" y2="' + plotBot +
+               '" stroke="' + C.grid + '" stroke-width="1.5"/>');
+    parts.push('<text x="' + axisX + '" y="' + (plotTop - 5) + '" text-anchor="middle" ' + FONT +
+               ';font-size:8px;fill:' + C.text2 + '">▲ higher</text>');
+
+    // ---- Level helper ----
+    const tick = (y, color, label, dashed, thick) => {
+      if (y == null) return;
+      parts.push('<line x1="' + axisX + '" y1="' + y.toFixed(1) + '" x2="' + (labelX - 4) + '" y2="' + y.toFixed(1) +
+                 '" stroke="' + color + '" stroke-width="' + (thick ? 3 : 2) + '"' +
+                 (dashed ? ' stroke-dasharray="5 4"' : '') + '/>');
+      parts.push('<text x="' + labelX + '" y="' + (y + 3.5).toFixed(1) + '" ' + FONT +
+                 ';font-size:10px;font-weight:600;fill:' + color + '">' + esc2(label) + '</text>');
+    };
+
+    // Air-pocket floor (dark red, dashed) — draw under spot so spot pill sits on top.
+    if (yFloor != null) tick(yFloor, C.darkred, Math.round(floorLevel) + ' · deepest neg-gamma', true, false);
+
+    // Trapdoor (red) — biggest negative-gamma wall.
+    if (yTrap != null) {
+      const gexB = (maxNegGex != null) ? ('$' + (Math.abs(maxNegGex) / 1e9).toFixed(2) + 'B') : '';
+      tick(yTrap, C.red, Math.round(maxNeg) + (gexB ? (' · ' + gexB + ' wall') : '') + ' — TRAPDOOR', false, false);
+    }
+
+    // Escape hatch (green).
+    if (yEscape != null) {
+      const escTxt = hasFlip
+        ? (Math.round(escapeLevel) + ' · gamma flip / pin — ESCAPE HATCH')
+        : (Math.round(escapeLevel) + ' · reclaim to stabilize (no flip)');
+      tick(yEscape, C.green, escTxt, false, false);
+    }
+
+    // Spot (thick cyan) + pill.
+    parts.push('<line x1="' + (axisX - 6) + '" y1="' + ySpot.toFixed(1) + '" x2="' + (W - 14) + '" y2="' + ySpot.toFixed(1) +
+               '" stroke="' + C.cyan + '" stroke-width="3"/>');
+    const pillTxt = 'SPX ' + spot.toFixed(2) + ' · you are here';
+    const pillW = pillTxt.length * 6.2 + 16;
+    let pillY = ySpot - 11; if (pillY < plotTop) pillY = plotTop; if (pillY + 22 > plotBot) pillY = plotBot - 22;
+    parts.push('<rect x="' + labelX + '" y="' + pillY.toFixed(1) + '" width="' + pillW.toFixed(0) +
+               '" height="20" rx="10" fill="' + C.cyan + '"/>');
+    parts.push('<text x="' + (labelX + pillW / 2).toFixed(0) + '" y="' + (pillY + 14).toFixed(1) +
+               '" text-anchor="middle" ' + FONT + ';font-size:10px;font-weight:700;fill:#0f172a">' + esc2(pillTxt) + '</text>');
+
+    parts.push('</svg>');
+    wrap.innerHTML = parts.join('');
+
+    // ---- Regime banner ----
+    if (bannerEl) {
+      let regimeTxt, qual;
+      if (isBreakout) {
+        regimeTxt = 'short-gamma·breakout·no pin';
+        qual = 'fragile, extends either way';
+      } else {
+        regimeTxt = 'long-gamma·pin ' + (Number.isFinite(maxPos) ? Math.round(maxPos) : '—');
+        qual = 'pinning';
+      }
+      bannerEl.textContent = 'SPX ' + spot.toFixed(2) + ' · ' + regimeTxt + ' — ' + qual;
+      bannerEl.style.color = isBreakout ? C.red : C.green;
+    }
+
+    // ---- Charm footnote ----
+    if (charmEl) {
+      if (charm == null) {
+        charmEl.textContent = '';
+        charmEl.style.display = 'none';
+      } else {
+        charmEl.style.display = 'block';
+        const charmB = charm / 1e9;
+        const aB = Math.abs(charmB);
+        const signTxt = (charmB >= 0 ? '+' : '−') + (aB >= 1000 ? (aB / 1000).toFixed(2) + 'T' : aB.toFixed(2) + 'B');
+        const tail = charmB < 0
+          ? 'decay feeding the move'
+          : 'decay pulling hedges toward the pin into the close';
+        charmEl.textContent = 'Charm ' + signTxt + ' — ' + tail;
+        charmEl.style.color = charmB < 0 ? C.red : C.green;
+      }
+    }
+
+    gammaLevelMapDrawn = true;
+  } catch (e) {
+    // Never throw: hide the card on any unexpected failure.
+    console.warn('[GEX] gamma level map render failed:', e);
+    section.style.display = 'none';
+    wrap.innerHTML = '';
+  }
+}
+
 function renderTable(data) {
   if (!data.walls) return;
   const body = document.getElementById('wallsBody');
@@ -1159,6 +1379,7 @@ async function tryLoadCached() {
     renderFlowChart(data);
     renderCharmStrikeChart(data);
     renderCharmTimeChart(data);
+    renderGammaLevelMap(data);
     renderTable(data);
     renderEvents(data);
     document.getElementById('mainContent').style.display = 'block';
@@ -1200,6 +1421,7 @@ async function fetchAndRender() {
                   renderFlowChart(data);
                   renderCharmStrikeChart(data);
                   renderCharmTimeChart(data);
+                  renderGammaLevelMap(data);
                   renderTable(data); renderEvents(data);
                   document.getElementById('mainContent').style.display = 'block';
                   document.getElementById('loadingOverlay').classList.add('hidden');
@@ -1253,6 +1475,7 @@ async function fetchAndRender() {
     renderFlowChart(data);
     renderCharmStrikeChart(data);
     renderCharmTimeChart(data);
+    renderGammaLevelMap(data);
     renderTable(data);
     renderEvents(data);
 
