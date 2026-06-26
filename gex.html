@@ -1293,6 +1293,39 @@ function renderGammaLevelMap(data) {
     parts.push('<text x="' + (labelX + pillW / 2).toFixed(0) + '" y="' + (pillY + 14).toFixed(1) +
                '" text-anchor="middle" ' + FONT + ';font-size:10px;font-weight:700;fill:#0f172a">' + esc2(pillTxt) + '</text>');
 
+    // ---- 0DTE trade-side flow overlay: which way today's signed (ask-lift vs bid-hit) flow pushes spot ----
+    // Net directional = (call buys − call sells) − (put buys − put sells): > 0 = bullish (toward escape),
+    // < 0 = bearish (toward trapdoor). From data.flowSeries; absent until the worker has written sided bars.
+    let netDir = null;
+    {
+      const fs = Array.isArray(data.flowSeries) ? data.flowSeries : [];
+      if (fs.some(x => x && typeof x.cb === 'number')) {
+        netDir = 0;
+        for (const x of fs) netDir += ((x.cb || 0) - (x.cs || 0)) - ((x.pb || 0) - (x.ps || 0));
+      }
+    }
+    if (netDir != null && netDir !== 0) {
+      const up = netDir > 0;
+      const fcol = up ? C.green : C.red;
+      const ax = 380;
+      const tipY = up ? (ySpot - 46) : (ySpot + 46);
+      const hy = up ? (tipY + 10) : (tipY - 10);
+      parts.push('<line x1="' + ax + '" y1="' + ySpot.toFixed(1) + '" x2="' + ax + '" y2="' + tipY.toFixed(1) +
+                 '" stroke="' + fcol + '" stroke-width="3"/>');
+      parts.push('<path d="M' + (ax - 7) + ' ' + hy.toFixed(1) + ' L' + (ax + 7) + ' ' + hy.toFixed(1) +
+                 ' L' + ax + ' ' + tipY.toFixed(1) + ' Z" fill="' + fcol + '"/>');
+      const a = Math.abs(netDir);
+      const mag = a >= 1000 ? (a / 1000).toFixed(1) + 'k' : String(Math.round(a));
+      const tgt = up ? (Number.isFinite(escapeLevel) ? Math.round(escapeLevel) : null)
+                     : (Number.isFinite(maxNeg) ? Math.round(maxNeg) : null);
+      const lbl = '0DTE flow ' + (up ? '▲ ' : '▼ ') + (up ? '+' : '−') + mag + (tgt != null ? ('  → toward ' + tgt) : '');
+      const labelY = up ? (ySpot - 22) : (ySpot + 28);
+      parts.push('<text x="' + (ax + 12) + '" y="' + labelY.toFixed(1) + '" ' + FONT +
+                 ';font-size:11px;font-weight:700;fill:' + fcol + '">' + esc2(lbl) + '</text>');
+      parts.push('<text x="' + (ax + 12) + '" y="' + (labelY + 13).toFixed(1) + '" ' + FONT +
+                 ';font-size:9px;fill:' + C.text2 + '">' + esc2(up ? 'buying calls · selling puts' : 'buying puts · selling calls') + '</text>');
+    }
+
     parts.push('</svg>');
     wrap.innerHTML = parts.join('');
 
