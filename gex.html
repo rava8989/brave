@@ -1255,39 +1255,54 @@ function renderGammaLevelMap(data) {
     parts.push('<text x="' + axisX + '" y="' + (plotTop - 5) + '" text-anchor="middle" ' + FONT +
                ';font-size:8px;fill:' + C.text2 + '">▲ higher</text>');
 
-    // ---- Level helper ----
-    const tick = (y, color, label, dashed, thick) => {
-      if (y == null) return;
-      parts.push('<line x1="' + axisX + '" y1="' + y.toFixed(1) + '" x2="' + (labelX - 4) + '" y2="' + y.toFixed(1) +
-                 '" stroke="' + color + '" stroke-width="' + (thick ? 3 : 2) + '"' +
-                 (dashed ? ' stroke-dasharray="5 4"' : '') + '/>');
-      parts.push('<text x="' + labelX + '" y="' + (y + 3.5).toFixed(1) + '" ' + FONT +
-                 ';font-size:10px;font-weight:600;fill:' + color + '">' + esc2(label) + '</text>');
-    };
-
-    // Air-pocket floor (dark red, dashed) — draw under spot so spot pill sits on top.
-    if (yFloor != null) tick(yFloor, C.darkred, Math.round(floorLevel) + ' · deepest neg-gamma', true, false);
-
-    // Trapdoor (red) — biggest negative-gamma wall.
-    if (yTrap != null) {
-      const gexB = (maxNegGex != null) ? ('$' + (Math.abs(maxNegGex) / 1e9).toFixed(2) + 'B') : '';
-      tick(yTrap, C.red, Math.round(maxNeg) + (gexB ? (' · ' + gexB + ' wall') : '') + ' — TRAPDOOR', false, false);
-    }
-
-    // Escape hatch (green).
-    if (yEscape != null) {
-      const escTxt = hasFlip
-        ? (Math.round(escapeLevel) + ' · gamma flip / pin — ESCAPE HATCH')
-        : (Math.round(escapeLevel) + ' · reclaim to stabilize (no flip)');
-      tick(yEscape, C.green, escTxt, false, false);
-    }
-
-    // Spot (thick cyan) + pill.
-    parts.push('<line x1="' + (axisX - 6) + '" y1="' + ySpot.toFixed(1) + '" x2="' + (W - 14) + '" y2="' + ySpot.toFixed(1) +
-               '" stroke="' + C.cyan + '" stroke-width="3"/>');
+    // ---- Levels + spot pill, with vertical label de-collision ----
+    // The spot pill is the anchor; tick labels keep their LINE at the true price but
+    // the TEXT nudges clear of the pill band (and each other), joined by a thin leader.
     const pillTxt = 'SPX ' + spot.toFixed(2) + ' · you are here';
     const pillW = pillTxt.length * 6.2 + 16;
-    let pillY = ySpot - 11; if (pillY < plotTop) pillY = plotTop; if (pillY + 22 > plotBot) pillY = plotBot - 22;
+    let pillY = ySpot - 10; if (pillY < plotTop) pillY = plotTop; if (pillY + 20 > plotBot) pillY = plotBot - 20;
+    const exTop = pillY - 9, exBot = pillY + 27; // label-center exclusion zone around the pill
+    const GAP = 14;
+
+    // Collect tick labels (ty = true y at the level's price).
+    const ticks = [];
+    if (yFloor != null) ticks.push({ ty: yFloor, color: C.darkred, dashed: true,
+      text: Math.round(floorLevel) + ' · deepest neg-gamma' });
+    if (yTrap != null) {
+      const gexB = (maxNegGex != null) ? ('$' + (Math.abs(maxNegGex) / 1e9).toFixed(2) + 'B') : '';
+      ticks.push({ ty: yTrap, color: C.red, dashed: false,
+        text: Math.round(maxNeg) + (gexB ? (' · ' + gexB + ' wall') : '') + ' — TRAPDOOR' });
+    }
+    if (yEscape != null) {
+      ticks.push({ ty: yEscape, color: C.green, dashed: false,
+        text: hasFlip ? (Math.round(escapeLevel) + ' · gamma flip / pin — ESCAPE HATCH')
+                      : (Math.round(escapeLevel) + ' · reclaim to stabilize (no flip)') });
+    }
+
+    // De-collide: above-spot labels stack upward off the pill, below-spot labels downward.
+    const above = ticks.filter(t => t.ty <= ySpot).sort((a, b) => b.ty - a.ty); // nearest spot first
+    const below = ticks.filter(t => t.ty > ySpot).sort((a, b) => a.ty - b.ty);
+    let cur = exTop;
+    for (const t of above) { t.ly = Math.min(t.ty, cur); cur = t.ly - GAP; }
+    cur = exBot;
+    for (const t of below) { t.ly = Math.max(t.ty, cur); cur = t.ly + GAP; }
+    ticks.forEach(t => { t.ly = Math.max(plotTop + 8, Math.min(plotBot - 4, t.ly)); });
+
+    // Draw each: line at the TRUE y, a leader to the nudged label, then the text.
+    for (const t of ticks) {
+      parts.push('<line x1="' + axisX + '" y1="' + t.ty.toFixed(1) + '" x2="' + (labelX - 4) + '" y2="' + t.ty.toFixed(1) +
+                 '" stroke="' + t.color + '" stroke-width="2"' + (t.dashed ? ' stroke-dasharray="5 4"' : '') + '/>');
+      if (Math.abs(t.ly - t.ty) > 3) {
+        parts.push('<line x1="' + (labelX - 4) + '" y1="' + t.ty.toFixed(1) + '" x2="' + labelX + '" y2="' + t.ly.toFixed(1) +
+                   '" stroke="' + t.color + '" stroke-width="1" opacity="0.5"/>');
+      }
+      parts.push('<text x="' + labelX + '" y="' + (t.ly + 3.5).toFixed(1) + '" ' + FONT +
+                 ';font-size:10px;font-weight:600;fill:' + t.color + '">' + esc2(t.text) + '</text>');
+    }
+
+    // Spot (thick cyan) + pill — drawn last so the pill sits on top.
+    parts.push('<line x1="' + (axisX - 6) + '" y1="' + ySpot.toFixed(1) + '" x2="' + (W - 14) + '" y2="' + ySpot.toFixed(1) +
+               '" stroke="' + C.cyan + '" stroke-width="3"/>');
     parts.push('<rect x="' + labelX + '" y="' + pillY.toFixed(1) + '" width="' + pillW.toFixed(0) +
                '" height="20" rx="10" fill="' + C.cyan + '"/>');
     parts.push('<text x="' + (labelX + pillW / 2).toFixed(0) + '" y="' + (pillY + 14).toFixed(1) +
