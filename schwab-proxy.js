@@ -4638,6 +4638,25 @@ async function freezeTailOpenIfDue(env, etNow, line = null) {
     label: 'Tail Hedge', currentSpot: snap.spot ?? null,
   };
   await env.SIGNAL_KV.put(`tail_open_trade_${todayISO}`, JSON.stringify(tailOpen), { expirationTtl: 7 * 86400 });
+
+  // Fan out the tail order to subscribers in ToS format — PARITY with the
+  // skipper-routed strategies (they fan out via /link-notify). The tail is
+  // frozen here by the worker, NOT skipper, so it never hit that path → no
+  // subscriber DM (2026-06-26 bug). The `if (existing) return` guard at the
+  // top makes this fire exactly once per day. Same string format as the live
+  // page's renderTail copy button (SPX 100 (Weeklys), see [[feedback_tos_copy_spx_weeklys]]).
+  try {
+    const _MON = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+    const e = String(tailOpen.expDate);
+    const tosD = `${+e.slice(8,10)} ${_MON[+e.slice(5,7)-1]} ${e.slice(2,4)}`;
+    const px = tailOpen.entryMid ?? tailOpen.entryAsk ?? tailOpen.entryBid;
+    if (px != null) {
+      const tos = `BUY +1 SPX 100 (Weeklys) ${tosD} ${tailOpen.strike} PUT @${Number(px).toFixed(2)} LMT`;
+      await fanoutSubscribers(env, `🛡️ Tail Hedge — 0DTE put · 9:45 ET entry\n${tos}`);
+      try { await logEvent(env, 'info', 'trade', `tail fan-out: ${tos}`, {}); } catch (_) {}
+    }
+  } catch (e) { console.warn('[tail-fanout]', e.message); }
+
   return tailOpen;
 }
 
