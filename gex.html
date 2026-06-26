@@ -243,6 +243,10 @@
         <button class="gex-mode-btn active" data-mode="0dte">0DTE</button>
         <button class="gex-mode-btn" data-mode="all">All Exp</button>
       </div>
+      <div class="gex-mode-toggle" id="gexBasisToggle" title="OI = standing open interest (only updates overnight → stale for 0DTE intraday). Flow = today's signed (bid/ask) volume → the live 0DTE book.">
+        <button class="gex-mode-btn active" data-basis="oi">OI</button>
+        <button class="gex-mode-btn" data-basis="flow">Flow</button>
+      </div>
     </div>
     <div class="chart-wrap">
       <canvas id="gexChart"></canvas>
@@ -366,6 +370,7 @@
 const GEX_BASE = 'https://schwab-proxy.ravamt4.workers.dev/gex';
 const TRIGGER_ENDPOINT = 'https://schwab-proxy.ravamt4.workers.dev/trigger';
 let gexMode = '0dte'; // '0dte' (default) or 'all'
+let gexBasis = 'oi';  // 'oi' (standing inventory) or 'flow' (today's signed-volume book)
 function GEX_ENDPOINT() { return gexMode === '0dte' ? GEX_BASE + '?mode=0dte' : GEX_BASE; }
 const POLL_MS_NORMAL = 30000;
 const POLL_MS_MORNING = 5000; // 5s polling during 9:30-9:40 ET for fast VIX capture
@@ -533,7 +538,8 @@ function renderChart(data) {
   const ctx = document.getElementById('gexChart').getContext('2d');
   const strikes = data.strikes;
   const labels = strikes.map(s => s.strike.toFixed(0));
-  const values = strikes.map(s => s.netGex);
+  // OI basis = standing inventory (s.netGex); Flow basis = today's signed-volume book (s.netGexVol).
+  const values = strikes.map(s => gexBasis === 'flow' ? (s.netGexVol || 0) : s.netGex);
   const colors = values.map(v => v >= 0 ? 'rgba(34,197,94,0.75)' : 'rgba(239,68,68,0.75)');
   const borderColors = values.map(v => v >= 0 ? 'rgba(34,197,94,1)' : 'rgba(239,68,68,1)');
 
@@ -561,8 +567,8 @@ function renderChart(data) {
     };
   }
 
-  // Flip line
-  if (data.flipStrike != null) {
+  // Flip line (OI-based — hide it on the Flow view to avoid mixing bases)
+  if (gexBasis !== 'flow' && data.flipStrike != null) {
     const flipIdx = labels.findIndex(l => parseFloat(l) >= data.flipStrike);
     if (flipIdx >= 0) {
       annotations.flipLine = {
@@ -1690,7 +1696,7 @@ function startPolling() {
 document.getElementById('gexModeToggle').addEventListener('click', async (e) => {
   const btn = e.target.closest('.gex-mode-btn');
   if (!btn || btn.classList.contains('active')) return;
-  document.querySelectorAll('.gex-mode-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('#gexModeToggle .gex-mode-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   gexMode = btn.dataset.mode;
   // Force chart rebuild for clean axis transition
@@ -1700,6 +1706,17 @@ document.getElementById('gexModeToggle').addEventListener('click', async (e) => 
   if (flow0dteChart) { flow0dteChart.destroy(); flow0dteChart = null; }
   if (charmStrikeChart) { charmStrikeChart.destroy(); charmStrikeChart = null; }
   if (charmTimeChart) { charmTimeChart.destroy(); charmTimeChart = null; }
+  await guardedFetch();
+});
+
+// ── Basis toggle (OI standing inventory vs today's signed Flow) — switches the profile bars ──
+document.getElementById('gexBasisToggle').addEventListener('click', async (e) => {
+  const btn = e.target.closest('.gex-mode-btn');
+  if (!btn || btn.classList.contains('active')) return;
+  document.querySelectorAll('#gexBasisToggle .gex-mode-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  gexBasis = btn.dataset.basis;
+  if (gexChart) { gexChart.destroy(); gexChart = null; } // clean axis transition (flow scale ≫ OI)
   await guardedFetch();
 });
 

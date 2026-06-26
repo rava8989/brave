@@ -6140,6 +6140,19 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
   // Per-contract traded-volume + quote snapshot (vol>0 rows) → the caller classifies
   // trade-side (buyers lifting the ask vs sellers hitting the bid). Internal only.
   const flowContracts = [];
+  // Trade-side from last vs the spread: +1 customer bought (lifted ask), −1 sold (hit bid), 0 neutral.
+  // Used for the flow/volume-based GEX (today's book) vs the OI-based GEX (standing inventory).
+  const sideSign = (last, bid, ask) => {
+    const l = (typeof last === 'number') ? last : null;
+    const b = (typeof bid === 'number') ? bid : null;
+    const a = (typeof ask === 'number') ? ask : null;
+    if (l == null) return 0;
+    if (a != null && a > 0 && l >= a) return 1;
+    if (b != null && b > 0 && l <= b) return -1;
+    const mid = (b != null && a != null && a >= b) ? (b + a) / 2 : null;
+    if (mid != null) { if (l > mid) return 1; if (l < mid) return -1; }
+    return 0;
+  };
 
   for (const expKey of expiriesToUse) {
     const dteParts = expKey.split(':');
@@ -6156,7 +6169,7 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
       const K = parseFloat(strikeStr);
       if (isNaN(K)) continue;
 
-      if (!strikeAccum[strikeStr]) strikeAccum[strikeStr] = { strike: K, callGex: 0, putGex: 0, callOI: 0, putOI: 0, callVex: 0, putVex: 0, callCex: 0, putCex: 0 };
+      if (!strikeAccum[strikeStr]) strikeAccum[strikeStr] = { strike: K, callGex: 0, putGex: 0, callOI: 0, putOI: 0, callVex: 0, putVex: 0, callCex: 0, putCex: 0, callGexVol: 0, putGexVol: 0 };
       const acc = strikeAccum[strikeStr];
 
       const callContracts = calls[strikeStr] || [];
@@ -6168,9 +6181,14 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
         // INFO-ONLY flow: sum traded volume for ALL contracts (count it even when oi===0).
         const cVol = Math.max(c.totalVolume || 0, 0);
         totalCallVol += cVol;
-        if (cVol > 0) flowContracts.push({ k: expKey + '|' + strikeStr + '|C', v: cVol,
-          l: (typeof c.last === 'number' ? c.last : (typeof c.mark === 'number' ? c.mark : null)),
-          b: (typeof c.bid === 'number' ? c.bid : null), a: (typeof c.ask === 'number' ? c.ask : null) });
+        if (cVol > 0) {
+          const lastC = (typeof c.last === 'number') ? c.last : (typeof c.mark === 'number' ? c.mark : null);
+          flowContracts.push({ k: expKey + '|' + strikeStr + '|C', v: cVol, l: lastC,
+            b: (typeof c.bid === 'number' ? c.bid : null), a: (typeof c.ask === 'number' ? c.ask : null) });
+          // Flow GEX (today's book): dealer takes the OTHER side of customer flow → −side.
+          const cside = sideSign(lastC, c.bid, c.ask);
+          if (cside !== 0) acc.callGexVol += bsGamma(S, K, T_years, iv > 0 ? iv : 0.2) * (-cside * cVol) * S * S * MULT * 0.01;
+        }
         // Standard GEX: use open interest only (volume is turnover, not dealer inventory)
         if (oi === 0) continue;
         acc.callOI += oi;
@@ -6194,9 +6212,14 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
         // INFO-ONLY flow: sum traded volume for ALL contracts (count it even when oi===0).
         const pVol = Math.max(p.totalVolume || 0, 0);
         totalPutVol += pVol;
-        if (pVol > 0) flowContracts.push({ k: expKey + '|' + strikeStr + '|P', v: pVol,
-          l: (typeof p.last === 'number' ? p.last : (typeof p.mark === 'number' ? p.mark : null)),
-          b: (typeof p.bid === 'number' ? p.bid : null), a: (typeof p.ask === 'number' ? p.ask : null) });
+        if (pVol > 0) {
+          const lastP = (typeof p.last === 'number') ? p.last : (typeof p.mark === 'number' ? p.mark : null);
+          flowContracts.push({ k: expKey + '|' + strikeStr + '|P', v: pVol, l: lastP,
+            b: (typeof p.bid === 'number' ? p.bid : null), a: (typeof p.ask === 'number' ? p.ask : null) });
+          // Flow GEX: same dealer-side rule for puts (sign comes from flow, not option type).
+          const pside = sideSign(lastP, p.bid, p.ask);
+          if (pside !== 0) acc.putGexVol += bsGamma(S, K, T_years, iv > 0 ? iv : 0.2) * (-pside * pVol) * S * S * MULT * 0.01;
+        }
         if (oi === 0) continue;
         acc.putOI += oi;
         const sig = iv > 0 ? iv : 0.2;
@@ -6219,8 +6242,8 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
   const lo = S * (1 - rangePct), hi = S * (1 + rangePct);
 
   const strikeResults = Object.values(strikeAccum)
-    .map(s => ({ ...s, netGex: s.callGex + s.putGex, netVex: s.callVex + s.putVex, netCex: s.callCex + s.putCex }))
-    .filter(s => (s.callOI > 0 || s.putOI > 0) && s.strike >= lo && s.strike <= hi)
+    .map(s => ({ ...s, netGex: s.callGex + s.putGex, netVex: s.callVex + s.putVex, netCex: s.callCex + s.putCex, netGexVol: s.callGexVol + s.putGexVol }))
+    .filter(s => (s.callOI > 0 || s.putOI > 0 || s.callGexVol !== 0 || s.putGexVol !== 0) && s.strike >= lo && s.strike <= hi)
     .sort((a, b) => a.strike - b.strike);
 
   const dte = nearestDte;
@@ -6228,11 +6251,13 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
   // Compute totalGex from filtered strikes only (matches what the chart displays)
   let totalCallGexFiltered = 0, totalPutGexFiltered = 0;
   let totalVex = 0, totalCex = 0; // net VEX / CEX over the same filtered strikes as gex
+  let totalGexVol = 0;            // net flow-based (signed-volume) GEX over the band — today's book
   for (const r of strikeResults) {
     totalCallGexFiltered += r.callGex;
     totalPutGexFiltered += r.putGex;
     totalVex += r.netVex;
     totalCex += r.netCex;
+    totalGexVol += r.netGexVol;
   }
   const totalGex = totalCallGexFiltered + totalPutGexFiltered;
 
@@ -6327,6 +6352,7 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
     totalGex: Math.round(totalGex),
     totalCallGex: Math.round(totalCallGexFiltered),
     totalPutGex: Math.round(totalPutGexFiltered),
+    totalGexVol: Math.round(totalGexVol),   // flow-based (signed-volume) net GEX — today's 0DTE book
     flipStrike,
     maxPosStrike,
     maxPosGex: Math.round(maxPosGex),
@@ -6352,6 +6378,7 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
       callGex: Math.round(s.callGex),
       putGex: Math.round(s.putGex),
       cex: Math.round(s.netCex),   // per-strike charm exposure (time-decay hedging pressure)
+      netGexVol: Math.round(s.netGexVol),   // per-strike flow GEX (signed volume — today's book)
     })),
     events: [],
     commentary: null,
