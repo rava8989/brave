@@ -6246,6 +6246,10 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
     .filter(s => (s.callOI > 0 || s.putOI > 0 || s.callGexVol !== 0 || s.putGexVol !== 0) && s.strike >= lo && s.strike <= hi)
     .sort((a, b) => a.strike - b.strike);
 
+  // Structural OI metrics (flip, walls, max-gamma) iterate OI-bearing strikes ONLY — vol-only
+  // strikes have netGex 0 and must not shift the flip-crossing bracket or pad the walls list.
+  const oiStrikes = strikeResults.filter(s => s.callOI > 0 || s.putOI > 0);
+
   const dte = nearestDte;
 
   // Compute totalGex from filtered strikes only (matches what the chart displays)
@@ -6264,7 +6268,7 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
   // Max positive gamma strike
   let maxPosStrike = null, maxPosGex = 0;
   let maxNegStrike = null, maxNegGex = 0;
-  for (const r of strikeResults) {
+  for (const r of oiStrikes) {
     if (r.netGex > maxPosGex) { maxPosStrike = r.strike; maxPosGex = r.netGex; }
     if (r.netGex < maxNegGex) { maxNegStrike = r.strike; maxNegGex = r.netGex; }
   }
@@ -6280,20 +6284,20 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
     const crossings = [];
     let cumGex = 0, maxCum = -Infinity, minCum = Infinity;
     let minAbsCum = Infinity, minAbsCumStrike = null; // fallback: closest to zero
-    for (let i = 0; i < strikeResults.length; i++) {
+    for (let i = 0; i < oiStrikes.length; i++) {
       const prevCum = cumGex;
-      cumGex += strikeResults[i].netGex;
+      cumGex += oiStrikes[i].netGex;
       if (cumGex > maxCum) maxCum = cumGex;
       if (cumGex < minCum) minCum = cumGex;
       if (i > 0 && ((prevCum < 0 && cumGex >= 0) || (prevCum > 0 && cumGex <= 0))) {
-        const s0 = strikeResults[i - 1].strike;
-        const s1 = strikeResults[i].strike;
+        const s0 = oiStrikes[i - 1].strike;
+        const s1 = oiStrikes[i].strike;
         const ratio = Math.abs(prevCum) / (Math.abs(prevCum) + Math.abs(cumGex));
         crossings.push(Math.round(s0 + ratio * (s1 - s0)));
       }
       if (Math.abs(cumGex) < minAbsCum) {
         minAbsCum = Math.abs(cumGex);
-        minAbsCumStrike = strikeResults[i].strike;
+        minAbsCumStrike = oiStrikes[i].strike;
       }
     }
     const sig = Math.abs(totalGex) * 0.02;
@@ -6310,7 +6314,7 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
   }
 
   // Top 10 walls by absolute net GEX
-  const walls = [...strikeResults]
+  const walls = [...oiStrikes]
     .sort((a, b) => Math.abs(b.netGex) - Math.abs(a.netGex))
     .slice(0, 10)
     .map(w => ({
