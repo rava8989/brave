@@ -6137,6 +6137,9 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
   let nearestDte = Infinity;
   // Per-contract gamma inputs (OI>0 rows that fed gex) — reused for the spot-shifted curve.
   const gammaInputs = [];
+  // Per-contract traded-volume + quote snapshot (vol>0 rows) → the caller classifies
+  // trade-side (buyers lifting the ask vs sellers hitting the bid). Internal only.
+  const flowContracts = [];
 
   for (const expKey of expiriesToUse) {
     const dteParts = expKey.split(':');
@@ -6163,7 +6166,11 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
         const oi = Math.max(c.openInterest || 0, 0);
         const iv = (c.volatility || 0) / 100;
         // INFO-ONLY flow: sum traded volume for ALL contracts (count it even when oi===0).
-        totalCallVol += Math.max(c.totalVolume || 0, 0);
+        const cVol = Math.max(c.totalVolume || 0, 0);
+        totalCallVol += cVol;
+        if (cVol > 0) flowContracts.push({ k: expKey + '|' + strikeStr + '|C', v: cVol,
+          l: (typeof c.last === 'number' ? c.last : (typeof c.mark === 'number' ? c.mark : null)),
+          b: (typeof c.bid === 'number' ? c.bid : null), a: (typeof c.ask === 'number' ? c.ask : null) });
         // Standard GEX: use open interest only (volume is turnover, not dealer inventory)
         if (oi === 0) continue;
         acc.callOI += oi;
@@ -6185,7 +6192,11 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
         const oi = Math.max(p.openInterest || 0, 0);
         const iv = (p.volatility || 0) / 100;
         // INFO-ONLY flow: sum traded volume for ALL contracts (count it even when oi===0).
-        totalPutVol += Math.max(p.totalVolume || 0, 0);
+        const pVol = Math.max(p.totalVolume || 0, 0);
+        totalPutVol += pVol;
+        if (pVol > 0) flowContracts.push({ k: expKey + '|' + strikeStr + '|P', v: pVol,
+          l: (typeof p.last === 'number' ? p.last : (typeof p.mark === 'number' ? p.mark : null)),
+          b: (typeof p.bid === 'number' ? p.bid : null), a: (typeof p.ask === 'number' ? p.ask : null) });
         if (oi === 0) continue;
         acc.putOI += oi;
         const sig = iv > 0 ? iv : 0.2;
@@ -6328,6 +6339,7 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
     callVol: totalCallVol,
     putVol: totalPutVol,
     pcRatio: totalCallVol > 0 ? +(totalPutVol / totalCallVol).toFixed(2) : null,
+    _flowContracts: flowContracts, // INTERNAL: stripped by caller before persist (trade-side classification)
     gammaCurve,
     windowPct: parseFloat((rangePct * 100).toFixed(2)),
     windowWidened: true,
@@ -6377,6 +6389,12 @@ async function handleGEXUpdate(env, token, preChain = null) {
   const gexData = calculateGEX(chainData, spot, false);     // all expirations
   const gex0dte = calculateGEX(chainData, spot, true);      // 0DTE only
   if (!gexData) throw new Error('GEX calculation returned null (no expirations)');
+
+  // Pull the internal per-contract snapshot off before gexData is persisted / sent /
+  // committed to GitHub. Used only by the trade-side flow classifier in step 5c.
+  const flowContracts = Array.isArray(gexData._flowContracts) ? gexData._flowContracts : [];
+  delete gexData._flowContracts;
+  if (gex0dte) delete gex0dte._flowContracts;
 
   // Store 0DTE snapshot separately
   if (gex0dte) {
@@ -6506,20 +6524,68 @@ async function handleGEXUpdate(env, token, preChain = null) {
     }
   }
 
-  // 5c. Append today's traded-volume snapshot to a daily intraday flow series.
-  //     INFO-ONLY (powers the "Call vs Put Flow — Today" chart). Wrapped so a
+  // 5c. Append today's traded-volume snapshot to a daily intraday flow series,
+  //     AND classify it by trade-side. SNAPSHOT PROXY (not tick-level Lee-Ready):
+  //     each contract's volume DELTA since the last snapshot is sided by its last
+  //     price vs the bid/ask — buyers lifting the ask vs sellers hitting the bid.
+  //     Best free, SPX-native read; accumulates a durable daily dataset
+  //     (signed_flow_daily, no TTL) for later edge testing. INFO-ONLY. Wrapped so a
   //     flow-capture failure can NEVER break the GEX update.
   if (typeof gexData.callVol === 'number' && gexData.callVol >= 0 &&
       typeof gexData.putVol === 'number' && gexData.putVol >= 0) {
     try {
       const etNowFlow = toET(new Date());
-      const flowKey = `gex_flow_${isoDateET(etNowFlow)}`;
+      const dayISO = isoDateET(etNowFlow);
+      const flowKey = `gex_flow_${dayISO}`;
+
+      // ── Trade-side classification from per-contract volume deltas ──
+      const snapKey = `gex_volsnap_${dayISO}`;          // prev cumulative volume per contract
+      const prevSnapRaw = await env.SIGNAL_KV.get(snapKey);
+      const prevSnap = prevSnapRaw ? JSON.parse(prevSnapRaw) : null;   // { k: cumVol } or null on first bar
+      const hadPrev = !!prevSnap;
+      const newSnap = {};
+      let cb = 0, cs = 0, cn = 0, pb = 0, ps = 0, pn = 0; // this-bar buy/sell/neutral, calls & puts (contracts)
+      for (const ct of flowContracts) {
+        const v = Math.max(ct.v || 0, 0);
+        newSnap[ct.k] = v;
+        let dV = hadPrev ? (v - (prevSnap[ct.k] || 0)) : 0;  // first bar of day = baseline only
+        if (dV <= 0) continue;                               // cumulative only grows; guard resets
+        const b = (typeof ct.b === 'number') ? ct.b : null;
+        const a = (typeof ct.a === 'number') ? ct.a : null;
+        const l = (typeof ct.l === 'number') ? ct.l : null;
+        const mid = (b != null && a != null && a >= b) ? (b + a) / 2 : null;
+        let side; // buyer-initiated (lifted ask) | seller-initiated (hit bid) | neutral
+        if (l != null && a != null && a > 0 && l >= a) side = 'buy';
+        else if (l != null && b != null && b > 0 && l <= b) side = 'sell';
+        else if (l != null && mid != null && l > mid) side = 'buy';
+        else if (l != null && mid != null && l < mid) side = 'sell';
+        else side = 'neutral';
+        if (ct.k.endsWith('|C')) { if (side === 'buy') cb += dV; else if (side === 'sell') cs += dV; else cn += dV; }
+        else                     { if (side === 'buy') pb += dV; else if (side === 'sell') ps += dV; else pn += dV; }
+      }
+      await env.SIGNAL_KV.put(snapKey, JSON.stringify(newSnap), { expirationTtl: 172800 }); // ~2 days
+
+      // Intraday series (live chart): keep legacy cv/pv/ch, add this-bar sided deltas.
       const flowRaw = await env.SIGNAL_KV.get(flowKey);
       let flow = flowRaw ? JSON.parse(flowRaw) : [];
       flow.push({ ts: Math.floor(Date.now() / 1000), cv: gexData.callVol, pv: gexData.putVol,
-                  ch: (typeof gexData.charm === 'number' ? gexData.charm : null) });   // intraday charm → into-the-close drift chart
+                  ch: (typeof gexData.charm === 'number' ? gexData.charm : null),
+                  cb, cs, pb, ps, cn, pn });   // sided deltas: call/put buy/sell/neutral this bar
       if (flow.length > 250) flow = flow.slice(-250);
       await env.SIGNAL_KV.put(flowKey, JSON.stringify(flow), { expirationTtl: 172800 }); // ~2 days
+
+      // Durable daily roll-up (the multi-week dataset for testing) — accumulate today's sided totals.
+      if (hadPrev && (cb || cs || cn || pb || ps || pn)) {
+        const DKEY = 'signed_flow_daily';
+        const dRaw = await env.SIGNAL_KV.get(DKEY);
+        let daily = dRaw ? JSON.parse(dRaw) : [];
+        let row = daily.find(r => r.date === dayISO);
+        if (!row) { row = { date: dayISO, cb: 0, cs: 0, cn: 0, pb: 0, ps: 0, pn: 0 }; daily.push(row); }
+        row.cb += cb; row.cs += cs; row.cn += cn; row.pb += pb; row.ps += ps; row.pn += pn;
+        row.spot = gexData.spot; row.regime = gexData.regime; row.ts = Math.floor(Date.now() / 1000);
+        if (daily.length > 400) daily = daily.slice(-400);
+        await env.SIGNAL_KV.put(DKEY, JSON.stringify(daily)); // no TTL — permanent
+      }
     } catch (e) { console.warn('[gex] flow series capture failed:', e.message); }
   }
 
