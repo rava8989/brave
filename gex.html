@@ -1098,7 +1098,9 @@ function renderGammaLevelMap(data) {
 
     const C = { green: '#16a34a', amber: '#f59e0b', red: '#dc2626', cyan: '#06b6d4',
                 darkred: '#7f1d1d', text: '#e2e8f0', text2: '#94a3b8', grid: 'rgba(45,63,85,0.6)' };
-    const FONT = "font-family:'JetBrains Mono',monospace";
+    // Opens the style="…" — each <text> below appends ;font-size..;fill..">. Without the
+    // style= wrapper the browser drops the CSS as bare attrs → default big black text.
+    const FONT = 'style="font-family:\'JetBrains Mono\',monospace';
     const esc2 = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
     const parts = [];
