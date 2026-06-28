@@ -1182,6 +1182,14 @@ async function weeklyDigest(env) {
   const weekAgo = new Date(etNow); weekAgo.setDate(weekAgo.getDate() - 7);
   const fromISO = isoDateET(weekAgo);
   const lines = [`📒 **Weekly digest — week ending ${todayISO}**`];
+  // Durable backup of the accumulating signed-flow dataset. The live `signed_flow_daily`
+  // key has no TTL (so it persists), but it's the one structural dataset not otherwise
+  // backed up — snapshot it weekly to a dated, 120-day-TTL key so it's recoverable if the
+  // live key is ever wiped. Best-effort; never blocks the digest. (2026-06-28)
+  try {
+    const sfd = await env.SIGNAL_KV.get('signed_flow_daily');
+    if (sfd) await env.SIGNAL_KV.put(`signed_flow_daily_bak_${todayISO}`, sfd, { expirationTtl: 120 * 86400 });
+  } catch (_) {}
   try {
     const rows = JSON.parse(await env.SIGNAL_KV.get('history_data') || '[]')
       .filter(r => r.date && r.date > fromISO && r.date <= todayISO);

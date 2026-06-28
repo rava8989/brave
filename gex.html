@@ -437,10 +437,50 @@ function isMarketOpen() {
 }
 
 // ── Render functions ──
+// Resolve the headline metrics for the active basis. OI mode → the data's standing
+// fields (unchanged). Flow mode → derived from per-strike netGexVol (today's book), so
+// the cards, top bar, and Level Map all flip together with the GEX-profile toggle.
+function basisVals(data) {
+  if (gexBasis !== 'flow') {
+    return { maxPosStrike: data.maxPosStrike, maxPosGex: data.maxPosGex,
+             maxNegStrike: data.maxNegStrike, maxNegGex: data.maxNegGex,
+             flipStrike: data.flipStrike, totalGex: data.totalGex, regime: data.regime };
+  }
+  const ss = (data.strikes || []).filter(s => Number.isFinite(s.netGexVol) && s.netGexVol !== 0);
+  let mPos = null, mPosV = 0, mNeg = null, mNegV = 0;
+  for (const s of ss) {
+    if (s.netGexVol > mPosV) { mPos = s.strike; mPosV = s.netGexVol; }
+    if (s.netGexVol < mNegV) { mNeg = s.strike; mNegV = s.netGexVol; }
+  }
+  const sorted = [...ss].sort((a, b) => a.strike - b.strike);
+  let cum = 0, maxCum = -Infinity, minCum = Infinity, minAbs = Infinity, minAbsK = null;
+  const cross = [];
+  for (let i = 0; i < sorted.length; i++) {
+    const p = cum; cum += sorted[i].netGexVol;
+    if (cum > maxCum) maxCum = cum;
+    if (cum < minCum) minCum = cum;
+    if (i > 0 && ((p < 0 && cum >= 0) || (p > 0 && cum <= 0))) {
+      const s0 = sorted[i - 1].strike, s1 = sorted[i].strike;
+      const r = Math.abs(p) / (Math.abs(p) + Math.abs(cum));
+      cross.push(Math.round(s0 + r * (s1 - s0)));
+    }
+    if (Math.abs(cum) < minAbs) { minAbs = Math.abs(cum); minAbsK = sorted[i].strike; }
+  }
+  const tot = data.totalGexVol || 0;
+  let flip = null; const sig = Math.abs(tot) * 0.02;
+  if (maxCum > sig && minCum < -sig) {
+    if (cross.length) { cross.sort((a, b) => Math.abs(a - data.spot) - Math.abs(b - data.spot)); flip = cross[0]; }
+    else if (minAbsK != null) flip = minAbsK;
+  }
+  return { maxPosStrike: mPos, maxPosGex: mPosV, maxNegStrike: mNeg, maxNegGex: mNegV,
+           flipStrike: flip, totalGex: tot, regime: tot > 0 ? 'PIN' : 'BREAKOUT' };
+}
+
 function renderTopBar(data) {
+  const bv = basisVals(data);
   const spot = data.spot != null ? data.spot : null;
-  const regime = data.regime || '--';
-  const totalGex = data.totalGex != null ? data.totalGex : null;
+  const regime = bv.regime || '--';
+  const totalGex = bv.totalGex != null ? bv.totalGex : null;
   const updatedAt = data.updatedAt || null;
 
   document.getElementById('spxPrice').textContent = spot != null ? spot.toFixed(2) : '--';
@@ -523,14 +563,15 @@ function renderTopBar(data) {
 }
 
 function renderCards(data) {
-  document.getElementById('maxPosStrike').textContent = data.maxPosStrike ? data.maxPosStrike.toFixed(0) : '--';
-  document.getElementById('maxPosValue').textContent = data.maxPosGex ? fmtGex(data.maxPosGex) : '--';
-  document.getElementById('flipStrike').textContent = data.flipStrike != null ? data.flipStrike.toFixed(0) : 'none';
-  document.getElementById('flipDesc').textContent = data.flipStrike != null
+  const bv = basisVals(data);
+  document.getElementById('maxPosStrike').textContent = bv.maxPosStrike ? bv.maxPosStrike.toFixed(0) : '--';
+  document.getElementById('maxPosValue').textContent = bv.maxPosGex ? fmtGex(bv.maxPosGex) : '--';
+  document.getElementById('flipStrike').textContent = bv.flipStrike != null ? bv.flipStrike.toFixed(0) : 'none';
+  document.getElementById('flipDesc').textContent = bv.flipStrike != null
     ? 'Above = long gamma, Below = short gamma'
-    : 'One-sided book — no flip within the ±5% band (deep ' + (data.totalGex >= 0 ? 'positive' : 'negative') + ' everywhere)';
-  document.getElementById('maxNegStrike').textContent = data.maxNegStrike ? data.maxNegStrike.toFixed(0) : '--';
-  document.getElementById('maxNegValue').textContent = data.maxNegGex ? fmtGex(data.maxNegGex) : '--';
+    : 'One-sided book — no flip within the ±5% band (deep ' + (bv.totalGex >= 0 ? 'positive' : 'negative') + ' everywhere)';
+  document.getElementById('maxNegStrike').textContent = bv.maxNegStrike ? bv.maxNegStrike.toFixed(0) : '--';
+  document.getElementById('maxNegValue').textContent = bv.maxNegGex ? fmtGex(bv.maxNegGex) : '--';
 }
 
 function renderChart(data) {
@@ -1153,11 +1194,12 @@ function renderGammaLevelMap(data) {
     if (spot == null) { section.style.display = 'none'; wrap.innerHTML = ''; return; }
     section.style.display = 'block';
 
-    const flip = num(data.flipStrike);
-    const maxPos = num(data.maxPosStrike);
-    const maxNeg = num(data.maxNegStrike);
-    const maxNegGex = num(data.maxNegGex);
-    const regime = data.regime || '';
+    const bv = basisVals(data);   // OI fields, or flow-derived when the toggle is on Flow
+    const flip = num(bv.flipStrike);
+    const maxPos = num(bv.maxPosStrike);
+    const maxNeg = num(bv.maxNegStrike);
+    const maxNegGex = num(bv.maxNegGex);
+    const regime = bv.regime || '';
     const charm = num(data.charm);
 
     // Escape hatch: flip if present, else max-positive strike (one-sided book).
@@ -1165,8 +1207,10 @@ function renderGammaLevelMap(data) {
     const escapeLevel = hasFlip ? flip : maxPos; // may be null if neither exists
 
     // Air-pocket floor: deepest-negative point of gammaCurve → price = spot + shift_at_min_gamma.
+    // Air-pocket floor comes from the OI gamma curve (a spot-shift simulation of standing
+    // gamma) — there's no flow equivalent, so it shows only in OI mode.
     let floorLevel = null;
-    const curve = Array.isArray(data.gammaCurve) ? data.gammaCurve : null;
+    const curve = (gexBasis === 'flow') ? null : (Array.isArray(data.gammaCurve) ? data.gammaCurve : null);
     if (curve && curve.length) {
       let minG = Infinity, minShift = null;
       for (const p of curve) {
