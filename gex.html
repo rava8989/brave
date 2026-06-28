@@ -578,6 +578,7 @@ function renderChart(data) {
   if (!data.strikes || data.strikes.length === 0) return;
   const ctx = document.getElementById('gexChart').getContext('2d');
   const strikes = data.strikes;
+  const bv = basisVals(data);   // OI or flow-resolved max-gamma markers, matching the bars
   const labels = strikes.map(s => s.strike.toFixed(0));
   // OI basis = standing inventory (s.netGex); Flow basis = today's signed-volume book (s.netGexVol).
   const values = strikes.map(s => gexBasis === 'flow' ? (s.netGexVol || 0) : s.netGex);
@@ -633,14 +634,14 @@ function renderChart(data) {
     }
   }
 
-  // Max positive highlight
-  if (data.maxPosStrike) {
-    const maxPIdx = labels.indexOf(data.maxPosStrike.toFixed(0));
+  // Max positive highlight (basis-matched so it sits on the bars shown)
+  if (bv.maxPosStrike) {
+    const maxPIdx = labels.indexOf(bv.maxPosStrike.toFixed(0));
     if (maxPIdx >= 0) {
       annotations.maxPosBox = {
         type: 'point',
         xValue: maxPIdx,
-        yValue: data.maxPosGex,
+        yValue: bv.maxPosGex,
         radius: 6,
         backgroundColor: '#22c55e',
         borderColor: '#fff',
@@ -649,14 +650,14 @@ function renderChart(data) {
     }
   }
 
-  // Max negative highlight
-  if (data.maxNegStrike) {
-    const maxNIdx = labels.indexOf(data.maxNegStrike.toFixed(0));
+  // Max negative highlight (basis-matched so it sits on the bars shown)
+  if (bv.maxNegStrike) {
+    const maxNIdx = labels.indexOf(bv.maxNegStrike.toFixed(0));
     if (maxNIdx >= 0) {
       annotations.maxNegBox = {
         type: 'point',
         xValue: maxNIdx,
-        yValue: data.maxNegGex,
+        yValue: bv.maxNegGex,
         radius: 6,
         backgroundColor: '#ef4444',
         borderColor: '#fff',
