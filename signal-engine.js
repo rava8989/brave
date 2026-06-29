@@ -113,7 +113,7 @@ export const earningsSchedule = [
   { date:"July 29, 2026",     company:"Meta",      ticker:"META", timing:"AH", confirmed:false },
   { date:"July 30, 2026",     company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:false },
   { date:"July 30, 2026",     company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:false },
-  { date:"August 19, 2026",   company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:false },
+  { date:"August 26, 2026",   company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:false },
   // ── Q4 2026 (Oct/Nov reports — estimates) ──
   { date:"October 21, 2026",  company:"Tesla",     ticker:"TSLA", timing:"AH", confirmed:false },
   { date:"October 22, 2026",  company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:false },
