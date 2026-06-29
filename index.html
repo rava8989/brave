@@ -410,6 +410,7 @@
       <input id="subId" placeholder="Discord user ID (right-click → Copy User ID)" style="flex:2;min-width:200px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:7px 9px;font-size:12px;">
       <input id="subLabel" placeholder="name (optional)" style="flex:1;min-width:90px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:7px 9px;font-size:12px;">
       <button class="schwab-btn primary" onclick="subAdd()">Add</button>
+      <button class="schwab-btn" onclick="subTestChannel()">Test channel</button>
     </div>
     <div id="subNote" style="font-size:11px;color:var(--text3);margin-top:5px;">Recipient must share a server with the bot &amp; allow DMs from members.</div>
   </div>
@@ -3392,6 +3393,12 @@
     const j = await _subApi({action:'test', id});
     if(!j) return;
     document.getElementById('subNote').innerHTML = j.ok ? '✓ test DM delivered.' : `✗ ${j.error||'failed'} ${j.hint?'— '+j.hint:''}`;
+  }
+  async function subTestChannel(){
+    document.getElementById('subNote').textContent = 'posting test to channel…';
+    const j = await _subApi({action:'test-channel'});
+    if(!j) return;
+    document.getElementById('subNote').innerHTML = j.ok ? '✓ test posted to the signals channel.' : `✗ ${j.error||'failed'} ${j.hint?'— '+j.hint:''}`;
   }
 
   /* Auto-post after calculate — called by calculateStrategy when Schwab auto-fills */

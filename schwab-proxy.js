@@ -10096,6 +10096,12 @@ export default {
         return jsonResp({ ok: !!r.ok, status: r.status, error: r.error,
           hint: !r.ok && r.status === 403 ? 'This user must share a server with the bot AND allow DMs from server members.' : undefined }, 200, sCors);
       }
+      if (act === 'test-channel') {
+        // Post a test to the broadcast channel via its webhook (KV signals_webhook_url).
+        const r = await postSignalsChannel(env, '🔔 **Test from Σ3** — signals channel is wired up. Live trades will post here. (manual test)');
+        return jsonResp({ ok: !!r.ok, status: r.status, error: r.error,
+          hint: r.skipped ? 'No signals_webhook_url set in KV — create a channel webhook first.' : undefined }, 200, sCors);
+      }
       return jsonResp({ error: 'unknown action' }, 400, sCors);
     }
 
