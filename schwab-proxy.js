@@ -1423,7 +1423,25 @@ async function getSubscribers(env) {
   try { const raw = await env.SIGNAL_KV.get('signal_subscribers'); return raw ? JSON.parse(raw) : []; }
   catch { return []; }
 }
+// Post a signal to the broadcast channel via its Discord webhook (KV `signals_webhook_url`).
+// Best-effort — never breaks the fanout. The channel is "another recipient" alongside the DMs,
+// with no DM cap / anti-spam risk. URL lives in KV (NOT in code — this repo is public).
+async function postSignalsChannel(env, message) {
+  try {
+    const url = await env.SIGNAL_KV.get('signals_webhook_url');
+    if (!url) return { ok: false, skipped: true };
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: String(message).slice(0, 2000), allowed_mentions: { parse: [] } }),
+    });
+    return { ok: r.ok, status: r.status };
+  } catch (e) { return { ok: false, error: e.message }; }
+}
+
 async function fanoutSubscribers(env, message) {
+  // Broadcast channel first (one post, no DM caps), then the per-user DM list.
+  try { await postSignalsChannel(env, message); } catch (_) {}
   const subs = (await getSubscribers(env)).filter(s => s && s.id && !s.paused);
   const out = [];
   for (const s of subs) {
