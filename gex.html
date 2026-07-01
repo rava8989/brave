@@ -1168,7 +1168,7 @@ function renderCharmTimeChart(data) {
              ticks: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 10 },
                       maxRotation: 45, autoSkip: true, maxTicksLimit: 14 } },
         y: { grid: { color: 'rgba(45,63,85,0.3)', drawBorder: false },
-             title: { display: true, text: 'Charm (B)', color: '#94a3b8', font: { family: 'JetBrains Mono', size: 10 } },
+             title: { display: true, text: 'Charm ($B/day)', color: '#94a3b8', font: { family: 'JetBrains Mono', size: 10 } },
              ticks: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 10 },
                       callback: v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(1) + 'B' } }
       },

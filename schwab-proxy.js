@@ -4640,10 +4640,41 @@ async function settleGxbfEOD(env, etNow, spxClose) {
 // Freeze today's tail open from the 9:45 put snapshot once we're past 9:45 ET
 // on a TRADE day. Idempotent (first call wins). Called by BOTH the cron (robust,
 // no page-poll needed) and GET /tail-today.
-async function freezeTailOpenIfDue(env, etNow, line = null) {
+// Fan out the frozen tail order to subscribers EXACTLY ONCE per day, ONLY when
+// announce=true (the cron path). /tail-today (a GET the live page polls every
+// few seconds) also freezes the trade for display but passes announce=false — a
+// GET must never send Discord, else each poll near 9:45 re-fires the DM before
+// the KV guard propagates (the 2→3 duplicate-tail bug, 2026-06-30). Runs
+// regardless of WHO froze the trade first, so a poll freezing it never
+// suppresses the cron's announce. `tail_fanout_<date>` caps it at one send even
+// across back-to-back cron ticks. Format = live page's renderTail copy button
+// (SPX 100 (Weeklys), see [[feedback_tos_copy_spx_weeklys]]).
+async function announceTailIfDue(env, tailOpen, todayISO, announce) {
+  if (!announce || !tailOpen) return tailOpen;
+  const fkey = `tail_fanout_${todayISO}`;
+  if (await env.SIGNAL_KV.get(fkey)) return tailOpen;
+  await env.SIGNAL_KV.put(fkey, '1', { expirationTtl: 7 * 86400 });
+  try {
+    const _MON = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+    const e = String(tailOpen.expDate);
+    const tosD = `${+e.slice(8,10)} ${_MON[+e.slice(5,7)-1]} ${e.slice(2,4)}`;
+    const px = tailOpen.entryMid ?? tailOpen.entryAsk ?? tailOpen.entryBid;
+    if (px != null) {
+      const tos = `BUY +1 SPX 100 (Weeklys) ${tosD} ${tailOpen.strike} PUT @${Number(px).toFixed(2)} LMT`;
+      await fanoutSubscribers(env, `🛡️ Tail Hedge — 0DTE put · 9:45 ET entry\n${tos}`);
+      try { await logEvent(env, 'info', 'trade', `tail fan-out: ${tos}`, {}); } catch (_) {}
+    }
+  } catch (e) { console.warn('[tail-fanout]', e.message); }
+  return tailOpen;
+}
+
+async function freezeTailOpenIfDue(env, etNow, line = null, announce = false) {
   const todayISO = isoDateET(etNow);
   const existing = await env.SIGNAL_KV.get(`tail_open_trade_${todayISO}`);
-  if (existing) return JSON.parse(existing);
+  // Even if a /tail-today poll already froze the trade, the cron (announce=true)
+  // must still get a chance to fan out — so route through announceTailIfDue
+  // rather than returning early.
+  if (existing) return announceTailIfDue(env, JSON.parse(existing), todayISO, announce);
   const statusLine = line || await getTailHedgeStatusLine(env);
   const h = etNow.getHours(), m = etNow.getMinutes();
   const pastEntry = h > 9 || (h === 9 && m >= 45);
@@ -4665,25 +4696,7 @@ async function freezeTailOpenIfDue(env, etNow, line = null) {
   };
   await env.SIGNAL_KV.put(`tail_open_trade_${todayISO}`, JSON.stringify(tailOpen), { expirationTtl: 7 * 86400 });
 
-  // Fan out the tail order to subscribers in ToS format — PARITY with the
-  // skipper-routed strategies (they fan out via /link-notify). The tail is
-  // frozen here by the worker, NOT skipper, so it never hit that path → no
-  // subscriber DM (2026-06-26 bug). The `if (existing) return` guard at the
-  // top makes this fire exactly once per day. Same string format as the live
-  // page's renderTail copy button (SPX 100 (Weeklys), see [[feedback_tos_copy_spx_weeklys]]).
-  try {
-    const _MON = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
-    const e = String(tailOpen.expDate);
-    const tosD = `${+e.slice(8,10)} ${_MON[+e.slice(5,7)-1]} ${e.slice(2,4)}`;
-    const px = tailOpen.entryMid ?? tailOpen.entryAsk ?? tailOpen.entryBid;
-    if (px != null) {
-      const tos = `BUY +1 SPX 100 (Weeklys) ${tosD} ${tailOpen.strike} PUT @${Number(px).toFixed(2)} LMT`;
-      await fanoutSubscribers(env, `🛡️ Tail Hedge — 0DTE put · 9:45 ET entry\n${tos}`);
-      try { await logEvent(env, 'info', 'trade', `tail fan-out: ${tos}`, {}); } catch (_) {}
-    }
-  } catch (e) { console.warn('[tail-fanout]', e.message); }
-
-  return tailOpen;
+  return announceTailIfDue(env, tailOpen, todayISO, announce);
 }
 
 // Refresh intraday mid + live P&L on today's open tail put (mirrors
@@ -4811,15 +4824,15 @@ async function handleScheduled(env) {
     let backfillWR = {}, backfillPL = {};
     try { backfillWR = await backfillMissingWR(env); } catch(e) { backfillWR = { error: e.message }; }
     try { backfillPL = await backfillMissingPL(env); } catch(e) { backfillPL = { error: e.message }; }
-    // Append today's raw signals to scraped_signals.csv on GitHub
-    let scrapeAppend = {};
-    try { scrapeAppend = await appendScrapedSignals(env, etNow); } catch(e) { scrapeAppend = { error: e.message }; }
+    // NOTE: appendScrapedSignals (raw signal CSV) MOVED to the 16:25 aux tick
+    // below — bundled here it starved on the subrequest budget after handleEOD +
+    // backfillWR/PL and silently stopped archiving on 2026-06-04 (lesson P17).
     // Heavy GitHub-write jobs MOVED to their own 16:25 tick (2026-06-12,
     // lessons P17): bundled here they pushed the EOD invocation past the
     // subrequest budget — settle succeeded, every later persist silently
     // died (06-11: fly marks/surface/decomp/cyclicality all missing while
     // captures sat healthy in KV). See eodAuxJobs().
-    return { ...eodResult, discord: discordResult, backfill_wr: backfillWR, backfill_pl: backfillPL, scrape_append: scrapeAppend };
+    return { ...eodResult, discord: discordResult, backfill_wr: backfillWR, backfill_pl: backfillPL };
   }
 
   // ── 16:25–16:40 ET aux tick (2026-06-12, lessons P17): the GitHub-heavy
@@ -4834,6 +4847,16 @@ async function handleScheduled(env) {
       try { await computeVixDecompDaily(env, etNow); } catch (e) { ok = false; console.warn('[vix-decomp]', e.message); }
       try { await appendCyclicalityDays(env); } catch (e) { ok = false; console.warn('[cyclelab]', e.message); }
       try { await appendCyclicalityDays(env, { symbol: '%24NDX', file: 'cyclicality_ndx.json' }); } catch (e) { console.warn('[cyclelab-ndx]', e.message); }
+      // Raw Discord signal archive → scraped_signals.csv (moved here from EOD,
+      // lesson P17). Durable status in KV so a failure can't go unnoticed again.
+      try {
+        const sa = await appendScrapedSignals(env, etNow);
+        await env.SIGNAL_KV.put('scrape_append_last', JSON.stringify({ ...sa, ts: Date.now() }));
+      } catch (e) {
+        ok = false;
+        await env.SIGNAL_KV.put('scrape_append_last', JSON.stringify({ error: e.message, ts: Date.now() }));
+        console.warn('[scrape-append]', e.message);
+      }
       if (etNow.getDay() === 5) {
         try { await cotWeeklyRefresh(env); } catch (e) { console.warn('[cot]', e.message); }
       }
@@ -4866,7 +4889,10 @@ async function handleScheduled(env) {
   let gexResult = {};
   if (isMarket && schwabToken) {
     try {
-      gexResult = await handleGEXUpdate(env, schwabToken, masterChain);
+      // Fix 1 (2026-06-30): do NOT pass masterChain — it's only ~±$200 (±2.7%) wide, so
+      // GEX's walls/flip/regime/curve were silently confined there while the UI claimed ±8%.
+      // handleGEXUpdate now always fetches its own wide (strikeCount=150 ≈ ±7.9%) chain.
+      gexResult = await handleGEXUpdate(env, schwabToken);
     } catch (e) {
       gexResult = { gex: 'error', error: e.message };
       console.warn('[proxy] GEX update failed:', e.message || e);
@@ -4905,7 +4931,7 @@ async function handleScheduled(env) {
     try { await captureTailPutSnap(env, etNow, masterChain); } catch (e) { console.warn('[tail-snap]', e.message); }
     // Tail Hedge live-trade parity: freeze today's open at/after 9:45 (robust —
     // no page-poll needed) and refresh its intraday P&L every tick.
-    try { await freezeTailOpenIfDue(env, etNow); } catch (e) { console.warn('[tail-freeze]', e.message); }
+    try { await freezeTailOpenIfDue(env, etNow, null, true); } catch (e) { console.warn('[tail-freeze]', e.message); }
     try { await refreshTailLiveQuotes(env, etNow, masterChain); } catch (e) { console.warn('[tail-refresh]', e.message); }
     // Research capture: Diagonal 12:30 put chain + GXBF 9:35 call chain
     // (with these all three bt datasets grow Schwab-only — ThetaData optional)
@@ -6160,7 +6186,7 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
   // INFO-ONLY flow: total traded VOLUME (not OI) across all selected expirations.
   // Volume is the day's flow → summed unconditionally (even when oi===0), not gated on OI.
   let totalCallVol = 0, totalPutVol = 0;
-  let nearestDte = Infinity;
+  let nearestDte = Infinity, nearestT = 0;
   // Per-contract gamma inputs (OI>0 rows that fed gex) — reused for the spot-shifted curve.
   const gammaInputs = [];
   // Per-contract traded-volume + quote snapshot (vol>0 rows) → the caller classifies
@@ -6186,6 +6212,7 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
     if (dte < nearestDte) nearestDte = dte;
     // 0DTE uses real hours-to-close; longer-dated uses calendar dte/365
     const T_years = dte === 0 ? zeroDteT() : Math.max(dte / 365, 1 / (365 * 24));
+    if (dte === nearestDte) nearestT = T_years;   // nearest-expiry T → charm-per-day (Fix 5)
 
     const calls = callMap[expKey] || {};
     const puts = putMap[expKey] || {};
@@ -6375,6 +6402,15 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
 
   const regime = totalGex > 0 ? 'PIN' : 'BREAKOUT';
 
+  // Actual strike coverage of the chain we fetched (OI-bearing strikes only). Report what
+  // we can SEE, not a nominal band: on the old master-chain path the real window was
+  // ~±2.7% while the UI claimed ±8% (Fix 1, 2026-06-30).
+  const _covK = oiStrikes.map(s => s.strike);
+  const coverageLo = _covK.length ? Math.min(..._covK) : null;
+  const coverageHi = _covK.length ? Math.max(..._covK) : null;
+  const coveragePct = (coverageLo != null && S > 0)
+    ? parseFloat((100 * Math.max(S - coverageLo, coverageHi - S) / S).toFixed(1)) : null;
+
   return {
     timestamp: Math.floor(Date.now() / 1000),
     spot: parseFloat(S.toFixed(2)),
@@ -6397,8 +6433,11 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
     pcRatio: totalCallVol > 0 ? +(totalPutVol / totalCallVol).toFixed(2) : null,
     _flowContracts: flowContracts, // INTERNAL: stripped by caller before persist (trade-side classification)
     gammaCurve,
-    windowPct: parseFloat((rangePct * 100).toFixed(2)),
-    windowWidened: true,
+    windowPct: coveragePct != null
+      ? Math.min(parseFloat((rangePct * 100).toFixed(2)), coveragePct)
+      : parseFloat((rangePct * 100).toFixed(2)),
+    coverageLo, coverageHi, coveragePct,
+    tYears: nearestT,   // nearest-expiry T (years) — charm-per-day normalization (Fix 5)
     pctChange1m: null, // filled in by history comparison
     pctChange5m: null,
     walls,
@@ -6427,7 +6466,10 @@ async function handleGEXUpdate(env, token, preChain = null) {
     chainData = { callExpDateMap: preChain.callExpDateMap, putExpDateMap: preChain.putExpDateMap };
     spot = preChain.spot;
   } else {
-    // GEX wants a wide strike window (±8% band + far walls) → strikeCount=150.
+    // GEX wants a wide strike window. strikeCount=150 empirically returns ~±7.9% of spot
+    // (far strikes have wider spacing) — verified from a live snapshot 2026-06-30. The real
+    // Fix-1 change is that the CRON now takes THIS self-fetch path instead of the ±2.7%
+    // 80-strike master chain; 150 is the proven value the page-poll path already used.
     const baseParams = 'symbol=%24SPX&strikeCount=150&includeUnderlyingQuote=true&strategy=SINGLE';
     const [callData, putData] = await Promise.all([
       fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/chains?${baseParams}&contractType=CALL`, token),
@@ -6441,6 +6483,24 @@ async function handleGEXUpdate(env, token, preChain = null) {
         || putData.underlyingPrice || putData.underlying?.last || putData.underlying?.mark;
   }
   if (!spot) throw new Error('No SPX spot price in chain response');
+
+  // Fix 3 (2026-06-30): reject a DEAD chain — every contract openInterest=0 AND
+  // totalVolume=0 (e.g. a Tasty fallback). Writing it would zero gex_current AND
+  // poison the gex_volsnap baseline → double-count the next real bar into
+  // signed_flow_daily. A real SPX chain never has zero OI and zero vol everywhere,
+  // so this guard (before ANY KV write) cannot misfire on live data.
+  {
+    let oiSum = 0, volSum = 0;
+    for (const m of [chainData.callExpDateMap || {}, chainData.putExpDateMap || {}]) {
+      for (const exp in m) for (const k in m[exp]) for (const c of (m[exp][k] || [])) {
+        oiSum += (c.openInterest || 0); volSum += (c.totalVolume || 0);
+      }
+    }
+    if (oiSum === 0 && volSum === 0) {
+      console.warn('[gex] dead chain (fallback?) — skipping snapshot to protect gex_current + volsnap');
+      return { gex: 'skipped', reason: 'dead-chain' };
+    }
+  }
 
   // 4. Calculate GEX — both all-expiry and 0DTE-only
   const gexData = calculateGEX(chainData, spot, false);     // all expirations
@@ -6608,7 +6668,11 @@ async function handleGEXUpdate(env, token, preChain = null) {
       for (const ct of flowContracts) {
         const v = Math.max(ct.v || 0, 0);
         newSnap[ct.k] = v;
-        let dV = hadPrev ? (v - (prevSnap[ct.k] || 0)) : 0;  // first bar of day = baseline only
+        // First bar of day, OR a contract appearing for the FIRST time mid-day (e.g. when
+        // the wider 250-strike chain brings in a new strike) → baseline only (dV=0), NOT its
+        // full cumulative volume counted as one spike. Protects signed_flow_daily from the
+        // chain-width change (Fix 1, 2026-06-30).
+        let dV = (hadPrev && (ct.k in prevSnap)) ? (v - prevSnap[ct.k]) : 0;
         if (dV <= 0) continue;                               // cumulative only grows; guard resets
         const b = (typeof ct.b === 'number') ? ct.b : null;
         const a = (typeof ct.a === 'number') ? ct.a : null;
@@ -6628,10 +6692,19 @@ async function handleGEXUpdate(env, token, preChain = null) {
       // Intraday series (live chart): keep legacy cv/pv/ch, add this-bar sided deltas.
       const flowRaw = await env.SIGNAL_KV.get(flowKey);
       let flow = flowRaw ? JSON.parse(flowRaw) : [];
+      // ch: 0DTE charm as $-delta drift per calendar DAY (T divided out). Raw CEX carries
+      // ×T_years, so the all-expiry gexData.charm decays to ~0 into the close BY CONSTRUCTION
+      // and read as fake "charm fading" — the opposite of the real story, where charm pressure
+      // intensifies into the close (Fix 5, 2026-06-30). 0DTE-only + per-day now.
+      const ch0dte = (gex0dte && typeof gex0dte.charm === 'number' && gex0dte.tYears > 0)
+        ? Math.round(gex0dte.charm / gex0dte.tYears / 365) : null;
       flow.push({ ts: Math.floor(Date.now() / 1000), cv: gexData.callVol, pv: gexData.putVol,
-                  ch: (typeof gexData.charm === 'number' ? gexData.charm : null),
+                  ch: ch0dte,
                   cb, cs, pb, ps, cn, pn });   // sided deltas: call/put buy/sell/neutral this bar
-      if (flow.length > 250) flow = flow.slice(-250);
+      // 500 > ~390 bars/full trading day — the cap is a safety BOUND, not a window.
+      // At 250 the trim kicked in ~13:40 ET and silently dropped the morning, breaking
+      // every "since the open" cumulative sum + the Level Map flow arrow (Fix 2).
+      if (flow.length > 500) flow = flow.slice(-500);
       await env.SIGNAL_KV.put(flowKey, JSON.stringify(flow), { expirationTtl: 172800 }); // ~2 days
 
       // Durable daily roll-up (the multi-week dataset for testing) — accumulate today's sided totals.
@@ -7127,18 +7200,11 @@ async function fetchAllDiscordSignalsForDate(token, channelId, dateISO) {
   return allSignals;
 }
 
-// ── Append today's full Discord signals to scraped_signals.csv on GitHub ──
-async function appendScrapedSignals(env, etNow) {
-  const todayISO = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
-  const token = env.DISCORD_USER_TOKEN;
-  const channelId = '1048242197029458040';
-
-  // Check if already appended today
-  const doneKey = `scrape_appended_${todayISO}`;
-  if (await env.SIGNAL_KV.get(doneKey)) return { skipped: true, date: todayISO };
-
-  // Fetch raw Discord messages for today
-  const [y, m, d] = todayISO.split('-').map(Number);
+// ── Scrape raw Discord signal CSV rows for ONE ET date ──
+// Shared by appendScrapedSignals (daily) and backfillScrapedSignals (recovery)
+// so the 38-column parsing lives in exactly one place.
+async function scrapeRawRowsForDate(token, channelId, dateISO) {
+  const [y, m, d] = dateISO.split('-').map(Number);
   const startMs = Date.UTC(y, m - 1, d, 12, 0, 0);
   const endMs = Date.UTC(y, m - 1, d, 22, 0, 0);
   const discordEpoch = 1420070400000n;
@@ -7160,7 +7226,7 @@ async function appendScrapedSignals(env, etNow) {
       const content = msg.content || '';
       const msgET = toET(new Date(msg.timestamp));
       const msgDate = `${msgET.getFullYear()}-${String(msgET.getMonth()+1).padStart(2,'0')}-${String(msgET.getDate()).padStart(2,'0')}`;
-      if (msgDate !== todayISO) continue;
+      if (msgDate !== dateISO) continue;
       const msgTime = `${String(msgET.getHours()).padStart(2,'0')}:${String(msgET.getMinutes()).padStart(2,'0')}`;
 
       const priceM = content.match(/Price:\s*([\d.]+)/i);
@@ -7222,40 +7288,97 @@ async function appendScrapedSignals(env, etNow) {
     if (batch.length < 100) break;
     afterSnowflake = batch[batch.length - 1].id;
   }
+  return rows;
+}
 
-  if (rows.length === 0) return { date: todayISO, appended: 0 };
-
-  // Fetch current scraped_signals.csv from GitHub, append rows, push
-  const apiUrl = 'https://api.github.com/repos/rava8989/brave/contents/scraped_signals.csv';
-  const ghHeaders = {
+// ── GitHub read/write helpers for scraped_signals.csv ──
+const SCRAPED_CSV_API = 'https://api.github.com/repos/rava8989/brave/contents/scraped_signals.csv';
+function scrapedCsvHeaders(env) {
+  return {
     'Authorization': `Bearer ${env.GITHUB_TOKEN}`,
     'Accept': 'application/vnd.github+json',
     'User-Agent': 'schwab-proxy-worker/1.0',
     'X-GitHub-Api-Version': '2022-11-28',
   };
-
-  const getResp = await fetch(apiUrl, { headers: ghHeaders });
-  let existingContent = '', sha = '';
-  if (getResp.ok) {
-    const meta = await getResp.json();
-    sha = meta.sha;
-    existingContent = atob(meta.content.replace(/\n/g, ''));
+}
+async function fetchScrapedCsv(env) {
+  const resp = await fetch(SCRAPED_CSV_API, { headers: scrapedCsvHeaders(env) });
+  if (resp.status === 404) return { content: '', sha: '' };   // file absent → safe to create
+  if (!resp.ok) throw new Error(`scraped csv GET ${resp.status}`);
+  const meta = await resp.json();
+  let content;
+  if (meta.content && meta.encoding === 'base64') {
+    content = atob(meta.content.replace(/\n/g, ''));
+  } else {
+    // Files >1MB: the Contents API returns EMPTY content (encoding 'none'). Reading
+    // it as '' and appending would CLOBBER the whole file (this is exactly what wiped
+    // April–June on 2026-06-29). Read the blob via the Git Data API instead — no size
+    // limit, authoritative, not CDN-cached — using the sha from the metadata.
+    const blob = await fetch(`https://api.github.com/repos/rava8989/brave/git/blobs/${meta.sha}`, { headers: scrapedCsvHeaders(env) });
+    if (!blob.ok) throw new Error(`scraped csv blob GET ${blob.status}`);
+    const bd = await blob.json();
+    content = atob(bd.content.replace(/\n/g, ''));
   }
-
-  const newContent = existingContent.trimEnd() + '\n' + rows.join('\n') + '\n';
-  const putResp = await fetch(apiUrl, {
+  // Final guard: a file that exists (has a sha) must never read as empty before an append.
+  if (meta.sha && !content) throw new Error('scraped csv read empty — aborting to avoid clobber');
+  return { content, sha: meta.sha };
+}
+async function putScrapedCsv(env, content, sha, message) {
+  const putResp = await fetch(SCRAPED_CSV_API, {
     method: 'PUT',
-    headers: ghHeaders,
-    body: JSON.stringify({
-      message: `auto: append ${rows.length} scraped signals for ${todayISO}`,
-      content: btoa(newContent),
-      sha,
-    }),
+    headers: scrapedCsvHeaders(env),
+    body: JSON.stringify({ message, content: btoa(content), sha }),
   });
-
   if (!putResp.ok) throw new Error(`GitHub PUT failed: ${putResp.status}`);
+}
+
+// ── Append ONE day's full Discord signals to scraped_signals.csv on GitHub ──
+// Runs in the 16:25 aux tick (its own subrequest budget). Was previously in the
+// EOD invocation and silently starved on the subrequest budget after handleEOD +
+// backfillWR/PL — leaving a gap from 2026-06-04 onward (lesson P17).
+async function appendScrapedSignals(env, etNow) {
+  const todayISO = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
+  const doneKey = `scrape_appended_${todayISO}`;
+  if (await env.SIGNAL_KV.get(doneKey)) return { skipped: true, date: todayISO };
+
+  const rows = await scrapeRawRowsForDate(env.DISCORD_USER_TOKEN, '1048242197029458040', todayISO);
+  if (rows.length === 0) return { date: todayISO, appended: 0 };
+
+  const { content: existingContent, sha } = await fetchScrapedCsv(env);
+  const newContent = existingContent.trimEnd() + '\n' + rows.join('\n') + '\n';
+  await putScrapedCsv(env, newContent, sha, `auto: append ${rows.length} scraped signals for ${todayISO}`);
   await env.SIGNAL_KV.put(doneKey, 'done', { expirationTtl: 86400 * 3 });
   return { date: todayISO, appended: rows.length };
+}
+
+// ── One-shot backfill: scrape every MISSING trading day in [fromISO, toISO]
+//    and append them all in a SINGLE GitHub commit. Weekends/holidays yield
+//    0 rows and are skipped automatically. Triggered via KV
+//    'scrape_backfill_trigger' = "from,to". ──
+async function backfillScrapedSignals(env, fromISO, toISO) {
+  const { content: existingContent, sha } = await fetchScrapedCsv(env);
+  const have = new Set();
+  for (const line of existingContent.split('\n')) {
+    const c = line.split(',');
+    if (c[1] && /^\d{4}-\d{2}-\d{2}$/.test(c[1])) have.add(c[1]);
+  }
+  const start = new Date(`${fromISO}T12:00:00Z`).getTime();
+  const end = new Date(`${toISO}T12:00:00Z`).getTime();
+  const allRows = [];
+  const filled = [];
+  for (let t = start; t <= end; t += 86400000) {
+    const dt = new Date(t);
+    const iso = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth()+1).padStart(2,'0')}-${String(dt.getUTCDate()).padStart(2,'0')}`;
+    const dow = dt.getUTCDay();
+    if (dow === 0 || dow === 6) continue;     // weekend
+    if (have.has(iso)) continue;              // already archived
+    const rows = await scrapeRawRowsForDate(env.DISCORD_USER_TOKEN, '1048242197029458040', iso);
+    if (rows.length > 0) { allRows.push(...rows); filled.push(`${iso}:${rows.length}`); }
+  }
+  if (allRows.length === 0) return { backfilled: 0, dates: [] };
+  const newContent = existingContent.trimEnd() + '\n' + allRows.join('\n') + '\n';
+  await putScrapedCsv(env, newContent, sha, `backfill: ${allRows.length} scraped signals across ${filled.length} day(s)`);
+  return { backfilled: allRows.length, dates: filled };
 }
 
 function computeWinRateFromSignals(signals, spxClose) {
@@ -10740,6 +10863,23 @@ export default {
             await env.SIGNAL_KV.put('signals_today', JSON.stringify({ date: rescrapeDate, signals }));
             console.log(`[gex] Rescrape complete: ${signals.length} signals for ${rescrapeDate}`);
           } catch (e) { console.warn('[gex] rescrape failed:', e.message); }
+        }
+
+        // ── One-shot scrape-backfill trigger (KV 'scrape_backfill_trigger' = "from,to") ──
+        // Recovers missing trading days in scraped_signals.csv (one GET + scrape
+        // all missing days + one PUT). Delete first so a failure can't loop.
+        const backfillRange = await env.SIGNAL_KV.get('scrape_backfill_trigger');
+        if (backfillRange) {
+          await env.SIGNAL_KV.delete('scrape_backfill_trigger');
+          try {
+            const [bf, bt] = backfillRange.split(',').map(s => s.trim());
+            const res = await backfillScrapedSignals(env, bf, bt || bf);
+            await env.SIGNAL_KV.put('scrape_backfill_result', JSON.stringify({ ...res, ts: Date.now() }), { expirationTtl: 86400 * 7 });
+            console.log(`[gex] scrape-backfill: ${res.backfilled} rows across ${res.dates.length} day(s)`);
+          } catch (e) {
+            await env.SIGNAL_KV.put('scrape_backfill_result', JSON.stringify({ error: e.message, ts: Date.now() }), { expirationTtl: 86400 * 7 });
+            console.warn('[gex] scrape-backfill failed:', e.message);
+          }
         }
 
         let data = await env.SIGNAL_KV.get('gex_current');
