@@ -73,6 +73,24 @@ for p in sorted(glob.glob(os.path.join(ROOT, 'data/spx/SPX_*.csv'))):
     if wd >= 5: continue
     days.append({'d': d_iso, 'w': wd, 'm': moves})
 
+# ── MERGE GUARD (audit fix 2026-06-30) ──────────────────────────────────────
+# The worker (appendCyclicalityDays) appends live sessions from Schwab beyond the
+# local SPX_*.csv files, which are FROZEN (ThetaData sub lapsed — no new CSVs are
+# coming). A naive full overwrite here would silently DESTROY that worker-appended
+# tail. So: keep any existing day whose date is AFTER the last CSV day.
+csv_dates = {d['d'] for d in days}
+last_csv = max(csv_dates) if csv_dates else '0000-00-00'
+try:
+    with open(OUT) as _f:
+        _existing = json.load(_f).get('days', [])
+    kept = [d for d in _existing if d['d'] > last_csv and d['d'] not in csv_dates]
+    if kept:
+        print(f'  merge-guard: preserving {len(kept)} worker-appended day(s) after {last_csv} '
+              f'({kept[0]["d"]} → {kept[-1]["d"]})')
+        days = sorted(days + kept, key=lambda d: d['d'])
+except FileNotFoundError:
+    pass
+
 out = {'built': datetime.date.today().isoformat(), 'slots': SLOTS, 'days': days}
 with open(OUT, 'w') as f:
     json.dump(out, f, separators=(',', ':'))

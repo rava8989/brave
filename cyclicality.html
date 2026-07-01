@@ -74,8 +74,8 @@ td:first-child,th:first-child{text-align:left}
   <div class="card"><div class="k">Predicted move (shown span)</div><div class="v" id="cPred">—</div><div class="n" id="cPredN"></div></div>
   <div class="card"><div class="k">% of time above zero</div><div class="v" id="cAbove">—</div><div class="n">share of plotted 5-min points &gt; 0</div></div>
   <div class="card"><div class="k">Actual so far</div><div class="v" id="cAct">—</div><div class="n" id="cActN"></div></div>
-  <div class="card"><div class="k">Method hit-rate (week direction)</div><div class="v" id="cHit">—</div><div class="n" id="cHitN"></div></div>
-  <div class="card"><div class="k">Expected movement today</div><div class="v" id="cRange">—</div><div class="n">trailing-20-session avg daily range — beats weekday & analog forecasts (validated 2026-06-12)</div></div>
+  <div class="card"><div class="k">Method hit-rate (per-day direction)</div><div class="v" id="cHit">—</div><div class="n" id="cHitN"></div></div>
+  <div class="card"><div class="k">Typical daily travel</div><div class="v" id="cRange">—</div><div class="n">trailing-20 avg open→close path range — runs ~8% under true high-low (wicks/gaps not captured)</div></div>
 </div>
 
 <div class="panel">
@@ -86,7 +86,7 @@ td:first-child,th:first-child{text-align:left}
     <span class="lg-act">Actual</span>
     <span class="lg-zero">Zero</span>
     <span style="color:var(--text2)"><span style="color:#818cf8;opacity:.4;font-weight:700">▮</span> Agreement band (prior-week spread — wide = ignore the line)</span>
-    <span style="color:var(--text2)"><span style="color:#22c55e;font-weight:700">▮</span> ✓ green day = the 4 weeks agreed (cloud stayed one side of the open → the line is tradeable)</span>
+    <span style="color:var(--text2)"><span style="color:#22c55e;font-weight:700">▮</span> ✓ green day = the priors agreed on direction (agreement only — walk-forward shows it is NOT a tradeable edge; see verdict)</span>
     <span style="color:var(--text2)"><span style="color:#22d3ee;font-weight:700">┄</span> Live rest-of-day projection</span>
     <span style="color:var(--text2)"><span style="color:#ef4444;font-weight:700">▂</span> Movement intensity (bottom strip)</span>
     <span style="color:var(--text2)">Top ticks: <b>S</b>traddle 9:32 · <b>G</b>XBF 9:36 · <b>T</b>ail 9:45 · <b>D</b>iag 12:30 · shaded = M8BF window</span>
@@ -160,13 +160,17 @@ td:first-child,th:first-child{text-align:left}
 let DATA = null, lookback = 4, weekKey = null, method = 'med';   // Median default (2026-06-12: lowest size error 33.5 vs Sum 69.8; Sum = same shape ×4)
 const METHODS = [['sum','Sum'],['avg','Average'],['med','Median'],['wavg','Weighted']];
 function buildSlots(priMoves) {
-  const n = priMoves.length, ns = DATA.slots.length, out = new Array(ns);
+  const ns = DATA.slots.length, out = new Array(ns);
   for (let s = 0; s < ns; s++) {
-    const vals = priMoves.map(m => m[s] || 0);
+    // Drop null slots (half-days close at 13:00) instead of counting them as 0-moves —
+    // coercing null→0 silently flattened the afternoon prediction toward zero (audit fix).
+    const vals = priMoves.map(m => m[s]).filter(v => v != null);
+    const k = vals.length;
+    if (k === 0) { out[s] = null; continue; }
     if (method === 'sum') out[s] = vals.reduce((a, b) => a + b, 0);
-    else if (method === 'avg') out[s] = vals.reduce((a, b) => a + b, 0) / n;
-    else if (method === 'med') { const v = [...vals].sort((a, b) => a - b); out[s] = n % 2 ? v[(n-1)/2] : (v[n/2-1] + v[n/2]) / 2; }
-    else { let num = 0, den = 0; vals.forEach((v, k) => { num += v * (k + 1); den += k + 1; }); out[s] = num / den; }
+    else if (method === 'avg') out[s] = vals.reduce((a, b) => a + b, 0) / k;
+    else if (method === 'med') { const v = [...vals].sort((a, b) => a - b); out[s] = k % 2 ? v[(k-1)/2] : (v[k/2-1] + v[k/2]) / 2; }
+    else { let num = 0, den = 0; vals.forEach((v, i) => { num += v * (i + 1); den += i + 1; }); out[s] = num / den; }
   }
   return out;
 }
@@ -293,7 +297,7 @@ function buildSegs() {
     loadData();
   });
   const oc = $('optClean'), og = $('optGhosts');
-  if (oc && !oc._wired) { oc._wired = true; oc.onchange = () => { cleanLB = oc.checked; render(); }; }
+  if (oc && !oc._wired) { oc._wired = true; oc.onchange = () => { cleanLB = oc.checked; render(); buildValidation(); }; }
   if (og && !og._wired) { og._wired = true; og.onchange = () => { showGhosts = og.checked; render(); }; }
 }
 
@@ -345,7 +349,7 @@ function compute() {
   // truncate the rest of the week (a single partial day used to make every
   // later day look "missing").
   let cp = 0, ca = 0;
-  const predCum = [], actCum = [], marks = [], bandLo = [], bandHi = [], intens = [];
+  const predCum = [], actCum = [], marks = [], bandLo = [], bandHi = [], intens = [], dayPaths = [];
   const ghosts = [];   // prior-week paths, only when a single weekday is shown
   const singleDow = days.length >= 1 && activeDows.size === 1 && lookback <= 10;
   days.forEach((d, di) => {
@@ -360,6 +364,8 @@ function compute() {
       for (let s = 0; s < ns; s++) { c += m[s] || 0; p[s] = c * scale; }
       return p;
     });
+    // unscaled per-prior within-day cumulative paths — for the live projection cone
+    dayPaths.push(scale === 1 ? paths : paths.map(p => p.map(v => v / scale)));
     if (singleDow && showGhosts) for (const p of paths)
       ghosts.push({ off: di * ns, path: p.map(v => dayStart + v) });
     for (let s = 0; s < ns; s++) {
@@ -376,12 +382,12 @@ function compute() {
       else actCum.push(null);
     }
     // cloud read: fraction of the day the band stayed on ONE side of the open
-    // (priors agreed on direction). High = tradeable line; low = noise. Rare.
+    // (priors agreed on direction). High = priors AGREED (not a validated edge); low = disagreed. Rare.
     mk.q = bandSlots ? oneSided / bandSlots : null;
     mk.avgW = bandSlots ? widthSum / bandSlots : null;
     mk.cls = mk.q == null ? null : (mk.q >= 0.70 ? 'good' : mk.q <= 0.40 ? 'noise' : 'mixed');
   });
-  return { days, predCum, actCum, marks, ns, bandLo, bandHi, intens, ghosts };
+  return { days, predCum, actCum, marks, ns, bandLo, bandHi, intens, ghosts, dayPaths };
 }
 
 function render() {
@@ -422,7 +428,7 @@ function draw(r) {
   const px = i => L + (W - L - R) * i / Math.max(1, N - 1);
   const py = v => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
   // cloud-quality day shading (bottom layer): green where the 4 prior weeks
-  // agreed (cloud stays one side of the open → tradeable line), faint red where
+  // agreed (cloud stays one side of the open → priors agree; not a validated edge), faint red where
   // the cloud straddles the open (the weeks disagreed → noise, skip).
   r.marks.forEach((mk, di) => {
     if (!mk.cls || mk.cls === 'mixed') return;
@@ -528,10 +534,24 @@ function draw(r) {
       if (last >= a0 && last < a1 - 1) {
         const anchor = r.actCum[last];
         const proj = [], pLo = [], pHi = [];
+        // Cone = envelope of each PRIOR's forward path from the anchor slot, re-anchored on
+        // today's live actual. The old code used difference-of-envelopes
+        // (bandHi[i]−bandHi[last]), whose two endpoints come from different priors →
+        // ~58% understated spread + inversions on ~28% of days (audit fix, 2026-06-30).
+        const pp = r.dayPaths[liveDi] || [];
+        const wl = last - a0;                      // anchor slot within the day
         for (let i = last; i < a1; i++) {
+          const wi = i - a0;
           proj.push(anchor + (r.predCum[i] - r.predCum[last]));
-          pLo.push(r.bandLo[i] != null && r.bandLo[last] != null ? anchor + (r.bandLo[i] - r.bandLo[last]) : null);
-          pHi.push(r.bandHi[i] != null && r.bandHi[last] != null ? anchor + (r.bandHi[i] - r.bandHi[last]) : null);
+          let mn = Infinity, mx = -Infinity;
+          for (const path of pp) {
+            if (path[wi] == null || path[wl] == null) continue;
+            const fwd = path[wi] - path[wl];       // this prior's move from the anchor onward
+            if (fwd < mn) mn = fwd;
+            if (fwd > mx) mx = fwd;
+          }
+          if (mn === Infinity) { pLo.push(null); pHi.push(null); }
+          else { pLo.push(anchor + mn); pHi.push(anchor + mx); }
         }
         if (pLo[1] != null) {
           x.fillStyle = 'rgba(34,211,238,0.08)'; x.beginPath();
@@ -564,16 +584,17 @@ function draw(r) {
 function buildValidation() {
   const tb = $('valTable').querySelector('tbody');
   const ns = DATA.slots.length;
+  const ev = cleanLB ? eventISOset() : null;   // audit fix: validation now honors the "skip FED/CPI/OPEX" toggle
   let rows = '', totHit = 0, totN = 0, totBaseUp = 0, totDays = 0, totErr = 0, zeroErr = 0, zeroN = 0;
   for (let w = 0; w < 5; w++) {
     // _live partial day excluded — validation must only judge completed sessions
-    const idxs = DATA.days.map((d, i) => i).filter(i => DATA.days[i].w === w && !DATA.days[i]._live);
+    let idxs = DATA.days.map((d, i) => i).filter(i => DATA.days[i].w === w && !DATA.days[i]._live);
+    if (ev) idxs = idxs.filter(i => !ev.has(DATA.days[i].d));
     const net = i => DATA.days[i].m.reduce((a, m) => a + (m || 0), 0);
-    const baseUp = idxs.filter(i => net(i) > 0).length / idxs.length;
     let hit = 0, tot = 0, csum = 0, esum = 0;
     for (let j = lookback; j < idxs.length; j++) {
       const pri = idxs.slice(j - lookback, j), tgt = idxs[j];
-      const pred = buildSlots(pri.map(i => DATA.days[i].m));
+      const pred = buildSlots(pri.map(i => DATA.days[i].m)).map(v => v || 0);   // null-safe (all-null half-day slots)
       const act = Array.from({ length: ns }, (_, s) => DATA.days[tgt].m[s] || 0);
       const pe = pred.reduce((a, b) => a + b, 0), ae = act.reduce((a, b) => a + b, 0);
       if (!pe || !ae) continue;
@@ -581,6 +602,11 @@ function buildValidation() {
       esum += Math.abs(pe - ae);
       csum += corr(cumArr(pred), cumArr(act));
     }
+    if (tot === 0) {   // thin history (e.g. NDX at large lookback) → no walk-forward rows; don't print NaN%
+      rows += `<tr><td>${WD[w]}</td><td>0</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>`;
+      continue;
+    }
+    const baseUp = idxs.length ? idxs.filter(i => net(i) > 0).length / idxs.length : 0;
     const hr = 100 * hit / tot, ed = hr - 100 * baseUp;
     totHit += hit; totN += tot; totBaseUp += baseUp * tot; totDays += tot;
     totErr += esum; zeroErr += idxs.reduce((a, i) => a + Math.abs(net(i)), 0); zeroN += idxs.length;
@@ -589,6 +615,14 @@ function buildValidation() {
       `<td class="${ed >= 1 ? 'pos' : ed <= -1 ? 'neg' : ''}">${ed >= 0 ? '+' : ''}${ed.toFixed(1)}pp</td>` +
       `<td>${(esum / tot).toFixed(1)}</td>` +
       `<td>${(csum / tot).toFixed(3)}</td></tr>`;
+  }
+  if (totN === 0) {   // no weekday had enough history — show em-dashes, not NaN
+    $('valTable').querySelector('tbody').innerHTML = rows +
+      `<tr style="font-weight:700"><td>ALL</td><td>0</td><td>—</td><td>—</td><td>—</td><td>—</td><td></td></tr>`;
+    $('cHit').textContent = '—';
+    $('cHitN').textContent = `lookback ${lookback} — not enough history to validate`;
+    $('verdict').innerHTML = '<b>Not enough history</b> at this lookback (or symbol) to run the walk-forward.';
+    return;
   }
   const thr = 100 * totHit / totN, tbase = 100 * totBaseUp / totDays, ted = thr - tbase;
   const avgErr = totErr / totN, zBase = zeroErr / zeroN;

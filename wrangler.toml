@@ -4,12 +4,17 @@ compatibility_date = "2026-03-17"
 
 [triggers]
 # Morning signal: dedicated 9:30 ET tick (EDT + EST)
-# Market hours: every 1 min for GEX + Discord poll + BOBF entry checks (EDT + EST)
+# Market hours + close + 16:25-16:40 aux tick: every 1 min 13-21 UTC.
+#   EDT (UTC-4): 09:00-16:59 ET.  EST (UTC-5): 08:00-15:59 ET was the OLD `13-20`
+#   range — which did NOT cover the 16:25-16:40 ET aux tick in winter (21:25-21:40
+#   UTC), silently killing the daily scraped-signals/cyclicality/research writes all
+#   winter. `13-21` now covers 16:xx ET in EST too (2026-06-30 fix). Extra post-close
+#   ticks in EDT (17:xx ET) are ET-gated no-ops.
 # EOD: ~16:17 ET (EDT + EST)
 crons = [
   "30 13 * * 1-5",
   "30 14 * * 1-5",
-  "* 13-20 * * 1-5",
+  "* 13-21 * * 1-5",
   "17 20 * * 1-5",
   "17 21 * * 1-5",
   "0 22 * * SUN"
