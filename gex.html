@@ -180,7 +180,7 @@
   <div class="gex-data" id="gexDataBar">
     <span class="spx-price" id="spxPrice">--</span>
     <span class="regime-badge pin" id="regimeBadge" style="display:none;">--</span>
-    <div class="total-gex stat-tile neutral" id="vannaTile" title="Vanna: how dealer gamma shifts as implied vol changes.">
+    <div class="total-gex stat-tile neutral" id="vannaTile" title="Vanna: how dealer delta shifts as implied vol changes.">
       <span class="label">Vanna</span><span class="val">--</span><span class="tag" id="vannaTag"></span>
     </div>
     <div class="total-gex stat-tile neutral" id="charmTile" title="Charm: how dealer gamma decays as time passes toward expiry.">
@@ -317,7 +317,7 @@
     </div>
     <div id="charmTimeNote" style="display:none;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text2);padding:24px 0;text-align:center;">capturing… (fills in through the session)</div>
     <div class="bottom-info" style="text-align:left;padding:8px 0 0;">
-      Aggregate charm per tick: green = positive, red = negative. As 0DTE decays, charm pulls dealer hedges toward the pin into the close.
+      0DTE charm per tick — $-delta drift per day (time factored out): green = positive (pin firms), red = negative (decay feeds the move). Reflects real hedging pressure, not units shrinking into the close.
     </div>
   </div>
 
@@ -509,9 +509,9 @@ function renderTopBar(data) {
     tile.title = (pos ? tipPos : tipNeg);
   }
   setStatTile('vannaTile','vannaTag', data.vanna,
-    'VOL-UP+','VOL-UP-',
-    'Vanna +: dealers buy into rising IV (vol-up supportive, vol-down adds pressure).',
-    'Vanna -: dealers sell into rising IV (rising vol amplifies moves).');
+    'VOL-UP-','VOL-UP+',
+    'Vanna +: dealers SELL into rising IV / buy on vol crush — vol-down supportive (the vanna rally).',
+    'Vanna -: dealers BUY into rising IV / sell on vol crush — vol-up supportive.');
   setStatTile('charmTile','charmTag', data.charm,
     'PIN+','PIN-',
     'Charm +: long-gamma decays toward expiry — pin tends to firm into the close.',
@@ -569,7 +569,7 @@ function renderCards(data) {
   document.getElementById('flipStrike').textContent = bv.flipStrike != null ? bv.flipStrike.toFixed(0) : 'none';
   document.getElementById('flipDesc').textContent = bv.flipStrike != null
     ? 'Above = long gamma, Below = short gamma'
-    : 'One-sided book — no flip within the ±5% band (deep ' + (bv.totalGex >= 0 ? 'positive' : 'negative') + ' everywhere)';
+    : 'One-sided book — no flip within the analysis window (deep ' + (bv.totalGex >= 0 ? 'positive' : 'negative') + ' everywhere)';
   document.getElementById('maxNegStrike').textContent = bv.maxNegStrike ? bv.maxNegStrike.toFixed(0) : '--';
   document.getElementById('maxNegValue').textContent = bv.maxNegGex ? fmtGex(bv.maxNegGex) : '--';
 }
@@ -1651,18 +1651,22 @@ async function fetchAndRender() {
       }
     } else if (modeWarn) { modeWarn.remove(); }
 
-    // Window-widened note (server widened the ±band to include far walls)
+    // Analysis-window note — show the ACTUAL strike coverage we fetched, not a nominal
+    // band. Everything structural (walls/flip/regime/curve) only sees this range (Fix 1).
     const widenNote = document.getElementById('gexWindowNote');
-    if (data.windowWidened) {
-      const pct = data.windowPct != null ? data.windowPct : null;
+    const covPct = data.coveragePct != null ? data.coveragePct : (data.windowPct != null ? data.windowPct : null);
+    if (covPct != null) {
+      const range = (data.coverageLo != null && data.coverageHi != null)
+        ? ' · ' + Math.round(data.coverageLo) + '–' + Math.round(data.coverageHi) : '';
+      const txt = 'window ±' + covPct + '%' + range;
       if (!widenNote) {
         const w = document.createElement('span');
         w.id = 'gexWindowNote';
-        w.style.cssText = 'font-size:10px;color:var(--yellow);font-weight:600;';
-        w.textContent = '(window widened' + (pct != null ? ' to ±' + pct + '%' : '') + ' to include walls)';
+        w.style.cssText = 'font-size:10px;color:var(--dim,#8a8f98);font-weight:600;';
+        w.textContent = txt;
         document.getElementById('gexModeToggle').after(w);
-      } else if (pct != null) {
-        widenNote.textContent = '(window widened to ±' + pct + '% to include walls)';
+      } else {
+        widenNote.textContent = txt;
       }
     } else if (widenNote) {
       widenNote.remove();
