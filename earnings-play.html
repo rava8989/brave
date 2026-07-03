@@ -259,7 +259,7 @@ function render(d) {
     `<td>${r.deep_itm_usd ? '$' + (r.deep_itm_usd/1e6).toFixed(1) + 'M' : '—'}</td>` +
     `<td>${pct(r.runup_2w)}</td><td>${r.base_rate == null ? '—' : (r.base_rate*100).toFixed(0) + '%'}</td>` +
     `<td class="${vcls(r.verdict)}">${r.verdict}</td>` +
-    `<td>${pct(r.move_24h)}</td><td>${r.pl_r == null ? '—' : fmt(r.pl_r, 2)}</td></tr>`).join('') ||
+    `<td class="${r.move_24h > 0 ? 'g-ok' : r.move_24h < 0 ? 'g-no' : ''}">${pct(r.move_24h)}</td><td>${r.pl_r == null ? '—' : fmt(r.pl_r, 2)}</td></tr>`).join('') ||
     '<tr><td colspan="9" class="note">no history yet</td></tr>';
 }
 </script>
