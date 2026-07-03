@@ -442,6 +442,15 @@ function draw(r) {
     x.strokeStyle = '#22324a'; x.beginPath(); x.moveTo(L, py(v)); x.lineTo(W - R, py(v)); x.stroke();
     x.fillStyle = '#64748b'; x.fillText(String(v), 6, py(v) + 4);
   }
+  // hourly time markers — barely-visible verticals at 10:00…15:00 within each
+  // day (5-min slots → hour boundary every 12 slots, first one 6 slots after 9:30)
+  x.strokeStyle = 'rgba(148,163,184,0.09)';
+  r.marks.forEach((mk, di) => {
+    const nextX = (di + 1 < r.marks.length) ? r.marks[di + 1].x : N;
+    for (let j = 6; mk.x + j < nextX; j += 12) {
+      x.beginPath(); x.moveTo(px(mk.x + j), T); x.lineTo(px(mk.x + j), H - B); x.stroke();
+    }
+  });
   // day separators + labels
   r.marks.forEach(mk => {
     x.strokeStyle = '#2d3f55'; x.beginPath(); x.moveTo(px(mk.x), T); x.lineTo(px(mk.x), H - B); x.stroke();
