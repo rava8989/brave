@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>Earnings Play v2.1 — Complete Methodology</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
+<style>
+  :root { --bg:#0d1117; --card:#161b22; --border:#30363d; --text:#e6edf3;
+          --muted:#8b949e; --accent:#58a6ff; --green:#3fb950; --red:#f85149; --amber:#d29922; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'Inter',sans-serif; background:var(--bg); color:var(--text);
+         font-size:14px; line-height:1.75; padding:24px 16px 80px; }
+  .wrap { max-width:860px; margin:0 auto; }
+  h1 { font-size:21px; font-weight:600; margin-bottom:2px; }
+  h2 { font-size:16px; font-weight:600; margin:34px 0 10px; padding-top:14px; border-top:1px solid var(--border); }
+  h3 { font-size:14px; font-weight:600; margin:18px 0 6px; color:var(--accent); }
+  p { margin:0 0 12px; }
+  .sub { color:var(--muted); margin-bottom:24px; }
+  .muted { color:var(--muted); }
+  .formula { font-family:'JetBrains Mono',monospace; font-size:13px; background:var(--card);
+             border:1px solid var(--border); border-radius:8px; padding:12px 16px; margin:10px 0 14px;
+             overflow-x:auto; white-space:pre; }
+  table { width:100%; border-collapse:collapse; font-size:13px; margin:10px 0 16px; }
+  th { text-align:left; color:var(--muted); font-weight:500; padding:6px 10px; border-bottom:1px solid var(--border); }
+  td { text-align:left; padding:6px 10px; border-bottom:1px solid #21262d; vertical-align:top; }
+  code { font-family:'JetBrains Mono',monospace; font-size:12.5px; background:var(--card);
+         padding:1px 5px; border-radius:4px; }
+  a { color:var(--accent); text-decoration:none; }
+  .refs { font-size:12.5px; color:var(--muted); }
+  .refs li { margin-bottom:6px; margin-left:18px; }
+  .warn { border-left:3px solid var(--amber); padding:8px 14px; background:var(--card);
+          border-radius:0 8px 8px 0; margin:12px 0; }
+  ul.plain { margin:0 0 12px 20px; }
+  ul.plain li { margin-bottom:6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Earnings Play v2.1 — Complete Methodology</h1>
+  <div class="sub">Overnight long-stock earnings reaction system · three hard gates, LONG or PASS ·
+    <a href="earnings-play.html">← back to the board</a></div>
+
+  <h2>1 · Hypothesis</h2>
+  <p>Informed traders express earnings views in short-dated options in the days before the report, and
+  that activity carries predictive content for the announcement reaction (Pan &amp; Poteshman 2006;
+  Roll, Schwartz &amp; Subrahmanyam 2010; Johnson &amp; So 2012). We hypothesize that this content is
+  conditionally exploitable as a <b>24-hour long-stock position through the print</b> — but only when three
+  independent conditions hold simultaneously: bullish flow in a moderate (non-crowded) band, expectations
+  not already extended, and a name whose own history shows positive reactions get paid. Each gate removes a
+  distinct, known failure mode; the strategy's identity is the <i>conjunction</i>, not any single signal.</p>
+  <p class="muted">The system trades the overnight reaction only — not post-earnings drift (Bernard &amp;
+  Thomas 1989), which operates on a different horizon and is out of scope.</p>
+
+  <h2>2 · Signal construction</h2>
+  <h3>2.1 Flow window and hygiene</h3>
+  <ul class="plain">
+    <li>Only prints on contracts with ≤ 14 DTE at print time. Longer-dated (LEAP/swing) flow is bucketed
+    separately with <b>zero weight</b> — it speaks to a different horizon.</li>
+    <li>Directional classification: BULL = aggressive call buying; BEAR = aggressive put buying. With
+    aggressor-tagged data (CheddarFlow sweeps/blocks) this is direct; with the Schwab proxy (§3.2) it is
+    inferred (opened premium), a stated approximation.</li>
+    <li>Recency weighting: the final 48 hours before the print carry the heaviest weight.</li>
+    <li>Multi-pass collection, union-deduplicated before scoring.</li>
+  </ul>
+  <h3>2.2 PW ratio (Gate 1 statistic)</h3>
+  <div class="formula">PW = Σ premium(BULL call prints, ≤14 DTE, recency-weighted)
+     ÷ Σ premium(BEAR put prints, ≤14 DTE, recency-weighted)
+
+Deep-ITM stock replacement: call prints with strike &lt; 0.92 · S
+  → tracked separately in dollars; presence STRENGTHENS, absence never kills.</div>
+  <h3>2.3 Expectations measures (Gate 2)</h3>
+  <p>Two-week run-up = close ÷ close₁₀ᵗʳᵃᵈⁱⁿᵍ ᵈᵃʸˢ ᵃᵍᵒ − 1; ATH proximity = close ÷ all-time-high close − 1.
+  Both from split-adjusted daily history.</p>
+  <h3>2.4 Base rate (Gate 3 statistic)</h3>
+  <div class="formula">reaction(q) = next regular-session OPEN after print ÷ last CLOSE before print − 1
+base_rate   = frequency of reaction(q) &gt; 0 over the last 4–8 reports
+              (open→open where the position exits at the open; both recorded)</div>
+  <p class="muted">The exit is "sell into the morning move", so the tradable reaction is measured to the
+  open, not the close — measuring to the close would smuggle in intraday drift the system never holds for.</p>
+
+  <h2>3 · Data pipeline</h2>
+  <table>
+    <tr><th>Input</th><th>Source</th><th>Notes</th></tr>
+    <tr><td>Earnings calendar (date + AMC/BMO flag)</td><td>Nasdaq public calendar API</td>
+        <td>board = tonight AMC + tomorrow BMO, one list; liquidity-gated (same $5 / $50M ADV screen)</td></tr>
+    <tr><td>Live flow (Gate 1)</td><td>Schwab chain snapshots, 30-min cadence in RTH</td>
+        <td>rotating watchlist: names within 14 days of reporting; collected nightly + intraday on report day</td></tr>
+    <tr><td>Aggressor-tagged flow (optional upgrade)</td><td>CheddarFlow manual export</td>
+        <td>true BUY/SELL tags for names on the verdict boundary</td></tr>
+    <tr><td>Prices, run-up, ATH, base rates</td><td>Schwab price history</td><td>fully automatic</td></tr>
+    <tr><td>Historical validation set</td><td>ThetaData EOD chains 2022-07 → 2026-07</td>
+        <td>~3,000 earnings events across the 211-name universe</td></tr>
+  </table>
+  <h3>3.1 Intraday scoring cadence</h3>
+  <p>Gates 2 and 3 are frozen for the session (their inputs don't change intraday). Gate 1 rescoring runs
+  every 30 minutes during market hours: cumulative session option volume updates the opened-premium
+  estimate provisionally; the estimate is finalized overnight when OI confirms which volume actually opened.</p>
+  <h3>3.2 The Schwab proxy and its honest limits</h3>
+  <div class="warn">EOD/intraday chain data has no aggressor side. The proxy classifies
+  <b>opened premium</b> (volume confirmed by next-morning ΔOI &gt; 0) and assumes short-dated OTM call
+  opening into a print is predominantly buyer-initiated. That assumption is <i>tested, not trusted</i>:
+  the gate backtest (§5) runs entirely on the proxy, so live inputs match validated inputs. Where
+  CheddarFlow tags are available they take precedence.</div>
+
+  <h2>4 · Decision rule</h2>
+  <table>
+    <tr><th>Gate</th><th>Condition for ✓</th><th>Failure mode it removes</th></tr>
+    <tr><td><b>1 · Flow</b></td><td>2× ≤ PW ≤ 5×</td><td>&lt;2× = no informed signal; &gt;5× = crowded long —
+        the position everyone already holds has no marginal buyer left (the AVGO/MU air-pocket case)</td></tr>
+    <tr><td><b>2 · Expectations</b></td><td>not at/near ATH; no large 2-week run-up</td>
+        <td>priced-for-perfection: good news already spent</td></tr>
+    <tr><td><b>3 · Base rate</b></td><td>4–8 quarter history shows beats get paid</td>
+        <td>beat-fade names: chronic sell-the-news reactors</td></tr>
+  </table>
+  <p><b>Verdict: LONG only if all three pass. Two of three = PASS. No overrides.</b> "But the flow is huge"
+  at an all-time high is the trap case by construction, not an exception candidate. Verdicts are binary —
+  no sizing by conviction.</p>
+  <h3>4.1 Execution and risk</h3>
+  <ul class="plain">
+    <li>Enter long stock near the final minutes before the close on report day (AMC) or the prior close (BMO).</li>
+    <li>Size: 3–5% of account per name. Maximum two concurrent names. Overnight binary risk is a coin flip
+    with an edge — it is never conviction-sized.</li>
+    <li>Exit: sell into the next morning's move, green or red. The trade is 24 hours by definition;
+    holding a loser "to come back" converts a defined bet into an undefined one.</li>
+  </ul>
+
+  <h2>5 · Validation protocol</h2>
+  <ul class="plain">
+    <li><b>Historical gate test:</b> all three gates computed as-of each of ~3,000 past earnings events
+    (2022-07 →) using only pre-print data; LONG-verdict events' open-reaction distribution compared against
+    the PASS distribution and against unconditional. The 2×–5× band and gate conjunction must discriminate
+    out-of-sample or the scanner does not go live.</li>
+    <li><b>The log is mandatory:</b> every scored name — trades <i>and</i> passes — with date, ratios,
+    deep-ITM dollars, run-up, base rate, verdict, 24h outcome, P/L. Pass outcomes are the control group
+    that keeps the gates honest over time.</li>
+    <li><b>Costs:</b> slippage on both legs; the morning exit is marketable into liquidity.</li>
+    <li><b>Universe note:</b> validation events come from the 211-name activity-screened universe; the live
+    board applies the same liquidity screen to whoever reports, so construction matches.</li>
+  </ul>
+
+  <h2>6 · Known limitations</h2>
+  <ul class="plain">
+    <li>Proxy flow lacks true aggressor side (§3.2); written-call campaigns can masquerade as bullish
+    opened premium. Mitigated by the band's upper cut and by optional tagged data.</li>
+    <li>Calendar errors (date or AMC/BMO flag) are a real operational risk; the board displays its source
+    timestamp, and a name without a confirmable report time is not traded.</li>
+    <li>Halts, extreme gaps, and borrow constraints are not modeled; long-stock-only keeps the worst tail
+    (short squeeze) out of the book.</li>
+    <li>Small-N base rates (4–8 observations) are noisy by construction — treated as a veto gate, never as
+    a standalone signal.</li>
+  </ul>
+
+  <h2>References</h2>
+  <ul class="refs">
+    <li>Pan, J., &amp; Poteshman, A. M. (2006). The information in option volume for future stock prices.
+    <i>Review of Financial Studies</i> 19(3), 871–908.</li>
+    <li>Roll, R., Schwartz, E., &amp; Subrahmanyam, A. (2010). O/S: The relative trading activity in
+    options and stock. <i>Journal of Financial Economics</i> 96(1), 1–17.</li>
+    <li>Johnson, T. L., &amp; So, E. C. (2012). The option to stock volume ratio and market response to
+    earnings announcements. <i>Journal of Financial Economics</i> 106(2), 262–286.</li>
+    <li>Bernard, V. L., &amp; Thomas, J. K. (1989). Post-earnings-announcement drift: delayed price
+    response or risk premium? <i>Journal of Accounting Research</i> 27, 1–36.</li>
+  </ul>
+</div>
+</body>
+</html>
