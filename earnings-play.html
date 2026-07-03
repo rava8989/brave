@@ -218,7 +218,7 @@ setInterval(load, 60_000);   // page refresh; data itself updates every 30 min
 function render(d) {
   const b = document.getElementById('banner');
   b.classList.add('live');
-  document.getElementById('bannerTitle').textContent =
+  document.getElementById('bannerTitle').textContent = d.headline ||
     `${d.board.filter(r => r.verdict === 'LONG').length} LONG / ${d.board.length} scored`;
   document.getElementById('bannerNote').textContent = d.note || 'scores refresh every 30 min during market hours';
   document.getElementById('updated').textContent = 'updated ' + (d.updated_et || '—') + ' ET';
