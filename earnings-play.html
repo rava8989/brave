@@ -76,6 +76,7 @@
     Gate 3: 4–8 quarters of 24h reactions — beat-fade names PASS regardless of flow.</div>
 
   <div class="section-h">The log <span class="badge">trades AND passes — this is the edge</span></div>
+  <div class="card" id="logSummary" style="display:none"></div>
   <div class="card" style="overflow-x:auto"><table id="log"><thead><tr>
     <th>Date</th><th>Ticker</th><th>PW</th><th>Deep-ITM $</th><th>Run-up</th>
     <th>Base rate</th><th>Verdict</th><th>24h move</th><th>P/L (R)</th>
@@ -234,6 +235,25 @@ function render(d) {
     `<td class="${vcls(r.verdict)}">${r.verdict}</td></tr>`).join('') ||
     '<tr><td colspan="11" class="note">nobody reports in this window</td></tr>';
 
+  if (d.log_summary) {
+    const ls = d.log_summary;
+    const el = document.getElementById('logSummary');
+    el.style.display = '';
+    el.innerHTML =
+      `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px">` +
+      `<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase">Win rate</div>` +
+      `<div style="font-family:'JetBrains Mono',monospace;font-size:19px;font-weight:600">${(ls.win_rate*100).toFixed(1)}%</div>` +
+      `<div class="note">${ls.n} trades</div></div>` +
+      `<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase">Avg night</div>` +
+      `<div style="font-family:'JetBrains Mono',monospace;font-size:19px;font-weight:600;color:var(--green)">+${(ls.avg_night*100).toFixed(2)}%</div>` +
+      `<div class="note">best +${(ls.best*100).toFixed(0)}% · worst ${(ls.worst*100).toFixed(0)}%</div></div>` +
+      `<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase">$50k account</div>` +
+      `<div style="font-family:'JetBrains Mono',monospace;font-size:19px;font-weight:600;color:var(--green)">+$${ls.dollars_50k_total.toLocaleString()}</div>` +
+      `<div class="note">≈ $${ls.dollars_50k_yr.toLocaleString()}/yr · ${ls.sizing_note}</div></div>` +
+      `<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase">Total return</div>` +
+      `<div style="font-family:'JetBrains Mono',monospace;font-size:19px;font-weight:600">+${(ls.total_return*100).toFixed(1)}%</div>` +
+      `<div class="note">compounded, ~3 yrs · +${(ls.per_year*100).toFixed(1)}%/yr</div></div></div>`;
+  }
   document.querySelector('#log tbody').innerHTML = (d.log || []).slice(0, 200).map(r =>
     `<tr><td>${r.date}</td><td>${r.ticker}</td><td>${fmt(r.pw_ratio)}×</td>` +
     `<td>${r.deep_itm_usd ? '$' + (r.deep_itm_usd/1e6).toFixed(1) + 'M' : '—'}</td>` +
