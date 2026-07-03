@@ -6856,20 +6856,12 @@ async function handleGEXUpdate(env, token, preChain = null) {
   if (history.length > 60) history = history.slice(-60);
   await env.SIGNAL_KV.put('gex_history', JSON.stringify(history));
 
-  // 8. Commit to GitHub every 10 min OR on big events
-  const lastCommitRaw = await env.SIGNAL_KV.get('gex_last_github_commit');
-  const lastCommitTs = lastCommitRaw ? parseInt(lastCommitRaw) : 0;
-  const timeSinceCommit = now - lastCommitTs;
-  const hasBigEvent = events.includes('regime_flip') || events.includes('gex_surge');
-
-  if (timeSinceCommit >= 600_000 || hasBigEvent) {
-    try {
-      await commitGexToGitHub(env, gexData);
-      await env.SIGNAL_KV.put('gex_last_github_commit', String(now));
-    } catch (e) {
-      console.warn('[proxy] GEX GitHub commit failed:', e.message || e);
-    }
-  }
+  // 8. (REMOVED 2026-07-03) The every-10-min gex_data.json GitHub mirror is gone.
+  // Nothing consumed that file (the page reads /gex → KV), and each commit
+  // triggered a GitHub Pages deploy — ~30 junk deploys/day was the main source
+  // of "pages build and deployment" failure emails (deploy races + the
+  // ~10-builds/hour Pages throttle). gex_daily research capture (EOD) is the
+  // durable GEX record; intraday state lives in KV where it belongs.
 
   return { gex: 'updated', regime: gexData.regime, totalGex: gexData.totalGex, events };
 }
