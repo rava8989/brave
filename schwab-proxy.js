@@ -410,6 +410,122 @@ async function captureVixSurfaceSnap(env, etNow, token) {
     { expirationTtl: 90 * 86400 });
 }
 
+// ════════════════════════════════════════════════════════════════════
+// GEXMAGNET nightly single-stock chain collector (2026-07-02)
+// ────────────────────────────────────────────────────────────────────
+// Phase 0 of ~/projects/gexmagnet found NO single-stock chain snapshots
+// anywhere (all chain artifacts are SPX-only), which blocks the GEXMAGNET
+// Phase 1 backtest. This collects them forward: ONE post-close snapshot
+// per universe ticker per day. One is enough — Schwab OI updates only
+// overnight, so consecutive post-close snapshots already give clean
+// day-over-day OI deltas (the Phase 2 flow-join input).
+//
+// Runs in the 16:41–17:15 ET window on existing cron ticks, chunked
+// GEXM_CHUNK tickers/tick (lessons P17 — never blow one tick's subrequest
+// budget). Progress accumulates in KV gexm_chains_part_<date>; once every
+// ticker has data or failed twice, the day commits to GitHub
+// data/gexm_chains/<date>.json — one file per day, NOT a monthly upsert:
+// ~0.5–1 MB/day is too big for the contents-API read path to fold.
+// GET /gexm-status reports; GET /gexm-trigger (auth) forces a chunk now.
+// Loader on the Mac: ~/projects/gexmagnet/data/load_chains.py.
+
+const GEXM_UNIVERSE = [
+  // flow-ready in the Phase 0 audit (CheddarFlow history Jan–Jun 2026)
+  'HIMS', 'ASTS', 'AG', 'MARA', 'QBTS', 'RGTI', 'JD', 'CLSK', 'VG', 'ACHR', 'ONON',
+  // liquid options large-caps
+  'AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'GOOGL', 'META', 'AMD', 'AVGO', 'NFLX',
+  'MU', 'ORCL', 'PLTR', 'COIN', 'MSTR', 'CRWD', 'PANW', 'UBER', 'BABA', 'SMCI',
+  'HOOD', 'SOFI', 'RIOT', 'INTC', 'QCOM', 'LULU', 'SNOW', 'SHOP', 'DELL', 'ARM',
+];
+const GEXM_CHUNK = 14;          // tickers per tick — subrequest-budget guard
+const GEXM_MAX_DTE = 45;        // 1–7d swing horizon; longer expiries are dead weight
+const GEXM_STRIKE_BAND = 0.30;  // keep strikes within ±30% of spot
+
+// Schwab chain JSON → compact per-ticker snapshot:
+// { spot, exp: { "YYYY-MM-DD": { c: [[strike,bid,ask,last,vol,oi,iv,delta,gamma],…], p: […] } } }
+// Contracts with zero OI AND zero volume are dropped (loader treats missing
+// as OI=0, so day-over-day deltas still see new OI appearing).
+function _gexmCompact(chain) {
+  const spot = chain.underlyingPrice || chain.underlying?.last || chain.underlying?.mark;
+  if (!(spot > 0)) throw new Error('no spot');
+  const out = { spot: +spot.toFixed(2), exp: {} };
+  const lo = spot * (1 - GEXM_STRIKE_BAND), hi = spot * (1 + GEXM_STRIKE_BAND);
+  for (const [mapName, side] of [['callExpDateMap', 'c'], ['putExpDateMap', 'p']]) {
+    for (const [expKey, strikes] of Object.entries(chain[mapName] || {})) {
+      const iso = expKey.split(':')[0];
+      for (const arr of Object.values(strikes)) {
+        const c = Array.isArray(arr) ? arr[0] : arr;
+        if (!c) continue;
+        const k = c.strikePrice;
+        if (!(k >= lo && k <= hi)) continue;
+        const oi = c.openInterest || 0, vol = c.totalVolume || 0;
+        if (!oi && !vol) continue;
+        const iv = (c.volatility > 0 && c.volatility < 500) ? +c.volatility.toFixed(2) : null;
+        if (!out.exp[iso]) out.exp[iso] = { c: [], p: [] };
+        out.exp[iso][side].push([
+          k, +(c.bid ?? 0).toFixed(2), +(c.ask ?? 0).toFixed(2), +(c.last ?? 0).toFixed(2),
+          vol, oi, iv,
+          c.delta != null ? +(+c.delta).toFixed(3) : null,
+          c.gamma != null ? +(+c.gamma).toFixed(5) : null,
+        ]);
+      }
+    }
+  }
+  if (!Object.keys(out.exp).length) throw new Error('empty chain');
+  return out;
+}
+
+async function gexmCollectChains(env, etNow, opts = {}) {
+  const todayISO = isoDateET(etNow);
+  const h = etNow.getHours(), m = etNow.getMinutes();
+  const inWindow = (h === 16 && m >= 41) || (h === 17 && m <= 15);
+  if (!opts.force && !inWindow) return null;
+  const doneKey = `gexm_chains_done_${todayISO}`;
+  if (await env.SIGNAL_KV.get(doneKey)) return { gexm: 'done' };
+
+  let token;
+  try { token = opts.token || await getAccessToken(env); }
+  catch (e) { return { gexm: 'no-token', error: e.message }; }
+
+  const partKey = `gexm_chains_part_${todayISO}`;
+  const part = JSON.parse((await env.SIGNAL_KV.get(partKey)) || '{"tickers":{},"errs":{}}');
+  const pending = GEXM_UNIVERSE.filter(t => !part.tickers[t] && (part.errs[t] || 0) < 2);
+  const batch = pending.slice(0, opts.chunk || GEXM_CHUNK);
+
+  const toD = new Date(etNow); toD.setDate(toD.getDate() + GEXM_MAX_DTE);
+  const hhmm = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  for (const sym of batch) {
+    try {
+      const chain = await fetchSchwabJSON(
+        `https://api.schwabapi.com/marketdata/v1/chains?symbol=${sym}&strikeCount=50&fromDate=${todayISO}&toDate=${isoDateET(toD)}&includeUnderlyingQuote=true&strategy=SINGLE&contractType=ALL`,
+        token, env);
+      part.tickers[sym] = { at: hhmm, ..._gexmCompact(chain) };
+    } catch (e) {
+      part.errs[sym] = (part.errs[sym] || 0) + 1;
+      console.warn(`[gexm] ${sym} fetch failed (attempt ${part.errs[sym]}):`, e.message);
+    }
+  }
+
+  const remaining = GEXM_UNIVERSE.filter(t => !part.tickers[t] && (part.errs[t] || 0) < 2);
+  if (remaining.length) {
+    await env.SIGNAL_KV.put(partKey, JSON.stringify(part), { expirationTtl: 2 * 86400 });
+    return { gexm: 'partial', got: Object.keys(part.tickers).length, remaining: remaining.length };
+  }
+
+  // Every ticker resolved (data or 2 failed attempts) → persist the day.
+  const failed = GEXM_UNIVERSE.filter(t => !part.tickers[t]);
+  const n = Object.keys(part.tickers).length;
+  await githubUpsertResearchFile(env, `data/gexm_chains/${todayISO}.json`,
+    () => ({ date: todayISO, universe: GEXM_UNIVERSE.length, failed, tickers: part.tickers }),
+    `auto: gexm chains ${todayISO} (${n}/${GEXM_UNIVERSE.length})`);
+  await env.SIGNAL_KV.put(doneKey, 'done', { expirationTtl: 5 * 86400 });
+  await env.SIGNAL_KV.put('gexm_chains_last',
+    JSON.stringify({ date: todayISO, n, failed, ts: Date.now() }));
+  await env.SIGNAL_KV.delete(partKey);
+  console.log(`[gexm] committed ${todayISO}: ${n}/${GEXM_UNIVERSE.length}${failed.length ? ' failed=' + failed.join(',') : ''}`);
+  return { gexm: 'committed', n, failed };
+}
+
 // CycleLab 5-min slot helpers — shared by the EOD append and the live feed.
 function _cycSlots() {
   const slots = [];
@@ -4885,6 +5001,16 @@ async function handleScheduled(env) {
     }
   }
 
+  // ── GEXMAGNET single-stock chain collector — post-close, chunked ──
+  // Window-gated inside (16:41–17:15 ET); etHour guard just skips the call
+  // (and its KV read) on the ~400 market-hours ticks where it can't run.
+  if (etHour >= 16) {
+    try {
+      const gm = await gexmCollectChains(env, etNow);
+      if (gm && gm.gexm !== 'done') console.log('[gexm]', JSON.stringify(gm));
+    } catch (e) { console.warn('[gexm]', e.message); }
+  }
+
   // ── GEX update during market hours (every cron tick) ──
   let gexResult = {};
   if (isMarket && schwabToken) {
@@ -9088,6 +9214,42 @@ export default {
     // ── GET /diagonal-trigger ── Manually run handleDiagonalTrade NOW
     // Bypasses the normal 12:30 ET window so we can verify the open path
     // end-to-end without waiting for the cron. Auth-required.
+    // ── GET /gexm-status ── GEXMAGNET chain-collector status. Auth-required
+    // (SYNC_SECRET or the scoped GEXM_TRIGGER_TOKEN — the latter exists so
+    // local tooling can hit these two endpoints without the dashboard secret).
+    if (url.pathname === '/gexm-status' && request.method === 'GET') {
+      const secret = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
+      if (!secret || (secret !== env.SYNC_SECRET && secret !== env.GEXM_TRIGGER_TOKEN)) {
+        return jsonResp({ error: 'Unauthorized' }, 401, { 'Access-Control-Allow-Origin': '*' });
+      }
+      const todayISO = isoDateET(toET());
+      const [last, done, partRaw] = await Promise.all([
+        env.SIGNAL_KV.get('gexm_chains_last'),
+        env.SIGNAL_KV.get(`gexm_chains_done_${todayISO}`),
+        env.SIGNAL_KV.get(`gexm_chains_part_${todayISO}`),
+      ]);
+      const part = partRaw ? JSON.parse(partRaw) : null;
+      return jsonResp({
+        universe: GEXM_UNIVERSE.length,
+        last: last ? JSON.parse(last) : null,
+        today: { date: todayISO, done: !!done,
+                 partial: part ? Object.keys(part.tickers).length : 0,
+                 errs: part ? part.errs : {} },
+      });
+    }
+
+    // ── GET /gexm-trigger ── Run one collector chunk NOW, ignoring the
+    // 16:41–17:15 ET window (once-per-day done-key still respected). Call
+    // repeatedly until {gexm:'committed'}. Auth-required.
+    if (url.pathname === '/gexm-trigger' && request.method === 'GET') {
+      const secret = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
+      if (!secret || (secret !== env.SYNC_SECRET && secret !== env.GEXM_TRIGGER_TOKEN)) {
+        return jsonResp({ error: 'Unauthorized' }, 401, { 'Access-Control-Allow-Origin': '*' });
+      }
+      const res = await gexmCollectChains(env, toET(), { force: true });
+      return jsonResp(res || { gexm: 'no-op' });
+    }
+
     // ── GET /straddle-trigger ── Manually open a straddle NOW.
     // Useful when the 9:32 cron's openStraddleTrade threw and we need to
     // surface the actual error or do a late open. Auth-required.
