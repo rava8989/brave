@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>GEXMAGNET — Walk-Forward Report</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117; --card: #161b22; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+    --green: #3fb950; --red: #f85149; --amber: #d29922;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Inter', sans-serif; background: var(--bg);
+    color: var(--text); font-size: 13px; padding: 24px 16px 60px;
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; }
+  h1 { font-size: 20px; font-weight: 600; }
+  h1 .tag { font-size: 11px; color: var(--muted); font-weight: 400; margin-left: 8px; }
+  .sub { color: var(--muted); margin: 4px 0 20px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px 18px; margin-bottom: 14px;
+  }
+  .banner { display: flex; align-items: center; gap: 12px; }
+  .banner .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--amber); flex: none;
+    animation: pulse 2s infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .banner.go .dot { background: var(--green); animation: none; }
+  .banner.nogo .dot { background: var(--red); animation: none; }
+  .banner b { font-size: 15px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  .metric { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+  .metric .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
+  .metric .v { font-family: 'JetBrains Mono', monospace; font-size: 20px; font-weight: 600; margin-top: 4px; }
+  .metric .n { color: var(--muted); font-size: 11px; margin-top: 2px; }
+  table { width: 100%; border-collapse: collapse; font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+  th { text-align: right; color: var(--muted); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  td { text-align: right; padding: 6px 8px; border-bottom: 1px solid #21262d; }
+  th:first-child, td:first-child { text-align: left; }
+  .pos { color: var(--green); } .neg { color: var(--red); }
+  .section-h { font-size: 14px; font-weight: 600; margin: 22px 0 10px; }
+  .note { color: var(--muted); font-size: 12px; line-height: 1.6; }
+  #curveWrap { position: relative; height: 300px; }
+  a { color: var(--accent); text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>GEXMAGNET <span class="tag">single-stock +GEX magnet — walk-forward report</span></h1>
+  <div class="sub">All headline numbers are out-of-sample, net of costs, net of the SPY control. Unlisted page — not linked from the site.</div>
+
+  <div class="card banner" id="banner">
+    <div class="dot"></div>
+    <div>
+      <b id="bannerTitle">Phase 1 in progress</b>
+      <div class="note" id="bannerNote">Backtest hasn't produced results yet. This page reads <code>data/gexmagnet_results.json</code> when it exists.</div>
+    </div>
+  </div>
+
+  <div class="grid" id="metrics">
+    <div class="metric"><div class="k">Expectancy</div><div class="v" id="mExp">—</div><div class="n">R per trade, OOS − control</div></div>
+    <div class="metric"><div class="k">Profit factor</div><div class="v" id="mPF">—</div><div class="n">after costs</div></div>
+    <div class="metric"><div class="k">Win rate</div><div class="v" id="mWR">—</div><div class="n">context only</div></div>
+    <div class="metric"><div class="k">Max drawdown</div><div class="v" id="mDD">—</div><div class="n">equity, R units</div></div>
+    <div class="metric"><div class="k">OOS trades</div><div class="v" id="mN">—</div><div class="n">validation bar: 100</div></div>
+    <div class="metric"><div class="k">Avg hold</div><div class="v" id="mHold">—</div><div class="n">trading days</div></div>
+  </div>
+
+  <div class="section-h">Equity — strategy vs SPY control</div>
+  <div class="card"><div id="curveWrap"><canvas id="curve"></canvas></div></div>
+
+  <div class="section-h">By year</div>
+  <div class="card"><table id="yearTable"><thead><tr>
+    <th>Year</th><th>Trades</th><th>Win %</th><th>Expectancy R</th><th>Control-adj R</th><th>Profit factor</th>
+  </tr></thead><tbody><tr><td colspan="6" class="note">awaiting results…</td></tr></tbody></table></div>
+
+  <div class="section-h">Trades (OOS)</div>
+  <div class="card"><table id="tradeTable"><thead><tr>
+    <th>Ticker</th><th>Entry</th><th>Exit</th><th>Days</th><th>Exit rule</th><th>R</th><th>Ctl R</th><th>Net R</th>
+  </tr></thead><tbody><tr><td colspan="8" class="note">awaiting results…</td></tr></tbody></table></div>
+
+  <div class="note" style="margin-top:18px">
+    Dataset: 4y ThetaData EOD chains (2022-07 → 2026-07) + live nightly Schwab snapshots since 2026-07-02.
+    Method: entry = confirmed cross above gamma flip; target = max +GEX strike; R/R ≥ 2; GEX-per-ADV materiality
+    (threshold walk-forward fitted); exits = structural stop → −10% cap → day-7 time stop → T1.
+  </div>
+</div>
+
+<script>
+const fmt = (x, d=2) => x == null ? '—' : (+x).toFixed(d);
+const cls = x => x > 0 ? 'pos' : x < 0 ? 'neg' : '';
+
+fetch('data/gexmagnet_results.json', {cache: 'no-store'})
+  .then(r => { if (!r.ok) throw 0; return r.json(); })
+  .then(render)
+  .catch(() => {});   // no results yet — keep the in-progress banner
+
+function render(res) {
+  const b = document.getElementById('banner');
+  b.classList.add(res.verdict === 'GO' ? 'go' : 'nogo');
+  document.getElementById('bannerTitle').textContent =
+    `${res.verdict} — ${res.verdict_reason || ''}`;
+  document.getElementById('bannerNote').textContent =
+    `run ${res.run_date} · ${res.universe_n} tickers · fit ${res.fit_window} / test ${res.test_window}`;
+
+  const m = res.oos_metrics || {};
+  document.getElementById('mExp').textContent = fmt(m.expectancy_ctl_adj);
+  document.getElementById('mExp').className = 'v ' + cls(m.expectancy_ctl_adj);
+  document.getElementById('mPF').textContent = fmt(m.profit_factor);
+  document.getElementById('mWR').textContent = m.win_rate == null ? '—' : (m.win_rate*100).toFixed(1) + '%';
+  document.getElementById('mDD').textContent = fmt(m.max_dd_r, 1);
+  document.getElementById('mN').textContent = m.n_trades ?? '—';
+  document.getElementById('mHold').textContent = fmt(m.avg_hold_days, 1);
+
+  if (res.equity) {
+    new Chart(document.getElementById('curve'), {
+      type: 'line',
+      data: { labels: res.equity.dates, datasets: [
+        { label: 'Strategy (R)', data: res.equity.strategy, borderColor: '#58a6ff',
+          borderWidth: 2, pointRadius: 0, tension: .15 },
+        { label: 'SPY control (R)', data: res.equity.control, borderColor: '#8b949e',
+          borderWidth: 2, borderDash: [5,4], pointRadius: 0, tension: .15 },
+      ]},
+      options: { responsive: true, maintainAspectRatio: false, interaction: {mode:'index', intersect:false},
+        plugins: { legend: { labels: { color: '#8b949e', boxWidth: 14 } } },
+        scales: { x: { ticks: { color: '#8b949e', maxTicksLimit: 10 }, grid: { color: '#21262d' } },
+                  y: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } } } }
+    });
+  }
+
+  const yt = document.querySelector('#yearTable tbody');
+  yt.innerHTML = (res.by_year || []).map(y =>
+    `<tr><td>${y.year}</td><td>${y.trades}</td><td>${(y.win_rate*100).toFixed(0)}%</td>` +
+    `<td class="${cls(y.expectancy)}">${fmt(y.expectancy)}</td>` +
+    `<td class="${cls(y.expectancy_ctl_adj)}">${fmt(y.expectancy_ctl_adj)}</td>` +
+    `<td>${fmt(y.profit_factor)}</td></tr>`).join('') ||
+    '<tr><td colspan="6" class="note">no data</td></tr>';
+
+  const tt = document.querySelector('#tradeTable tbody');
+  tt.innerHTML = (res.trades || []).slice(0, 400).map(t =>
+    `<tr><td>${t.ticker}</td><td>${t.entry_date}</td><td>${t.exit_date}</td><td>${t.days}</td>` +
+    `<td>${t.exit_rule}</td><td class="${cls(t.r)}">${fmt(t.r)}</td>` +
+    `<td>${fmt(t.ctl_r)}</td><td class="${cls(t.net_r)}">${fmt(t.net_r)}</td></tr>`).join('') ||
+    '<tr><td colspan="8" class="note">no data</td></tr>';
+}
+</script>
+</body>
+</html>
