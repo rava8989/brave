@@ -90,6 +90,66 @@
     Method: entry = confirmed cross above gamma flip; target = max +GEX strike; R/R ≥ 2; GEX-per-ADV materiality
     (threshold walk-forward fitted); exits = structural stop → −10% cap → day-7 time stop → T1.
   </div>
+
+  <div class="section-h" style="margin-top:34px">How this works — in pictures</div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px">
+
+    <div class="card" style="margin:0">
+      <svg viewBox="0 0 220 120" width="100%" role="img" aria-label="Price ladder: magnet above, flip line in middle, wall below">
+        <line x1="20" y1="25" x2="200" y2="25" stroke="#3fb950" stroke-width="2.5"/>
+        <text x="24" y="18" fill="#3fb950" font-size="11" font-family="Inter">MAGNET — most call hedging</text>
+        <line x1="20" y1="68" x2="200" y2="68" stroke="#58a6ff" stroke-width="2" stroke-dasharray="6 4"/>
+        <text x="24" y="61" fill="#58a6ff" font-size="11" font-family="Inter">FLIP — calm above, wild below</text>
+        <line x1="20" y1="105" x2="200" y2="105" stroke="#f85149" stroke-width="2.5"/>
+        <text x="24" y="98" fill="#f85149" font-size="11" font-family="Inter">WALL — put hedging floor</text>
+        <circle cx="110" cy="84" r="5" fill="#e6edf3"/>
+      </svg>
+      <div class="note" style="margin-top:8px"><b style="color:var(--text)">1 · The map.</b>
+      Big option positions draw invisible lines on every stock. The white dot is the price.</div>
+    </div>
+
+    <div class="card" style="margin:0">
+      <svg viewBox="0 0 220 120" width="100%" role="img" aria-label="Price crosses the flip line and gets pulled up to the magnet">
+        <line x1="20" y1="25" x2="200" y2="25" stroke="#3fb950" stroke-width="2.5"/>
+        <line x1="20" y1="68" x2="200" y2="68" stroke="#58a6ff" stroke-width="2" stroke-dasharray="6 4"/>
+        <line x1="20" y1="105" x2="200" y2="105" stroke="#f85149" stroke-width="2.5"/>
+        <path d="M30,95 L60,88 L85,74 L110,60" fill="none" stroke="#e6edf3" stroke-width="2.5"/>
+        <circle cx="110" cy="60" r="5" fill="#e6edf3"/>
+        <path d="M118,52 L150,33" stroke="#3fb950" stroke-width="2.5" fill="none"/>
+        <path d="M150,33 l-9,0 l7,-7 z" fill="#3fb950"/>
+        <text x="24" y="117" fill="#8b949e" font-size="11" font-family="Inter">buy the cross, ride to the magnet</text>
+      </svg>
+      <div class="note" style="margin-top:8px"><b style="color:var(--text)">2 · The trade.</b>
+      When price breaks above the flip, market-makers' own hedging tends to pull it toward the magnet. We buy the break, aim for the magnet.</div>
+    </div>
+
+    <div class="card" style="margin:0">
+      <svg viewBox="0 0 220 120" width="100%" role="img" aria-label="Three automatic exits: target hit, stop under wall, seven day timer">
+        <circle cx="45" cy="45" r="22" fill="none" stroke="#3fb950" stroke-width="2"/>
+        <circle cx="45" cy="45" r="12" fill="none" stroke="#3fb950" stroke-width="2"/>
+        <circle cx="45" cy="45" r="3.5" fill="#3fb950"/>
+        <text x="45" y="92" fill="#3fb950" font-size="11" font-family="Inter" text-anchor="middle">target</text>
+        <path d="M110,25 l16,7 v14 c0,12 -7,19 -16,23 c-9,-4 -16,-11 -16,-23 v-14 z" fill="none" stroke="#f85149" stroke-width="2"/>
+        <text x="110" y="92" fill="#f85149" font-size="11" font-family="Inter" text-anchor="middle">stop</text>
+        <circle cx="175" cy="45" r="22" fill="none" stroke="#d29922" stroke-width="2"/>
+        <path d="M175,45 L175,31 M175,45 L185,52" stroke="#d29922" stroke-width="2.5"/>
+        <text x="175" y="92" fill="#d29922" font-size="11" font-family="Inter" text-anchor="middle">7-day timer</text>
+      </svg>
+      <div class="note" style="margin-top:8px"><b style="color:var(--text)">3 · The exits.</b>
+      Every way out is decided before entry: target, stop, or timer. Zero feelings involved.</div>
+    </div>
+
+    <div class="card" style="margin:0">
+      <svg viewBox="0 0 220 120" width="100%" role="img" aria-label="Strategy line must beat the SPY control line">
+        <path d="M20,95 C60,90 100,75 200,45" fill="none" stroke="#58a6ff" stroke-width="2.5"/>
+        <path d="M20,97 C70,94 130,88 200,78" fill="none" stroke="#8b949e" stroke-width="2" stroke-dasharray="5 4"/>
+        <text x="132" y="38" fill="#58a6ff" font-size="11" font-family="Inter">this strategy</text>
+        <text x="128" y="105" fill="#8b949e" font-size="11" font-family="Inter">just buying SPY</text>
+      </svg>
+      <div class="note" style="margin-top:8px"><b style="color:var(--text)">4 · The honesty rule.</b>
+      Every trade is scored against simply buying SPY the same days. If it can't beat doing nothing clever, it doesn't trade.</div>
+    </div>
+  </div>
 </div>
 
 <script>
