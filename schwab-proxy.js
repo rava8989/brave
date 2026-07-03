@@ -11608,6 +11608,37 @@ export default {
       console.error('[cron] Mirror watchdog failed:', mirrorWatchdogErr.message);
     }
 
+    // ── Pages-deploy watchdog (2026-07-03) ──
+    // GitHub Pages deploys race when commits land close together; a losing
+    // deploy normally self-heals on the next push — but when the LAST commit
+    // in a burst loses, the site silently stays one commit stale (observed
+    // 2026-07-03: earnings-play.html 404 for an hour). Hourly: if the most
+    // recent pages run FAILED and nothing newer is queued, bump a nudge file
+    // via the contents API → fresh commit → fresh deploy.
+    try {
+      const lastNudge = parseInt(await env.SIGNAL_KV.get('pages_watchdog_ms') || '0');
+      if (Date.now() - lastNudge > 55 * 60 * 1000 && env.GITHUB_TOKEN) {
+        await env.SIGNAL_KV.put('pages_watchdog_ms', String(Date.now()), { expirationTtl: 7 * 86400 });
+        const runsResp = await fetch(
+          'https://api.github.com/repos/rava8989/brave/actions/runs?per_page=1',
+          { headers: { 'Authorization': `Bearer ${env.GITHUB_TOKEN}`,
+                       'Accept': 'application/vnd.github+json',
+                       'User-Agent': 'schwab-proxy-worker/1.0' } });
+        if (runsResp.ok) {
+          const run = (await runsResp.json()).workflow_runs?.[0];
+          const ageMin = run ? (Date.now() - Date.parse(run.created_at)) / 60000 : 0;
+          if (run && run.conclusion === 'failure' && ageMin > 10) {
+            await githubUpsertResearchFile(env, 'data/.deploy_nudge',
+              () => ({ t: Date.now(), reason: `pages run ${run.id} failed` }),
+              'chore: pages deploy retry nudge (watchdog)');
+            await logEvent(env, 'warn', 'pages-watchdog',
+              `latest pages deploy failed (run ${run.id}, ${Math.round(ageMin)} min ago) — nudged redeploy`, {});
+            console.log('[pages-watchdog] nudged redeploy after failed run', run.id);
+          }
+        }
+      }
+    } catch (pwErr) { console.warn('[pages-watchdog]', pwErr.message); }
+
     // ── Evening preview (2026-06-10): tomorrow\'s special days + health ──
     // Once per weekday 18:00-18:20 ET. Tells the user TONIGHT what tomorrow
     // is (CPI/FED/OPEX+-1/VIX-exp/EOM/NM/earnings), which strategies that
