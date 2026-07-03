@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>GEX Dashboard — Complete Methodology</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
+<style>
+  :root { --bg:#0d1117; --card:#161b22; --border:#30363d; --text:#e6edf3;
+          --muted:#8b949e; --accent:#58a6ff; --green:#3fb950; --red:#f85149; --amber:#d29922; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'Inter',sans-serif; background:var(--bg); color:var(--text);
+         font-size:14px; line-height:1.75; padding:24px 16px 80px; }
+  .wrap { max-width:860px; margin:0 auto; }
+  h1 { font-size:21px; font-weight:600; margin-bottom:2px; }
+  h2 { font-size:16px; font-weight:600; margin:34px 0 10px; padding-top:14px; border-top:1px solid var(--border); }
+  h3 { font-size:14px; font-weight:600; margin:18px 0 6px; color:var(--accent); }
+  p { margin:0 0 12px; }
+  .sub { color:var(--muted); margin-bottom:24px; }
+  .muted { color:var(--muted); }
+  .formula { font-family:'JetBrains Mono',monospace; font-size:13px; background:var(--card);
+             border:1px solid var(--border); border-radius:8px; padding:12px 16px; margin:10px 0 14px;
+             overflow-x:auto; white-space:pre; }
+  table { width:100%; border-collapse:collapse; font-size:13px; margin:10px 0 16px; }
+  th { text-align:left; color:var(--muted); font-weight:500; padding:6px 10px; border-bottom:1px solid var(--border); }
+  td { text-align:left; padding:6px 10px; border-bottom:1px solid #21262d; vertical-align:top; }
+  code { font-family:'JetBrains Mono',monospace; font-size:12.5px; background:var(--card);
+         padding:1px 5px; border-radius:4px; }
+  a { color:var(--accent); text-decoration:none; }
+  .refs { font-size:12.5px; color:var(--muted); }
+  .refs li { margin-bottom:6px; margin-left:18px; }
+  .warn { border-left:3px solid var(--amber); padding:8px 14px; background:var(--card);
+          border-radius:0 8px 8px 0; margin:12px 0; }
+  ul.plain { margin:0 0 12px 20px; }
+  ul.plain li { margin-bottom:6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>GEX Dashboard — Complete Methodology</h1>
+  <div class="sub">SPX dealer gamma exposure, live · <a href="gex.html">← back to the dashboard</a></div>
+
+  <h2>1 · What this page measures</h2>
+  <p>Option market-makers (dealers) hedge the options they hold by trading the underlying. The
+  <i>rate</i> at which their hedge changes as price moves is gamma. Aggregated across the whole SPX
+  option book, dealer gamma predicts the <i>character</i> of price action: <b>long dealer gamma
+  (PIN)</b> → hedging sells rallies and buys dips → moves are dampened; <b>short dealer gamma
+  (BREAKOUT)</b> → hedging chases price → moves are amplified. The dashboard estimates that book
+  every minute of the session from the live Schwab SPX chain — no other data source.</p>
+
+  <h2>2 · Core computation (OI basis)</h2>
+  <div class="formula">per contract, strikes within the ±8% band (actual coverage displayed on-page):
+
+Γ    = Black-Scholes gamma(S, K, T, IV)      # 0DTE: T = real hours-to-close, 15-min floor
+GEX  = Γ · OI · 100 · S² · 0.01              # dollars of hedging per 1% move
+
+dealer sign: calls → +GEX, puts → −GEX       # dealers long calls / short puts
+netGEX(strike) = callGEX + putGEX;  totalGEX = Σ over the band</div>
+  <ul class="plain">
+    <li><b>Flip</b> = zero-crossing of cumulative net GEX nearest spot, with a <b>2% significance
+    gate</b>: the cumulative must hold ≥2% of |totalGEX| on both sides, else the book is one-sided
+    and no flip is reported. Computed over OI-bearing strikes only.</li>
+    <li><b>Max positive gamma</b> = the pin/magnet strike; <b>max negative</b> = the wall.
+    Walls list = top strikes by |netGEX|.</li>
+    <li><b>Regime</b> = PIN if totalGEX &gt; 0, BREAKOUT if &lt; 0.</li>
+    <li><b>Vanna (VEX)</b> and <b>charm (CEX)</b> use the same OI·S²·multiplier base: vanna = how
+    the dealer book's delta shifts per +1 vol point; charm = delta drift from time decay (0DTE charm
+    normalized per-day so it doesn't artificially decay into the close).</li>
+  </ul>
+
+  <h2>3 · The OI / Flow toggle — two estimates of one book</h2>
+  <div class="warn"><b>Why two bases exist:</b> open interest updates only overnight (OCC). Intraday,
+  OI-based GEX describes <i>yesterday's</i> book — nearly blind to 0DTE contracts born and dying the
+  same day. The Flow basis re-signs today's traded volume by aggressor side to estimate the live book.
+  Verified live 2026-06-26: OI read −$33B/BREAKOUT while Flow read +$76–121B/PIN, matching
+  volume-aware third-party tools — the OI read was the stale one.</div>
+  <div class="formula">side   = +1 if last ≥ ask (customer bought), −1 if last ≤ bid (sold), else mid-rule
+GEXvol = Γ · (−side · volume) · S² · 100 · 0.01
+         # dealer takes the OTHER side: customer buys any option → dealer short gamma</div>
+  <p class="muted">Honest caveat: this is a snapshot proxy, not tick-level Lee–Ready classification —
+  each contract's full-day volume is signed by its <i>current</i> last-vs-quote. Coarse, but free and
+  SPX-native. Rule of thumb: <b>OI = structural, multi-day walls; Flow = the live 0DTE read.</b>
+  Neither is "the truth"; every GEX number is model-dependent.</p>
+
+  <h2>4 · Components and how to read them</h2>
+  <table>
+    <tr><th>Component</th><th>What it is</th><th>Reading</th></tr>
+    <tr><td>GEX profile</td><td>per-strike net GEX bars, 0DTE/all-exp × OI/Flow</td>
+        <td>where the big hedging masses sit</td></tr>
+    <tr><td>Gamma curve</td><td>net dealer gamma if spot <i>were</i> at each level (±8% what-if,
+        book held fixed)</td><td>above zero = dampened region, below = amplified; zero-cross = flip;
+        trough = air-pocket floor</td></tr>
+    <tr><td>Gamma level map</td><td>price ladder: spot, escape hatch (flip/max-pos), trapdoor
+        (max-neg wall), air-pocket floor</td><td>the day's structural geography at a glance</td></tr>
+    <tr><td>Flow arrow</td><td>cumulative signed 0DTE flow Σ((call buys − sells) − (put buys − sells))</td>
+        <td>which way today's order flow is resolving the structure</td></tr>
+    <tr><td>Net flow chart</td><td>cumulative raw call − put volume since open</td><td>participation direction</td></tr>
+    <tr><td>Charm charts</td><td>per-strike and intraday delta-decay drift</td>
+        <td>negative charm + short gamma feeds the close move; positive pulls toward the pin</td></tr>
+  </table>
+
+  <h2>5 · Data pipeline &amp; integrity guards</h2>
+  <ul class="plain">
+    <li>Worker cron computes every minute of market hours from a self-fetched wide chain
+    (150 strikes ≈ ±7.9%); the page displays <i>actual</i> strike coverage, never a claimed band.</li>
+    <li>Dead-chain guard: a chain with zero OI and zero volume everywhere writes nothing
+    (prevents poisoning the baselines).</li>
+    <li>New contracts appearing mid-day enter as baselines, not as fake volume spikes.</li>
+    <li>Signed flow rolls up into a permanent daily dataset (<code>signed_flow_daily</code>) with
+    weekly backups — the multi-week record used for edge testing.</li>
+  </ul>
+
+  <h2>6 · Research verdicts baked into this page</h2>
+  <ul class="plain">
+    <li><b>Flow vs OI for same-day 0DTE:</b> use Flow; OI for persistent walls (§3).</li>
+    <li><b>Long-horizon seasonal tables are not a gate for 0DTE strategies</b> — tested 2026-06-28,
+    correlations ≈ 0 across all six strategies; horizons don't connect.</li>
+    <li><b>Day-type P&amp;L DNA is descriptive, not predictive</b> — realized move classes explain
+    which strategy paid, but the class is only known at the close.</li>
+  </ul>
+
+  <h2>7 · Limitations</h2>
+  <ul class="plain">
+    <li>The dealer-sign convention (long calls / short puts) is an assumption, standard but unproven
+    per-day; flip/walls inherit its error.</li>
+    <li>OI lags one day by construction; Flow's side-classification is a snapshot proxy (§3).</li>
+    <li>IV gaps fall back to 0.2; deep-ITM greeks are noisy.</li>
+    <li>GEX levels describe <i>propensity</i> (dampen vs amplify), not direction — the page never
+    claims a directional forecast.</li>
+  </ul>
+
+  <h2>References</h2>
+  <ul class="refs">
+    <li>SqueezeMetrics (2017). Gamma Exposure (GEX) — practitioner white paper (sign convention).</li>
+    <li>Barbon, A., &amp; Buraschi, A. (2021). Gamma fragility. Working paper.</li>
+    <li>Baltussen, G., Da, Z., Lammers, S., &amp; Martens, M. (2021). Hedging demand and market
+    intraday momentum. <i>Journal of Financial Economics</i> 142(1), 377–403.</li>
+    <li>Ni, S. X., Pearson, N. D., &amp; Poteshman, A. M. (2005). Stock price clustering on option
+    expiration dates. <i>Journal of Financial Economics</i> 78(1), 49–87.</li>
+    <li>Lee, C. M. C., &amp; Ready, M. J. (1991). Inferring trade direction from intraday data.
+    <i>Journal of Finance</i> 46(2), 733–746 (the classifier our snapshot proxy approximates).</li>
+  </ul>
+</div>
+</body>
+</html>

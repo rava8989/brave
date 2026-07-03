@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>CycleLab — Complete Methodology</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
+<style>
+  :root { --bg:#0d1117; --card:#161b22; --border:#30363d; --text:#e6edf3;
+          --muted:#8b949e; --accent:#58a6ff; --green:#3fb950; --red:#f85149; --amber:#d29922; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'Inter',sans-serif; background:var(--bg); color:var(--text);
+         font-size:14px; line-height:1.75; padding:24px 16px 80px; }
+  .wrap { max-width:860px; margin:0 auto; }
+  h1 { font-size:21px; font-weight:600; margin-bottom:2px; }
+  h2 { font-size:16px; font-weight:600; margin:34px 0 10px; padding-top:14px; border-top:1px solid var(--border); }
+  h3 { font-size:14px; font-weight:600; margin:18px 0 6px; color:var(--accent); }
+  p { margin:0 0 12px; }
+  .sub { color:var(--muted); margin-bottom:24px; }
+  .muted { color:var(--muted); }
+  .formula { font-family:'JetBrains Mono',monospace; font-size:13px; background:var(--card);
+             border:1px solid var(--border); border-radius:8px; padding:12px 16px; margin:10px 0 14px;
+             overflow-x:auto; white-space:pre; }
+  table { width:100%; border-collapse:collapse; font-size:13px; margin:10px 0 16px; }
+  th { text-align:left; color:var(--muted); font-weight:500; padding:6px 10px; border-bottom:1px solid var(--border); }
+  td { text-align:left; padding:6px 10px; border-bottom:1px solid #21262d; vertical-align:top; }
+  code { font-family:'JetBrains Mono',monospace; font-size:12.5px; background:var(--card);
+         padding:1px 5px; border-radius:4px; }
+  a { color:var(--accent); text-decoration:none; }
+  .refs { font-size:12.5px; color:var(--muted); }
+  .refs li { margin-bottom:6px; margin-left:18px; }
+  .warn { border-left:3px solid var(--red); padding:8px 14px; background:var(--card);
+          border-radius:0 8px 8px 0; margin:12px 0; }
+  .keep { border-left:3px solid var(--green); padding:8px 14px; background:var(--card);
+          border-radius:0 8px 8px 0; margin:12px 0; }
+  ul.plain { margin:0 0 12px 20px; }
+  ul.plain li { margin-bottom:6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>CycleLab — Complete Methodology</h1>
+  <div class="sub">SPX intraday cyclicality, with its own negative results attached ·
+    <a href="cyclicality.html">← back to CycleLab</a></div>
+
+  <h2>1 · What this tool is — and the finding that defines it</h2>
+  <p>CycleLab asks whether the intraday <i>shape</i> of SPX sessions repeats: does Monday behave like
+  prior Mondays, hour by hour? It composites the last N same-weekday sessions into a prediction line
+  and scores that line against reality, every day, permanently.</p>
+  <div class="warn"><b>The headline result is negative, and the page says so on its face:</b>
+  the same-weekday composite has <b>zero out-of-sample directional signal</b>. Tested four independent
+  ways: (a) direction hit-rate ≈ always-up baseline (53.6% vs 53.6%); (b) no averaging method ×
+  lookback combination beat a flat-zero baseline on end-of-day delta by more than 1%; (c) a
+  <b>wrong-weekday control</b> — feeding the model deliberately mismatched weekdays — performed
+  identically to the "right" weekdays, the cleanest possible refutation; (d) a pre-registered
+  look-alike-analog study (862 days) passed 0 of 9 gates. The prediction line is kept as a
+  seasonality <i>display</i>, labeled honestly. It does not predict.</div>
+  <div class="keep"><b>What survived testing — the tool's actual value:</b> movement
+  <i>magnitude</i> and its clock. (1) The trailing-20-day average daily travel beats every fancier
+  forecast of day size (median method's day-size miss ≈ 33 pts vs ~70 for the worst). (2) Sessions
+  finish roughly <b>half</b> as far as they travel — the bridge from "expected travel" to what a
+  finish-settled position (straddle/butterfly) actually pays. (3) The |move| U-shape by time-of-day
+  and "Monday has the calmest afternoons" both held in split-half validation.</div>
+
+  <h2>2 · Data &amp; construction</h2>
+  <ul class="plain">
+    <li><b>Base data:</b> SPX 1-minute bars (Schwab-fed, 2022-06 →), folded into 78 five-minute
+    slots per session (09:30–15:55 ET); each slot's value = net SPX points open→close of the slot.
+    Dataset self-feeds: the worker appends every session at EOD.</li>
+    <li><b>Prediction line:</b> for a chosen weekday, take the last N same-weekdays
+    (N ∈ 4…52, holidays auto-skipped, optional Fed/CPI/OPEX exclusion) and combine per slot by
+    Sum / Average / Median / Volatility-weighted. Cumulative sum of slot values = the line.</li>
+    <li><b>Agreement band ("the cloud"):</b> per-slot min/max across the N source weeks. A wide band
+    straddling zero = the source weeks disagreed — the line is declared noise for that stretch
+    (shaded faint red); a narrow one-sided band = the weeks rhymed (shaded green).
+    This is an honesty overlay, not a signal.</li>
+    <li><b>Ghost lines:</b> the individual source weeks drawn faintly, so one outlier week dragging
+    the composite is visible at a glance.</li>
+    <li><b>Live overlay:</b> today's actual cumulative line updates through the session
+    (worker 5-min capture), with the day scored HIT/MISS on direction at the close — the running,
+    unerasable record of §1's negative result.</li>
+  </ul>
+  <div class="formula">line(slot) = combine( week₁(slot) … week_N(slot) )        # per 5-min slot
+band(slot) = [min, max] over the N weeks
+travel     = mean over last 20 sessions of (high − low)   # "expected movement" card
+finish     ≈ 0.5 × travel                                 # validated rule of thumb</div>
+  <p class="muted">Why Median is the default combine: on 990 scored days it produced the smallest
+  day-size error (~33 pts). Sum is kept for illustration but draws the same line ~4× too tall by
+  construction. Direction is a coin flip on all four methods, so the honest-scale one wins.</p>
+
+  <h2>3 · The movement-regime table (the tradable part)</h2>
+  <p>Because finish ≈ half of travel, the trailing-20 travel number maps to option-selling vs
+  option-buying weather. Using 26 years of daily data (1,010 recent days scored):</p>
+  <table>
+    <tr><th>Trailing-20 travel</th><th>Days finishing &gt; 32 pts from open</th><th>Read</th></tr>
+    <tr><td>under 55</td><td>31%</td><td>butterfly weather — movement overpriced</td></tr>
+    <tr><td>55 – 75</td><td>44%</td><td>coin flip — defer to your strategy's own signal</td></tr>
+    <tr><td>over 75</td><td>57%</td><td>straddle weather — movement cheap</td></tr>
+  </table>
+  <p class="muted">The 32-pt reference is the standing $32 straddle cap; scale to the live quote.
+  Comparison rule: a 9:32 straddle quoted below half the travel card = movement on sale.
+  Per-strategy P&amp;L by regime is shown on-page with a ✓ only where the split held in both halves
+  of history — advisory context, not a gate (per the validated-advisory framework).</p>
+
+  <h2>4 · Validation protocol (why the negative result is trustworthy)</h2>
+  <ul class="plain">
+    <li><b>Controls before conclusions:</b> the wrong-weekday control is the core device — if
+    "Mondays predict Mondays" can't beat "Fridays predict Mondays," weekday identity carries no
+    information, whatever the backtest curve looks like.</li>
+    <li><b>Baseline discipline:</b> every method is scored against always-up and flat-zero baselines;
+    beating history is meaningless unless the baseline loses.</li>
+    <li><b>Pre-registration:</b> the analog study's 9 pass/fail gates were written down before the
+    test ran — no post-hoc goalpost moves. It failed all 9; the result stands.</li>
+    <li><b>Split-half persistence:</b> anything displayed as a keeper (U-shape, Monday afternoons,
+    regime table rows) must hold in both halves of the sample independently.</li>
+    <li><b>Live scoreboard:</b> direction HIT/MISS accumulates on-page daily, so the coin-flip
+    verdict keeps re-proving itself in public.</li>
+  </ul>
+
+  <h2>5 · Limitations</h2>
+  <ul class="plain">
+    <li>Travel is measured high-to-low on 1-min closes — true tick range runs ~8% higher; wicks and
+    overnight gaps are not captured.</li>
+    <li>The regime table's tails thin out at extremes (the "over 75" straddle cell is small-N in the
+    live-strategy overlay).</li>
+    <li>Magnitude regimes are persistence-based (trailing 20) — they adapt slowly to vol shocks by
+    construction; a Fed-day explosion lands in the average only afterward.</li>
+    <li>All findings are SPX-specific; the NDX toggle recomputes but has a shorter validated history.</li>
+  </ul>
+
+  <h2>References</h2>
+  <ul class="refs">
+    <li>Wood, R. A., McInish, T. H., &amp; Ord, J. K. (1985). An investigation of transactions data
+    for NYSE stocks. <i>Journal of Finance</i> 40(3), 723–739 (intraday U-shape).</li>
+    <li>Harris, L. (1986). A transaction data study of weekly and intradaily patterns in stock
+    returns. <i>Journal of Financial Economics</i> 16(1), 99–117 (weekday/intraday patterns).</li>
+    <li>Gao, L., Han, Y., Li, S. Z., &amp; Zhou, G. (2018). Market intraday momentum.
+    <i>Journal of Financial Economics</i> 129(2), 394–414.</li>
+    <li>Bouman, S., &amp; Jacobsen, B. (2002). The Halloween indicator. <i>American Economic
+    Review</i> 92(5), 1618–1635 (context on how fragile calendar effects are out-of-sample).</li>
+  </ul>
+</div>
+</body>
+</html>
