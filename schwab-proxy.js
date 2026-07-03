@@ -11639,6 +11639,43 @@ export default {
       }
     } catch (pwErr) { console.warn('[pages-watchdog]', pwErr.message); }
 
+    // ── Collector watchdog (2026-07-03, owner request) ──
+    // Data collectors fail SILENTLY (no page breaks, no trade misfires) —
+    // weeks of dataset can rot before anyone notices. Morning-after check
+    // (9:40-9:59 ET, DST-proof, race-free): if the previous trading day's
+    // collection done-marker is missing, DM Discord once. Covers the GEXM
+    // chain recorder now; the earnings watchlist collector adds its own
+    // entry to COLLECTOR_CHECKS when it ships.
+    try {
+      const etW = toET(new Date());
+      if (etW.getHours() === 9 && etW.getMinutes() >= 40) {
+        const prevISO = isoDateET(prevTrade(etW));
+        const COLLECTOR_CHECKS = [
+          ['GEXM chain recorder', `gexm_chains_done_${prevISO}`,
+           '→ hit /gexm-trigger to diagnose; data/gexm_chains/ missing a day'],
+          // ['Earnings watchlist collector', `earnwatch_done_${prevISO}`, '…'],
+        ];
+        for (const [label, key, hint] of COLLECTOR_CHECKS) {
+          const alertKey = `collector_alert_${key}`;
+          if (await env.SIGNAL_KV.get(alertKey)) continue;   // once per miss
+          if (await env.SIGNAL_KV.get(key)) continue;        // collected fine
+          await env.SIGNAL_KV.put(alertKey, 'sent', { expirationTtl: 3 * 86400 });
+          const dcRaw = await env.SIGNAL_KV.get('discord_config');
+          if (dcRaw) {
+            const dc = JSON.parse(dcRaw);
+            if (dc.channelId) {
+              await sendDiscordDM(env, dc.channelId,
+                `🚨 **${label} did NOT run for ${prevISO}** — no done-marker found this morning.\n${hint}`,
+                dc.proxyUrl);
+              await logEvent(env, 'error', 'collector-watchdog',
+                `${label} missing done-marker for ${prevISO} — Discord alert sent`, {});
+              console.log(`[collector-watchdog] alerted: ${label} missed ${prevISO}`);
+            }
+          }
+        }
+      }
+    } catch (cwErr) { console.warn('[collector-watchdog]', cwErr.message); }
+
     // ── Evening preview (2026-06-10): tomorrow\'s special days + health ──
     // Once per weekday 18:00-18:20 ET. Tells the user TONIGHT what tomorrow
     // is (CPI/FED/OPEX+-1/VIX-exp/EOM/NM/earnings), which strategies that
