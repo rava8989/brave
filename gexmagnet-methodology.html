@@ -125,7 +125,9 @@ S  = underlying spot price</div>
     <li>Confirmed cross: first 5-min close above flip at the regular open (live). Backtest fallback
     (EOD data only): T+1 open &gt; flip(T), flagged <code>fallback_entry</code> on every trade.</li>
     <li>Reward/risk: (magnet − entry) ÷ (entry − flip) ≥ 2.0.</li>
-    <li>Materiality: GEX/ADV$₂₀ ≥ θ<sub>mat</sub> — <b>fitted in walk-forward, never hand-picked</b>.</li>
+    <li>Materiality BAND: θ<sub>lo</sub> ≤ GEX/ADV$₂₀ &lt; θ<sub>hi</sub> — <b>both edges fitted in
+    walk-forward, never hand-picked</b>. (v1.1: the cap exists because the top materiality quartile
+    tested WORST — the crowded end, same logic as the earnings 2×–5× band.)</li>
     <li>Market gate: SPY session gap ≥ θ<sub>spy</sub> (fitted). One market gate, one vol gate maximum;
     no breadth gates unless they prove out net of the market gate.</li>
   </ul>
@@ -137,7 +139,10 @@ S  = underlying spot price</div>
     → exit next open.</li>
     <li><b>T1:</b> touch of the magnet (frozen at entry) → exit at the level, or move stop to entry and
     ride to the next structural level. Riding without locking the entry-stop is forbidden.</li>
-    <li><b>Time stop:</b> day 7 with &lt; 50% progress toward T1 → exit at close.</li>
+    <li><b>Time stop:</b> day 3 with &lt; 50% progress toward T1 → exit at close. (v1.1, owner-approved
+    2026-07-04: the magnet pays fast or not at all — 1–4 day holds averaged +0.25R while day-8+ holds
+    averaged −0.16R; day-7 time stops were 2024's entire loss. Validated OOS: t=2.20, positive
+    2024/2025/2026.)</li>
   </ul>
   <h3>4.3 Instruments &amp; sizing</h3>
   <p>Whole shares (IRA) or deep-ITM calls, delta ≥ 0.80, several weeks to expiry (margin account) sized to

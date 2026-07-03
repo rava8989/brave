@@ -87,8 +87,8 @@
 
   <div class="note" style="margin-top:18px">
     Dataset: 4y ThetaData EOD chains (2022-07 → 2026-07) + live nightly Schwab snapshots since 2026-07-02.
-    Method: entry = confirmed cross above gamma flip; target = max +GEX strike; R/R ≥ 2; GEX-per-ADV materiality
-    (threshold walk-forward fitted); exits = structural stop → −10% cap → day-7 time stop → T1.
+    Method (v1.1): entry = confirmed cross above gamma flip; target = max +GEX strike; R/R ≥ 2; GEX-per-ADV
+    materiality BAND (floor + cap, walk-forward fitted); exits = structural stop → −10% cap → day-3 time stop → T1.
   </div>
 
   <a href="gexmagnet-methodology.html" style="display:block;text-decoration:none">
