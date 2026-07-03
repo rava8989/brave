@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>Earnings Play — Tonight's Board</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
+<style>
+  :root {
+    --bg: #0d1117; --card: #161b22; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+    --green: #3fb950; --red: #f85149; --amber: #d29922;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text);
+         font-size: 13px; padding: 24px 16px 60px; }
+  .wrap { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 20px; font-weight: 600; }
+  h1 .tag { font-size: 11px; color: var(--muted); font-weight: 400; margin-left: 8px; }
+  .sub { color: var(--muted); margin: 4px 0 20px; }
+  .card { background: var(--card); border: 1px solid var(--border);
+          border-radius: 10px; padding: 16px 18px; margin-bottom: 14px; }
+  .banner { display: flex; align-items: center; gap: 12px; }
+  .banner .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--amber);
+                 flex: none; animation: pulse 2s infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .banner.live .dot { background: var(--green); animation: none; }
+  .banner b { font-size: 15px; }
+  .note { color: var(--muted); font-size: 12px; line-height: 1.6; }
+  table { width: 100%; border-collapse: collapse; font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+  th { text-align: right; color: var(--muted); font-weight: 500; padding: 6px 8px;
+       border-bottom: 1px solid var(--border); white-space: nowrap; }
+  td { text-align: right; padding: 7px 8px; border-bottom: 1px solid #21262d; white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  .long { color: var(--green); font-weight: 700; }
+  .pass { color: var(--muted); }
+  .crowded { color: var(--red); }
+  .g-ok { color: var(--green); } .g-no { color: var(--red); }
+  .section-h { font-size: 14px; font-weight: 600; margin: 22px 0 10px; }
+  .badge { display: inline-block; font-size: 10px; padding: 1px 7px; border-radius: 10px;
+           border: 1px solid var(--border); color: var(--muted); margin-left: 6px; }
+  .updated { font-family: 'JetBrains Mono', monospace; color: var(--muted); font-size: 11px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Earnings Play <span class="tag">v2.1 — LONG stock only · 24h by definition</span></h1>
+  <div class="sub">Board = tonight after-close + tomorrow before-open reporters, one list.
+    Gate 1 flow rescored every 30 min during RTH; Gates 2–3 frozen daily.
+    All three gates must pass — no overrides. Unlisted page.</div>
+
+  <div class="card banner" id="banner">
+    <div class="dot"></div>
+    <div>
+      <b id="bannerTitle">Scanner not live yet</b>
+      <div class="note" id="bannerNote">This page reads <code>data/earnings_play_today.json</code>
+        (worker writes it every 30 min in market hours once the scanner ships).</div>
+    </div>
+    <div style="margin-left:auto" class="updated" id="updated"></div>
+  </div>
+
+  <div class="section-h">Tonight's board <span class="badge" id="boardDate"></span></div>
+  <div class="card" style="overflow-x:auto"><table id="board"><thead><tr>
+    <th>Ticker</th><th>Reports</th><th>PW ratio</th><th>Deep-ITM $</th>
+    <th>Run-up 2w</th><th>ATH dist</th><th>Base rate</th>
+    <th>G1</th><th>G2</th><th>G3</th><th>Verdict</th>
+  </tr></thead><tbody>
+    <tr><td colspan="11" class="note">awaiting scanner…</td></tr>
+  </tbody></table></div>
+  <div class="note">Gate 1: bull/bear premium ratio must sit in the 2×–5× band — under 2× no edge,
+    over 5× crowded (the AVGO/MU air pocket), both PASS. Deep-ITM = stock-replacement prints,
+    strike &lt; spot × 0.92 — strengthens, absence doesn't kill.
+    Gate 2: extended at ATH or big 2-week run-up = PASS, no override.
+    Gate 3: 4–8 quarters of 24h reactions — beat-fade names PASS regardless of flow.</div>
+
+  <div class="section-h">The log <span class="badge">trades AND passes — this is the edge</span></div>
+  <div class="card" style="overflow-x:auto"><table id="log"><thead><tr>
+    <th>Date</th><th>Ticker</th><th>PW</th><th>Deep-ITM $</th><th>Run-up</th>
+    <th>Base rate</th><th>Verdict</th><th>24h move</th><th>P/L (R)</th>
+  </tr></thead><tbody>
+    <tr><td colspan="9" class="note">no history yet</td></tr>
+  </tbody></table></div>
+
+  <div class="note" style="margin-top:18px">
+    Sizing: 3–5% per name, two live max, never conviction-sized — binary overnight is a coin flip
+    with an edge, not a conviction trade. Exit: sell into the morning move, green or red.
+  </div>
+</div>
+
+<script>
+const fmt = (x, d=1) => x == null ? '—' : (+x).toFixed(d);
+const pct = x => x == null ? '—' : (x*100).toFixed(1) + '%';
+const g = ok => ok == null ? '—' : ok ? '<span class="g-ok">✓</span>' : '<span class="g-no">✗</span>';
+
+function load() {
+  fetch('data/earnings_play_today.json', {cache: 'no-store'})
+    .then(r => { if (!r.ok) throw 0; return r.json(); })
+    .then(render).catch(() => {});
+}
+load();
+setInterval(load, 60_000);   // page refresh; data itself updates every 30 min
+
+function render(d) {
+  const b = document.getElementById('banner');
+  b.classList.add('live');
+  document.getElementById('bannerTitle').textContent =
+    `${d.board.filter(r => r.verdict === 'LONG').length} LONG / ${d.board.length} scored`;
+  document.getElementById('bannerNote').textContent = d.note || 'scores refresh every 30 min during market hours';
+  document.getElementById('updated').textContent = 'updated ' + (d.updated_et || '—') + ' ET';
+  document.getElementById('boardDate').textContent = d.session || '';
+
+  const vcls = v => v === 'LONG' ? 'long' : (v === 'CROWDED' ? 'crowded' : 'pass');
+  document.querySelector('#board tbody').innerHTML = (d.board || []).map(r =>
+    `<tr><td>${r.ticker}</td><td>${r.when}</td>` +
+    `<td>${fmt(r.pw_ratio)}×</td><td>${r.deep_itm_usd ? '$' + (r.deep_itm_usd/1e6).toFixed(1) + 'M' : '—'}</td>` +
+    `<td>${pct(r.runup_2w)}</td><td>${pct(r.ath_dist)}</td>` +
+    `<td>${r.base_rate == null ? '—' : (r.base_rate*100).toFixed(0) + '% (' + r.base_n + 'q)'}</td>` +
+    `<td>${g(r.g1)}</td><td>${g(r.g2)}</td><td>${g(r.g3)}</td>` +
+    `<td class="${vcls(r.verdict)}">${r.verdict}</td></tr>`).join('') ||
+    '<tr><td colspan="11" class="note">nobody reports in this window</td></tr>';
+
+  document.querySelector('#log tbody').innerHTML = (d.log || []).slice(0, 200).map(r =>
+    `<tr><td>${r.date}</td><td>${r.ticker}</td><td>${fmt(r.pw_ratio)}×</td>` +
+    `<td>${r.deep_itm_usd ? '$' + (r.deep_itm_usd/1e6).toFixed(1) + 'M' : '—'}</td>` +
+    `<td>${pct(r.runup_2w)}</td><td>${r.base_rate == null ? '—' : (r.base_rate*100).toFixed(0) + '%'}</td>` +
+    `<td class="${vcls(r.verdict)}">${r.verdict}</td>` +
+    `<td>${pct(r.move_24h)}</td><td>${r.pl_r == null ? '—' : fmt(r.pl_r, 2)}</td></tr>`).join('') ||
+    '<tr><td colspan="9" class="note">no history yet</td></tr>';
+}
+</script>
+</body>
+</html>
