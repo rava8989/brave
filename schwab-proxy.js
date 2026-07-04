@@ -5001,15 +5001,10 @@ async function handleScheduled(env) {
     }
   }
 
-  // ── GEXMAGNET single-stock chain collector — post-close, chunked ──
-  // Window-gated inside (16:41–17:15 ET); etHour guard just skips the call
-  // (and its KV read) on the ~400 market-hours ticks where it can't run.
-  if (etHour >= 16) {
-    try {
-      const gm = await gexmCollectChains(env, etNow);
-      if (gm && gm.gexm !== 'done') console.log('[gexm]', JSON.stringify(gm));
-    } catch (e) { console.warn('[gexm]', e.message); }
-  }
+  // ── GEXMAGNET chain collector: RETIRED 2026-07-04 (owner call — strategy
+  // shelved; Σ3 outperforms it ~10x, page stays unlisted). Collection stopped;
+  // code + /gexm-trigger endpoint kept for manual re-runs if ever revived.
+  // Historical data preserved: data/gexm_chains/ (GitHub) + local theta_raw.
 
   // ── GEX update during market hours (every cron tick) ──
   let gexResult = {};
@@ -11659,8 +11654,7 @@ export default {
       if (etW.getHours() === 9 && etW.getMinutes() >= 40) {
         const prevISO = isoDateET(prevTrade(etW));
         const COLLECTOR_CHECKS = [
-          ['GEXM chain recorder', `gexm_chains_done_${prevISO}`,
-           '→ hit /gexm-trigger to diagnose; data/gexm_chains/ missing a day'],
+          // GEXM chain recorder retired 2026-07-04 (strategy shelved) — do not re-add
           // ['Earnings watchlist collector', `earnwatch_done_${prevISO}`, '…'],
         ];
         for (const [label, key, hint] of COLLECTOR_CHECKS) {
