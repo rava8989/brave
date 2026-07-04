@@ -9206,6 +9206,22 @@ export default {
     // ── GET /diagonal-trigger ── Manually run handleDiagonalTrade NOW
     // Bypasses the normal 12:30 ET window so we can verify the open path
     // end-to-end without waiting for the cron. Auth-required.
+    // ── GET /earnings-test-dm ── one test DM to the owner's private channel
+    // (discord_config.channelId — the watchdog path; NEVER subscribers). Auth.
+    if (url.pathname === '/earnings-test-dm' && request.method === 'GET') {
+      const secret = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
+      if (!secret || (secret !== env.SYNC_SECRET && secret !== env.GEXM_TRIGGER_TOKEN)) {
+        return jsonResp({ error: 'Unauthorized' }, 401, { 'Access-Control-Allow-Origin': '*' });
+      }
+      const dcRaw = await env.SIGNAL_KV.get('discord_config');
+      if (!dcRaw) return jsonResp({ ok: false, error: 'no discord_config in KV' });
+      const dc = JSON.parse(dcRaw);
+      const r = await sendDiscordDM(env, dc.channelId,
+        '🌙 **[EARNINGS] Private DM wired.** You (and only you) get: morning preview ~9:15 · final board 3:30 · sell reminder 9:32. Subscribers never see these. — test, no signal',
+        dc.proxyUrl);
+      return jsonResp({ ok: r.ok, source: r.source || null, error: r.error || null });
+    }
+
     // ── GET /gexm-status ── GEXMAGNET chain-collector status. Auth-required
     // (SYNC_SECRET or the scoped GEXM_TRIGGER_TOKEN — the latter exists so
     // local tooling can hit these two endpoints without the dashboard secret).
