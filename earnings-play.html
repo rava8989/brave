@@ -249,9 +249,9 @@ function render(d) {
       `<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase">Avg night (raw)</div>` +
       `<div style="font-family:'JetBrains Mono',monospace;font-size:19px;font-weight:600;color:var(--green)">+${(ls.avg_night*100).toFixed(2)}%</div>` +
       `<div class="note">best +${(ls.best*100).toFixed(0)}% · worst ${(ls.worst*100).toFixed(0)}%</div></div>` +
-      `<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase">$50k account</div>` +
-      `<div style="font-family:'JetBrains Mono',monospace;font-size:19px;font-weight:600;color:var(--green)">+$${ls.dollars_50k_total.toLocaleString()}</div>` +
-      `<div class="note">≈ $${ls.dollars_50k_yr.toLocaleString()}/yr · ${ls.sizing_note}</div></div>` +
+      `<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase">${ls.acct_label || 'account'}</div>` +
+      `<div style="font-family:'JetBrains Mono',monospace;font-size:19px;font-weight:600;color:var(--green)">+$${ls.dollars_acct_total.toLocaleString()}</div>` +
+      `<div class="note">≈ $${ls.dollars_acct_yr.toLocaleString()}/yr · ${ls.sizing_note}</div></div>` +
       `<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase">Total return</div>` +
       `<div style="font-family:'JetBrains Mono',monospace;font-size:19px;font-weight:600">+${(ls.total_return*100).toFixed(1)}%</div>` +
       `<div class="note">compounded, ~3 yrs · +${(ls.per_year*100).toFixed(1)}%/yr</div></div></div>`;
