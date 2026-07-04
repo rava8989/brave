@@ -89,7 +89,7 @@
     <div class="card" style="margin:0"><div style="font-size:11px;color:var(--muted);text-transform:uppercase">LONG verdicts</div>
       <div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:600">80</div>
       <div class="note">~0.5 per week</div></div>
-    <div class="card" style="margin:0"><div style="font-size:11px;color:var(--muted);text-transform:uppercase">Avg night, net of SPY</div>
+    <div class="card" style="margin:0"><div style="font-size:11px;color:var(--muted);text-transform:uppercase">Avg trade, net of SPY</div>
       <div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:600;color:var(--green)">+4.63%</div>
       <div class="note">PASS group: +0.87%</div></div>
     <div class="card" style="margin:0"><div style="font-size:11px;color:var(--muted);text-transform:uppercase">Hit rate</div>
@@ -147,11 +147,11 @@
     </div>
 
     <div class="card" style="margin:0">
-      <svg viewBox="0 0 220 120" width="100%" role="img" aria-label="Gauge with green zone between 2x and 5x bullish flow ratio">
+      <svg viewBox="0 0 220 120" width="100%" role="img" aria-label="Gauge with green zone between 2.33x and 5x bullish flow ratio">
         <path d="M30,90 A80,80 0 0,1 190,90" fill="none" stroke="#30363d" stroke-width="12"/>
         <path d="M78,50 A80,80 0 0,1 152,47" fill="none" stroke="#3fb950" stroke-width="12"/>
         <text x="34" y="112" fill="#8b949e" font-size="11" font-family="Inter">0×</text>
-        <text x="72" y="38" fill="#3fb950" font-size="11" font-family="Inter">2×</text>
+        <text x="64" y="38" fill="#3fb950" font-size="11" font-family="Inter">2.33×</text>
         <text x="146" y="36" fill="#3fb950" font-size="11" font-family="Inter">5×</text>
         <text x="205" y="112" fill="#f85149" font-size="11" font-family="Inter" text-anchor="end">crowded</text>
         <line x1="110" y1="90" x2="128" y2="52" stroke="#e6edf3" stroke-width="3"/>
@@ -162,15 +162,15 @@
     </div>
 
     <div class="card" style="margin:0">
-      <svg viewBox="0 0 220 120" width="100%" role="img" aria-label="Stock at all time high fails, flat or dipped stock passes">
+      <svg viewBox="0 0 220 120" width="100%" role="img" aria-label="Stock at all time high fails, falling or beaten-down stock passes">
         <path d="M15,85 L40,70 L60,45 L85,25" fill="none" stroke="#f85149" stroke-width="2.5"/>
         <text x="50" y="105" fill="#f85149" font-size="13" font-family="Inter" text-anchor="middle">✗ already ran up</text>
         <path d="M125,55 L150,60 L170,52 L200,57" fill="none" stroke="#3fb950" stroke-width="2.5"/>
-        <text x="163" y="105" fill="#3fb950" font-size="13" font-family="Inter" text-anchor="middle">✓ flat / beaten down</text>
+        <text x="163" y="105" fill="#3fb950" font-size="13" font-family="Inter" text-anchor="middle">✓ falling / beaten down</text>
         <line x1="110" y1="15" x2="110" y2="95" stroke="#30363d" stroke-width="1.5"/>
       </svg>
       <div class="note" style="margin-top:8px"><b style="color:var(--text)">Gate 2 · Expectations.</b>
-      A stock priced for perfection has nothing left to give on good news. Best setups look boring going in — with fresh bullish flow underneath.</div>
+      A stock priced for perfection has nothing left to give on good news. v2.3 requires the stock to be FALLING over the last two weeks — beaten-down with fresh bullish flow underneath.</div>
     </div>
 
     <div class="card" style="margin:0">
@@ -246,7 +246,7 @@ function render(d) {
       `<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase">Win rate</div>` +
       `<div style="font-family:'JetBrains Mono',monospace;font-size:19px;font-weight:600">${(ls.win_rate*100).toFixed(1)}%</div>` +
       `<div class="note">${ls.n} trades</div></div>` +
-      `<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase">Avg night</div>` +
+      `<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase">Avg night (raw)</div>` +
       `<div style="font-family:'JetBrains Mono',monospace;font-size:19px;font-weight:600;color:var(--green)">+${(ls.avg_night*100).toFixed(2)}%</div>` +
       `<div class="note">best +${(ls.best*100).toFixed(0)}% · worst ${(ls.worst*100).toFixed(0)}%</div></div>` +
       `<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase">$50k account</div>` +
