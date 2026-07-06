@@ -258,7 +258,7 @@ function render(d) {
       `<div class="note">≈ $${ls.dollars_acct_yr.toLocaleString()}/yr · ${ls.sizing_note}</div></div>` +
       `<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase">Total return</div>` +
       `<div style="font-family:'JetBrains Mono',monospace;font-size:19px;font-weight:600">+${(ls.total_return*100).toFixed(1)}%</div>` +
-      `<div class="note">compounded, ~3 yrs · +${(ls.per_year*100).toFixed(1)}%/yr</div></div></div>`;
+      `<div class="note">compounded, ~${ls.years || '?'} yrs · +${(ls.per_year*100).toFixed(1)}%/yr</div></div></div>`;
   }
   document.querySelector('#log tbody').innerHTML = (d.log || []).slice(0, 200).map(r =>
     `<tr><td>${r.date}</td><td>${r.ticker}</td><td>${fmt(r.pw_ratio)}×</td>` +
