@@ -1551,9 +1551,12 @@ async function computeVixDecompDaily(env, etNow) {
   if (!prev) return { skipped: 'no prior smile within 5d' };
   const rec = computeDecompPair(prev, cur);
   if (!rec) return { skipped: 'smiles too sparse' };
-  await env.SIGNAL_KV.put(`vix_decomp_${todayISO}`, JSON.stringify(rec), { expirationTtl: 90 * 86400 });
+  // GitHub upsert FIRST, then the KV done-guard — a failed PUT must NOT be recorded
+  // as "done": doing so blocked BOTH the aux-tick retry and the nightly watchdog heal,
+  // permanently dropping that day from the dataset (audit P2 2026-07-06).
   await githubUpsertResearchFile(env, 'data/vix_decomposition.json',
     curF => { curF[todayISO] = rec; return curF; }, `auto: vix decomp ${todayISO} ${rec.label}`);
+  await env.SIGNAL_KV.put(`vix_decomp_${todayISO}`, JSON.stringify(rec), { expirationTtl: 90 * 86400 });
   return { ok: true, label: rec.label };
 }
 
@@ -2709,16 +2712,28 @@ async function tastyGetSpx(env) {
   }
   const body = await resp.json();
   const d = body?.data || body;
-  const open = d?.open ?? d?.['open-price'] ?? null;
+  const openRaw = d?.open ?? d?.['open-price'] ?? null;
+  const openNum = openRaw != null ? parseFloat(openRaw) : null;
+  // VALUE-STALENESS GUARD (audit P1-e 2026-07-06, same class as tastyGetVix 06-16):
+  // Tasty serves the prior CLOSE as a pre-open `open` placeholder while `updated-at`
+  // ticks fresh, so a timestamp gate alone lets a stale open through. A real session
+  // open ~never equals the prior close to the penny — null it so callers fall back to
+  // Schwab / keep polling rather than anchor the straddle center + SPX-gap gate on
+  // yesterday's close on a gap day.
+  const prevCloseRaw = d?.['prev-close'] ?? d?.['close-price'] ?? null;
+  const prevCloseNum = prevCloseRaw != null ? parseFloat(prevCloseRaw) : null;
+  const openStale = openNum != null && prevCloseNum != null && Math.abs(openNum - prevCloseNum) < 0.005;
+  const open = openStale ? null : openNum;
   const last = d?.last ?? d?.['last-price'] ?? d?.mid ?? d?.mark ?? d?.bid ?? null;
-  const price = open ?? last;
+  const price = (open != null ? open : last) ?? openNum;
   const asOf = d?.['updated-at'] || d?.['quote-time'] || d?.timestamp;
   if (price == null) {
     throw new Error(`Tastytrade SPX: no usable price field: ${JSON.stringify(d).slice(0, 250)}`);
   }
   return {
     price: parseFloat(price),
-    open: open != null ? parseFloat(open) : null,
+    open, openStale,
+    prevClose: prevCloseNum,
     last: last != null ? parseFloat(last) : null,
     asOf, source: 'tastytrade', endpoint: '/market-data/Index/SPX', raw: d,
   };
@@ -4128,6 +4143,12 @@ async function settleStraddleEOD(env, etNow, spxClose) {
   const closeIntrinsic = Math.abs(spxClose - trade.strike);
   const pnl = Math.round((closeIntrinsic - trade.entryDebit) * 100 * trade.contracts);
 
+  // Write P/L to history FIRST — only mark 'closed' AFTER it lands, so a throw in
+  // upsertHistoryGitHub can't leave the trade closed with a blank PL column (no
+  // backfill, re-settle blocked). The status guard above makes re-settle idempotent
+  // (same spxClose → same pnl) (audit P2 2026-07-06).
+  await upsertHistoryGitHub(env, trade.openDate, { stradPL: pnl });
+
   trade.status = 'closed';
   trade.closeDate = isoDateET(etNow);
   trade.spxClose = parseFloat(spxClose.toFixed(2));
@@ -4140,9 +4161,6 @@ async function settleStraddleEOD(env, etNow, spxClose) {
   const log = logRaw ? JSON.parse(logRaw) : [];
   log.unshift(trade);
   await env.SIGNAL_KV.put('straddle_closed_log', JSON.stringify(log.slice(0, 30)));
-
-  // Commit stradPL to history_data.json
-  await upsertHistoryGitHub(env, trade.openDate, { stradPL: pnl });
 
   return { status: 'settled', pnl, strike: trade.strike, debit: trade.entryDebit, closeValue: closeIntrinsic };
 }
@@ -4682,6 +4700,9 @@ async function settleBobfEOD(env, etNow, spxClose) {
   const intrinsic = lowerI - 2 * bodyI + upperI;
   const pnl = Math.round((intrinsic - trade.entryDebit) * 100 * trade.contracts);
 
+  // History P/L FIRST, mark 'closed' after (audit P2 2026-07-06 — idempotent re-settle).
+  await upsertHistoryGitHub(env, trade.openDate, { bobfPL: pnl });
+
   trade.status = 'closed';
   trade.closeDate = isoDateET(etNow);
   trade.spxClose = parseFloat(spxClose.toFixed(2));
@@ -4693,8 +4714,6 @@ async function settleBobfEOD(env, etNow, spxClose) {
   const log = logRaw ? JSON.parse(logRaw) : [];
   log.unshift(trade);
   await env.SIGNAL_KV.put('bobf_closed_log', JSON.stringify(log.slice(0, 30)));
-
-  await upsertHistoryGitHub(env, trade.openDate, { bobfPL: pnl });
   return { status: 'settled', pnl, type: trade.type, strikes: [trade.lowerStrike, trade.bodyStrike, trade.upperStrike], debit: trade.entryDebit, intrinsic };
 }
 
@@ -5132,6 +5151,9 @@ async function settleGxbfEOD(env, etNow, spxClose) {
   const intrinsic = Math.min(Math.max(rawIntrinsic, 0), W);
   const pnl = Math.round((intrinsic - trade.netDebit) * 100 * trade.contracts);
 
+  // History P/L FIRST, mark 'closed' after (audit P2 2026-07-06 — idempotent re-settle).
+  await upsertHistoryGitHub(env, trade.openDate, { gxbfPL: pnl });
+
   trade.status = 'closed';
   trade.closeDate = isoDateET(etNow);
   trade.spxClose = parseFloat(spxClose.toFixed(2));
@@ -5143,8 +5165,6 @@ async function settleGxbfEOD(env, etNow, spxClose) {
   const log = logRaw ? JSON.parse(logRaw) : [];
   log.unshift(trade);
   await env.SIGNAL_KV.put('gxbf_closed_log', JSON.stringify(log.slice(0, 30)));
-
-  await upsertHistoryGitHub(env, trade.openDate, { gxbfPL: pnl });
   return { status: 'settled', pnl, center: trade.centerStrike, wing: W,
            strikes: [trade.lowerStrike, trade.centerStrike, trade.upperStrike],
            debit: trade.netDebit, intrinsic };
@@ -5269,6 +5289,10 @@ async function settleTailEOD(env, etNow, spxClose) {
   const intrinsic = Math.max(0, trade.strike - S);
   const pnl = Math.round((intrinsic - entryCost) * 100 * contracts);
 
+  // History P/L FIRST, mark 'closed' after (audit P2 2026-07-06 — the status guard
+  // above makes re-settle idempotent; the campaign-stop below keys on pnl, not status).
+  await upsertHistoryGitHub(env, todayISO, { tailPL: pnl });
+
   trade.status = 'closed';
   trade.closeDate = todayISO;
   trade.spxClose = parseFloat(S.toFixed(2));
@@ -5281,8 +5305,6 @@ async function settleTailEOD(env, etNow, spxClose) {
   const log = logRaw ? JSON.parse(logRaw) : [];
   log.unshift(trade);
   await env.SIGNAL_KV.put('tail_closed_log', JSON.stringify(log.slice(0, 30)));
-
-  await upsertHistoryGitHub(env, todayISO, { tailPL: pnl });
 
   // First profitable day STOPS the campaign (previously only the offline bundle
   // did this via exit_reason='profitable'; now the live worker ends it too).
@@ -7995,10 +8017,20 @@ async function backfillMissingWR(env, force = false, targetDates = null) {
     }
   }
 
-  // 3. Persist KV-first (source of truth), then mirror ONCE to GitHub.
+  // 3. Persist — RE-READ current history and apply ONLY the fields we computed, so a
+  //    concurrent EOD settle during our slow Discord loop isn't clobbered by a stale
+  //    full-array overwrite (audit P1-h 2026-07-06). content was read minutes ago.
   if (filled.length > 0) {
-    await setHistory(env, content, { dateStr: 'backfill-wr' });
-    await mirrorHistoryToGitHub(env, content, `auto: backfill m8bfWR for ${filled.map(f => f.date).join(', ')}`);
+    const fresh = await getHistory(env);
+    for (const f of filled) {
+      let row = fresh.find(r => r.date === f.date);
+      if (!row) { row = { date: f.date }; fresh.push(row); }
+      row.m8bfWR = f.m8bfWR;
+      if (row.spxClose == null) row.spxClose = f.spxClose;
+    }
+    fresh.sort((a, b) => a.date.localeCompare(b.date));
+    await setHistory(env, fresh, { dateStr: 'backfill-wr' });
+    await mirrorHistoryToGitHub(env, fresh, `auto: backfill m8bfWR for ${filled.map(f => f.date).join(', ')}`);
   }
 
   return { filled, failed, total_missing: missing.length };
@@ -8250,9 +8282,17 @@ async function backfillMissingPL(env, targetDates = null) {
   }
 
   if (filled.length > 0) {
-    // KV-first (source of truth), then mirror ONCE to GitHub.
-    await setHistory(env, content, { dateStr: 'backfill-pl' });
-    await mirrorHistoryToGitHub(env, content, `auto: backfill m8bfPL for ${filled.map(f => f.date).join(', ')}`);
+    // RE-READ fresh + apply ONLY m8bfPL for the dates we filled, so a concurrent EOD
+    // settle isn't clobbered by a stale full-array overwrite (audit P1-h 2026-07-06).
+    const fresh = await getHistory(env);
+    for (const f of filled) {
+      let row = fresh.find(r => r.date === f.date);
+      if (!row) { row = { date: f.date }; fresh.push(row); }
+      row.m8bfPL = f.pl;
+    }
+    fresh.sort((a, b) => a.date.localeCompare(b.date));
+    await setHistory(env, fresh, { dateStr: 'backfill-pl' });
+    await mirrorHistoryToGitHub(env, fresh, `auto: backfill m8bfPL for ${filled.map(f => f.date).join(', ')}`);
   }
 
   return { filled, failed, total_missing: missing.length };
@@ -12052,7 +12092,10 @@ export default {
 
     // Sunday digest cron runs ONLY the digest — the main tick's guards
     // assume weekdays and must not run on Sundays.
-    if (event.cron === '0 22 * * 0') {
+    // Cloudflare returns event.cron VERBATIM as configured in wrangler.toml — the
+    // cron is 'SUN', not '0', so the old '0 22 * * 0' guard never matched and the
+    // weekly digest + signed_flow backup never ran (audit P2 2026-07-06). Accept both.
+    if (event.cron === '0 22 * * SUN' || event.cron === '0 22 * * 0') {
       try { await weeklyDigest(env); } catch (e) { console.warn('[digest]', e.message); }
       return;
     }

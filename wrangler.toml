@@ -11,10 +11,15 @@ compatibility_date = "2026-03-17"
 #   winter. `13-21` now covers 16:xx ET in EST too (2026-06-30 fix). Extra post-close
 #   ticks in EDT (17:xx ET) are ET-gated no-ops.
 # EOD: ~16:17 ET (EDT + EST)
+# Evening jobs (preview + Schwab token-expiry warning, nightly data watchdog, tail-
+# bundle check) are gated on 18:xx ET = 22:xx UTC (EDT) / 23:xx UTC (EST). The old
+# `13-21` topped out at 17:xx ET, so those NEVER fired on a weekday in either DST
+# regime (audit 2026-07-06). `13-23` now reaches 18:xx/19:xx ET; the extra ticks are
+# ET-gated no-ops.
 crons = [
   "30 13 * * 1-5",
   "30 14 * * 1-5",
-  "* 13-21 * * 1-5",
+  "* 13-23 * * 1-5",
   "17 20 * * 1-5",
   "17 21 * * 1-5",
   "0 22 * * SUN",
