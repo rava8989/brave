@@ -285,7 +285,7 @@ def _third_friday(y: int, m: int) -> str:
 
 
 def build_special_sets(trading_days: list[str], by_date_entry_snapshot: dict[str, dict],
-                       vix_band: tuple[float, float] = (50.0, 90.0),
+                       vix_band: tuple[float, float] = (50.0, 80.0),
                        cor1m_by_date: dict[str, float] | None = None,
                        cor1m_min: float = 10.0) -> dict[str, set]:
     """
@@ -651,8 +651,8 @@ def run_backtest(data: dict, params: dict, halfday: dict[str, float],
             if et:
                 entry_snap[d] = {"vix_14": et.get("vix"), "spot_14": et.get("spot")}
 
-    # Tunable VIX percentile band — params may set vix_band=(lo, hi); else canonical (50, 90].
-    vix_band = tuple(params.get("vix_band", (50.0, 90.0)))
+    # Tunable VIX percentile band — params may set vix_band=(lo, hi); else canonical (50, 80].
+    vix_band = tuple(params.get("vix_band", (50.0, 80.0)))
 
     # 2026-06-09: load COR1M daily values from the Tail Hedge bundle for the
     # COR1M_LOW filter. Diagonal skips days where cor1m < cor1m_min.

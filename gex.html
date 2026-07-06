@@ -183,7 +183,7 @@
     <div class="total-gex stat-tile neutral" id="vannaTile" title="Vanna: how dealer delta shifts as implied vol changes.">
       <span class="label">Vanna</span><span class="val">--</span><span class="tag" id="vannaTag"></span>
     </div>
-    <div class="total-gex stat-tile neutral" id="charmTile" title="Charm: how dealer gamma decays as time passes toward expiry.">
+    <div class="total-gex stat-tile neutral" id="charmTile" title="Charm (0DTE): how much dealer delta drifts per day as time passes toward expiry ($/day) — a delta-drift measure, not gamma decay.">
       <span class="label">Charm</span><span class="val">--</span><span class="tag" id="charmTag"></span>
     </div>
     <div class="total-gex" id="totalGex"><span class="label">Total GEX</span>--</div>
@@ -274,7 +274,7 @@
       <canvas id="flowChart"></canvas>
     </div>
     <div class="bottom-info" style="text-align:left;padding:8px 0 0;">
-      Per-tick share of new traded volume: green = calls, red = puts. Lines sum to 100% and cross at 50% when flow flips from put-buying to call-buying.
+      Cumulative net new traded volume (calls − puts) through the day: green above the zero line = net call-buying, red below = net put-buying. The zero line is the flip point.
     </div>
   </div>
 

@@ -804,7 +804,7 @@ body {
       <button class="tpill" data-sd="FED">FED</button>
       <button class="tpill" data-sd="CPI">CPI</button>
       <button class="tpill" data-sd="VIX">VIX EXP</button>
-      <button class="tpill" data-sd="VIX_MID"  title="Rank today's VIX against the last 20 trading days' VIX values. Skip the trade if the percentile sits inside the band defined by the lo/hi inputs to the right. Default 50–90 (re-optimized 2026-06-02 from 40–90). Adjust lo/hi to sweep different bands.">VIX MID-band</button>
+      <button class="tpill" data-sd="VIX_MID"  title="Rank today's VIX against the last 20 trading days' VIX values. Skip the trade if the percentile sits inside the band defined by the lo/hi inputs to the right. Default 50–80 (re-optimized 2026-06-09 from 50–90). Adjust lo/hi to sweep different bands.">VIX MID-band</button>
       <span style="display:inline-flex;align-items:center;gap:3px;font-size:11px;color:var(--text2);margin-left:2px;">
         <input type="number" id="vixBandLo" value="50" min="0" max="99" step="5" style="width:38px;padding:1px 3px;font-family:'JetBrains Mono',monospace;font-size:11px;text-align:center;" title="Band lower bound (exclusive). Trades whose VIX percentile is &gt; this value AND ≤ hi are filtered out.">
         <span>–</span>
@@ -852,7 +852,7 @@ body {
         <strong style="color:#fcd34d">VIX regime filters</strong> <em style="color:var(--text3)">(data-derived, not calendar-based)</em>
         <ul style="margin:4px 0 0 16px;padding:0">
           <li>
-            <strong>VIX MID-band</strong> (default 40–90%) — the <em>"VIX 20-day percentile"</em> filter.
+            <strong>VIX MID-band</strong> (default 50–80%) — the <em>"VIX 20-day percentile"</em> filter.
             Each day, we take today's first VIX print at-or-after 9:30 ET and rank it against the last 20 trading days' first-post-9:30 prints (0% = lowest in 20 days, 100% = highest).
             This pill flags days where that rank lands inside the band defined by the <code>lo</code> / <code>hi</code> inputs to its right.
             Default 50–80 — the <strong>"uncomfortable middle"</strong>. Not cheap enough to be complacent, not elevated enough to be panic.
@@ -864,7 +864,7 @@ body {
             <strong>VIX DEAD</strong> — a tighter subset of VIX MID-band.
             Flags a day only if <em>both</em> conditions hold:
             <ol style="margin:2px 0 0 18px;padding:0">
-              <li>VIX rank lands in the MID-band (default 40–90% vs the prior 20 trading days), <strong>AND</strong></li>
+              <li>VIX rank lands in the MID-band (default 50–80% vs the prior 20 trading days), <strong>AND</strong></li>
               <li>Yesterday's SPX moved less than 0.5% in either direction (a "flat / sleepy" prior session).</li>
             </ol>
             This isolates the <strong>pure no-edge regime</strong>: elevated-but-not-spiky VIX plus no directional

@@ -1548,12 +1548,24 @@ async function refreshSPX() {
         const nowET = getNowET();
         const [dy, dmo, dd] = d.date.split('-').map(Number);
         const sameDay = (nowET.getFullYear() === dy && (nowET.getMonth()+1) === dmo && nowET.getDate() === dd);
-        if (sameDay) {
+        // Freshness: the tick's OWN time must be recent — sameDay alone renders a
+        // frozen feed as "live" with a green badge (audit P1-i 2026-07-06). Reject
+        // if the last tick is > 5 min old; the tick carries {time:'HH:MM'}.
+        let fresh = sameDay;
+        if (sameDay && last.time) {
+          const [th, tm] = String(last.time).split(':').map(Number);
+          if (Number.isFinite(th) && Number.isFinite(tm)) {
+            const ageSecs = (nowET.getHours() * 60 + nowET.getMinutes() - th * 60 - tm) * 60;
+            if (ageSecs > 300) fresh = false;
+          }
+        }
+        if (fresh) {
           spxPrice = last.price;
           lastSpxTimestamp = Date.now();
           schwabConnected = true;
           return true;
         }
+        schwabConnected = false;   // stale → fall through to the GH-raw fallback (own age check)
       }
     }
   } catch (e) { console.warn('[live] spx worker fetch failed, falling back to GH raw:', e); }

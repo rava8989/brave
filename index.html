@@ -502,7 +502,7 @@
     <span class="msep" id="spxSep" style="display:none;">|</span>
     <div class="mi" id="spxGapWrap" style="display:none;"><span class="ml">SPX Gap</span><span class="mv" id="spxGapDisplay">—</span></div>
     <span class="msep" id="vixPctSep" style="display:none;">|</span>
-    <div class="mi" id="vixPct20Wrap" style="display:none;" title="VIX 20-day percentile: ranks today's VIX against the last 20 trading days' VIX values. 0% = lowest in 20 days, 100% = highest. The 50–90% band is a 'no-edge' regime for short-premium diagonal strategies (re-optimized 2026-06-02 from 40–90 on corrected VIX data — +$12.4k / 24 trades / lower MaxDD / MAR 14.94). Outside that band = edge present. Click for full explanation.">
+    <div class="mi" id="vixPct20Wrap" style="display:none;" title="VIX 20-day percentile: ranks today's VIX against the last 20 trading days' VIX values. 0% = lowest in 20 days, 100% = highest. The 50–80% band is a 'no-edge' regime for short-premium diagonal strategies (re-optimized 2026-06-02 from 40–90 on corrected VIX data — +$12.4k / 24 trades / lower MaxDD / MAR 14.94). Outside that band = edge present. Click for full explanation.">
       <span class="ml" style="cursor:help" onclick="document.getElementById('vixPctExplain').hidden=!document.getElementById('vixPctExplain').hidden">VIX 20d %ile</span><span class="mv" id="vixPct20Display">—</span>
     </div>
     <span class="msep" id="regimeSep" style="display:none;">|</span>
@@ -910,7 +910,7 @@
       <li><strong>Not 0DTE</strong> — both legs carry overnight (1 DTE short + 25 DTE long).</li>
       <li><strong>Not a credit spread</strong> — it's a long-calendar-style diagonal; different DTEs, different strikes.</li>
       <li><strong>Not part of Sigma 3</strong> — separate sizing and separate signals. It does not displace M8BF / Straddle / GXBF / BOBF.</li>
-      <li><strong>Not blocked by CPI, FED, or earnings</strong> — the default filter stack only skips OPEX-1, EOM, EOM-1, NM, and VIX 50-90%. Per-ticker earnings filters were dropped 2026-04-29 because at 30/40 strikes they cost more edge than they preserved.</li>
+      <li><strong>Not blocked by CPI, FED, or earnings</strong> — the default filter stack only skips OPEX-1, EOM, EOM-1, NM, and VIX 50-80%. Per-ticker earnings filters were dropped 2026-04-29 because at 30/40 strikes they cost more edge than they preserved.</li>
       <li><strong>Never two diagonals at once</strong> — because entry time equals exit time, the previous day's position exits at the exact instant the next one opens. One position in the book, always.</li>
     </ul>
 
