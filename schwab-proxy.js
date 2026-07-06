@@ -8889,6 +8889,11 @@ export default {
     }
 
     if (url.pathname === '/test-card-discord' && request.method === 'GET') {
+      // AUTH (2026-07-06 audit): side-effecting Discord send — gate it so a
+      // stranger can't spam the channel / burn the bot's rate budget.
+      if ((request.headers.get('X-Sync-Secret') || url.searchParams.get('secret')) !== env.SYNC_SECRET) {
+        return new Response('Unauthorized', { status: 401 });
+      }
       try {
         const dcRaw = await env.SIGNAL_KV.get('discord_config');
         if (!dcRaw) return new Response('no discord_config', { status: 500 });
@@ -9408,17 +9413,19 @@ export default {
         'Access-Control-Allow-Methods': 'POST, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization',
       };
-      // Optional PROXY_SECRET check (mirrors discord-proxy's lenient behavior)
-      if (env.PROXY_SECRET) {
-        const auth = request.headers.get('Authorization') || '';
-        // Allow browser CORS (no Authorization header from same-origin XHR);
-        // for direct API calls, require the secret.
-        const origin = request.headers.get('Origin') || '';
-        const fromBrowser = origin.length > 0;
-        const validAuth = auth === `Bearer ${env.PROXY_SECRET}`;
-        if (!fromBrowser && !validAuth) {
-          return jsonResp({ ok: false, error: 'Unauthorized' }, 401, cors);
-        }
+      // AUTH (2026-07-06 audit C1): this route DMs arbitrary users as the bot,
+      // so it MUST be secret-gated. The old check was bypassable two ways —
+      // skipped entirely when PROXY_SECRET was unset, and `origin.length>0`
+      // treated any (forgeable) Origin header as a trusted browser. No repo
+      // page calls /discord-send, so lock it hard with SYNC_SECRET (header or
+      // ?secret=, same pattern as /trigger). A bearer PROXY_SECRET still works
+      // for any legacy caller that used it.
+      {
+        const provided = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret') || '';
+        const bearer = (request.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
+        const ok = (env.SYNC_SECRET && provided === env.SYNC_SECRET) ||
+                   (env.PROXY_SECRET && bearer === env.PROXY_SECRET);
+        if (!ok) return jsonResp({ ok: false, error: 'Unauthorized' }, 401, cors);
       }
       try {
         const body = await request.json();
@@ -10905,6 +10912,10 @@ export default {
     if (url.pathname === '/bot-info' && request.method === 'GET') {
       // Diagnostic: which servers (guilds) the bot is in + its identity.
       // The bot can DM anyone who shares one of these guilds with it.
+      // AUTH (2026-07-06 audit): leaks bot identity + guild list — gate it.
+      if ((request.headers.get('X-Sync-Secret') || url.searchParams.get('secret')) !== env.SYNC_SECRET) {
+        return jsonResp({ error: 'Unauthorized' }, 401, corsHeaders);
+      }
       if (!env.DISCORD_TOKEN) return jsonResp({ error: 'no DISCORD_TOKEN (bot uses a proxy path)' }, 200, corsHeaders);
       try {
         const meR = await fetch('https://discord.com/api/v10/users/@me', { headers: { Authorization: `Bot ${env.DISCORD_TOKEN}` } });
