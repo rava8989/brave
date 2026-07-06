@@ -758,7 +758,9 @@ function earnBoardMsg(b, mode, stage) {
   const head = stage === 'final' ? `🌙 **[EARNINGS]${tag} FINAL BOARD — ${b.date}**`
              : `🌙 **[EARNINGS]${tag} morning preview — ${b.date}**`;
   if (!b.board.length) return `${head}\nNobody reports in this window. No trades tonight.`;
-  const lines = b.board.map(r => {
+  const outside = b.board.filter(r => r.notes.some(n => n.startsWith('outside universe')));
+  const scored = b.board.filter(r => !r.notes.some(n => n.startsWith('outside universe')));
+  const lines = scored.map(r => {
     const g = x => x === null ? '·' : x ? '✓' : '✗';
     return `${r.verdict === 'LONG' ? '🟢' : r.verdict === 'CROWDED' ? '🔴' : '⚪'} ` +
       `**${r.ticker}** (${r.when}) PW ${r.pw_ratio ?? '—'} | run ${r.runup_2w != null ? (r.runup_2w * 100).toFixed(1) + '%' : '—'} | ` +
@@ -766,7 +768,10 @@ function earnBoardMsg(b, mode, stage) {
       `G:${g(r.g1)}${g(r.g2)}${g(r.g3)}${g(r.g4)} → **${r.verdict}**` +
       (r.notes.length ? ` _(${r.notes.join('; ')})_` : '');
   });
-  let tail = `\nVIX check: ${b.vix.ratio}× its 100d mean (${b.vix.ok ? 'calm ✓' : '⛔ SPIKING — all nights skipped'})` +
+  let tail = outside.length
+    ? `\n⚪ outside universe (${outside.length}): ${outside.map(o => o.ticker).join(', ')}`
+    : '';
+  tail += `\nVIX check: ${b.vix.ratio}× its 100d mean (${b.vix.ok ? 'calm ✓' : '⛔ SPIKING — all nights skipped'})` +
              ` · calendar: ${b.calSrc}`;
   if (stage === 'final' && b.longs.length) {
     const w = (100 / b.longs.length).toFixed(1);
