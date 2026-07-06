@@ -754,9 +754,8 @@ async function earnBuildBoard(env, token, boardISO, opts = {}) {
 }
 
 function earnBoardMsg(b, mode, stage) {
-  const tag = mode === 'live' ? '' : ' [PAPER]';
-  const head = stage === 'final' ? `🌙 **[EARNINGS]${tag} FINAL BOARD — ${b.date}**`
-             : `🌙 **[EARNINGS]${tag} morning preview — ${b.date}**`;
+  const head = stage === 'final' ? `🌙 **[EARNINGS] FINAL BOARD — ${b.date}**`
+             : `🌙 **[EARNINGS] morning preview — ${b.date}**`;
   if (!b.board.length) return `${head}\nNobody reports in this window. No trades tonight.`;
   const outside = b.board.filter(r => r.notes.some(n => n.startsWith('outside universe')));
   const scored = b.board.filter(r => !r.notes.some(n => n.startsWith('outside universe')));
@@ -775,7 +774,7 @@ function earnBoardMsg(b, mode, stage) {
              ` · calendar: ${b.calSrc}`;
   if (stage === 'final' && b.longs.length) {
     const w = (100 / b.longs.length).toFixed(1);
-    tail += `\n**ACTION (${mode === 'live' ? 'REAL' : 'PAPER'}): buy at 3:45–3:55 close — ` +
+    tail += `\n**ACTION: buy at 3:45–3:55 close — ` +
             b.longs.map(l => `${l.ticker} ${w}%`).join(' · ') + `** · sell ALL at tomorrow's open`;
   }
   if (stage === 'final' && !b.longs.length) tail += `\nNo qualifiers tonight — stand down.`;
@@ -874,7 +873,7 @@ async function earnExitJob(env, etNow, token) {
       } catch (e) { outs.push(`${sym} (quote failed)`); }
     }
     const mode = open_.mode || 'paper';
-    await earnSend(env, `🌙 **[EARNINGS]${mode === 'live' ? '' : ' [PAPER]'} SELL AT OPEN — now.** ` +
+    await earnSend(env, `🌙 **[EARNINGS] SELL AT OPEN — now.** ` +
       `Overnight results: ${outs.join(' · ')}. Green or red — out.`);
     await env.SIGNAL_KV.delete(`earn_open_${prevISO}`);
   } catch (e) {
