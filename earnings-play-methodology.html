@@ -90,8 +90,8 @@ base_rate   = frequency of reaction(q) &gt; 0 over the last 4–8 reports
     <tr><td>Aggressor-tagged flow (optional upgrade)</td><td>CheddarFlow manual export</td>
         <td>true BUY/SELL tags for names on the verdict boundary</td></tr>
     <tr><td>Prices, run-up, ATH, base rates</td><td>Schwab price history</td><td>fully automatic</td></tr>
-    <tr><td>Historical validation set</td><td>ThetaData EOD chains 2022-07 → 2026-07</td>
-        <td>~3,000 earnings events across the 211-name universe</td></tr>
+    <tr><td>Historical validation set</td><td>ThetaData EOD chains 2018-07 → 2026-07</td>
+        <td>10,677 earnings events across the 502-name universe (7 tradeable years after base-rate warm-up)</td></tr>
   </table>
   <h3>3.1 Intraday scoring cadence</h3>
   <p>Gates 2 and 3 are frozen for the session (their inputs don't change intraday). Gate 1 rescoring runs
@@ -107,11 +107,11 @@ base_rate   = frequency of reaction(q) &gt; 0 over the last 4–8 reports
   <h2>4 · Decision rule</h2>
   <table>
     <tr><th>Gate</th><th>Condition for ✓</th><th>Failure mode it removes</th></tr>
-    <tr><td><b>1 · Flow</b></td><td>2.33× ≤ PW ≤ 5× (v2.3: floor raised — the 2.0–2.33 sliver was net-negative and carried the drawdown; maxDD −45%→−19%)</td><td>&lt;2× = no informed signal; &gt;5× = crowded long —
+    <tr><td><b>1 · Flow</b></td><td>2.33× ≤ PW ≤ 5× (v2.3: the 2.0–2.33 "lukewarm" sliver was net-negative and carried the drawdown; re-validated on the full 502-name / 8-year record — relaxing the floor back to 2.0 collapses returns)</td><td>&lt;2× = no informed signal; &gt;5× = crowded long —
         the position everyone already holds has no marginal buyer left (the AVGO/MU air-pocket case)</td></tr>
-    <tr><td><b>2 · Expectations</b></td><td>v2.2: 2-week run-up &lt; 0 AND ≥5% below ATH
-        (backtest 2026-07-04: rising-in LONGs lost −0.50% at 44% hit; falling-in made +2.73% at 67% — t=2.76,
-        positive all 4 years)</td>
+    <tr><td><b>2 · Expectations</b></td><td>v2.3 FINAL: 2-week run-up &lt; 0 AND ≥5% below ATH. Rising-in trades lost money at every
+        sample size tested; a deeper −10% ATH cut looked better on 4-year data but did NOT survive the
+        6-year test and was rejected.</td>
         <td>priced-for-perfection: good news already spent</td></tr>
     <tr><td><b>3 · Base rate</b></td><td>4–8 quarter history shows beats get paid</td>
         <td>beat-fade names: chronic sell-the-news reactors</td></tr>
@@ -132,17 +132,27 @@ base_rate   = frequency of reaction(q) &gt; 0 over the last 4–8 reports
 
   <h2>5 · Validation protocol</h2>
   <ul class="plain">
-    <li><b>Historical gate test:</b> all three gates computed as-of each of ~3,000 past earnings events
-    (2022-07 →) using only pre-print data; LONG-verdict events' open-reaction distribution compared against
+    <li><b>Historical gate test:</b> all three gates computed as-of each of 10,677 past earnings events
+    (2018-07 →) using only pre-print data; LONG-verdict events' open-reaction distribution compared against
     the PASS distribution and against unconditional. The PW band and gate conjunction must discriminate
     out-of-sample or the scanner does not go live.</li>
     <li><b>The log is mandatory:</b> every scored name — trades <i>and</i> passes — with date, ratios,
     deep-ITM dollars, run-up, base rate, verdict, 24h outcome, P/L. Pass outcomes are the control group
     that keeps the gates honest over time.</li>
     <li><b>Costs:</b> slippage on both legs; the morning exit is marketable into liquidity.</li>
-    <li><b>Universe note:</b> validation events come from the 211-name activity-screened universe; the live
+    <li><b>Universe note:</b> validation events come from the 502-name activity-screened universe; the live
     board applies the same liquidity screen to whoever reports, so construction matches.</li>
   </ul>
+
+  <h3>Final validated record (v2.3, locked 2026-07-05)</h3>
+  <p>313 LONGs over 7 tradeable years: +2.62% average night net of SPY, 61% hit rate, t=3.60. At the
+  owner's 100%-per-night sizing: +61%/yr compounded, max drawdown −53%. Per-year (net):
+  2019 −4% · 2020 −18% · 2021 +82% · 2022 −24% · 2023 +227% · 2024 +87% · 2025 +183% · 2026 +46%.</p>
+  <div class="warn"><b>Two pre-registered rejections and one era finding, recorded so they stay dead:</b>
+  (1) ATH −10% variant — won on 4-year data, failed the 6-year test. (2) SPY&gt;200-day trend gate —
+  fixed 2022 beautifully, then failed its pre-registered COVID out-of-time test (it cut +2.79% winners
+  in 2020); rejected. (3) The edge is a post-2020 phenomenon: pre-2021 options flow was too thin for
+  Gate 1 to read — 2019–2020 trade flat-to-negative and are disclosed, not hidden.</div>
 
   <h2>6 · Known limitations</h2>
   <ul class="plain">
