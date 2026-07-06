@@ -526,6 +526,392 @@ async function gexmCollectChains(env, etNow, opts = {}) {
   return { gexm: 'committed', n, failed };
 }
 
+
+// ════════════════════════════════════════════════════════════════════
+// EARNINGS PLAY v2.4 SCANNER (2026-07-06) — fully Schwab-automatic
+// ────────────────────────────────────────────────────────────────────
+// Gates (v2.4, backtest-locked): 1) opened-premium PW ratio in [2.33, 5]
+// over 14d lookback (last 2 trading days ×2 weight); 2) 2-week run-up < 0
+// AND ≥5% below rolling ATH; 3) ticker base rate ≥ 0.5 (needs ≥4 prior
+// reactions); 4) prior-day VIX < 1.2 × its own 100-day mean.
+// Sizing rule (owner): 100% of account per signal night, equal split.
+// Mode: KV earnings_mode = 'paper' (default) | 'live' — message tag only,
+// this scanner NEVER places orders.
+//
+// Delivery: owner DM (discord_config.channelId) + KV earnings_webhook_url.
+// NEVER the Σ3 subscriber fan-out.
+//
+// Data: seed file data/earnings_scanner_seed.json (base rates from the 8yr
+// backtest; flow windows through 2026-07-02; 6-week forward calendar as
+// Nasdaq fallback). Worker self-collects flow nightly for watchlist names
+// (earnflow_<sym> KV, rolling). Live intraday Gate-1 is volume-premium
+// (no next-day OI confirmation available intraday) — divergence from the
+// backtest's OI-confirmed proxy is exactly what paper week measures.
+// KV keys: earn_board_<date>, earn_done_<date>_<step>, earnflow_<sym>,
+//          earn_log (rolling paper log), earnscan_done_<date> (watchdog).
+
+const EARN_DTE_MAX = 14, EARN_PW_LO = 7/3, EARN_PW_HI = 5.0;
+const EARN_RUNUP_MAX = 0.0, EARN_ATH_MAX = -0.05, EARN_BASE_MIN = 0.5;
+const EARN_VIXR_MAX = 1.2, EARN_LOOKBACK_D = 14, EARN_W2_BDAYS = 2;
+
+async function earnSeed(env) {
+  const cached = await env.SIGNAL_KV.get('earn_seed_cache');
+  if (cached) return JSON.parse(cached);
+  const r = await fetch('https://raw.githubusercontent.com/rava8989/brave/main/data/earnings_scanner_seed.json',
+    { headers: { 'User-Agent': 'schwab-proxy-worker/1.0' } });
+  if (!r.ok) throw new Error(`seed fetch ${r.status}`);
+  const s = await r.json();
+  await env.SIGNAL_KV.put('earn_seed_cache', JSON.stringify(s), { expirationTtl: 6 * 3600 });
+  return s;
+}
+
+async function earnCalendar(env, fromISO, toISO) {
+  // Try Nasdaq live; fall back to the seed's baked 6-week calendar.
+  const ck = `earn_cal_${fromISO}_${toISO}`;
+  const hit = await env.SIGNAL_KV.get(ck);
+  if (hit) return JSON.parse(hit);
+  const out = [];
+  let src = 'nasdaq';
+  try {
+    for (let d = new Date(fromISO); d <= new Date(toISO); d.setDate(d.getDate() + 1)) {
+      const iso = d.toISOString().slice(0, 10);
+      const dow = new Date(iso + 'T12:00:00Z').getUTCDay();
+      if (dow === 0 || dow === 6) continue;
+      const r = await fetch(`https://api.nasdaq.com/api/calendar/earnings?date=${iso}`,
+        { headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 'Accept': 'application/json' } });
+      if (!r.ok) throw new Error(`nasdaq ${r.status}`);
+      const j = await r.json();
+      for (const row of ((j.data || {}).rows || [])) {
+        out.push({ ticker: (row.symbol || '').trim().toUpperCase(), report_date: iso,
+                   when: row.time === 'time-after-hours' ? 'AMC'
+                       : row.time === 'time-pre-market' ? 'BMO' : 'UNKNOWN' });
+      }
+    }
+  } catch (e) {
+    console.warn('[earn] nasdaq calendar failed, using seed fallback:', e.message);
+    src = 'seed';
+    const seed = await earnSeed(env);
+    for (const ev of (seed.forward_calendar || [])) {
+      const rd = String(ev.report_date).slice(0, 10);
+      if (rd >= fromISO && rd <= toISO) out.push({ ticker: ev.ticker, report_date: rd, when: ev.when });
+    }
+  }
+  const res = { src, events: out };
+  await env.SIGNAL_KV.put(ck, JSON.stringify(res), { expirationTtl: 20 * 3600 });
+  return res;
+}
+
+async function earnVixOK(env, token) {
+  // prior-day VIX close vs mean of last 100 closes (incl. prior day)
+  const end = Date.now(), start = end - 220 * 86400_000;
+  const d = await fetchSchwabJSON(
+    `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24VIX&periodType=year&frequencyType=daily&frequency=1&startDate=${start}&endDate=${end}`,
+    token, env);
+  const closes = (d.candles || []).map(c => c.close).filter(x => x > 0);
+  if (closes.length < 101) throw new Error('VIX history too short');
+  const prior = closes[closes.length - 1];
+  const last100 = closes.slice(-100);
+  const mean = last100.reduce((a, b) => a + b, 0) / last100.length;
+  return { ok: prior < EARN_VIXR_MAX * mean, prior: +prior.toFixed(2), ratio: +(prior / mean).toFixed(3) };
+}
+
+async function earnPriceStats(env, token, sym) {
+  const end = Date.now(), start = end - 5.2 * 365 * 86400_000;
+  const d = await fetchSchwabJSON(
+    `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=${encodeURIComponent(sym)}&periodType=year&frequencyType=daily&frequency=1&startDate=${start}&endDate=${end}`,
+    token, env);
+  const cs = (d.candles || []).filter(c => c.close > 0);
+  if (cs.length < 15) return null;
+  const closes = cs.map(c => c.close);
+  const last = closes[closes.length - 1];
+  const runup = last / closes[closes.length - 11] - 1;
+  const ath = Math.max(...closes);
+  return { last: +last.toFixed(2), runup_2w: +runup.toFixed(4), ath_dist: +(last / ath - 1).toFixed(4) };
+}
+
+function earnFlowFromDays(days, todayISO) {
+  // days: {iso: {c, p, di}} — 14 calendar-day window ending today, last 2
+  // bdays double-weighted. Returns {pw, deep, callSum, putSum, nDays}.
+  const cutoff = new Date(new Date(todayISO + 'T12:00:00Z').getTime() - EARN_LOOKBACK_D * 86400_000)
+    .toISOString().slice(0, 10);
+  const isos = Object.keys(days).filter(d => d > cutoff && d <= todayISO).sort();
+  if (!isos.length) return { pw: null, deep: 0, callSum: 0, putSum: 0, nDays: 0 };
+  const recent = new Set(isos.slice(-EARN_W2_BDAYS));
+  let c = 0, p = 0, deep = 0;
+  for (const iso of isos) {
+    const w = recent.has(iso) ? 2 : 1;
+    c += (days[iso].c || 0) * w;
+    p += (days[iso].p || 0) * w;
+    deep += (days[iso].di || 0) * w;
+  }
+  return { pw: p > 0 ? c / p : (c > 0 ? Infinity : null), deep, callSum: c, putSum: p, nDays: isos.length };
+}
+
+async function earnFlowWindow(env, sym, todayISO, intradayDays) {
+  const seed = await earnSeed(env);
+  const days = Object.assign({}, (seed.flow_seed || {})[sym] || {});
+  const kv = await env.SIGNAL_KV.get(`earnflow_${sym}`);
+  if (kv) Object.assign(days, JSON.parse(kv));
+  if (intradayDays) Object.assign(days, intradayDays);
+  return earnFlowFromDays(days, todayISO);
+}
+
+async function earnChainDayPremium(env, token, sym, todayISO) {
+  // Today's ≤14-DTE volume-premium by side from the live Schwab chain.
+  const toD = new Date(new Date(todayISO).getTime() + (EARN_DTE_MAX + 1) * 86400_000).toISOString().slice(0, 10);
+  const chain = await fetchSchwabJSON(
+    `https://api.schwabapi.com/marketdata/v1/chains?symbol=${encodeURIComponent(sym)}&strikeCount=40&fromDate=${todayISO}&toDate=${toD}&includeUnderlyingQuote=true&strategy=SINGLE&contractType=ALL`,
+    token, env);
+  const spot = chain.underlyingPrice || (chain.underlying || {}).last;
+  let c = 0, p = 0, di = 0;
+  for (const [mapName, side] of [['callExpDateMap', 'c'], ['putExpDateMap', 'p']]) {
+    for (const strikes of Object.values(chain[mapName] || {})) {
+      for (const arr of Object.values(strikes)) {
+        const ct = Array.isArray(arr) ? arr[0] : arr;
+        if (!ct || !(ct.totalVolume > 0)) continue;
+        const mid = (ct.bid > 0 && ct.ask > 0) ? (ct.bid + ct.ask) / 2 : (ct.last > 0 ? ct.last : 0);
+        const prem = ct.totalVolume * mid * 100;
+        if (side === 'c') { c += prem; if (spot && ct.strikePrice < 0.92 * spot) di += prem; }
+        else p += prem;
+      }
+    }
+  }
+  return { c: Math.round(c), p: Math.round(p), di: Math.round(di), spot };
+}
+
+async function earnSend(env, msg) {
+  const results = { dm: false, webhook: false };
+  try {
+    const dcRaw = await env.SIGNAL_KV.get('discord_config');
+    if (dcRaw) {
+      const dc = JSON.parse(dcRaw);
+      if (dc.channelId) results.dm = (await sendDiscordDM(env, dc.channelId, msg, dc.proxyUrl)).ok;
+    }
+  } catch (e) { console.warn('[earn] DM failed:', e.message); }
+  try {
+    const wh = await env.SIGNAL_KV.get('earnings_webhook_url');
+    if (wh) {
+      const r = await fetch(wh, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: msg.slice(0, 1900) }) });
+      results.webhook = r.status === 204 || r.ok;
+    }
+  } catch (e) { console.warn('[earn] webhook failed:', e.message); }
+  return results;
+}
+
+async function earnBuildBoard(env, token, boardISO, opts = {}) {
+  // Board = boardISO's AMC reporters + next-trading-day BMO reporters.
+  // UNKNOWN report time = treated as AMC (enter boardISO close), flagged.
+  const uniRaw = await earnSeed(env);
+  const uniset = new Set(Object.keys(uniRaw.base_rates || {}));
+  const nextD = nextTrade(new Date(boardISO + 'T12:00:00'));
+  const nextISO = isoDateET(nextD);
+  const cal = await earnCalendar(env, boardISO, nextISO);
+  const cands = [];
+  const seen = new Set();
+  for (const ev of cal.events) {
+    if (seen.has(ev.ticker)) continue;
+    const isTonight = ev.report_date === boardISO && ev.when !== 'BMO';
+    const isTomorrowAM = ev.report_date === nextISO && ev.when === 'BMO';
+    if (!isTonight && !isTomorrowAM) continue;
+    seen.add(ev.ticker);
+    cands.push({ ticker: ev.ticker, when: ev.when === 'UNKNOWN' ? 'AMC?' : ev.when,
+                 report_date: ev.report_date, inUniverse: uniset.has(ev.ticker) });
+  }
+  const vix = await earnVixOK(env, token);
+  const seed = uniRaw;
+  const board = [];
+  for (const cd of cands.slice(0, 40)) {                 // subrequest guard
+    const row = { ticker: cd.ticker, when: cd.when, g1: null, g2: null, g3: null, g4: vix.ok,
+                  pw_ratio: null, deep_itm_usd: 0, runup_2w: null, ath_dist: null,
+                  base_rate: null, base_n: 0, verdict: 'PASS', notes: [] };
+    if (!cd.inUniverse) { row.notes.push('outside universe (no base-rate history)'); board.push(row); continue; }
+    const br = (seed.base_rates || {})[cd.ticker];
+    if (br) { row.base_rate = br.base_rate; row.base_n = br.n; row.g3 = br.base_rate >= EARN_BASE_MIN; }
+    try {
+      const ps = await earnPriceStats(env, token, cd.ticker);
+      if (ps) { row.runup_2w = ps.runup_2w; row.ath_dist = ps.ath_dist;
+                row.g2 = ps.runup_2w < EARN_RUNUP_MAX && ps.ath_dist <= EARN_ATH_MAX; }
+    } catch (e) { row.notes.push('price fetch failed'); }
+    try {
+      let intraday = null;
+      if (opts.withIntraday) {
+        const today = await earnChainDayPremium(env, token, cd.ticker, boardISO);
+        intraday = { [boardISO]: today };
+      }
+      const fw = await earnFlowWindow(env, cd.ticker, boardISO, intraday);
+      if (fw.pw != null && isFinite(fw.pw)) row.pw_ratio = +fw.pw.toFixed(2);
+      row.deep_itm_usd = Math.round(fw.deep);
+      row.g1 = fw.pw != null && fw.pw >= EARN_PW_LO && fw.pw <= EARN_PW_HI;
+      if (fw.nDays < 5) row.notes.push(`thin flow window (${fw.nDays}d)`);
+      if (fw.pw != null && fw.pw > EARN_PW_HI) row.verdict = 'CROWDED';
+    } catch (e) { row.notes.push('flow fetch failed'); }
+    if (row.g1 && row.g2 && row.g3 && row.g4) row.verdict = 'LONG';
+    board.push(row);
+  }
+  const longs = board.filter(b => b.verdict === 'LONG');
+  return { date: boardISO, next: nextISO, calSrc: cal.src, vix, board, longs };
+}
+
+function earnBoardMsg(b, mode, stage) {
+  const tag = mode === 'live' ? '' : ' [PAPER]';
+  const head = stage === 'final' ? `🌙 **[EARNINGS]${tag} FINAL BOARD — ${b.date}**`
+             : `🌙 **[EARNINGS]${tag} morning preview — ${b.date}**`;
+  if (!b.board.length) return `${head}\nNobody reports in this window. No trades tonight.`;
+  const lines = b.board.map(r => {
+    const g = x => x === null ? '·' : x ? '✓' : '✗';
+    return `${r.verdict === 'LONG' ? '🟢' : r.verdict === 'CROWDED' ? '🔴' : '⚪'} ` +
+      `**${r.ticker}** (${r.when}) PW ${r.pw_ratio ?? '—'} | run ${r.runup_2w != null ? (r.runup_2w * 100).toFixed(1) + '%' : '—'} | ` +
+      `ATH ${r.ath_dist != null ? (r.ath_dist * 100).toFixed(0) + '%' : '—'} | base ${r.base_rate ?? '—'} | ` +
+      `G:${g(r.g1)}${g(r.g2)}${g(r.g3)}${g(r.g4)} → **${r.verdict}**` +
+      (r.notes.length ? ` _(${r.notes.join('; ')})_` : '');
+  });
+  let tail = `\nVIX check: ${b.vix.ratio}× its 100d mean (${b.vix.ok ? 'calm ✓' : '⛔ SPIKING — all nights skipped'})` +
+             ` · calendar: ${b.calSrc}`;
+  if (stage === 'final' && b.longs.length) {
+    const w = (100 / b.longs.length).toFixed(1);
+    tail += `\n**ACTION (${mode === 'live' ? 'REAL' : 'PAPER'}): buy at 3:45–3:55 close — ` +
+            b.longs.map(l => `${l.ticker} ${w}%`).join(' · ') + `** · sell ALL at tomorrow's open`;
+  }
+  if (stage === 'final' && !b.longs.length) tail += `\nNo qualifiers tonight — stand down.`;
+  return [head, ...lines, tail].join('\n');
+}
+
+async function earnMorningJob(env, etNow, token) {
+  const iso = isoDateET(etNow);
+  const key = `earn_done_${iso}_morning`;
+  if (await env.SIGNAL_KV.get(key)) return;
+  const h = etNow.getHours(), m = etNow.getMinutes();
+  if (!(h === 9 && m >= 10 && m <= 25)) return;
+  await env.SIGNAL_KV.put(key, 'running', { expirationTtl: 86400 });
+  try {
+    const b = await earnBuildBoard(env, token, iso, { withIntraday: false });
+    await env.SIGNAL_KV.put(`earn_board_${iso}`, JSON.stringify(b), { expirationTtl: 3 * 86400 });
+    const mode = (await env.SIGNAL_KV.get('earnings_mode')) || 'paper';
+    await earnSend(env, earnBoardMsg(b, mode, 'morning'));
+    await env.SIGNAL_KV.put(`earnscan_done_${iso}`, 'ok', { expirationTtl: 5 * 86400 });
+  } catch (e) {
+    await env.SIGNAL_KV.delete(key);          // retry next tick in window
+    console.warn('[earn] morning job failed:', e.message);
+  }
+}
+
+async function earnRescoreJob(env, etNow, token) {
+  const iso = isoDateET(etNow);
+  const m = etNow.getMinutes(), h = etNow.getHours();
+  if (!((m >= 0 && m <= 2) || (m >= 30 && m <= 32))) return;     // :00/:30 ticks
+  if (h < 10 || h >= 15 && !(h === 15 && m <= 2)) return;        // 10:00–15:02
+  const raw = await env.SIGNAL_KV.get(`earn_board_${iso}`);
+  if (!raw) return;
+  const prev = JSON.parse(raw);
+  if (!prev.board.length) return;
+  const lock = `earn_rescore_${iso}_${h}_${m < 30 ? 0 : 30}`;
+  if (await env.SIGNAL_KV.get(lock)) return;
+  await env.SIGNAL_KV.put(lock, '1', { expirationTtl: 3600 });
+  try {
+    const b = await earnBuildBoard(env, token, iso, { withIntraday: true });
+    await env.SIGNAL_KV.put(`earn_board_${iso}`, JSON.stringify(b), { expirationTtl: 3 * 86400 });
+  } catch (e) { console.warn('[earn] rescore failed:', e.message); }
+}
+
+async function earnFinalJob(env, etNow, token) {
+  const iso = isoDateET(etNow);
+  const key = `earn_done_${iso}_final`;
+  if (await env.SIGNAL_KV.get(key)) return;
+  const h = etNow.getHours(), m = etNow.getMinutes();
+  if (!(h === 15 && m >= 30 && m <= 45)) return;
+  await env.SIGNAL_KV.put(key, 'running', { expirationTtl: 86400 });
+  try {
+    const b = await earnBuildBoard(env, token, iso, { withIntraday: true });
+    b.final = true;
+    await env.SIGNAL_KV.put(`earn_board_${iso}`, JSON.stringify(b), { expirationTtl: 7 * 86400 });
+    const mode = (await env.SIGNAL_KV.get('earnings_mode')) || 'paper';
+    await earnSend(env, earnBoardMsg(b, mode, 'final'));
+    if (b.longs.length) {
+      await env.SIGNAL_KV.put(`earn_open_${iso}`, JSON.stringify(
+        { date: iso, longs: b.longs.map(l => l.ticker), mode }), { expirationTtl: 7 * 86400 });
+    }
+  } catch (e) {
+    await env.SIGNAL_KV.delete(key);
+    console.warn('[earn] final job failed:', e.message);
+  }
+}
+
+async function earnExitJob(env, etNow, token) {
+  // 9:32: sell reminder + outcome recording for the previous session's LONGs.
+  const iso = isoDateET(etNow);
+  const h = etNow.getHours(), m = etNow.getMinutes();
+  if (!(h === 9 && m >= 32 && m <= 45)) return;
+  const prevISO = isoDateET(prevTrade(etNow));
+  const raw = await env.SIGNAL_KV.get(`earn_open_${prevISO}`);
+  if (!raw) return;
+  const key = `earn_done_${iso}_exit`;
+  if (await env.SIGNAL_KV.get(key)) return;
+  await env.SIGNAL_KV.put(key, 'running', { expirationTtl: 86400 });
+  try {
+    const open_ = JSON.parse(raw);
+    const outs = [];
+    for (const sym of open_.longs) {
+      try {
+        const end = Date.now(), start = end - 7 * 86400_000;
+        const d = await fetchSchwabJSON(
+          `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=${encodeURIComponent(sym)}&periodType=month&frequencyType=daily&frequency=1&startDate=${start}&endDate=${end}`,
+          token, env);
+        const cs = d.candles || [];
+        const prevBar = cs[cs.length - 2], todayBar = cs[cs.length - 1];
+        const ret = todayBar.open / prevBar.close - 1;
+        outs.push(`${sym} ${ret >= 0 ? '+' : ''}${(ret * 100).toFixed(1)}%`);
+        const logRaw = await env.SIGNAL_KV.get('earn_log');
+        const log = logRaw ? JSON.parse(logRaw) : [];
+        log.unshift({ date: prevISO, ticker: sym, mode: open_.mode,
+                      move_24h: +ret.toFixed(4), recorded: iso });
+        await env.SIGNAL_KV.put('earn_log', JSON.stringify(log.slice(0, 500)));
+      } catch (e) { outs.push(`${sym} (quote failed)`); }
+    }
+    const mode = open_.mode || 'paper';
+    await earnSend(env, `🌙 **[EARNINGS]${mode === 'live' ? '' : ' [PAPER]'} SELL AT OPEN — now.** ` +
+      `Overnight results: ${outs.join(' · ')}. Green or red — out.`);
+    await env.SIGNAL_KV.delete(`earn_open_${prevISO}`);
+  } catch (e) {
+    await env.SIGNAL_KV.delete(key);
+    console.warn('[earn] exit job failed:', e.message);
+  }
+}
+
+async function earnNightlyCollect(env, etNow, token) {
+  // 16:41–17:15: append today's ≤14-DTE volume-premium day entry for every
+  // name reporting within 15 days. Chunked ≤10 names/tick.
+  const iso = isoDateET(etNow);
+  const doneKey = `earn_collect_done_${iso}`;
+  if (await env.SIGNAL_KV.get(doneKey)) return;
+  const h = etNow.getHours(), m = etNow.getMinutes();
+  if (!((h === 16 && m >= 41) || (h === 17 && m <= 15))) return;
+  const horizon = new Date(etNow.getTime() + 15 * 86400_000).toISOString().slice(0, 10);
+  const cal = await earnCalendar(env, iso, horizon);
+  const uniset = new Set(Object.keys(((await earnSeed(env)).base_rates) || {}));
+  const names = [...new Set(cal.events.filter(e => uniset.has(e.ticker)).map(e => e.ticker))];
+  const progKey = `earn_collect_part_${iso}`;
+  const done = new Set(JSON.parse((await env.SIGNAL_KV.get(progKey)) || '[]'));
+  const batch = names.filter(n => !done.has(n)).slice(0, 10);
+  for (const sym of batch) {
+    try {
+      const day = await earnChainDayPremium(env, token, sym, iso);
+      const kvKey = `earnflow_${sym}`;
+      const cur = JSON.parse((await env.SIGNAL_KV.get(kvKey)) || '{}');
+      cur[iso] = { c: day.c, p: day.p, di: day.di };
+      const isos = Object.keys(cur).sort().slice(-25);
+      const trimmed = {}; for (const k of isos) trimmed[k] = cur[k];
+      await env.SIGNAL_KV.put(kvKey, JSON.stringify(trimmed), { expirationTtl: 40 * 86400 });
+      done.add(sym);
+    } catch (e) { console.warn(`[earn] collect ${sym}:`, e.message); done.add(sym); }
+  }
+  await env.SIGNAL_KV.put(progKey, JSON.stringify([...done]), { expirationTtl: 86400 });
+  if (done.size >= names.length) {
+    await env.SIGNAL_KV.put(doneKey, 'done', { expirationTtl: 3 * 86400 });
+    console.log(`[earn] nightly collect complete: ${done.size} names`);
+  }
+}
+
 // CycleLab 5-min slot helpers — shared by the EOD append and the live feed.
 function _cycSlots() {
   const slots = [];
@@ -5001,6 +5387,23 @@ async function handleScheduled(env) {
     }
   }
 
+  // ── EARNINGS PLAY scanner jobs (window-gated inside; cheap no-ops otherwise) ──
+  {
+    let earnToken = schwabToken;
+    const earnWindow = (etHour === 9) || (etHour >= 10 && etHour <= 15) ||
+                       (etHour === 16 && etMin >= 41) || (etHour === 17 && etMin <= 15);
+    if (earnWindow) {
+      if (!earnToken) { try { earnToken = await getAccessToken(env); } catch (_) {} }
+      if (earnToken) {
+        try { await earnMorningJob(env, etNow, earnToken); } catch (e) { console.warn('[earn-morning]', e.message); }
+        try { await earnExitJob(env, etNow, earnToken); } catch (e) { console.warn('[earn-exit]', e.message); }
+        try { await earnRescoreJob(env, etNow, earnToken); } catch (e) { console.warn('[earn-rescore]', e.message); }
+        try { await earnFinalJob(env, etNow, earnToken); } catch (e) { console.warn('[earn-final]', e.message); }
+        try { await earnNightlyCollect(env, etNow, earnToken); } catch (e) { console.warn('[earn-collect]', e.message); }
+      }
+    }
+  }
+
   // ── GEXMAGNET chain collector: RETIRED 2026-07-04 (owner call — strategy
   // shelved; Σ3 outperforms it ~10x, page stays unlisted). Collection stopped;
   // code + /gexm-trigger endpoint kept for manual re-runs if ever revived.
@@ -9201,6 +9604,47 @@ export default {
     // ── GET /diagonal-trigger ── Manually run handleDiagonalTrade NOW
     // Bypasses the normal 12:30 ET window so we can verify the open path
     // end-to-end without waiting for the cron. Auth-required.
+    // ── GET /earnings-board ── today's board (public read for the page) ──
+    if (url.pathname === '/earnings-board' && request.method === 'GET') {
+      const iso = isoDateET(toET());
+      const raw = await env.SIGNAL_KV.get(`earn_board_${iso}`)
+               || await env.SIGNAL_KV.get(`earn_board_${isoDateET(prevTrade(toET()))}`);
+      const logRaw = await env.SIGNAL_KV.get('earn_log');
+      return jsonResp({ board: raw ? JSON.parse(raw) : null,
+                        live_log: logRaw ? JSON.parse(logRaw) : [] },
+        200, { 'Access-Control-Allow-Origin': '*' });
+    }
+
+    // ── GET /earnings-scan-trigger?step=morning|rescore|final|exit|collect&date=ISO ──
+    // Manual/dry-run driver. Auth. date override runs the board builder for
+    // any date WITHOUT sending messages unless &send=1.
+    if (url.pathname === '/earnings-scan-trigger' && request.method === 'GET') {
+      const secret = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
+      if (!secret || (secret !== env.SYNC_SECRET && secret !== env.GEXM_TRIGGER_TOKEN)) {
+        return jsonResp({ error: 'Unauthorized' }, 401, { 'Access-Control-Allow-Origin': '*' });
+      }
+      const token = await getAccessToken(env);
+      const step = url.searchParams.get('step') || 'board';
+      const dateISO = url.searchParams.get('date') || isoDateET(toET());
+      if (step === 'board') {
+        const b = await earnBuildBoard(env, token, dateISO,
+          { withIntraday: url.searchParams.get('intraday') === '1' });
+        if (url.searchParams.get('send') === '1') {
+          const mode = (await env.SIGNAL_KV.get('earnings_mode')) || 'paper';
+          await earnSend(env, earnBoardMsg(b, mode,
+            url.searchParams.get('stage') === 'final' ? 'final' : 'morning'));
+        }
+        return jsonResp(b);
+      }
+      const etNow = toET();
+      if (step === 'morning') { await earnMorningJob(env, etNow, token); }
+      else if (step === 'rescore') { await earnRescoreJob(env, etNow, token); }
+      else if (step === 'final') { await earnFinalJob(env, etNow, token); }
+      else if (step === 'exit') { await earnExitJob(env, etNow, token); }
+      else if (step === 'collect') { await earnNightlyCollect(env, etNow, token); }
+      return jsonResp({ ok: true, step });
+    }
+
     // ── GET /earnings-test-dm ── one test DM to the owner's private channel
     // (discord_config.channelId — the watchdog path; NEVER subscribers). Auth.
     if (url.pathname === '/earnings-test-dm' && request.method === 'GET') {
@@ -11655,7 +12099,8 @@ export default {
         const prevISO = isoDateET(prevTrade(etW));
         const COLLECTOR_CHECKS = [
           // GEXM chain recorder retired 2026-07-04 (strategy shelved) — do not re-add
-          // ['Earnings watchlist collector', `earnwatch_done_${prevISO}`, '…'],
+          ['Earnings scanner (morning board)', `earnscan_done_${prevISO}`,
+           '→ /earnings-scan-trigger?step=morning to diagnose; no board was built'],
         ];
         for (const [label, key, hint] of COLLECTOR_CHECKS) {
           const alertKey = `collector_alert_${key}`;

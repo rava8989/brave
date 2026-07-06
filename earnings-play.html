@@ -213,10 +213,33 @@ const fmt = (x, d=1) => x == null ? '—' : (+x).toFixed(d);
 const pct = x => x == null ? '—' : (x*100).toFixed(1) + '%';
 const g = ok => ok == null ? '—' : ok ? '<span class="g-ok">✓</span>' : '<span class="g-no">✗</span>';
 
+const WORKER = 'https://schwab-proxy.ravamt4.workers.dev';
 function load() {
-  fetch('data/earnings_play_today.json', {cache: 'no-store'})
+  fetch(WORKER + '/earnings-board', {cache: 'no-store'})
     .then(r => { if (!r.ok) throw 0; return r.json(); })
+    .then(d => {
+      if (d.board && d.board.board && d.board.board.length) {
+        renderLiveBoard(d.board);
+      }
+      return fetch('data/earnings_play_today.json', {cache: 'no-store'});
+    })
+    .catch(() => fetch('data/earnings_play_today.json', {cache: 'no-store'}))
+    .then(r => { if (!r || !r.ok) throw 0; return r.json(); })
     .then(render).catch(() => {});
+}
+function renderLiveBoard(b) {
+  const vcls = v => v === 'LONG' ? 'long' : (v === 'CROWDED' ? 'crowded' : 'pass');
+  const g = x => x === null ? '·' : x ? '<span class="g-ok">✓</span>' : '<span class="g-no">✗</span>';
+  document.querySelector('#board tbody').innerHTML = b.board.map(r =>
+    `<tr><td>${r.ticker}</td><td>${r.when}</td><td>${r.pw_ratio ?? '—'}${r.pw_ratio ? '×' : ''}</td>` +
+    `<td>${r.deep_itm_usd ? '$' + (r.deep_itm_usd/1e6).toFixed(1) + 'M' : '—'}</td>` +
+    `<td>${r.runup_2w != null ? (r.runup_2w*100).toFixed(1) + '%' : '—'}</td>` +
+    `<td>${r.ath_dist != null ? (r.ath_dist*100).toFixed(0) + '%' : '—'}</td>` +
+    `<td>${r.base_rate ?? '—'}${r.base_n ? ' (' + r.base_n + 'q)' : ''}</td>` +
+    `<td>${g(r.g1)}</td><td>${g(r.g2)}</td><td>${g(r.g3)}</td>` +
+    `<td class="${vcls(r.verdict)}">${r.verdict}</td></tr>`).join('');
+  document.getElementById('boardDate').textContent =
+    `${b.date} · live${b.final ? ' · FINAL' : ''} · VIX ${b.vix.ratio}×`;
 }
 load();
 setInterval(load, 60_000);   // page refresh; data itself updates every 30 min
