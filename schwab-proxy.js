@@ -709,6 +709,19 @@ async function earnBuildBoard(env, token, boardISO, opts = {}) {
   const cal = await earnCalendar(env, boardISO, nextISO);
   const cands = [];
   const seen = new Set();
+  // Manual additions (owner override for calendar gaps): KV earn_extra_<date>
+  // = JSON array of tickers, treated as AMC reporters on boardISO.
+  try {
+    const extraRaw = await env.SIGNAL_KV.get(`earn_extra_${boardISO}`);
+    if (extraRaw) {
+      for (const t of JSON.parse(extraRaw)) {
+        const tk = String(t).toUpperCase();
+        if (!seen.has(tk)) { seen.add(tk);
+          cands.push({ ticker: tk, when: 'AMC', report_date: boardISO,
+                       inUniverse: uniset.has(tk), manual: true }); }
+      }
+    }
+  } catch (e) { console.warn('[earn] extra parse:', e.message); }
   for (const ev of cal.events) {
     if (seen.has(ev.ticker)) continue;
     const isTonight = ev.report_date === boardISO && ev.when !== 'BMO';
@@ -725,9 +738,11 @@ async function earnBuildBoard(env, token, boardISO, opts = {}) {
     const row = { ticker: cd.ticker, when: cd.when, g1: null, g2: null, g3: null, g4: vix.ok,
                   pw_ratio: null, deep_itm_usd: 0, runup_2w: null, ath_dist: null,
                   base_rate: null, base_n: 0, verdict: 'PASS', notes: [] };
-    if (!cd.inUniverse) { row.notes.push('outside universe (no base-rate history)'); board.push(row); continue; }
+    if (!cd.inUniverse && !cd.manual) { row.notes.push('outside universe (no base-rate history)'); board.push(row); continue; }
     const br = (seed.base_rates || {})[cd.ticker];
     if (br) { row.base_rate = br.base_rate; row.base_n = br.n; row.g3 = br.base_rate >= EARN_BASE_MIN; }
+    else { row.g3 = false; row.notes.push('history too thin for Gate 3 (<4 prior reports)'); }
+    if (cd.manual) row.notes.push('manually added');
     try {
       const ps = await earnPriceStats(env, token, cd.ticker);
       if (ps) { row.runup_2w = ps.runup_2w; row.ath_dist = ps.ath_dist;
@@ -8450,6 +8465,39 @@ async function getCardFonts() {
 function _cardEsc(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
+// Approx Inter advance widths (fraction of em) so we can wrap card text before
+// it clips past the inner width — SVG <text> has no auto-wrap. Biased slightly
+// wide so estimation errors wrap early rather than overflow the card.
+function _cardCharEm(ch) {
+  if (ch === ' ') return 0.28;
+  if ('il.,:;\'!|'.includes(ch)) return 0.30;
+  if ('jtrf()[]{}-/\\·'.includes(ch)) return 0.42;
+  if ('mwMW%—@&→'.includes(ch)) return 0.90;
+  if (ch >= 'A' && ch <= 'Z') return 0.72;
+  if (ch >= '0' && ch <= '9') return 0.58;
+  return 0.56;
+}
+function _cardTextW(str, fs) {
+  let em = 0;
+  for (const ch of String(str)) em += _cardCharEm(ch);
+  return em * fs;
+}
+// Word-wrap a value into lines: the first line has `firstMax` px available
+// (room left after its label), continuation lines get `contMax`. Never splits
+// a single word.
+function _cardWrap(value, fs, firstMax, contMax) {
+  const words = String(value == null ? '' : value).split(' ');
+  const lines = [];
+  let cur = '';
+  for (const w of words) {
+    const test = cur ? cur + ' ' + w : w;
+    const max = lines.length === 0 ? firstMax : contMax;
+    if (cur && _cardTextW(test, fs) > max) { lines.push(cur); cur = w; }
+    else cur = test;
+  }
+  lines.push(cur);
+  return lines;
+}
 // data: { title, date, vix, vixSub, rows:[{n,det,yes}], tiles:[[label,val,color]], stats:[[label,val]] }
 function buildMorningCardSvg(d) {
   const W = 460, P = 18;
@@ -8482,21 +8530,34 @@ function buildMorningCardSvg(d) {
   });
   const statLabelY = tileY + tileH + 22;
   s += `<text x="${P}" y="${statLabelY}" font-family="${F}" font-size="11" letter-spacing="0.5" fill="${C.mute}">STATS</text>`;
+  // SVG <text> does not wrap; long stat/strike values used to clip past the
+  // card's inner width. emitKV word-wraps the value under its label and returns
+  // the baseline of the last line it drew.
+  const emitKV = (label, val, fs, yStart, contStep) => {
+    const off = _cardTextW(label + '   ', fs);
+    const lines = _cardWrap(val, fs, Math.max(60, innerW - off), innerW);
+    s += `<text x="${P}" y="${yStart}" font-family="${F}" font-size="${fs}"><tspan fill="${C.mute}">${_cardEsc(label)}</tspan><tspan fill="${C.sub}">   ${_cardEsc(lines[0])}</tspan></text>`;
+    let yy = yStart;
+    for (let k = 1; k < lines.length; k++) {
+      yy += contStep;
+      s += `<text x="${P}" y="${yy}" font-family="${F}" font-size="${fs}" fill="${C.sub}">${_cardEsc(lines[k])}</text>`;
+    }
+    return yy;
+  };
   const sy0 = statLabelY + 18;
-  d.stats.forEach((st, i) => {
-    const y = sy0 + i * 20;
-    s += `<text x="${P}" y="${y}" font-family="${F}" font-size="12"><tspan fill="${C.mute}">${_cardEsc(st[0])}</tspan><tspan fill="${C.sub}">   ${_cardEsc(st[1])}</tspan></text>`;
+  let statY = sy0, lastY = sy0;
+  d.stats.forEach((st) => {
+    lastY = emitKV(String(st[0] || ''), String(st[1] || ''), 12, statY, 16);
+    statY = lastY + 20;
   });
-  let H = sy0 + d.stats.length * 20 + 6;
+  let H = lastY + 8;
   // Optional M8BF strikes block — INSIDE the card, small + muted, only when armed.
   if (d.m8bfStrikes) {
     const sepY = H + 2;
     s += `<line x1="${P}" y1="${sepY}" x2="${W - P}" y2="${sepY}" stroke="#34363c" stroke-width="1"/>`;
-    const l1 = sepY + 19;
-    s += `<text x="${P}" y="${l1}" font-family="${F}" font-size="11"><tspan fill="${C.mute}">M8BF skip-ends</tspan><tspan fill="${C.sub}">   ${_cardEsc(d.m8bfStrikes.skip)}</tspan></text>`;
-    const l2 = l1 + 18;
-    s += `<text x="${P}" y="${l2}" font-family="${F}" font-size="11"><tspan fill="${C.mute}">combo bans</tspan><tspan fill="${C.sub}">   ${_cardEsc(d.m8bfStrikes.combos)}</tspan></text>`;
-    H = l2 + 8;
+    let strikeY = emitKV('M8BF skip-ends', d.m8bfStrikes.skip, 11, sepY + 19, 15);
+    strikeY = emitKV('combo bans', d.m8bfStrikes.combos, 11, strikeY + 18, 15);
+    H = strikeY + 8;
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><rect x="0" y="0" width="${W}" height="${H}" rx="16" fill="${C.card}"/>${s}</svg>`;
 }
@@ -8776,7 +8837,7 @@ const SAMPLE_MORNING_CARD = {
   stats: [
     ['Day-type', 'NEUTRAL/BULL · Strad below norm ($695 vs $1091)'],
     ['Vol-flow', 'VOL_BID · M8BF $149 vs $434 · Strad $1902 vs $1091'],
-    ['M8BF WR', '6% yday · soft ($310–350 vs $427)'],
+    ['M8BF svc', 'yday WR 32% — soft next-day history ($310–350 vs $427), not proven'],
   ],
   m8bfStrikes: { skip: '10 · 25 · 35 · 40 · 65 · 80', combos: '0→95 · 20→15 · 55→50 · 65→60 · 85→90' },
 };
