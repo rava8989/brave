@@ -579,6 +579,7 @@ async function gexmCollectChains(env, etNow, opts = {}) {
 const EARN_DTE_MAX = 14, EARN_PW_LO = 7/3, EARN_PW_HI = 5.0;
 const EARN_RUNUP_MAX = 0.0, EARN_ATH_MAX = -0.05, EARN_BASE_MIN = 0.5;
 const EARN_VIXR_MAX = 1.2, EARN_LOOKBACK_D = 14, EARN_W2_BDAYS = 2;
+const EARN_M_LO = 2.5, EARN_M_HI = 6.0, EARN_WEEKLY_MIN_DAYS = 5;  // hybrid: monthly band + weekly-presence threshold
 
 async function earnSeed(env) {
   const cached = await env.SIGNAL_KV.get('earn_seed_cache');
@@ -682,27 +683,57 @@ async function earnFlowWindow(env, sym, todayISO, intradayDays) {
   return earnFlowFromDays(days, todayISO);
 }
 
-async function earnChainDayPremium(env, token, sym, todayISO) {
-  // Today's ≤14-DTE volume-premium by side from the live Schwab chain.
-  const toD = new Date(new Date(todayISO).getTime() + (EARN_DTE_MAX + 1) * 86400_000).toISOString().slice(0, 10);
+async function earnMonthWindow(env, sym, todayISO, intradayDays) {
+  // Same as earnFlowWindow but for the earnings-monthly flow store.
+  const days = {};
+  const seed = await earnSeed(env);
+  Object.assign(days, ((seed.flow_seed_month || {})[sym]) || {});
+  const kv = await env.SIGNAL_KV.get(`earnflow_m_${sym}`);
+  if (kv) Object.assign(days, JSON.parse(kv));
+  if (intradayDays) Object.assign(days, intradayDays);
+  return earnFlowFromDays(days, todayISO);
+}
+
+async function earnChainDayPremium(env, token, sym, todayISO, reportISO) {
+  // Today's volume-premium by side, computed for BOTH the ≤14-DTE band
+  // (weekly names) AND the earnings-capturing monthly (first expiry on/after
+  // the report date, within 45d — for monthly-only names). Fetches a wide
+  // enough date range to cover both.
+  const toD = new Date(new Date(todayISO).getTime() + 55 * 86400_000).toISOString().slice(0, 10);
   const chain = await fetchSchwabJSON(
     `https://api.schwabapi.com/marketdata/v1/chains?symbol=${encodeURIComponent(sym)}&strikeCount=40&fromDate=${todayISO}&toDate=${toD}&includeUnderlyingQuote=true&strategy=SINGLE&contractType=ALL`,
     token, env);
   const spot = chain.underlyingPrice || (chain.underlying || {}).last;
-  let c = 0, p = 0, di = 0;
+  // pick the earnings-capturing monthly expiry key
+  let mExpKey = null;
+  if (reportISO) {
+    const rd = new Date(reportISO), cap = new Date(new Date(reportISO).getTime() + 45 * 86400_000);
+    const keys = Object.keys(chain.callExpDateMap || {}).map(k => k.split(':')[0]).sort();
+    mExpKey = keys.find(k => new Date(k) >= rd && new Date(k) <= cap) || null;
+  }
+  let c = 0, p = 0, di = 0, mc = 0, mp = 0, mdi = 0;
   for (const [mapName, side] of [['callExpDateMap', 'c'], ['putExpDateMap', 'p']]) {
-    for (const strikes of Object.values(chain[mapName] || {})) {
+    for (const [expKey, strikes] of Object.entries(chain[mapName] || {})) {
+      const iso = expKey.split(':')[0];
+      const dte = Math.round((new Date(iso) - new Date(todayISO)) / 86400_000);
+      const isMonth = mExpKey && iso === mExpKey;
       for (const arr of Object.values(strikes)) {
         const ct = Array.isArray(arr) ? arr[0] : arr;
         if (!ct || !(ct.totalVolume > 0)) continue;
         const mid = (ct.bid > 0 && ct.ask > 0) ? (ct.bid + ct.ask) / 2 : (ct.last > 0 ? ct.last : 0);
         const prem = ct.totalVolume * mid * 100;
-        if (side === 'c') { c += prem; if (spot && ct.strikePrice < 0.92 * spot) di += prem; }
-        else p += prem;
+        const deep = spot && ct.strikePrice < 0.92 * spot;
+        if (dte >= 0 && dte <= EARN_DTE_MAX) {
+          if (side === 'c') { c += prem; if (deep) di += prem; } else p += prem;
+        }
+        if (isMonth) {
+          if (side === 'c') { mc += prem; if (deep) mdi += prem; } else mp += prem;
+        }
       }
     }
   }
-  return { c: Math.round(c), p: Math.round(p), di: Math.round(di), spot };
+  return { c: Math.round(c), p: Math.round(p), di: Math.round(di),
+           mc: Math.round(mc), mp: Math.round(mp), mdi: Math.round(mdi), spot };
 }
 
 async function earnParkingSleeve(env, token) {
@@ -792,17 +823,31 @@ async function earnBuildBoard(env, token, boardISO, opts = {}) {
                 row.g2 = ps.runup_2w < EARN_RUNUP_MAX && ps.ath_dist <= EARN_ATH_MAX; }
     } catch (e) { row.notes.push('price fetch failed'); }
     try {
-      let intraday = null;
+      let intraday = null, intradayM = null;
       if (opts.withIntraday) {
-        const today = await earnChainDayPremium(env, token, cd.ticker, boardISO);
-        intraday = { [boardISO]: today };
+        const today = await earnChainDayPremium(env, token, cd.ticker, boardISO, cd.report_date);
+        intraday = { [boardISO]: { c: today.c, p: today.p, di: today.di } };
+        intradayM = { [boardISO]: { c: today.mc, p: today.mp, di: today.mdi } };
       }
       const fw = await earnFlowWindow(env, cd.ticker, boardISO, intraday);
-      if (fw.pw != null && isFinite(fw.pw)) row.pw_ratio = +fw.pw.toFixed(2);
-      row.deep_itm_usd = Math.round(fw.deep);
-      row.g1 = fw.pw != null && fw.pw >= EARN_PW_LO && fw.pw <= EARN_PW_HI;
-      if (fw.nDays < 5) row.notes.push(`thin flow window (${fw.nDays}d)`);
-      if (fw.pw != null && fw.pw > EARN_PW_HI) row.verdict = 'CROWDED';
+      const hasWeekly = fw.nDays >= EARN_WEEKLY_MIN_DAYS;
+      if (hasWeekly) {
+        // weekly name → 14-DTE flow, band 2.33–5
+        if (fw.pw != null && isFinite(fw.pw)) row.pw_ratio = +fw.pw.toFixed(2);
+        row.deep_itm_usd = Math.round(fw.deep);
+        row.g1 = fw.pw != null && fw.pw >= EARN_PW_LO && fw.pw <= EARN_PW_HI;
+        if (fw.pw != null && fw.pw > EARN_PW_HI) row.verdict = 'CROWDED';
+        row.flowSrc = '14d';
+      } else {
+        // monthly-only name → earnings-monthly flow, band 2.5–6
+        const fwm = await earnMonthWindow(env, cd.ticker, boardISO, intradayM);
+        if (fwm.pw != null && isFinite(fwm.pw)) row.pw_ratio = +fwm.pw.toFixed(2);
+        row.deep_itm_usd = Math.round(fwm.deep);
+        row.g1 = fwm.pw != null && fwm.pw >= EARN_M_LO && fwm.pw <= EARN_M_HI;
+        if (fwm.pw != null && fwm.pw > EARN_M_HI) row.verdict = 'CROWDED';
+        row.flowSrc = 'monthly';
+        if (fwm.nDays < 3) row.notes.push(`thin monthly window (${fwm.nDays}d)`);
+      }
     } catch (e) { row.notes.push('flow fetch failed'); }
     if (row.g1 && row.g2 && row.g3 && row.g4) row.verdict = 'LONG';
     board.push(row);
@@ -957,15 +1002,20 @@ async function earnNightlyCollect(env, etNow, token) {
   const progKey = `earn_collect_part_${iso}`;
   const done = new Set(JSON.parse((await env.SIGNAL_KV.get(progKey)) || '[]'));
   const batch = names.filter(n => !done.has(n)).slice(0, 10);
+  const repOf = {};
+  for (const ev of cal.events) if (!repOf[ev.ticker]) repOf[ev.ticker] = ev.report_date;
   for (const sym of batch) {
     try {
-      const day = await earnChainDayPremium(env, token, sym, iso);
-      const kvKey = `earnflow_${sym}`;
-      const cur = JSON.parse((await env.SIGNAL_KV.get(kvKey)) || '{}');
-      cur[iso] = { c: day.c, p: day.p, di: day.di };
-      const isos = Object.keys(cur).sort().slice(-25);
-      const trimmed = {}; for (const k of isos) trimmed[k] = cur[k];
-      await env.SIGNAL_KV.put(kvKey, JSON.stringify(trimmed), { expirationTtl: 40 * 86400 });
+      const day = await earnChainDayPremium(env, token, sym, iso, repOf[sym]);
+      for (const [pfx, rec] of [['earnflow_', { c: day.c, p: day.p, di: day.di }],
+                                ['earnflow_m_', { c: day.mc, p: day.mp, di: day.mdi }]]) {
+        const kvKey = `${pfx}${sym}`;
+        const cur = JSON.parse((await env.SIGNAL_KV.get(kvKey)) || '{}');
+        cur[iso] = rec;
+        const isos = Object.keys(cur).sort().slice(-25);
+        const trimmed = {}; for (const k of isos) trimmed[k] = cur[k];
+        await env.SIGNAL_KV.put(kvKey, JSON.stringify(trimmed), { expirationTtl: 40 * 86400 });
+      }
       done.add(sym);
     } catch (e) { console.warn(`[earn] collect ${sym}:`, e.message); done.add(sym); }
   }
