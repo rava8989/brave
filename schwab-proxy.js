@@ -257,6 +257,23 @@ async function archiveFlyMarks(env, etNow) {
   await env.SIGNAL_KV.put(k, JSON.stringify(day), { expirationTtl: 90 * 86400 });
 }
 
+// Black-Scholes put delta — used to recover the tail's delta from a greeks-less
+// Tasty fallback chain (which zeroes delta) so the 9:45 Δ-0.10 picker still works
+// when Schwab's chain is unavailable (audit P1-f 2026-07-06).
+function _normCdf(x) {
+  // Abramowitz-Stegun 7.1.26
+  const t = 1 / (1 + 0.2316419 * Math.abs(x));
+  const d = 0.3989423 * Math.exp(-x * x / 2);
+  const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+  return x >= 0 ? 1 - p : p;
+}
+function bsPutDelta(S, K, sigma, T) {
+  if (!(S > 0) || !(K > 0) || !(sigma > 0) || !(T > 0)) return null;
+  const R = 0.043, Q = 0.013;
+  const d1 = (Math.log(S / K) + (R - Q + 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));
+  return -Math.exp(-Q * T) * _normCdf(-d1);
+}
+
 async function captureTailPutSnap(env, etNow, masterChain) {
   const h = etNow.getHours(), m = etNow.getMinutes();
   if (!(h === 9 && m >= 45 && m <= 59)) return;   // AT the 9:45 tail entry time (quote == entry)
@@ -266,13 +283,22 @@ async function captureTailPutSnap(env, etNow, masterChain) {
   if (await env.SIGNAL_KV.get(k)) return;          // once per day
   const exps = Object.keys(masterChain.putExpDateMap).sort().slice(0, 2);  // 0-1 DTE
   const puts = [];
+  const etHrs = etNow.getHours() + etNow.getMinutes() / 60;
   for (const exp of exps) {
     const strikes = masterChain.putExpDateMap[exp] || {};
+    const dte = parseInt((exp.split(':')[1] || '0'), 10);
+    // T = hours-to-16:00-ET across the DTE days, floored so it never collapses.
+    const T = Math.max((dte * 24 + Math.max(16 - etHrs, 0.25)) / (365 * 24), 0.25 / (365 * 24));
     for (const [strike, arr] of Object.entries(strikes)) {
       const c = Array.isArray(arr) ? arr[0] : arr;
-      if (!c || c.delta == null) continue;
-      const d = Number(c.delta);
-      if (!(d <= -0.05 && d >= -0.35)) continue;
+      if (!c) continue;
+      let d = (c.delta != null) ? Number(c.delta) : null;
+      // Tasty fallback chains carry no greeks (delta coerced to 0) — recover a BS put
+      // delta from the chain's IV so the Δ-0.10 picker still works (audit P1-f 2026-07-06).
+      if ((d == null || d === 0) && c.volatility) {
+        d = bsPutDelta(masterChain.spot, parseFloat(strike), (c.volatility || 0) / 100, T);
+      }
+      if (d == null || !(d <= -0.05 && d >= -0.35)) continue;
       puts.push({ e: exp.split(':')[0], k: parseFloat(strike), d: parseFloat(d.toFixed(3)),
                   b: c.bid ?? null, a: c.ask ?? null });
     }
@@ -4490,7 +4516,7 @@ async function handleBobfEntry(env, etNow, preChain = null) {
   // Use master chain if available (saves 2 Schwab calls), else fetch our own.
   let token, spot, callExpDateMap;
   try {
-    token = await getAccessToken(env);
+    token = preChain ? null : await getAccessToken(env);   // skip token when the chain is in hand — a dead Schwab token must not error a preChain entry (audit P1-f)
     const chain = preChain || await fetchSpxFullChain(token, todayISO, env);
     spot = chain.spot; callExpDateMap = chain.callExpDateMap;
   } catch (e) { return { ...out, status: 'error', error: 'chain fetch: ' + e.message }; }
@@ -4900,6 +4926,17 @@ async function handleGxbfEntry(env, etNow, signal, preChain = null) {
   }
 
   if (gxbfPastWindow(etNow)) {
+    // If a center was never computable all window, the live SPX chain was likely
+    // unavailable (Schwab down → greeks/volume-less fallback) and GXBF can't build a
+    // volume-weighted center from it. Alert instead of skipping silently (audit P1-f).
+    if (!(await env.SIGNAL_KV.get(`gxbf_center_seen_${todayISO}`))) {
+      try {
+        const dcRaw = await env.SIGNAL_KV.get('discord_config');
+        const dc = dcRaw ? JSON.parse(dcRaw) : null;
+        if (dc && dc.channelId) await sendDiscordDM(env, dc.channelId,
+          `⚠️ **GXBF** — no trade. Entry window passed without a computable center (live SPX chain unavailable — the fallback chain lacks volume/OI). No order placed.`, dc.proxyUrl);
+      } catch (_) {}
+    }
     await env.SIGNAL_KV.put(doneKey, 'window-passed', { expirationTtl: 86400 });
     return { ...out, status: 'window-passed' };
   }
@@ -4908,7 +4945,7 @@ async function handleGxbfEntry(env, etNow, signal, preChain = null) {
   //    We need the chain to compute the gamma center live.
   let token, spot, callExpDateMap;
   try {
-    token = await getAccessToken(env);
+    token = preChain ? null : await getAccessToken(env);   // skip token when the chain is in hand — a dead Schwab token must not error a preChain entry (audit P1-f)
     const chain = preChain || await fetchSpxFullChain(token, todayISO, env);
     spot = chain.spot; callExpDateMap = chain.callExpDateMap;
   } catch (e) { return { ...out, status: 'error', error: 'chain fetch: ' + e.message }; }
@@ -4918,10 +4955,12 @@ async function handleGxbfEntry(env, etNow, signal, preChain = null) {
   //    Replaces the old Discord scraper. snap5/round already applied inside.
   const computed = computeGxbfCenterLive(callExpDateMap, todayISO, spot);
   if (!computed) {
-    // No qualifying strikes (e.g. empty 0DTE chain). Don't mark done —
-    // subsequent cron ticks re-attempt within the entry window.
+    // No qualifying strikes (empty 0DTE chain, or a greeks/volume-less fallback chain).
+    // Don't mark done — later ticks retry; window-passed alerts if we never compute a
+    // center all window (audit P1-f 2026-07-06).
     return { ...out, status: 'no-center', reason: 'live-gamma compute returned null' };
   }
+  await env.SIGNAL_KV.put(`gxbf_center_seen_${todayISO}`, '1', { expirationTtl: 86400 });
 
   // 2a. Pick the per-day center via signal.centerSource (hybrid routing).
   //     'oi'  → OPEX-1 / VIX-expiry / FED days (per signal-engine.js)
@@ -5222,7 +5261,21 @@ async function freezeTailOpenIfDue(env, etNow, line = null, announce = false) {
   if (!(statusLine.includes('▶ TRADE') && pastEntry && h < 16)) return null;
   const snapRaw = await env.SIGNAL_KV.get(`tail_put_snap_${todayISO}`);
   const snap = snapRaw ? JSON.parse(snapRaw) : null;
-  if (!snap || !Array.isArray(snap.puts) || !snap.puts.length) return null;
+  if (!snap || !Array.isArray(snap.puts) || !snap.puts.length) {
+    // TRADE day, past 9:45, but no put snapshot — the live chain was unavailable at
+    // entry. Alert ONCE instead of silently skipping the tail (audit P1-f 2026-07-06).
+    const ak = `tail_nosnap_alert_${todayISO}`;
+    if (!(await env.SIGNAL_KV.get(ak))) {
+      await env.SIGNAL_KV.put(ak, '1', { expirationTtl: 86400 });
+      try {
+        const dcRaw = await env.SIGNAL_KV.get('discord_config');
+        const dc = dcRaw ? JSON.parse(dcRaw) : null;
+        if (dc && dc.channelId) await sendDiscordDM(env, dc.channelId,
+          `⚠️ **Tail Hedge** — TRADE signal today but no 9:45 put snapshot (live SPX chain unavailable at entry). No tail frozen — enter the 0DTE Δ-0.10 put manually if still desired.`, dc.proxyUrl);
+      } catch (_) {}
+    }
+    return null;
+  }
   const e0 = snap.puts[0].e;
   const candidate = snap.puts.filter(p => p.e === e0)
     .sort((a, b) => Math.abs(a.d + 0.10) - Math.abs(b.d + 0.10))[0] || null;
