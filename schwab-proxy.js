@@ -2008,14 +2008,23 @@ async function postSignalsChannel(env, message) {
   } catch (e) { return { ok: false, error: e.message }; }
 }
 
+// Compliance disclaimer appended to EVERY subscriber-facing trade message (user
+// request 2026-07-07). `-#` renders as small subtext in Discord (channel + DM).
+const FANOUT_DISCLAIMER = '\n-# ⚠️ Not financial advice — for educational purposes only. Trade at your own risk.';
+
 async function fanoutSubscribers(env, message) {
+  // Single chokepoint: append the disclaimer here so NO trade path (tail, skipper
+  // trades, any future caller) can reach the broadcast channel OR a subscriber DM
+  // without it. Idempotent — won't double-add if a caller already included it.
+  const base = String(message);
+  const msg = base.includes('Not financial advice') ? base : base + FANOUT_DISCLAIMER;
   // Broadcast channel first (one post, no DM caps), then the per-user DM list.
-  try { await postSignalsChannel(env, message); } catch (_) {}
+  try { await postSignalsChannel(env, msg); } catch (_) {}
   const subs = (await getSubscribers(env)).filter(s => s && s.id && !s.paused);
   const out = [];
   for (const s of subs) {
     try {
-      const r = await sendDiscordDM(env, s.id, message);
+      const r = await sendDiscordDM(env, s.id, msg);
       out.push({ id: s.id, ok: !!r.ok, status: r.status, error: r.error });
     } catch (e) { out.push({ id: s.id, ok: false, error: e.message }); }
   }
