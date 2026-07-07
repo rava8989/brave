@@ -705,8 +705,24 @@ async function earnChainDayPremium(env, token, sym, todayISO) {
   return { c: Math.round(c), p: Math.round(p), di: Math.round(di), spot };
 }
 
+async function earnParkingSleeve(env, token) {
+  // Four-regime parking: SPY when above its 200-day; else CASH when prior-day
+  // VIX > 25; else GLD. Returns {sleeve, spy, sma, vix}.
+  const end=Date.now(), start=end-320*86400_000;
+  const px=await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=SPY&periodType=year&frequencyType=daily&frequency=1&startDate=${start}&endDate=${end}`,token,env);
+  const c=(px.candles||[]).map(x=>x.close).filter(x=>x>0);
+  const spot=c[c.length-1], sma=c.slice(-200).reduce((a,b)=>a+b,0)/Math.min(200,c.length);
+  let vixPrior=null;
+  try{ const v=await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24VIX&periodType=year&frequencyType=daily&frequency=1&startDate=${end-20*86400_000}&endDate=${end}`,token,env);
+       const vc=(v.candles||[]).map(x=>x.close).filter(x=>x>0); vixPrior=vc[vc.length-2]??vc[vc.length-1]; }catch(_){}
+  let sleeve='SPY';
+  if(spot<=sma) sleeve=(vixPrior!=null&&vixPrior>25)?'CASH':'GLD';
+  return {sleeve, spot:+spot.toFixed(2), sma:+sma.toFixed(2), vix:vixPrior?+vixPrior.toFixed(1):null};
+}
+
 async function earnSend(env, msg) {
   const results = { dm: false, webhook: false };
+  msg = msg + '\n\n_Not financial advice. For informational/educational purposes only. You are solely responsible for your own trades._';
   try {
     const dcRaw = await env.SIGNAL_KV.get('discord_config');
     if (dcRaw) {
@@ -758,6 +774,7 @@ async function earnBuildBoard(env, token, boardISO, opts = {}) {
                  report_date: ev.report_date, inUniverse: uniset.has(ev.ticker) });
   }
   const vix = await earnVixOK(env, token);
+  let park=null; try{ park=await earnParkingSleeve(env, token); }catch(e){ console.warn('[earn] parking:',e.message); }
   const seed = uniRaw;
   const board = [];
   for (const cd of cands.slice(0, 40)) {                 // subrequest guard
@@ -791,13 +808,14 @@ async function earnBuildBoard(env, token, boardISO, opts = {}) {
     board.push(row);
   }
   const longs = board.filter(b => b.verdict === 'LONG');
-  return { date: boardISO, next: nextISO, calSrc: cal.src, vix, board, longs };
+  return { date: boardISO, next: nextISO, calSrc: cal.src, vix, park, board, longs };
 }
 
 function earnBoardMsg(b, mode, stage) {
   const head = stage === 'final' ? `🌙 **[EARNINGS] FINAL BOARD — ${b.date}**`
-             : `🌙 **[EARNINGS] morning preview — ${b.date}**`;
-  if (!b.board.length) return `${head}\nNobody reports in this window. No trades tonight.`;
+             : `🌙 **[EARNINGS] morning — ${b.date}**`;
+  const parkLine = b.park ? `\n**Parking sleeve: ${b.park.sleeve}** `+(b.park.sleeve==='SPY'?'(market above its 200-day — hold SPY)':b.park.sleeve==='GLD'?'(market below 200-day, calm — hold GLD)':'(market below 200-day + VIX>25 — sit in cash)') : '';
+  if (!b.board.length) return `${head}${stage==='morning'?parkLine:''}\nNobody reports in this window. No trades tonight.`;
   const outside = b.board.filter(r => r.notes.some(n => n.startsWith('outside universe')));
   const scored = b.board.filter(r => !r.notes.some(n => n.startsWith('outside universe')));
   const lines = scored.map(r => {
@@ -818,8 +836,9 @@ function earnBoardMsg(b, mode, stage) {
     tail += `\n**ACTION: buy at 3:45–3:55 close — ` +
             b.longs.map(l => `${l.ticker} ${w}%`).join(' · ') + `** · sell ALL at tomorrow's open`;
   }
-  if (stage === 'final' && !b.longs.length) tail += `\nNo qualifiers tonight — stand down.`;
-  return [head, ...lines, tail].join('\n');
+  if (stage === 'final' && !b.longs.length) tail += `\nNo earnings tonight. Stay parked in your sleeve (see morning note).`;
+  if (stage === 'final' && b.park) tail += `\n_Parking sleeve today: ${b.park.sleeve}${b.park.sleeve==='CASH'?' (market below 200-day + VIX>25)':b.park.sleeve==='GLD'?' (market below 200-day, calm)':' (market above 200-day)'}._`;
+  return [head + (stage==='morning'?parkLine:''), ...lines, tail].join('\n');
 }
 
 async function earnMorningJob(env, etNow, token) {

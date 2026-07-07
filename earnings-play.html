@@ -86,24 +86,31 @@
 
   <div class="section-h">Backtest — the gates vs 8 years of history <span class="badge">v2.4 FINAL · 10,677 events · 502 names · 2018-07 → 2026-07</span></div>
   <div class="card" style="border-color:#3d5a80">
-    <div style="font-size:13px;color:var(--muted);text-transform:uppercase;margin-bottom:10px">Operating model — SPY↑ / GLD↓ (200-day) + earnings overlay</div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-bottom:12px">
-      <div><div style="font-size:11px;color:var(--muted)">RETURN / YR</div><div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:600;color:var(--green)">+110%</div></div>
-      <div><div style="font-size:11px;color:var(--muted)">MAX DRAWDOWN</div><div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:600;color:var(--red)">−31%</div></div>
-      <div><div style="font-size:11px;color:var(--muted)">$10k → (7 yrs)</div><div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:600">$1.75M</div></div>
-      <div><div style="font-size:11px;color:var(--muted)">SPY b&amp;h benchmark</div><div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:600;color:var(--muted)">+14%/yr</div></div>
+    <div style="font-size:13px;color:var(--muted);text-transform:uppercase;margin-bottom:10px">Operating model — four regimes: SPY↑ / GLD↓ / cash (VIX&gt;25) + earnings hybrid</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-bottom:16px">
+      <div><div style="font-size:11px;color:var(--muted)">RETURN / YR</div><div style="font-family:'JetBrains Mono',monospace;font-size:22px;font-weight:600;color:var(--green)">+124%</div></div>
+      <div><div style="font-size:11px;color:var(--muted)">MAX DRAWDOWN</div><div style="font-family:'JetBrains Mono',monospace;font-size:22px;font-weight:600;color:var(--red)">−35%</div></div>
+      <div><div style="font-size:11px;color:var(--muted)">$10k → 7 yrs</div><div style="font-family:'JetBrains Mono',monospace;font-size:22px;font-weight:600">$2.7M</div></div>
+      <div><div style="font-size:11px;color:var(--muted)">SPY benchmark</div><div style="font-family:'JetBrains Mono',monospace;font-size:22px;font-weight:600;color:var(--muted)">+14%/yr</div></div>
+    </div>
+    <div style="font-size:12px;color:var(--muted);text-transform:uppercase;margin-bottom:8px">Where your money sits — % of all days</div>
+    <div style="display:flex;flex-direction:column;gap:9px;margin-bottom:14px">
+      <div><div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:3px"><span>SPY &nbsp;<span style="color:var(--muted)">market above its 200-day</span></span><span style="font-family:'JetBrains Mono',monospace">67.4%</span></div><div style="height:15px;background:#378ADD;width:67.4%;border-radius:3px"></div></div>
+      <div><div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:3px"><span>Earnings basket &nbsp;<span style="color:var(--muted)">signal nights</span></span><span style="font-family:'JetBrains Mono',monospace">13.7%</span></div><div style="height:15px;background:#3fb950;width:13.7%;border-radius:3px"></div></div>
+      <div><div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:3px"><span>Cash &nbsp;<span style="color:var(--muted)">below 200-day + VIX&gt;25</span></span><span style="font-family:'JetBrains Mono',monospace">11.5%</span></div><div style="height:15px;background:#8b949e;width:11.5%;border-radius:3px"></div></div>
+      <div><div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:3px"><span>GLD &nbsp;<span style="color:var(--muted)">below 200-day, calm</span></span><span style="font-family:'JetBrains Mono',monospace">7.3%</span></div><div style="height:15px;background:#eda100;width:7.3%;border-radius:3px"></div></div>
     </div>
     <table style="font-size:12px"><thead><tr><th>Year</th><th>Operating-model return</th></tr></thead><tbody>
-    <tr><td>2019</td><td class="crowded">-1%</td></tr>
-    <tr><td>2020</td><td class="long">+18%</td></tr>
-    <tr><td>2021</td><td class="long">+144%</td></tr>
-    <tr><td>2022</td><td class="long">+24%</td></tr>
-    <tr><td>2023</td><td class="long">+313%</td></tr>
-    <tr><td>2024</td><td class="long">+111%</td></tr>
-    <tr><td>2025</td><td class="long">+290%</td></tr>
-    <tr><td>2026</td><td class="long">+46%</td></tr>
+    <tr><td>2019</td><td class="crowded">-7%</td></tr>
+    <tr><td>2020</td><td class="long">+25%</td></tr>
+    <tr><td>2021</td><td class="long">+174%</td></tr>
+    <tr><td>2022</td><td class="long">+56%</td></tr>
+    <tr><td>2023</td><td class="long">+297%</td></tr>
+    <tr><td>2024</td><td class="long">+184%</td></tr>
+    <tr><td>2025</td><td class="long">+300%</td></tr>
+    <tr><td>2026</td><td class="long">+21%</td></tr>
     </tbody></table>
-    <div class="note">Idle capital sits in SPY above its 200-day, rotates to GLD below it (gold made +21% across the down-regimes vs cash's 0%), and goes 100% into the earnings basket on signal nights. <b style="color:var(--text)">This layer is portfolio construction</b> — sensible, tuned on the same window, not independently proven. The validated edge is below.</div>
+    <div class="note">240 signal nights (227 weekly + 139 monthly-name trades). Two-thirds of the time you simply hold SPY; you touch the earnings basket about one night in seven; cash and gold split the downtrends. <b style="color:var(--text)">The regime/parking layer is portfolio construction</b> — tuned on the same window, not independently proven. The validated earnings edge is below.</div>
   </div>
   <div class="section-h" style="font-size:13px;color:var(--muted)">The validated edge underneath — the 4 gates vs 8 years</div>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:12px">
