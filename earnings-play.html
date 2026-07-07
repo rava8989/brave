@@ -85,6 +85,27 @@
   </tbody></table></div>
 
   <div class="section-h">Backtest — the gates vs 8 years of history <span class="badge">v2.4 FINAL · 10,677 events · 502 names · 2018-07 → 2026-07</span></div>
+  <div class="card" style="border-color:#3d5a80">
+    <div style="font-size:13px;color:var(--muted);text-transform:uppercase;margin-bottom:10px">Operating model — SPY↑ / GLD↓ (200-day) + earnings overlay</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-bottom:12px">
+      <div><div style="font-size:11px;color:var(--muted)">RETURN / YR</div><div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:600;color:var(--green)">+110%</div></div>
+      <div><div style="font-size:11px;color:var(--muted)">MAX DRAWDOWN</div><div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:600;color:var(--red)">−31%</div></div>
+      <div><div style="font-size:11px;color:var(--muted)">$10k → (7 yrs)</div><div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:600">$1.75M</div></div>
+      <div><div style="font-size:11px;color:var(--muted)">SPY b&amp;h benchmark</div><div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:600;color:var(--muted)">+14%/yr</div></div>
+    </div>
+    <table style="font-size:12px"><thead><tr><th>Year</th><th>Operating-model return</th></tr></thead><tbody>
+    <tr><td>2019</td><td class="crowded">-1%</td></tr>
+    <tr><td>2020</td><td class="long">+18%</td></tr>
+    <tr><td>2021</td><td class="long">+144%</td></tr>
+    <tr><td>2022</td><td class="long">+24%</td></tr>
+    <tr><td>2023</td><td class="long">+313%</td></tr>
+    <tr><td>2024</td><td class="long">+111%</td></tr>
+    <tr><td>2025</td><td class="long">+290%</td></tr>
+    <tr><td>2026</td><td class="long">+46%</td></tr>
+    </tbody></table>
+    <div class="note">Idle capital sits in SPY above its 200-day, rotates to GLD below it (gold made +21% across the down-regimes vs cash's 0%), and goes 100% into the earnings basket on signal nights. <b style="color:var(--text)">This layer is portfolio construction</b> — sensible, tuned on the same window, not independently proven. The validated edge is below.</div>
+  </div>
+  <div class="section-h" style="font-size:13px;color:var(--muted)">The validated edge underneath — the 4 gates vs 8 years</div>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:12px">
     <div class="card" style="margin:0"><div style="font-size:11px;color:var(--muted);text-transform:uppercase">LONG verdicts</div>
       <div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:600">260</div>
@@ -95,9 +116,9 @@
     <div class="card" style="margin:0"><div style="font-size:11px;color:var(--muted);text-transform:uppercase">Hit rate</div>
       <div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:600">64%</div>
       <div class="note">t = 4.82 across 7 tradeable years</div></div>
-    <div class="card" style="margin:0"><div style="font-size:11px;color:var(--muted);text-transform:uppercase">Max drawdown</div>
-      <div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:600;color:var(--red)">−29%</div>
-      <div class="note">max drawdown at 100% sizing</div></div>
+    <div class="card" style="margin:0"><div style="font-size:11px;color:var(--muted);text-transform:uppercase">t-stat</div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:600">4.82</div>
+      <div class="note">edge vs zero — strongest we found</div></div>
   </div>
   <div class="card"><table><thead><tr><th>Year</th><th>LONGs</th><th>Avg net/night</th><th>Hit</th></tr></thead><tbody>
     <tr><td>2019</td><td>7</td><td class="crowded">-1.12%</td><td>43%</td></tr>
@@ -292,7 +313,7 @@ function render(d) {
       `<div class="note">best +${(ls.best*100).toFixed(0)}% · worst ${(ls.worst*100).toFixed(0)}%</div></div>` +
       `<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase">${ls.acct_label || 'account'}</div>` +
       `<div style="font-family:'JetBrains Mono',monospace;font-size:19px;font-weight:600;color:var(--green)">+$${ls.dollars_acct_total.toLocaleString()}</div>` +
-      `<div class="note">≈ $${ls.dollars_acct_yr.toLocaleString()}/yr · ${ls.sizing_note}</div></div>` +
+      `<div class="note">${(ls.per_year*100).toFixed(0)}%/yr compounded · ${ls.sizing_note}</div></div>` +
       `<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase">Total return</div>` +
       `<div style="font-family:'JetBrains Mono',monospace;font-size:19px;font-weight:600">+${(ls.total_return*100).toFixed(1)}%</div>` +
       `<div class="note">compounded, ~${ls.years || '?'} yrs · +${(ls.per_year*100).toFixed(1)}%/yr</div></div></div>`;
