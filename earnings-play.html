@@ -75,6 +75,14 @@
     Gate 2 (v2.2): 2-week run-up must be negative AND ≥5% below ATH — rising into the print = PASS, no override.
     Gate 3: 4–8 quarters of 24h reactions — beat-fade names PASS regardless of flow. Gate 4 (v2.4): prior-day VIX must be under 1.2× its own 100-day average — when fear is spiking above its own recent normal, the night is skipped.</div>
 
+  <div class="section-h">📅 Pipeline — earnings coming in the next 2 weeks <span class="badge" id="pipeDate"></span></div>
+  <div class="card" style="overflow-x:auto"><table id="pipe"><thead><tr>
+    <th>Date</th><th>Ticker</th><th>When</th><th>Track record</th><th>Flow so far</th><th>Read</th>
+  </tr></thead><tbody>
+    <tr><td colspan="6" class="note">loading pipeline…</td></tr>
+  </tbody></table></div>
+  <div class="note">Forward look at every universe name reporting soon. <b style="color:var(--text)">Track record</b> (does it pay on beats) and <b style="color:var(--text)">flow so far</b> (call-vs-put ratio building in the window) are knowable now; the falling-in and calm-tape gates finalize on report day. 🟢 = trending toward a LONG. Not a signal — the final call comes in the 3:30 board.</div>
+
   <div class="section-h">The log <span class="badge">trades AND passes — this is the edge</span></div>
   <div class="card" id="logSummary" style="display:none"></div>
   <div class="card" style="overflow-x:auto"><table id="log"><thead><tr>
@@ -257,6 +265,20 @@ const pct = x => x == null ? '—' : (x*100).toFixed(1) + '%';
 const g = ok => ok == null ? '—' : ok ? '<span class="g-ok">✓</span>' : '<span class="g-no">✗</span>';
 
 const WORKER = 'https://schwab-proxy.ravamt4.workers.dev';
+function loadPipeline() {
+  fetch('data/earnings_pipeline.json', {cache:'no-store'}).then(r=>r.ok?r.json():null).then(d=>{
+    if(!d||!d.rows) return;
+    document.getElementById('pipeDate').textContent = 'as of ' + d.built;
+    const cls = st => st.startsWith('🟢')?'long':(st.startsWith('unlikely')||st.startsWith('crowded'))?'pass':'';
+    document.querySelector('#pipe tbody').innerHTML = d.rows.map(r =>
+      `<tr><td>${r.date}</td><td>${r.ticker}</td><td>${r.when}</td>`+
+      `<td>${r.base_rate==null?'—':(r.base_rate*100).toFixed(0)+'% ('+r.base_n+'q)'}</td>`+
+      `<td>${r.pw_so_far==null?'building':r.pw_so_far+'× ('+r.flow_days+'d)'}</td>`+
+      `<td class="${cls(r.status)}">${r.status}</td></tr>`).join('') ||
+      '<tr><td colspan="6" class="note">nothing reporting in the next 2 weeks</td></tr>';
+  }).catch(()=>{});
+}
+loadPipeline();
 function load() {
   fetch(WORKER + '/earnings-board', {cache: 'no-store'})
     .then(r => { if (!r.ok) throw 0; return r.json(); })
