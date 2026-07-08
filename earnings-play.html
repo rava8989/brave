@@ -307,7 +307,11 @@ function loadPipeline() {
     if(!d||!d.rows) return;
     document.getElementById('pipeDate').textContent = 'as of ' + d.built;
     const cls = st => st.startsWith('🟢')?'long':(st.startsWith('unlikely')||st.startsWith('crowded'))?'pass':'';
-    document.querySelector('#pipe tbody').innerHTML = d.rows.map(r =>
+    // guard: never show a name whose report date has already passed, even if the
+    // JSON is a day stale (self-correcting if the nightly refresh misses a run)
+    const today = new Date().toLocaleDateString('en-CA');  // YYYY-MM-DD local
+    const rows = d.rows.filter(r => r.date >= today);
+    document.querySelector('#pipe tbody').innerHTML = rows.map(r =>
       `<tr><td>${r.date}</td><td>${r.ticker}</td><td>${r.when}</td>`+
       `<td>${r.base_rate==null?'—':(r.base_rate*100).toFixed(0)+'% ('+r.base_n+'q)'}</td>`+
       `<td>${r.pw_so_far==null?'building':r.pw_so_far+'× ('+r.flow_days+'d)'}</td>`+
