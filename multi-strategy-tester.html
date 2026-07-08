@@ -491,7 +491,7 @@ body {
 
     <div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px;font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.05em;margin:14px 0 8px;">
       Tail Hedge — contracts per $50k of equity
-      <span style="font-weight:500;color:var(--text3);text-transform:none;letter-spacing:0;">scales with portfolio value · sized differently from the Sigma 3 strategies (not % allocation)</span>
+      <span style="font-weight:500;color:var(--text3);text-transform:none;letter-spacing:0;">scales with portfolio value · sized differently from the Sigma 3 strategies (not % allocation). Note: the LIVE tail doubles to 2 contracts on overnight-VIX-down days; this equity-sizing simulator does not model that per-day doubling.</span>
     </div>
     <div class="sz-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr))">
       <div class="sz-field"><label class="sz-label" for="szT_tail">Contracts per $50k <span class="sz-dot" data-tip="On each trigger day, Tail Hedge contracts = floor(equity × N / $50,000). Example: N=2 → 2 contracts per $50k of equity → 4 ct at $100k, 8 ct at $200k, 1 ct at $25k, 0 ct under $25k. Max risk per contract is $200 (worst Sweet Spot trade historically was -$520). 0 = strategy off.">ⓘ</span></label>

@@ -148,7 +148,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);font-
 <div class="banner">
   <div class="banner-title">TAIL HEDGE — BALANCED (DEFAULT)</div>
   <div class="banner-desc">
-    <strong>The strategy:</strong> Buy a cheap 0DTE SPX put at 9:45 AM ET whenever stock correlation (COR1M) crashes below <strong>7.75</strong> — but only if VVIX is under <strong>110</strong>. Hold to 4 PM close. Most days you lose $100-500 (the put expires worthless). A few days print <strong>$5k-$15k</strong> when the market shocks. Over 4 years: <strong>+$47,040 across 68 trades</strong>, worst single loss only <strong>−$320</strong>.
+    <strong>The strategy:</strong> Buy a cheap 0DTE SPX put at 9:45 AM ET whenever stock correlation (COR1M) crashes below <strong>7.75</strong> — but only if VVIX is under <strong>110</strong>. Size <strong>2 contracts when overnight VIX is down</strong> (today's open below yesterday's close — the edge concentrates there), else 1. Hold to 4 PM close. Most days you lose $100-500 (the put expires worthless). A few days print <strong>$5k-$30k</strong> when the market shocks. Over 4 years: <strong>+$79,340 across 68 trades</strong>, worst single loss <strong>−$640</strong>.
     <br>
     <strong>The trigger (catches EVERY cross):</strong> Watch COR1M's hourly bars. The moment it transitions from above 7.75 to at-or-below 7.75 — overnight OR intraday — you're in buying mode. If the cross is on the 9:30 bar → trade same day at 9:45. If it's at 10:30 or later → trade next trading day. Keep buying every morning until the first profitable day, then back to waiting for the next cross.
     <br>
@@ -981,12 +981,17 @@ function runSandbox({ threshold, delta_target, vvix_max, regimes_allowed }) {
     if (!pick) { skipped.no_pick++; continue; }
     const spxClose = perDay.spx_close;
     if (spxClose == null) { skipped.no_snap++; continue; }
+    // 2 contracts on overnight-VIX-down days (today's 9:30 VIX open below prior
+    // close), else 1 — mirrors the live rule + restated history + Python backtest
+    // (user-approved 2026-07-07). vix_down flag baked into the sandbox per_day.
+    const contracts = perDay.vix_down ? 2 : 1;
     const intrinsic = Math.max(pick.strike - spxClose, 0);
-    const pnlRaw = (intrinsic - pick.mid) * 100;
+    const pnlRaw = (intrinsic - pick.mid) * 100 * contracts;
     const pnl = _floorPnl(pnlRaw);
     cum += pnl;
     const rec = {
       date: d,
+      contracts,
       regime,
       regime_label: dayObj.regime_label,
       cor1m: dayObj.cor1m,

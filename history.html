@@ -256,7 +256,7 @@
     <div class="strat-pill active" data-strat="gxbf" onclick="toggleStrat('gxbf')" ondblclick="soloStrat('gxbf')">GXBF</div>
     <div class="strat-pill active" data-strat="bobf" onclick="toggleStrat('bobf')" ondblclick="soloStrat('bobf')">BOBF</div>
     <div class="strat-pill active" data-strat="diagonal" onclick="toggleStrat('diagonal')" ondblclick="soloStrat('diagonal')" title="1/25 put-diagonal — entry anywhere in the 12:30–15:00 ET window, exit at the same clock time next day (24-hour hold, Entry Time === Exit Time, one diagonal active at a time); sDTE=1, +10 ITM, lDTE=25, −20 below (long 10 OTM, width 20); OPEX-1 + EOM + EOM-1 + NM + VIX 50–80% + COR1M≥10 excluded (default; 2026-06-09 safer-tail retune from 30/40 + VIX 50-90)">Diagonal</div>
-    <div class="strat-pill active" data-strat="tail" onclick="toggleStrat('tail')" ondblclick="soloStrat('tail')" title="Tail Hedge — Sweet Spot preset (threshold 7.75, delta -0.20, VVIX<110). Buy 0DTE SPX put at 9:45 ET on any COR1M cross below 7.75; hold to 4 PM. Companion strategy, not part of Sigma 3.">Tail Hedge</div>
+    <div class="strat-pill active" data-strat="tail" onclick="toggleStrat('tail')" ondblclick="soloStrat('tail')" title="Tail Hedge — Convex Tail preset (threshold 7.75, delta -0.10, VVIX<110). Buy 0DTE SPX put at 9:45 ET on any COR1M cross below 7.75 — 2 contracts when overnight VIX is down, else 1; hold to 4 PM. Companion strategy, not part of Sigma 3.">Tail Hedge</div>
   </div>
 
   <div class="filter-bar" id="filterBar">

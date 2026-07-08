@@ -662,7 +662,7 @@
     </div>
 
     <!-- CARD 6: Tail Hedge (companion — added 2026-06-08) -->
-    <div class="scard" id="cardTail" title="Tail Hedge (Convex Tail — DEFAULT, Δ-0.10). Watch COR1M hourly bars; whenever it crosses from above to at-or-below 7.75 (intraday or overnight), enter at the next 9:45 AM ET. VVIX gate: block when VVIX_open ≥ 110. Buy 0DTE SPXW put delta -0.10, hold to 4 PM. Keep buying daily until first profitable day. Recommended preset (2026-06-16 sweep): +$46,990, MAR 10.3, max DD $4,560, worst day -$320 — the cheaper 10-delta wing beats -0.20 on return AND drawdown. Full backtester: cor1m_contango.html.">
+    <div class="scard" id="cardTail" title="Tail Hedge (Convex Tail — DEFAULT, Δ-0.10). Watch COR1M hourly bars; whenever it crosses from above to at-or-below 7.75 (intraday or overnight), enter at the next 9:45 AM ET. VVIX gate: block when VVIX_open ≥ 110. Buy 0DTE SPXW put delta -0.10 — 2 contracts when overnight VIX is down (else 1), hold to 4 PM. Keep buying daily until first profitable day. Recommended preset (2026-06-16 sweep, 2× VIX-down sizing): +$79,340, MAR 12.1, max DD $6,560, worst day -$640 — the cheaper 10-delta wing beats -0.20 on return AND drawdown. Full backtester: cor1m_contango.html.">
       <div class="scard-header">
         <span class="scard-label">Tail Hedge <span style="font-weight:400;font-size:10px;opacity:.7;letter-spacing:normal;text-transform:none">· companion · Sweet Spot</span></span>
         <span class="today-trade-pill" id="pillTail" style="display:none;">▶ TODAY'S TRADE</span>
@@ -952,13 +952,13 @@
         </ul>
       </li>
       <li><strong>VVIX gate:</strong> on the trade day morning, check <code>$VVIX</code> open. If VVIX ≥ <strong>110</strong>, skip the trade that day (puts too expensive). Stay in buying-mode for tomorrow.</li>
-      <li>If both checks pass, at <strong>9:45 AM ET</strong> buy <strong>1 contract</strong> of a 0DTE SPXW put with delta closest to <strong>−0.10</strong> (further OTM, ~$1-2.50 premium — cheaper wing, ~2× the risk-adjusted return of −0.20).</li>
+      <li>If both checks pass, at <strong>9:45 AM ET</strong> buy a 0DTE SPXW put with delta closest to <strong>−0.10</strong> — <strong>2 contracts when overnight VIX is down</strong> (today's open below yesterday's close, where the edge concentrates), else 1 (further OTM, ~$1-2.50 premium — cheaper wing, ~2× the risk-adjusted return of −0.20).</li>
       <li>Hold to <strong>4:00 PM close</strong>. Put settles to intrinsic value (or expires worthless if SPX stayed above strike).</li>
     </ul>
 
     <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">State machine — keep buying until you win</h4>
     <ul>
-      <li><strong>Once TRIGGERED, buy a put every trading morning</strong> until one of them pays off.</li>
+      <li><strong>Once TRIGGERED, buy a put every trading morning</strong> (2 contracts when overnight VIX is down, else 1) until one of them pays off.</li>
       <li><strong>First profitable day → exit to WAITING</strong>. No more trades until the next fresh cross.</li>
       <li><strong>VVIX block does NOT exit</strong> — if VVIX ≥ 110 today, just skip today's buy, stay TRIGGERED.</li>
       <li>Typical pattern: 5-10 small losses (~$100-500 each) followed by one big winner ($5k-$15k) that pays for all of them and adds profit. <em>Most days lose a little. A few days print huge. That's the trade.</em></li>

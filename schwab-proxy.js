@@ -5318,8 +5318,10 @@ async function announceTailIfDue(env, tailOpen, todayISO, announce) {
     const tosD = `${+e.slice(8,10)} ${_MON[+e.slice(5,7)-1]} ${e.slice(2,4)}`;
     const px = tailOpen.entryMid ?? tailOpen.entryAsk ?? tailOpen.entryBid;
     if (px != null) {
-      const tos = `BUY +1 SPX 100 (Weeklys) ${tosD} ${tailOpen.strike} PUT @${Number(px).toFixed(2)} LMT`;
-      await fanoutSubscribers(env, `🛡️ Tail Hedge — 0DTE put · 9:45 ET entry\n${tos}`);
+      const qty = tailOpen.contracts || 1;
+      const tos = `BUY +${qty} SPX 100 (Weeklys) ${tosD} ${tailOpen.strike} PUT @${Number(px).toFixed(2)} LMT`;
+      const sizeNote = qty >= 2 ? ' · 2× (overnight VIX down)' : '';
+      await fanoutSubscribers(env, `🛡️ Tail Hedge — 0DTE put · 9:45 ET entry${sizeNote}\n${tos}`);
       try { await logEvent(env, 'info', 'trade', `tail fan-out: ${tos}`, {}); } catch (_) {}
     }
   } catch (e) { console.warn('[tail-fanout]', e.message); }
@@ -5361,9 +5363,20 @@ async function freezeTailOpenIfDue(env, etNow, line = null, announce = false) {
   const entryMid = (candidate.b != null && candidate.a != null)
     ? parseFloat(((candidate.b + candidate.a) / 2).toFixed(2))
     : (candidate.a ?? candidate.b ?? null);
+  // Size: 2 contracts when overnight VIX is DOWN (prior VIX close > today's 9:30
+  // open), else 1. Reuses the morning signal's oNight (= vixYClose − vixToday;
+  // positive = VIX fell overnight), persisted to KV ~9:30 — before this 9:45 freeze.
+  // Backtest: the tail's entire edge concentrates on these days (7 of 8 winners,
+  // ~+108%) — user-approved 2026-07-07. Null/NaN/flat oNight → 1 (safe default).
+  let contracts = 1;
+  try {
+    const msdRaw = await env.SIGNAL_KV.get(`morning_signal_data_${todayISO}`);
+    const msd = msdRaw ? JSON.parse(msdRaw) : null;
+    if (msd && typeof msd.oNight === 'number' && isFinite(msd.oNight) && msd.oNight > 0) contracts = 2;
+  } catch (_) { /* default to 1 */ }
   const tailOpen = {
     openDate: todayISO, openTimeET: '09:45', strike: candidate.k, expDate: candidate.e,
-    entryBid: candidate.b, entryAsk: candidate.a, entryMid, contracts: 1, status: 'filled',
+    entryBid: candidate.b, entryAsk: candidate.a, entryMid, contracts, status: 'filled',
     label: 'Tail Hedge', currentSpot: snap.spot ?? null,
   };
   await env.SIGNAL_KV.put(`tail_open_trade_${todayISO}`, JSON.stringify(tailOpen), { expirationTtl: 7 * 86400 });
@@ -8775,7 +8788,8 @@ function buildMorningCardData(signal, vixValues, tailLine) {
     let tdet;
     if (tYes) {                                  // concise — the full line overflowed the row
       const dm = tl.match(/Δ\s*-?[\d.]+/);
-      tdet = `9:45 · 0DTE put ${dm ? dm[0].replace(/\s+/g, '') : 'Δ-0.10'}`;
+      const twoX = (typeof signal.oNight === 'number' && isFinite(signal.oNight) && signal.oNight > 0) ? ' ×2' : '';
+      tdet = `9:45 · 0DTE put ${dm ? dm[0].replace(/\s+/g, '') : 'Δ-0.10'}${twoX}`;
     } else if (/\bSKIP\b/i.test(tl)) {
       tdet = 'SKIP · VVIX ≥ 110';
     } else {

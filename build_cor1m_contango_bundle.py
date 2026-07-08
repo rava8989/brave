@@ -75,7 +75,7 @@ PRESETS = [
     {
         'id': 'total_champ',
         'name': 'Total Champion',
-        'desc': 'Most trades. thr 9.0, delta -0.20, VVIX<110 (corrected 2026-06-16: +$48.7k, n=103, MAR ~3). Higher bleed than the -0.10 wing.',
+        'desc': 'Most trades. thr 9.0, delta -0.20, VVIX<110 (corrected 2026-06-16, 2× VIX-down: +$81,610, n=103, MAR ~4). Higher bleed than the -0.10 wing.',
         'threshold': 9.0, 'delta': -0.20, 'time': '0945',
         'regimes': [], 'vvix_max': 110,
         'recommended': False,
@@ -83,7 +83,7 @@ PRESETS = [
     {
         'id': 'sweet_spot',
         'name': 'Sweet Spot',
-        'desc': 'Old default (thr 7.75, delta -0.20, VVIX<110). Corrected 2026-06-16: only +$23.8k, MAR 2.44 — the -0.20 wing bleeds too much. Superseded by Convex Tail.',
+        'desc': 'Old default (thr 7.75, delta -0.20, VVIX<110). Corrected 2026-06-16, 2× VIX-down: +$29,900, MAR 2.12 — the -0.20 wing bleeds too much. Superseded by Convex Tail.',
         'threshold': 7.75, 'delta': -0.20, 'time': '0945',
         'regimes': [], 'vvix_max': 110,
         'recommended': False,
@@ -91,7 +91,7 @@ PRESETS = [
     {
         'id': 'mar_champ',
         'name': 'MAR Champion',
-        'desc': 'Best risk-adjusted. thr 7.75, delta -0.075, VVIX<110. 93 trades, +$30.5k, MAR 16.83. Worst trade only -$200.',
+        'desc': 'Best risk-adjusted. thr 7.75, delta -0.075, VVIX<110. 72 trades, +$71,670, MAR 14.75 (2× VIX-down sizing).',
         'threshold': 7.75, 'delta': -0.075, 'time': '0945',
         'regimes': [], 'vvix_max': 110,
         'recommended': False,
@@ -99,7 +99,7 @@ PRESETS = [
     {
         'id': 'balanced',
         'name': 'Balanced',
-        'desc': '★ RECOMMENDED (sweep winner 2026-06-16). thr 7.75, delta -0.10, VVIX<110. +$46,990, MAR 10.30, max DD $4,560, worst day -$320. Cheaper 10-delta wing = half the bleed, ~90% of crash payoff. Best total AND best risk-adjusted; robust both halves (7 separate selloffs).',
+        'desc': '★ RECOMMENDED (sweep winner 2026-06-16; 2 contracts on overnight-VIX-down days, else 1). thr 7.75, delta -0.10, VVIX<110. +$79,340, MAR 12.09, max DD $6,560, worst day -$640. Cheaper 10-delta wing = half the bleed, ~90% of crash payoff. Best total AND best risk-adjusted; robust both halves (7 separate selloffs).',
         'threshold': 7.75, 'delta': -0.10, 'time': '0945',
         'regimes': [], 'vvix_max': 110,
         'recommended': True,
@@ -107,7 +107,7 @@ PRESETS = [
     {
         'id': 'wide_champ',
         'name': 'Wide Net',
-        'desc': 'Higher threshold catches more crosses. thr 9.5, delta -0.20, VVIX<110. 186 trades, +$47.8k, MAR 5.98.',
+        'desc': 'Higher threshold catches more crosses. thr 9.5, delta -0.20, VVIX<110. 128 trades, +$95,070, MAR 5.51 (2× VIX-down sizing).',
         'threshold': 9.5, 'delta': -0.20, 'time': '0945',
         'regimes': [], 'vvix_max': 110,
         'recommended': False,
@@ -228,6 +228,16 @@ def main():
     hourly_cor1m = [[ts, c] for (ts, c) in hourly_bars]
     print(f'  Hourly COR1M bars: {len(hourly_cor1m)}')
 
+    # per-day overnight-VIX-down flag for the JS Custom-recompute path (the bundle
+    # otherwise lacks vix_close). Matches the live rule: today's 9:30 VIX open below
+    # the prior trading day's VIX close (user-approved 2026-07-07).
+    _vt_dates = sorted(vt.keys())
+    _vt_prev = {_vt_dates[i]: _vt_dates[i - 1] for i in range(1, len(_vt_dates))}
+    def _vix_down(day):
+        vo = vt.get(day, {}).get('vix_open')
+        pc = vt.get(_vt_prev.get(day), {}).get('vix_close')
+        return bool(vo is not None and pc is not None and vo < pc)
+
     per_day = {}
     n_with_picks = 0
     n_missing_snap = 0
@@ -250,13 +260,13 @@ def main():
         if snap is None:
             n_missing_snap += 1
             if spx_cls is not None:
-                per_day[d] = {'spx_close': spx_cls, 'picks': {}}
+                per_day[d] = {'spx_close': spx_cls, 'picks': {}, 'vix_down': _vix_down(d)}
             continue
         vix = load_vix_intraday_at(d, '09:45')
         if vix is None or vix <= 0:
             n_missing_vix += 1
             if spx_cls is not None:
-                per_day[d] = {'spx_close': spx_cls, 'picks': {}}
+                per_day[d] = {'spx_close': spx_cls, 'picks': {}, 'vix_down': _vix_down(d)}
             continue
         sigma = vix / 100.0
         T = time_to_close('09:45', d in HALF_DAYS)
@@ -283,7 +293,7 @@ def main():
         # in their trade records. Previously JS used dayObj.vix (9:30 open),
         # creating a confusing "same trade, different VIX" reproducibility gap
         # between baked-preset view and Custom-recompute view.
-        per_day[d] = {'spx_close': spx_cls, 'vix_945': vix, 'picks': picks}
+        per_day[d] = {'spx_close': spx_cls, 'vix_945': vix, 'picks': picks, 'vix_down': _vix_down(d)}
         if any_valid:
             n_with_picks += 1
     print(f'  Sandbox done: {len(per_day)} days in per_day, '

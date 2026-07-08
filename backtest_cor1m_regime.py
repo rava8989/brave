@@ -238,6 +238,16 @@ def run(args) -> dict:
     cor1m_open, cor1m_close = load_cor1m_open_and_close()
     cor1m_bars = load_cor1m_hourly_bars()
     vt = load_vix_term()
+    # Overnight-VIX-down sizing (user-approved 2026-07-07): 2 contracts when today's
+    # 9:30 VIX open is BELOW the prior trading day's VIX close, else 1. Matches the
+    # live rule (oNight = vixYClose − vixToday > 0) and the restated history. vt is
+    # keyed by trading date (holidays skipped) → prev key = prior session's close.
+    _vt_dates = sorted(vt.keys())
+    _vt_prev = {_vt_dates[i]: _vt_dates[i - 1] for i in range(1, len(_vt_dates))}
+    def tail_contracts(day):
+        vo = vt.get(day, {}).get('vix_open')
+        pc = vt.get(_vt_prev.get(day), {}).get('vix_close')
+        return 2 if (vo is not None and pc is not None and vo < pc) else 1
     dates = trading_dates(args.from_date, args.to_date)
     # Detect ALL cross-down events (intraday + overnight). Same-day entry if cross at 9:30,
     # otherwise next trading day at 9:45.
@@ -323,7 +333,8 @@ def run(args) -> dict:
                 if c_close is not None: prev_close = c_close
                 continue
             intrinsic = max(put['strike'] - spx_cls, 0)
-            pnl_raw = (intrinsic - put['mid']) * 100  # entry mid already rounded UP
+            contracts = tail_contracts(d)             # 2 on overnight-VIX-down days, else 1
+            pnl_raw = (intrinsic - put['mid']) * 100 * contracts  # entry mid already rounded UP
             pnl = round_pnl_down(pnl_raw)             # floor to nearest $10 (commissions+exit slip)
             cum = cum + pnl
 
@@ -333,6 +344,7 @@ def run(args) -> dict:
                 'cor1m': c_open,           # 9:30 OPEN (live-correct, NOT EOD close)
                 'cor1m_eod_close': c_close, # for forensic only
                 'vix_open': vix,
+                'contracts': contracts,     # 2 = overnight-VIX-down sizing
                 'spot': put['spot'], 'strike': put['strike'],
                 'bid': put['bid'], 'ask': put['ask'],
                 'mid': put['mid'],          # entry premium ROUNDED UP to $0.10
