@@ -303,7 +303,13 @@ const g = ok => ok == null ? '—' : ok ? '<span class="g-ok">✓</span>' : '<sp
 
 const WORKER = 'https://schwab-proxy.ravamt4.workers.dev';
 function loadPipeline() {
-  fetch('data/earnings_pipeline.json', {cache:'no-store'}).then(r=>r.ok?r.json():null).then(d=>{
+  // live worker pipeline (rolling 2 weeks, auto-adds new earnings); static JSON is fallback.
+  // 8s timeout so a cold worker cache never hangs the page — falls back to static.
+  const ctl = new AbortController(); const to = setTimeout(()=>ctl.abort(), 8000);
+  const src = fetch('https://schwab-proxy.ravamt4.workers.dev/earnings-pipeline', {cache:'no-store', signal:ctl.signal})
+    .then(r=>{clearTimeout(to); return r.ok?r.json():Promise.reject();})
+    .catch(()=>fetch('data/earnings_pipeline.json',{cache:'no-store'}).then(r=>r.ok?r.json():null));
+  src.then(d=>{
     if(!d||!d.rows) return;
     document.getElementById('pipeDate').textContent = 'as of ' + d.built;
     const cls = st => st.startsWith('🟢')?'long':(st.startsWith('unlikely')||st.startsWith('crowded'))?'pass':'';

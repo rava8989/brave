@@ -628,6 +628,58 @@ async function earnCalendar(env, fromISO, toISO) {
   return res;
 }
 
+function earnPipeStatus(base_rate, pw) {
+  if (base_rate == null) return 'new (no track record)';
+  if (base_rate < 0.5) return 'unlikely — fades its beats';
+  if (pw == null) return 'watching — flow building';
+  if (pw > 6) return 'crowded — likely PASS';
+  if (pw >= 2.5) return '\uD83D\uDFE2 live candidate — bullish flow + pays on beats';
+  return 'watching — flow light';
+}
+
+async function earnPipeline(env) {
+  // Forward pipeline from the LIVE Nasdaq calendar (rolling 15 days) — always
+  // current, auto-adds newly-announced earnings, never runs dry. In-universe
+  // names only; flow-so-far read from the KV windows the worker already keeps.
+  const today = isoDateET(toET());
+  const to = isoDateET(new Date(Date.now() + 15 * 86400_000));
+  const cal = await earnCalendar(env, today, to);
+  const seed = await earnSeed(env);
+  const base = seed.base_rates || {};
+  const uni = new Set(Object.keys(base));
+  const evs = cal.events
+    .filter(e => uni.has(e.ticker) && e.report_date >= today)
+    .sort((a, b) => a.report_date < b.report_date ? -1 : a.report_date > b.report_date ? 1 : 0);
+  const seen = new Set(); const rows = [];
+  for (const e of evs) {
+    if (seen.has(e.ticker)) continue; seen.add(e.ticker);
+    const br = base[e.ticker] || {};
+    let pw = null, ndays = 0;
+    try {
+      const fw = await earnFlowWindow(env, e.ticker, today, null);
+      if (fw.nDays >= EARN_WEEKLY_MIN_DAYS) {
+        pw = (fw.pw != null && isFinite(fw.pw)) ? +fw.pw.toFixed(2) : null; ndays = fw.nDays;
+      } else {
+        const fm = await earnMonthWindow(env, e.ticker, today, null);
+        pw = (fm.pw != null && isFinite(fm.pw)) ? +fm.pw.toFixed(2) : null; ndays = fm.nDays;
+      }
+    } catch (_) {}
+    const brate = br.base_rate ?? null;
+    rows.push({ date: e.report_date, ticker: e.ticker, when: e.when,
+      base_rate: brate, base_n: br.n || 0, pw_so_far: pw, flow_days: ndays,
+      status: earnPipeStatus(brate, pw) });
+  }
+  return { built: today, calSrc: cal.src, rows };
+}
+
+async function earnRefreshPipeline(env) {
+  try {
+    const data = await earnPipeline(env);
+    await env.SIGNAL_KV.put('earn_pipeline_cache', JSON.stringify(data), { expirationTtl: 30 * 3600 });
+    return data;
+  } catch (e) { console.warn('[earn] pipeline refresh:', e.message); return null; }
+}
+
 async function earnVixOK(env, token) {
   // prior-day VIX close vs mean of last 100 closes (incl. prior day)
   const end = Date.now(), start = end - 220 * 86400_000;
@@ -899,6 +951,7 @@ async function earnMorningJob(env, etNow, token) {
     const mode = (await env.SIGNAL_KV.get('earnings_mode')) || 'paper';
     await earnSend(env, earnBoardMsg(b, mode, 'morning'));
     await env.SIGNAL_KV.put(`earnscan_done_${iso}`, 'ok', { expirationTtl: 5 * 86400 });
+    await earnRefreshPipeline(env);            // refresh 2-week pipeline from live calendar
   } catch (e) {
     await env.SIGNAL_KV.delete(key);          // retry next tick in window
     console.warn('[earn] morning job failed:', e.message);
@@ -1022,6 +1075,7 @@ async function earnNightlyCollect(env, etNow, token) {
   await env.SIGNAL_KV.put(progKey, JSON.stringify([...done]), { expirationTtl: 86400 });
   if (done.size >= names.length) {
     await env.SIGNAL_KV.put(doneKey, 'done', { expirationTtl: 3 * 86400 });
+    await earnRefreshPipeline(env);           // pipeline reflects the day's fresh flow
     console.log(`[earn] nightly collect complete: ${done.size} names`);
   }
 }
@@ -2200,7 +2254,16 @@ async function getTailHedgeStatusLine(env = null) {
       if (cor1m == null) cor1m = dailyToday?.cor1m ?? null;
       if (vvix == null)  vvix  = dailyToday?.vvix ?? null;
       const daily = b.daily || [];
-      bundleLastDay = daily.length ? daily[daily.length - 1].date : null;
+      // Last day the bundle actually has DATA — NOT the last padded row. The
+      // builder emits empty rows out to date.today(); using the final (often
+      // data-less) row would push bundleLastDay past a live cloud cross and
+      // silently disarm the tail. 2026-07-09 bug: a mid-campaign bundle rebuild
+      // padded daily to 07-08, so the 06-22 cloud trigger (st.since) looked
+      // OLDER than the bundle → cloudTriggered flipped false → "No trade today"
+      // while the campaign was in fact still armed. Anchor to real data instead.
+      const withData = daily.filter(d => d && d.cor1m != null);
+      bundleLastDay = withData.length ? withData[withData.length - 1].date
+                    : (daily.length ? daily[daily.length - 1].date : null);
       const defId = b.default_preset || 'balanced';
       const triggers = b.preset_results?.[defId]?.triggers || [];
       const last = triggers[triggers.length - 1];
@@ -9862,6 +9925,13 @@ export default {
     // Bypasses the normal 12:30 ET window so we can verify the open path
     // end-to-end without waiting for the cron. Auth-required.
     // ── GET /earnings-board ── today's board (public read for the page) ──
+    if (url.pathname === '/earnings-pipeline' && request.method === 'GET') {
+      const force = url.searchParams.get('force') === '1';
+      let cached = force ? null : await env.SIGNAL_KV.get('earn_pipeline_cache');
+      if (!cached) { const d = await earnRefreshPipeline(env); cached = JSON.stringify(d || { built: isoDateET(toET()), rows: [] }); }
+      return jsonResp(JSON.parse(cached), 200, { 'Access-Control-Allow-Origin': '*' });
+    }
+
     if (url.pathname === '/earnings-board' && request.method === 'GET') {
       const iso = isoDateET(toET());
       const raw = await env.SIGNAL_KV.get(`earn_board_${iso}`)
