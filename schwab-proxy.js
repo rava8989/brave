@@ -5810,12 +5810,26 @@ async function handleScheduled(env) {
       const hbAge = hb && hb.ts ? (Date.now() - hb.ts) : null;
       const hbDead = hb && (hbAge == null || hbAge > 3 * 60 * 1000);
       if (hbDead) {
+        // Prosthesis ticks are spaced ≥5 min (2026-07-10 incident: every-minute
+        // ticks outran KV propagation of the skipper's day-key guard and re-sent
+        // the fresh BOBF relay ~8× — 5 min ≫ the ~60s KV staleness window, and
+        // the skipper now also claims the day-key BEFORE sending). A relay
+        // lagging the signal by ≤5 min is fine: paper fills use the trade
+        // record's frozen prices, not live quotes.
         if (env.LINK_SECRET) {
           try {
-            const pr = await fetch('https://skipper.ravamt4.workers.dev/api/poll', {
-              method: 'POST', headers: { 'X-Link-Secret': env.LINK_SECRET },
-            });
-            console.log('[skipper-hb] prosthesis tick →', pr.status);
+            const lastPRaw = await env.SIGNAL_KV.get('skipper_prosthesis_last');
+            if (!lastPRaw || (Date.now() - parseInt(lastPRaw, 10)) > 5 * 60 * 1000) {
+              await env.SIGNAL_KV.put('skipper_prosthesis_last', String(Date.now()), { expirationTtl: 86400 });
+              const prReq = new Request('https://skipper.internal/api/poll', {
+                method: 'POST', headers: { 'X-Link-Secret': env.LINK_SECRET },
+              });
+              const pr = env.SKIPPER_WORKER
+                ? await env.SKIPPER_WORKER.fetch(prReq)
+                : await fetch('https://skipper.ravamt4.workers.dev/api/poll', {
+                    method: 'POST', headers: { 'X-Link-Secret': env.LINK_SECRET } });
+              console.log('[skipper-hb] prosthesis tick →', pr.status);
+            }
           } catch (e) { console.warn('[skipper-hb] prosthesis failed:', e.message); }
         }
         const akSk = `skipper_dead_alert_${todayISO}`;
@@ -9836,10 +9850,26 @@ export default {
         // live fill) so subscribers get each trade regardless of our exec mode.
         let fanned = 0;
         if (fanoutText) {
+          // Dedup backstop (2026-07-10 spam incident: racing skipper ticks
+          // re-sent the same BOBF relay ~8×): identical fanout text within
+          // 30 min is always a duplicate from a retrying/racing caller —
+          // each trade fans out once per day and every message differs.
+          let dupF = false;
           try {
-            const o = await fanoutSubscribers(env, String(fanoutText).slice(0, 1800));
-            fanned = o.filter(x => x.ok).length;
-          } catch (e) { console.warn('[link-notify/fanout]', e.message); }
+            const sF = String(fanoutText); let hF = 0;
+            for (let i = 0; i < sF.length; i++) hF = (hF * 31 + sF.charCodeAt(i)) >>> 0;
+            const dkF = `fanout_dedup_${hF}`;
+            if (await env.SIGNAL_KV.get(dkF)) dupF = true;
+            else await env.SIGNAL_KV.put(dkF, '1', { expirationTtl: 1800 });
+          } catch (_) {}
+          if (dupF) {
+            console.warn('[link-notify/fanout] duplicate suppressed');
+          } else {
+            try {
+              const o = await fanoutSubscribers(env, String(fanoutText).slice(0, 1800));
+              fanned = o.filter(x => x.ok).length;
+            } catch (e) { console.warn('[link-notify/fanout]', e.message); }
+          }
         }
         return jsonResp({ ok: !!r.ok, fanned }, 200, corsHeaders);
       } catch (e) { return jsonResp({ ok: false, error: e.message }, 400, corsHeaders); }
