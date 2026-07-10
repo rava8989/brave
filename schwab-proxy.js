@@ -9163,26 +9163,41 @@ const EARN_CARD_FOOTER = '⚠️ Not financial advice — for educational purpos
 // render/upload failure falls back to the text board so nothing goes silent.
 // `dmOnly` (test endpoint) sends the card to the owner DM only, ignores the flag.
 async function earnSendCard(env, b, stage, dmOnly = false) {
-  const text = earnBoardMsg(b, null, stage);
   const flag = await env.SIGNAL_KV.get('earnings_card_mode');
-  if (!dmOnly && flag !== 'on') return earnSend(env, text);
-  try {
-    const png = await renderEarningsCardPng(b);
-    const dcRaw = await env.SIGNAL_KV.get('discord_config');
-    const dc = dcRaw ? JSON.parse(dcRaw) : null;
-    let dmOk = false, whOk = false;
-    if (dc && dc.channelId) dmOk = (await sendDiscordImage(env, dc.channelId, png, dc.proxyUrl, 'earnings.png', EARN_CARD_FOOTER)).ok;
-    if (!dmOnly) {
-      const wh = await env.SIGNAL_KV.get('earnings_webhook_url');
-      if (wh) whOk = await postWebhookImage(wh, png, EARN_CARD_FOOTER, 'earnings.png');
-    }
-    if (!dmOk && !whOk) throw new Error('no image sink ok');
-    return { card: true, dm: dmOk, webhook: whOk };
-  } catch (e) {
-    try { await logEvent(env, 'warn', 'earn-card', 'card failed — text fallback', { msg: e && (e.message || String(e)) }); } catch (_) {}
-    if (dmOnly) return { card: false, error: e.message };
-    return earnSend(env, text);
+  if (!dmOnly && flag !== 'on') return earnSend(env, earnBoardMsg(b, null, stage));  // flag off → text (earnSend adds its own disclaimer)
+  // PER-SINK resilience (2026-07-10): render once; then EACH sink (owner DM,
+  // subscriber webhook) tries the image and, if that fails, sends TEXT to that
+  // same sink. A broken webhook-image post can no longer leave subscribers with
+  // NOTHING while the owner got the card — the recurring silent-drop class.
+  const DISC = '\n\n_Not financial advice. For informational/educational purposes only. You are solely responsible for your own trades._';
+  const text = earnBoardMsg(b, null, stage) + DISC;
+  let png = null;
+  try { png = await renderEarningsCardPng(b); }
+  catch (e) { try { await logEvent(env, 'warn', 'earn-card', 'render failed — text per sink', { msg: e && (e.message || String(e)) }); } catch (_) {} }
+  const dcRaw = await env.SIGNAL_KV.get('discord_config');
+  const dc = dcRaw ? JSON.parse(dcRaw) : null;
+  const out = { card: !!png };
+  if (dc && dc.channelId) {
+    let ok = false;
+    if (png) ok = (await sendDiscordImage(env, dc.channelId, png, dc.proxyUrl, 'earnings.png', EARN_CARD_FOOTER)).ok;
+    if (!ok) ok = (await sendDiscordDM(env, dc.channelId, text.slice(0, 2000), dc.proxyUrl)).ok;
+    out.dm = ok;
   }
+  if (!dmOnly) {
+    const wh = await env.SIGNAL_KV.get('earnings_webhook_url');
+    if (wh) {
+      let ok = false;
+      if (png) ok = await postWebhookImage(wh, png, EARN_CARD_FOOTER, 'earnings.png');
+      if (!ok) {
+        try {
+          const r = await fetch(wh, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: text.slice(0, 1900) }) });
+          ok = r.ok || r.status === 204;
+        } catch (_) {}
+      }
+      out.webhook = ok;
+    }
+  }
+  return out;
 }
 
 // Map the live `signal` (same object the text builder uses) → card data.
