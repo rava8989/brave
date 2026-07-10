@@ -913,8 +913,11 @@ function earnBoardMsg(b, mode, stage) {
              : `🌙 **[EARNINGS] morning — ${b.date}**`;
   const parkLine = b.park ? `\n**Parking sleeve: ${b.park.sleeve}** `+(b.park.sleeve==='SPY'?'(market above its 200-day — hold SPY)':b.park.sleeve==='GLD'?'(market below 200-day, calm — hold GLD)':'(market below 200-day + VIX>25 — sit in cash)') : '';
   if (!b.board.length) return `${head}${stage==='morning'?parkLine:''}\nNobody reports in this window. No trades tonight.`;
-  const outside = b.board.filter(r => r.notes.some(n => n.startsWith('outside universe')));
+  // Outside-universe names stay in the board JSON (KV earn_board_<date>) for
+  // audits but are NOT listed in the message — they can never be scored, so
+  // they never change the decision (user 2026-07-10: pure noise).
   const scored = b.board.filter(r => !r.notes.some(n => n.startsWith('outside universe')));
+  if (!scored.length) return `${head}${stage==='morning'?parkLine:''}\nNobody in-universe reports in this window. No trades tonight.`;
   const lines = scored.map(r => {
     const g = x => x === null ? '·' : x ? '✓' : '✗';
     return `${r.verdict === 'LONG' ? '🟢' : r.verdict === 'CROWDED' ? '🔴' : '⚪'} ` +
@@ -923,10 +926,7 @@ function earnBoardMsg(b, mode, stage) {
       `G:${g(r.g1)}${g(r.g2)}${g(r.g3)}${g(r.g4)} → **${r.verdict}**` +
       (r.notes.length ? ` _(${r.notes.join('; ')})_` : '');
   });
-  let tail = outside.length
-    ? `\n⚪ outside universe (${outside.length}): ${outside.map(o => o.ticker).join(', ')}`
-    : '';
-  tail += `\nVIX check: ${b.vix.ratio}× its 100d mean (${b.vix.ok ? 'calm ✓' : '⛔ SPIKING — all nights skipped'})` +
+  let tail = `\nVIX check: ${b.vix.ratio}× its 100d mean (${b.vix.ok ? 'calm ✓' : '⛔ SPIKING — all nights skipped'})` +
              ` · calendar: ${b.calSrc}`;
   if (stage === 'final' && b.longs.length) {
     const w = (100 / b.longs.length).toFixed(1);
