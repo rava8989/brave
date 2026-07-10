@@ -5794,6 +5794,25 @@ async function handleScheduled(env) {
   // Diagonal COR1M gate, and the history cor1m column no longer depend on
   // the user's Mac being on (ThetaData/LaunchAgent = research-only now).
   //  • 9:30-9:36: every tick until the day's open is captured
+  // Skipper heartbeat watchdog (2026-07-10): the skipper's cron scheduler
+  // stalled silently for 3.5h — worker healthy, ZERO ticks, nobody alerted
+  // (its errstreak alarm only counts ticks that RUN; a dead cron runs none).
+  // Its tick now stamps errstreak.ts every minute; alarm once/day when that
+  // goes stale >10 min during market hours. Fix = redeploy skipper.
+  if (isMarket && env.SKIPPER_KV && etMin % 10 === 0) {
+    try {
+      const hbRaw = await env.SKIPPER_KV.get('errstreak');
+      const hb = hbRaw ? JSON.parse(hbRaw) : null;
+      const akSk = `skipper_dead_alert_${todayISO}`;
+      if (hb && hb.ts && (Date.now() - hb.ts) > 10 * 60 * 1000 && !(await env.SIGNAL_KV.get(akSk))) {
+        await env.SIGNAL_KV.put(akSk, '1', { expirationTtl: 86400 });
+        const dcSk = JSON.parse(await env.SIGNAL_KV.get('discord_config') || 'null');
+        if (dcSk && dcSk.channelId) await sendDiscordDM(env, dcSk.channelId,
+          `🚨 **Skipper cron DEAD** — no tick for ${Math.round((Date.now() - hb.ts) / 60000)} min during market hours. Trade relays are NOT going out. Fix: redeploy skipper (cd ~/Desktop/skipper && npx wrangler deploy).`, dcSk.proxyUrl);
+      }
+    } catch (e) { console.warn('[skipper-hb]', e.message); }
+  }
+
   // Morning orphan sweep (lessons P18): settle any prior-session trade left
   // 'filled' by a missed EOD BEFORE today's entries can overwrite the undated
   // strad/bobf/gxbf KV slots (BOBF enters ~10:30, straddle ~9:33). Once per

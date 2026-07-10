@@ -30,6 +30,14 @@ crons = [
 binding = "SIGNAL_KV"
 id = "be47dd5d2fb34ec79e5a34f0e241f125"
 
+# Read-only view into the skipper's KV for the heartbeat watchdog
+# (2026-07-10: skipper's cron scheduler stalled silently — worker healthy,
+# zero ticks, nobody alerted; its tick stamps errstreak.ts every minute
+# and the market cron here alarms when that goes stale >10 min).
+[[kv_namespaces]]
+binding = "SKIPPER_KV"
+id = "12a70130968646be93787f9725a15614"
+
 # DISCORD_TOKEN (secret) replaces the standalone discord-proxy worker.
 # Set via: npx wrangler secret put DISCORD_TOKEN
 # When DISCORD_TOKEN is present, sendDiscordDM bypasses the service binding
