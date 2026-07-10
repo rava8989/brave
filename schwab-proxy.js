@@ -948,8 +948,7 @@ async function earnMorningJob(env, etNow, token) {
   try {
     const b = await earnBuildBoard(env, token, iso, { withIntraday: false });
     await env.SIGNAL_KV.put(`earn_board_${iso}`, JSON.stringify(b), { expirationTtl: 3 * 86400 });
-    const mode = (await env.SIGNAL_KV.get('earnings_mode')) || 'paper';
-    await earnSend(env, earnBoardMsg(b, mode, 'morning'));
+    await earnSendCard(env, b, 'morning');   // card when flag 'on', else text — both fall back to text
     await env.SIGNAL_KV.put(`earnscan_done_${iso}`, 'ok', { expirationTtl: 5 * 86400 });
     await earnRefreshPipeline(env);            // refresh 2-week pipeline from live calendar
   } catch (e) {
@@ -988,7 +987,7 @@ async function earnFinalJob(env, etNow, token) {
     b.final = true;
     await env.SIGNAL_KV.put(`earn_board_${iso}`, JSON.stringify(b), { expirationTtl: 7 * 86400 });
     const mode = (await env.SIGNAL_KV.get('earnings_mode')) || 'paper';
-    await earnSend(env, earnBoardMsg(b, mode, 'final'));
+    await earnSendCard(env, b, 'final');     // card when flag 'on', else text — both fall back to text
     if (b.longs.length) {
       await env.SIGNAL_KV.put(`earn_open_${iso}`, JSON.stringify(
         { date: iso, longs: b.longs.map(l => l.ticker), mode }), { expirationTtl: 7 * 86400 });
@@ -9021,6 +9020,171 @@ async function renderMorningCardPng(d) {
   });
   return r.render().asPng();
 }
+
+// ════════════════════════════════════════════════════════════════════
+// EARNINGS CARD IMAGE (2026-07-10) — the nightly earnings board rendered
+// SVG → PNG, reusing the SAME rasterizer + fonts + Discord-attachment path
+// as the morning card. Every state (LONG night / mixed board / quiet /
+// VIX-spike skip) collapses to one card. ANY failure → caller falls back
+// to the text board, so the earnings signal can never go silent.
+// ════════════════════════════════════════════════════════════════════
+function _earnDotColor(g) { return g === true ? '#4ade80' : g === false ? '#f87171' : '#4a4d54'; }
+function _earnReason(r) {
+  if (r.verdict === 'LONG') return `flow ${r.pw_ratio ?? '—'}`;
+  if (r.verdict === 'CROWDED') return `crowded · flow ${r.pw_ratio ?? '—'}`;
+  if (r.g1 === false) return r.pw_ratio != null ? `flow light ${r.pw_ratio}` : 'no flow';
+  if (r.g2 === false) return 'extended · at highs';
+  if (r.g3 === false) return 'weak track record';
+  if (r.g4 === false) return 'VIX elevated';
+  return 'pass';
+}
+const _EARN_MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const _EARN_DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+function _earnCardDate(iso) {
+  const [y, m, d] = String(iso).split('-').map(Number);
+  const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  return `${_EARN_DOW[dow]} ${_EARN_MON[m - 1]} ${d}`;
+}
+// b = earnBuildBoard output {date, vix:{ratio,ok}, park:{sleeve}, board:[...], longs:[...]}
+function buildEarningsCardSvg(b) {
+  const W = 460, P = 18, innerW = W - 2 * P;
+  const F = 'Inter, DejaVu Sans, sans-serif';
+  const C = { card: '#1e1f22', skipCard: '#241a1a', text: '#f2f3f5', sub: '#b5bac1',
+    mute: '#80848e', longBg: '#17251c', failBg: '#251a1c', green: '#4ade80', red: '#f87171',
+    accent: '#a78bfa', foot: '#2a2c30', footTxt: '#e7e3ff', footGood: '#1d3a29',
+    footGoodTxt: '#c9f5da', footBad: '#3a2020', footBadTxt: '#f7c9c9' };
+  const vixOk = b.vix ? b.vix.ok !== false : true;
+  const scored = (b.board || []).filter(r => !(r.notes || []).some(n => String(n).startsWith('outside universe')));
+  const longs = (b.longs && b.longs.length) ? b.longs : scored.filter(r => r.verdict === 'LONG');
+  const parkTxt = b.park ? ({ SPY: 'stay in SPY', GLD: 'stay in GLD', CASH: 'sit in cash' }[b.park.sleeve] || 'stay parked') : 'stay parked';
+
+  const header = (bg) => {
+    let h = `<rect x="0" y="0" width="${W}" height="__H__" rx="16" fill="${bg}"/>`;
+    h += `<text x="${P}" y="34" font-family="${F}" font-size="16" font-weight="600" fill="${C.accent}">Σ3 earnings</text>`;
+    h += `<text x="${W - P}" y="34" text-anchor="end" font-family="${F}" font-size="12" fill="${C.mute}">${_cardEsc(_earnCardDate(b.date))}</text>`;
+    return h;
+  };
+  const footBar = (y, bg, txtColor, msg) => {
+    let f = `<rect x="${P}" y="${y}" width="${innerW}" height="34" rx="9" fill="${bg}"/>`;
+    f += `<clipPath id="fc"><rect x="${P + 10}" y="${y}" width="${innerW - 20}" height="34"/></clipPath>`;
+    f += `<text x="${W / 2}" y="${y + 22}" clip-path="url(#fc)" text-anchor="middle" font-family="${F}" font-size="12.5" fill="${txtColor}">${_cardEsc(msg)}</text>`;
+    return f;
+  };
+  const centerMsg = (bigColor, big, small) => {
+    let m = `<text x="${W / 2}" y="86" text-anchor="middle" font-family="${F}" font-size="17" font-weight="600" fill="${bigColor}">${_cardEsc(big)}</text>`;
+    m += `<text x="${W / 2}" y="108" text-anchor="middle" font-family="${F}" font-size="12.5" fill="${C.mute}">${_cardEsc(small)}</text>`;
+    return m;
+  };
+
+  // STATE E — VIX spike: everything skipped.
+  if (!vixOk) {
+    const H = 168;
+    const vixR = b.vix && b.vix.ratio != null ? b.vix.ratio : '—';
+    let s = header(C.skipCard).replace('__H__', H);
+    s += centerMsg(C.red, 'All nights skipped', `VIX ${vixR}× its 100-day mean — fear spiking`);
+    s += footBar(H - 48, C.footBad, C.footBadTxt, 'no earnings trades until VIX calms');
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${s}</svg>`;
+  }
+  // STATE D — quiet night: nobody in-universe reports.
+  if (!scored.length) {
+    const H = 168;
+    let s = header(C.card).replace('__H__', H);
+    s += centerMsg(C.sub, 'No trades tonight', 'nobody in-universe reports');
+    s += footBar(H - 48, C.foot, C.footTxt, parkTxt);
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${s}</svg>`;
+  }
+
+  // STATES A/B/C — a board. LONGs first, then the rest; cap the visible rows.
+  const ordered = [...scored].sort((a, b2) => (a.verdict === 'LONG' ? 0 : 1) - (b2.verdict === 'LONG' ? 0 : 1));
+  const MAX = 7;
+  const shown = ordered.slice(0, MAX);
+  const overflow = ordered.length - shown.length;
+  const w = longs.length ? Math.round(100 / longs.length) : 0;
+  const rowH = 46, step = 52, y0 = 54;
+  let s = '';
+  shown.forEach((r, i) => {
+    const top = y0 + i * step;
+    const isLong = r.verdict === 'LONG';
+    const bg = isLong ? C.longBg : C.failBg, bar = isLong ? C.green : C.red;
+    s += `<rect x="${P}" y="${top}" width="${innerW}" height="${rowH}" rx="9" fill="${bg}"/>`;
+    s += `<rect x="${P}" y="${top + 1}" width="4" height="${rowH - 2}" rx="2" fill="${bar}"/>`;
+    const clipW = innerW - 120;
+    s += `<clipPath id="er${i}"><rect x="${P + 12}" y="${top}" width="${clipW}" height="${rowH}"/></clipPath>`;
+    s += `<text x="${P + 14}" y="${top + 20}" clip-path="url(#er${i})" font-family="${F}" font-size="15"><tspan font-weight="600" fill="${C.text}">${_cardEsc(r.ticker)}</tspan><tspan font-size="11" fill="${C.mute}">  ${_cardEsc(r.when || '')}</tspan></text>`;
+    s += `<text x="${P + 14}" y="${top + 37}" clip-path="url(#er${i})" font-family="${F}" font-size="12" fill="${C.sub}">${_cardEsc(_earnReason(r))}</text>`;
+    // Right: weight% for a LONG, else the verdict word.
+    if (isLong) s += `<text x="${W - P - 14}" y="${top + 22}" text-anchor="end" font-family="${F}" font-size="17" font-weight="600" fill="${C.green}">${w}%</text>`;
+    else s += `<text x="${W - P - 14}" y="${top + 22}" text-anchor="end" font-family="${F}" font-size="12" fill="${C.red}">${r.verdict === 'CROWDED' ? 'crowded' : 'pass'}</text>`;
+    // 4 gate dots, right-aligned, ending at W-P-14.
+    const dots = [r.g1, r.g2, r.g3, r.g4];
+    dots.forEach((g, k) => {
+      const cx = (W - P - 16) - (3 - k) * 13;
+      s += `<circle cx="${cx}" cy="${top + 34}" r="4" fill="${_earnDotColor(g)}"/>`;
+    });
+  });
+  let footY = y0 + shown.length * step + (overflow > 0 ? 16 : 4);
+  if (overflow > 0) {
+    s += `<text x="${W / 2}" y="${y0 + shown.length * step + 12}" text-anchor="middle" font-family="${F}" font-size="11" fill="${C.mute}">+${overflow} more on the page</text>`;
+  }
+  let footBg, footTxt, msg;
+  if (longs.length) {
+    footBg = C.footGood; footTxt = C.footGoodTxt;
+    msg = `buy 3:45–3:55 close · ${longs.map(l => `${l.ticker} ${w}%`).join(' · ')} → sell at open`;
+  } else {
+    footBg = C.foot; footTxt = C.footTxt;
+    msg = `no qualifiers tonight · ${parkTxt}`;
+  }
+  const H = footY + 34 + P;
+  s = header(C.card).replace('__H__', H) + s + footBar(footY, footBg, footTxt, msg);
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${s}</svg>`;
+}
+async function renderEarningsCardPng(b) {
+  await ensureResvg();
+  const fonts = await getCardFonts();
+  const r = new Resvg(buildEarningsCardSvg(b), {
+    fitTo: { mode: 'width', value: 920 },
+    font: { fontBuffers: fonts, defaultFontFamily: 'Inter', loadSystemFonts: false },
+  });
+  return r.render().asPng();
+}
+// Post a PNG to a Discord WEBHOOK (multipart) — the earnings channel sink.
+async function postWebhookImage(url, pngBytes, content, filename = 'earnings.png') {
+  try {
+    const fd = new FormData();
+    fd.append('payload_json', JSON.stringify({ content: String(content || '').slice(0, 1900) }));
+    fd.append('files[0]', new Blob([pngBytes], { type: 'image/png' }), filename);
+    const r = await fetch(url, { method: 'POST', body: fd });
+    return r.ok || r.status === 204;
+  } catch (_) { return false; }
+}
+const EARN_CARD_FOOTER = '⚠️ Not financial advice — for educational purposes only. You are solely responsible for your own trades.';
+// Send the earnings board as a CARD when KV `earnings_card_mode` === 'on', else
+// as text (current behavior). Card path: owner DM + subscriber webhook; ANY
+// render/upload failure falls back to the text board so nothing goes silent.
+// `dmOnly` (test endpoint) sends the card to the owner DM only, ignores the flag.
+async function earnSendCard(env, b, stage, dmOnly = false) {
+  const text = earnBoardMsg(b, null, stage);
+  const flag = await env.SIGNAL_KV.get('earnings_card_mode');
+  if (!dmOnly && flag !== 'on') return earnSend(env, text);
+  try {
+    const png = await renderEarningsCardPng(b);
+    const dcRaw = await env.SIGNAL_KV.get('discord_config');
+    const dc = dcRaw ? JSON.parse(dcRaw) : null;
+    let dmOk = false, whOk = false;
+    if (dc && dc.channelId) dmOk = (await sendDiscordImage(env, dc.channelId, png, dc.proxyUrl, 'earnings.png', EARN_CARD_FOOTER)).ok;
+    if (!dmOnly) {
+      const wh = await env.SIGNAL_KV.get('earnings_webhook_url');
+      if (wh) whOk = await postWebhookImage(wh, png, EARN_CARD_FOOTER, 'earnings.png');
+    }
+    if (!dmOk && !whOk) throw new Error('no image sink ok');
+    return { card: true, dm: dmOk, webhook: whOk };
+  } catch (e) {
+    try { await logEvent(env, 'warn', 'earn-card', 'card failed — text fallback', { msg: e && (e.message || String(e)) }); } catch (_) {}
+    if (dmOnly) return { card: false, error: e.message };
+    return earnSend(env, text);
+  }
+}
+
 // Map the live `signal` (same object the text builder uses) → card data.
 // Faithful: reuses the exact status strings + the active/blocked rule (a status
 // starting with "No " = blocked = red/NO). M8BF is shown as CONDITIONAL
@@ -10206,6 +10370,62 @@ export default {
         '🌙 **[EARNINGS] Private DM wired.** You (and only you) get: morning preview ~9:15 · final board 3:30 · sell reminder 9:32. Subscribers never see these. — test, no signal',
         dc.proxyUrl);
       return jsonResp({ ok: r.ok, source: r.source || null, error: r.error || null });
+    }
+
+    // ── GET /earnings-card-test ── Render the earnings CARD and (unless ?png=1)
+    // DM it to the owner ONLY — never the subscriber webhook. Validates every
+    // visual state before flipping KV `earnings_card_mode` → 'on'.
+    //   ?sample=A|B|C|D|E  synthetic board for that state
+    //   ?date=YYYY-MM-DD   real board from KV earn_board_<date>
+    //   (default)          today's board from KV, else sample C
+    //   ?png=1             return the raw PNG (eyeball in a browser, no Discord)
+    if (url.pathname === '/earnings-card-test' && request.method === 'GET') {
+      const secret = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
+      if (!secret || (secret !== env.SYNC_SECRET && secret !== env.GEXM_TRIGGER_TOKEN)) {
+        return jsonResp({ error: 'Unauthorized' }, 401, { 'Access-Control-Allow-Origin': '*' });
+      }
+      const g = (v) => v;   // gate value passthrough for readability
+      const SAMPLES = {
+        A: { date: '2026-07-22', vix: { ratio: 0.82, ok: true }, park: { sleeve: 'SPY' },
+             board: [{ ticker: 'TSLA', when: 'AMC', verdict: 'LONG', pw_ratio: 3.4, g1: g(true), g2: g(true), g3: g(true), g4: g(true), notes: [] }],
+             longs: [{ ticker: 'TSLA' }] },
+        B: { date: '2026-07-14', vix: { ratio: 0.81, ok: true }, park: null,
+             board: [
+               { ticker: 'JPM', when: 'BMO', verdict: 'LONG', pw_ratio: 3.1, g1: true, g2: true, g3: true, g4: true, notes: [] },
+               { ticker: 'C', when: 'BMO', verdict: 'LONG', pw_ratio: 2.9, g1: true, g2: true, g3: true, g4: true, notes: [] },
+               { ticker: 'WFC', when: 'BMO', verdict: 'LONG', pw_ratio: 2.6, g1: true, g2: true, g3: true, g4: true, notes: [] }],
+             longs: [{ ticker: 'JPM' }, { ticker: 'C' }, { ticker: 'WFC' }] },
+        C: { date: '2026-07-17', vix: { ratio: 0.9, ok: true }, park: { sleeve: 'SPY' },
+             board: [
+               { ticker: 'NFLX', when: 'AMC', verdict: 'LONG', pw_ratio: 3.1, g1: true, g2: true, g3: true, g4: true, notes: [] },
+               { ticker: 'GS', when: 'BMO', verdict: 'CROWDED', pw_ratio: 5.8, g1: false, g2: true, g3: true, g4: true, notes: [] },
+               { ticker: 'IBM', when: 'AMC', verdict: 'PASS', pw_ratio: 2.7, g1: true, g2: false, g3: false, g4: true, notes: [] }],
+             longs: [{ ticker: 'NFLX' }] },
+        D: { date: '2026-07-11', vix: { ratio: 0.8, ok: true }, park: { sleeve: 'SPY' }, board: [], longs: [] },
+        E: { date: '2026-08-06', vix: { ratio: 1.34, ok: false }, park: { sleeve: 'CASH' },
+             board: [{ ticker: 'DIS', when: 'AMC', verdict: 'PASS', pw_ratio: 3.0, g1: true, g2: true, g3: true, g4: false, notes: [] }],
+             longs: [] },
+      };
+      let b = null;
+      const samp = (url.searchParams.get('sample') || '').toUpperCase();
+      const dq = url.searchParams.get('date');
+      if (samp && SAMPLES[samp]) b = SAMPLES[samp];
+      else if (dq && /^\d{4}-\d{2}-\d{2}$/.test(dq)) {
+        const raw = await env.SIGNAL_KV.get(`earn_board_${dq}`);
+        b = raw ? JSON.parse(raw) : null;
+      } else {
+        const raw = await env.SIGNAL_KV.get(`earn_board_${isoDateET(toET())}`);
+        b = raw ? JSON.parse(raw) : SAMPLES.C;
+      }
+      if (!b) return jsonResp({ ok: false, error: 'no board for that date' }, 404, {});
+      if (url.searchParams.get('png') === '1') {
+        try {
+          const png = await renderEarningsCardPng(b);
+          return new Response(png, { status: 200, headers: { 'Content-Type': 'image/png', 'Access-Control-Allow-Origin': '*' } });
+        } catch (e) { return jsonResp({ ok: false, error: e.message }, 500, {}); }
+      }
+      const res = await earnSendCard(env, b, b.final ? 'final' : 'morning', true);
+      return jsonResp({ ok: res.card === true, result: res });
     }
 
     // ── GET /gexm-status ── GEXMAGNET chain-collector status. Auth-required
