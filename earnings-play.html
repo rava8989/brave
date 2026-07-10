@@ -313,10 +313,12 @@ function loadPipeline() {
     if(!d||!d.rows) return;
     document.getElementById('pipeDate').textContent = 'as of ' + d.built;
     const cls = st => st.startsWith('🟢')?'long':(st.startsWith('unlikely')||st.startsWith('crowded'))?'pass':'';
-    // guard: never show a name whose report date has already passed, even if the
-    // JSON is a day stale (self-correcting if the nightly refresh misses a run)
+    // guard: never show a name whose report has already happened, even if the
+    // JSON is a day stale (self-correcting if the nightly refresh misses a run).
+    // Today's BMO names reported THIS MORNING — drop them too; today's AMC
+    // names report tonight — keep (user 2026-07-10: DAL lingered all day).
     const today = new Date().toLocaleDateString('en-CA');  // YYYY-MM-DD local
-    const rows = d.rows.filter(r => r.date >= today);
+    const rows = d.rows.filter(r => r.date > today || (r.date === today && r.when !== 'BMO'));
     document.querySelector('#pipe tbody').innerHTML = rows.map(r =>
       `<tr><td>${r.date}</td><td>${r.ticker}</td><td>${r.when}</td>`+
       `<td>${r.base_rate==null?'—':(r.base_rate*100).toFixed(0)+'% ('+r.base_n+'q)'}</td>`+

@@ -648,7 +648,11 @@ async function earnPipeline(env) {
   const base = seed.base_rates || {};
   const uni = new Set(Object.keys(base));
   const evs = cal.events
-    .filter(e => uni.has(e.ticker) && e.report_date >= today)
+    // Keep future dates; keep TODAY only if the report is still ahead (AMC /
+    // unknown = tonight). A BMO name dated today already reported this
+    // morning — its play is over (user 2026-07-10: DAL lingered all day).
+    .filter(e => uni.has(e.ticker) &&
+      (e.report_date > today || (e.report_date === today && e.when !== 'BMO')))
     .sort((a, b) => a.report_date < b.report_date ? -1 : a.report_date > b.report_date ? 1 : 0);
   const seen = new Set(); const rows = [];
   for (const e of evs) {
