@@ -3122,12 +3122,18 @@ async function handleEOD(env, etNow) {
       });
       if (closeCandle) spxClose = parseFloat(closeCandle.close.toFixed(2));
     }
-    if (spxClose === null) {
+  } catch (e) { console.warn('[proxy]', e.message || e); }
+  // Quote-endpoint fallback in its OWN try (2026-07-10): it used to share the
+  // candle fetch's try block, so a thrown candle call skipped it entirely —
+  // that cascade (candles threw → quote skipped → Stooq too early at 16:17)
+  // left 2026-07-09 with spxClose null and every strategy settle silently dropped.
+  if (spxClose === null) {
+    try {
       const q = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24SPX&fields=quote`, token);
       const cp = q?.['$SPX']?.quote?.closePrice;
       if (cp) spxClose = parseFloat(cp.toFixed(2));
-    }
-  } catch (e) { console.warn('[proxy]', e.message || e); }
+    } catch (e) { console.warn('[proxy] spx quote fallback:', e.message || e); }
+  }
 
   // Stooq fallback for SPX close when Schwab tokens are expired
   if (spxClose === null) {
@@ -3135,6 +3141,23 @@ async function handleEOD(env, etNow) {
       const todayISO2 = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
       spxClose = await getSpxCloseForDate(todayISO2);
     } catch (e) { console.warn('[proxy]', e.message || e); }
+  }
+
+  // Still nothing → every settle below will be skipped. Say so ONCE instead of
+  // silently dropping the day (rule: every terminal skip path must notify).
+  // The next-EOD orphan sweep + backfills self-heal once a close is available.
+  if (spxClose === null) {
+    try {
+      const todayISO3 = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
+      const akE = `eod_noclose_alert_${todayISO3}`;
+      if (!(await env.SIGNAL_KV.get(akE))) {
+        await env.SIGNAL_KV.put(akE, '1', { expirationTtl: 86400 });
+        const dcRaw = await env.SIGNAL_KV.get('discord_config');
+        const dc = dcRaw ? JSON.parse(dcRaw) : null;
+        if (dc && dc.channelId) await sendDiscordDM(env, dc.channelId,
+          `⚠️ **EOD** — SPX close unavailable (Schwab candles + quote + Stooq all failed). Today's strategy settles are deferred; the next EOD run auto-heals via the orphan sweep + backfills.`, dc.proxyUrl);
+      }
+    } catch (_) {}
   }
 
   // Compute m8bfPL directly from today's signals + spxClose (no live_updater dependency)
@@ -5407,6 +5430,10 @@ async function freezeTailOpenIfDue(env, etNow, line = null, announce = false) {
   if (!snap || !Array.isArray(snap.puts) || !snap.puts.length) {
     // TRADE day, past 9:45, but no put snapshot — the live chain was unavailable at
     // entry. Alert ONCE instead of silently skipping the tail (audit P1-f 2026-07-06).
+    // Grace until 9:48: a client poll at 9:45:00 can race the cron tick that
+    // captures the snapshot (2026-07-09: spurious "enter manually" DM at 9:45,
+    // trade then froze normally at 9:46). Retry silently for the first ticks.
+    if (h === 9 && m < 48) return null;
     const ak = `tail_nosnap_alert_${todayISO}`;
     if (!(await env.SIGNAL_KV.get(ak))) {
       await env.SIGNAL_KV.put(ak, '1', { expirationTtl: 86400 });
@@ -5477,8 +5504,11 @@ async function refreshTailLiveQuotes(env, etNow, preChain = null) {
 // (mirrors research_tail_hedge.py; same ×100×contracts + Math.round as the other settles)
 // On the first PROFITABLE day, flip tail_trigger_state → RESOLVED so the campaign
 // stops signalling TRADE until COR1M crosses below 7.75 again.
-async function settleTailEOD(env, etNow, spxClose) {
-  const todayISO = isoDateET(etNow);
+async function settleTailEOD(env, etNow, spxClose, dateISO = null) {
+  // dateISO: settle a PAST day's trade (orphan sweep / manual ?date=). Without
+  // it the function is locked to today — a missed EOD could never be retried
+  // (2026-07-09 orphaned this way: spxClose null at 16:17 → skip → stuck 'filled').
+  const todayISO = dateISO || isoDateET(etNow);
   const raw = await env.SIGNAL_KV.get(`tail_open_trade_${todayISO}`);
   if (!raw) return { status: 'no-trade' };
   const trade = JSON.parse(raw);
@@ -5498,7 +5528,13 @@ async function settleTailEOD(env, etNow, spxClose) {
 
   // History P/L FIRST, mark 'closed' after (audit P2 2026-07-06 — the status guard
   // above makes re-settle idempotent; the campaign-stop below keys on pnl, not status).
-  await upsertHistoryGitHub(env, todayISO, { tailPL: pnl });
+  // Past-day heals (dateISO set) also repair the row's spxClose — that day's main
+  // EOD failed (which is why the trade orphaned), so the row lacks it, and
+  // backfillMissingPL skips rows without spxClose. NOT on the today-path:
+  // spxClose is alwaysOverwrite in upsertHistoryGitHub and handleEOD owns it there.
+  const histFields = { tailPL: pnl };
+  if (dateISO) histFields.spxClose = parseFloat(Number(S).toFixed(2));
+  await upsertHistoryGitHub(env, todayISO, histFields);
 
   trade.status = 'closed';
   trade.closeDate = todayISO;
@@ -5571,6 +5607,34 @@ async function handleScheduled(env) {
     if (eodResult.wroteFields) {
       await env.SIGNAL_KV.put(eodKey, 'done', { expirationTtl: 86400 });
     }
+    // Orphan-tail sweep (2026-07-10): a missed EOD close (spxClose null at 16:17)
+    // used to strand that day's tail_open_trade at status 'filled' forever —
+    // settleTailEOD was date-locked to today, so no later run could touch it
+    // (2026-07-09 orphaned exactly this way). Sweep the last 5 sessions and
+    // settle stragglers via the past-day path (Stooq has the close by the next
+    // day even when Schwab failed at 16:17). Runs BEFORE the backfills so the
+    // healed row's spxClose lets backfillMissingPL repair m8bfPL this same tick.
+    // Cheap when clean: 5 KV reads, no subrequest-budget risk (lesson P17).
+    try {
+      for (let i = 1; i <= 5; i++) {
+        const dPast = new Date(etNow); dPast.setDate(dPast.getDate() - i);
+        const dISO = isoDateET(dPast);
+        const rawT = await env.SIGNAL_KV.get(`tail_open_trade_${dISO}`);
+        if (!rawT) continue;
+        const trT = JSON.parse(rawT);
+        if (trT.status === 'closed') continue;
+        const resT = await settleTailEOD(env, etNow, null, dISO);
+        console.log('[tail] orphan sweep', dISO, JSON.stringify(resT));
+        if (resT.status === 'settled') {
+          try {
+            const dcRaw = await env.SIGNAL_KV.get('discord_config');
+            const dc = dcRaw ? JSON.parse(dcRaw) : null;
+            if (dc && dc.channelId) await sendDiscordDM(env, dc.channelId,
+              `🧹 **Tail Hedge** — settled orphaned ${dISO} trade (missed EOD): P/L $${resT.pnl}.`, dc.proxyUrl);
+          } catch (_) {}
+        }
+      }
+    } catch (e) { console.warn('[tail] orphan sweep', e.message); }
     let backfillWR = {}, backfillPL = {};
     try { backfillWR = await backfillMissingWR(env); } catch(e) { backfillWR = { error: e.message }; }
     try { backfillPL = await backfillMissingPL(env); } catch(e) { backfillPL = { error: e.message }; }
@@ -11047,6 +11111,12 @@ export default {
           { status: 403, headers: { 'Content-Type': 'application/json' } });
       }
       const etNowS = toET(new Date());
+      // Optional ?date=YYYY-MM-DD settles a PAST day's orphaned trade (must not
+      // be in the future). Default: today, as before.
+      const dateQ = url.searchParams.get('date');
+      const dateS = (dateQ && /^\d{4}-\d{2}-\d{2}$/.test(dateQ) && dateQ <= isoDateET(etNowS))
+        ? dateQ : null;
+      const targetISO = dateS || isoDateET(etNowS);
       let spxCloseS = null;
       const qpS = url.searchParams.get('spxClose');
       if (qpS && !isNaN(parseFloat(qpS))) spxCloseS = parseFloat(qpS);
@@ -11056,14 +11126,14 @@ export default {
         // consistent — NOT quote.closePrice (that's a prior/quote field).
         try {
           const histS = await getHistory(env);
-          const rowS = (histS || []).find(r => r.date === isoDateET(etNowS));
+          const rowS = (histS || []).find(r => r.date === targetISO);
           if (rowS && rowS.spxClose != null) spxCloseS = parseFloat(rowS.spxClose);
         } catch (_) {}
       }
       let resultS;
-      try { resultS = await settleTailEOD(env, etNowS, spxCloseS); }
+      try { resultS = await settleTailEOD(env, etNowS, spxCloseS, dateS); }
       catch (e) { resultS = { error: e.message }; }
-      return new Response(JSON.stringify({ date: isoDateET(etNowS), spxClose: spxCloseS, result: resultS }, null, 2),
+      return new Response(JSON.stringify({ date: targetISO, spxClose: spxCloseS, result: resultS }, null, 2),
         { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': 'https://rava8989.github.io' } });
     }
 
