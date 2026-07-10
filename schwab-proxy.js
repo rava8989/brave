@@ -3139,7 +3139,7 @@ async function handleEOD(env, etNow) {
   if (spxClose === null) {
     try {
       const todayISO2 = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
-      spxClose = await getSpxCloseForDate(todayISO2);
+      spxClose = await getSpxCloseForDate(todayISO2, env);
     } catch (e) { console.warn('[proxy]', e.message || e); }
   }
 
@@ -4313,11 +4313,13 @@ async function refreshStraddleLiveQuotes(env, token, etNow, preChain = null) {
 
 // EOD: settle the straddle at SPX close. Records stradPL.
 // `spxClose` provided by handleEOD (from Schwab quote).
-async function settleStraddleEOD(env, etNow, spxClose) {
+async function settleStraddleEOD(env, etNow, spxClose, dateISO = null) {
+  // dateISO: settle a PAST day's orphaned trade (P18 sweep / manual heal).
   const raw = await env.SIGNAL_KV.get('straddle_open_trade');
   if (!raw) return { status: 'no-trade' };
   const trade = JSON.parse(raw);
-  if (trade.openDate !== isoDateET(etNow)) return { status: 'wrong-date', openDate: trade.openDate };
+  const targetISO = dateISO || isoDateET(etNow);
+  if (trade.openDate !== targetISO) return { status: 'wrong-date', openDate: trade.openDate };
   if (trade.status === 'closed' || trade.status === 'expired') {
     // Working order that never filled → no trade, no P&L
     if (trade.status === 'expired') {
@@ -4337,10 +4339,12 @@ async function settleStraddleEOD(env, etNow, spxClose) {
   // upsertHistoryGitHub can't leave the trade closed with a blank PL column (no
   // backfill, re-settle blocked). The status guard above makes re-settle idempotent
   // (same spxClose → same pnl) (audit P2 2026-07-06).
-  await upsertHistoryGitHub(env, trade.openDate, { stradPL: pnl });
+  const stradFields = { stradPL: pnl };
+  if (dateISO) stradFields.spxClose = parseFloat(spxClose.toFixed(2));
+  await upsertHistoryGitHub(env, trade.openDate, stradFields);
 
   trade.status = 'closed';
-  trade.closeDate = isoDateET(etNow);
+  trade.closeDate = targetISO;
   trade.spxClose = parseFloat(spxClose.toFixed(2));
   trade.closeValue = parseFloat(closeIntrinsic.toFixed(2));
   trade.pnl = pnl;
@@ -4875,11 +4879,13 @@ async function refreshBobfLiveQuotes(env, token, etNow, preChain = null) {
 
 // Settle BOBF at SPX close. PnL from intrinsic of the call butterfly:
 //   pnl = (lower_intrinsic − 2*body_intrinsic + upper_intrinsic − debit) × 100
-async function settleBobfEOD(env, etNow, spxClose) {
+async function settleBobfEOD(env, etNow, spxClose, dateISO = null) {
+  // dateISO: settle a PAST day's orphaned trade (P18 sweep / manual heal).
   const raw = await env.SIGNAL_KV.get('bobf_open_trade');
   if (!raw) return { status: 'no-trade' };
   const trade = JSON.parse(raw);
-  if (trade.openDate !== isoDateET(etNow)) return { status: 'wrong-date', openDate: trade.openDate };
+  const targetISO = dateISO || isoDateET(etNow);
+  if (trade.openDate !== targetISO) return { status: 'wrong-date', openDate: trade.openDate };
   if (trade.status === 'closed') return { status: 'already-closed' };
   if (trade.status === 'expired') return { status: 'expired-no-trade' };
   if (trade.status !== 'filled') return { status: trade.status };
@@ -4891,10 +4897,12 @@ async function settleBobfEOD(env, etNow, spxClose) {
   const pnl = Math.round((intrinsic - trade.entryDebit) * 100 * trade.contracts);
 
   // History P/L FIRST, mark 'closed' after (audit P2 2026-07-06 — idempotent re-settle).
-  await upsertHistoryGitHub(env, trade.openDate, { bobfPL: pnl });
+  const bobfFields = { bobfPL: pnl };
+  if (dateISO) bobfFields.spxClose = parseFloat(spxClose.toFixed(2));
+  await upsertHistoryGitHub(env, trade.openDate, bobfFields);
 
   trade.status = 'closed';
-  trade.closeDate = isoDateET(etNow);
+  trade.closeDate = targetISO;
   trade.spxClose = parseFloat(spxClose.toFixed(2));
   trade.closeIntrinsic = parseFloat(intrinsic.toFixed(2));
   trade.pnl = pnl;
@@ -5337,11 +5345,13 @@ async function refreshM8bfLiveQuotes(env, token, etNow, preChain = null) {
 //   clamp( max(0,S−(K−W)) − 2·max(0,S−K) + max(0,S−(K+W)), 0, W )
 //   pnl = (intrinsic − netDebit) × 100 × contracts
 // (same per-point-per-contract convention as settleBobfEOD/settleStraddleEOD)
-async function settleGxbfEOD(env, etNow, spxClose) {
+async function settleGxbfEOD(env, etNow, spxClose, dateISO = null) {
+  // dateISO: settle a PAST day's orphaned trade (P18 sweep / manual heal).
   const raw = await env.SIGNAL_KV.get('gxbf_open_trade');
   if (!raw) return { status: 'no-trade' };
   const trade = JSON.parse(raw);
-  if (trade.openDate !== isoDateET(etNow)) return { status: 'wrong-date', openDate: trade.openDate };
+  const targetISO = dateISO || isoDateET(etNow);
+  if (trade.openDate !== targetISO) return { status: 'wrong-date', openDate: trade.openDate };
   if (trade.status === 'closed') return { status: 'already-closed' };
   if (trade.status === 'expired') return { status: 'expired-no-trade' };
   if (trade.status !== 'filled') return { status: trade.status };
@@ -5355,10 +5365,12 @@ async function settleGxbfEOD(env, etNow, spxClose) {
   const pnl = Math.round((intrinsic - trade.netDebit) * 100 * trade.contracts);
 
   // History P/L FIRST, mark 'closed' after (audit P2 2026-07-06 — idempotent re-settle).
-  await upsertHistoryGitHub(env, trade.openDate, { gxbfPL: pnl });
+  const gxbfFields = { gxbfPL: pnl };
+  if (dateISO) gxbfFields.spxClose = parseFloat(spxClose.toFixed(2));
+  await upsertHistoryGitHub(env, trade.openDate, gxbfFields);
 
   trade.status = 'closed';
-  trade.closeDate = isoDateET(etNow);
+  trade.closeDate = targetISO;
   trade.spxClose = parseFloat(spxClose.toFixed(2));
   trade.closeIntrinsic = parseFloat(intrinsic.toFixed(2));
   trade.pnl = pnl;
@@ -5516,7 +5528,7 @@ async function settleTailEOD(env, etNow, spxClose, dateISO = null) {
   if (trade.status === 'closed') return { status: 'already-closed', pnl: trade.pnl };
 
   let S = spxClose;
-  if (S == null) { try { S = await getSpxCloseForDate(todayISO); } catch (_) {} }
+  if (S == null) { try { S = await getSpxCloseForDate(todayISO, env); } catch (_) {} }
   if (S == null) return { status: 'no-close' };
 
   const contracts = trade.contracts || 1;
@@ -5565,6 +5577,69 @@ async function settleTailEOD(env, etNow, spxClose, dateISO = null) {
   return { status: 'settled', pnl, strike: trade.strike, entryMid: entryCost, intrinsic, spxClose: S };
 }
 
+// Settle any prior-session trade left 'filled' by a missed EOD (lessons P18 —
+// 2026-07-09 stranded BOTH the tail put AND a winning BOBF fly this way).
+// Tail uses dated keys (scan last 5 sessions); strad/bobf/gxbf share ONE
+// undated key each, so an orphan there gets OVERWRITTEN by today's entry —
+// which is why the morning call runs before any entry window. Uses Stooq for
+// the past day's close (published by the next session even when Schwab's EOD
+// fetch failed at 16:17).
+async function sweepOrphanSettles(env, etNow) {
+  const todayISO = isoDateET(etNow);
+  const results = [];
+  // Prefer the close already in the history row (canonical, written by
+  // handleEOD or an earlier heal) — external lookups only when it's absent.
+  let histSw = null;
+  try { histSw = await getHistory(env); } catch (_) {}
+  const rowCloseSw = (d) => {
+    const r = (histSw || []).find(x => x.date === d);
+    return (r && r.spxClose != null) ? parseFloat(r.spxClose) : null;
+  };
+  const notify = async (label, dISO, pnl) => {
+    try {
+      const dcRaw = await env.SIGNAL_KV.get('discord_config');
+      const dc = dcRaw ? JSON.parse(dcRaw) : null;
+      if (dc && dc.channelId) await sendDiscordDM(env, dc.channelId,
+        `🧹 **${label}** — settled orphaned ${dISO} trade (missed EOD): P/L $${pnl}.`, dc.proxyUrl);
+    } catch (_) {}
+  };
+  for (let i = 1; i <= 5; i++) {
+    const dPast = new Date(etNow); dPast.setDate(dPast.getDate() - i);
+    const dISO = isoDateET(dPast);
+    try {
+      const rawT = await env.SIGNAL_KV.get(`tail_open_trade_${dISO}`);
+      if (rawT) {
+        const trT = JSON.parse(rawT);
+        if (trT.status === 'filled') {
+          const resT = await settleTailEOD(env, etNow, rowCloseSw(dISO), dISO);
+          results.push({ strat: 'tail', date: dISO, ...resT });
+          if (resT.status === 'settled') await notify('Tail Hedge', dISO, resT.pnl);
+        }
+      }
+    } catch (e) { console.warn('[orphan-sweep] tail', dISO, e.message); }
+  }
+  const undated = [
+    ['straddle_open_trade', 'Straddle', settleStraddleEOD],
+    ['bobf_open_trade', 'BOBF', settleBobfEOD],
+    ['gxbf_open_trade', 'GXBF', settleGxbfEOD],
+  ];
+  for (const [key, label, fn] of undated) {
+    try {
+      const raw = await env.SIGNAL_KV.get(key);
+      if (!raw) continue;
+      const tr = JSON.parse(raw);
+      if (tr.status !== 'filled' || !tr.openDate || tr.openDate >= todayISO) continue;
+      let S = rowCloseSw(tr.openDate);
+      if (S == null) S = await getSpxCloseForDate(tr.openDate, env);
+      if (S == null) { results.push({ strat: label.toLowerCase(), date: tr.openDate, status: 'no-close' }); continue; }
+      const res = await fn(env, etNow, S, tr.openDate);
+      results.push({ strat: label.toLowerCase(), date: tr.openDate, ...res });
+      if (res.status === 'settled') await notify(label, tr.openDate, res.pnl);
+    } catch (e) { console.warn('[orphan-sweep]', key, e.message); }
+  }
+  return results;
+}
+
 async function handleScheduled(env) {
   const etNow = toET();
   const dow = etNow.getDay();
@@ -5607,34 +5682,12 @@ async function handleScheduled(env) {
     if (eodResult.wroteFields) {
       await env.SIGNAL_KV.put(eodKey, 'done', { expirationTtl: 86400 });
     }
-    // Orphan-tail sweep (2026-07-10): a missed EOD close (spxClose null at 16:17)
-    // used to strand that day's tail_open_trade at status 'filled' forever —
-    // settleTailEOD was date-locked to today, so no later run could touch it
-    // (2026-07-09 orphaned exactly this way). Sweep the last 5 sessions and
-    // settle stragglers via the past-day path (Stooq has the close by the next
-    // day even when Schwab failed at 16:17). Runs BEFORE the backfills so the
-    // healed row's spxClose lets backfillMissingPL repair m8bfPL this same tick.
-    // Cheap when clean: 5 KV reads, no subrequest-budget risk (lesson P17).
-    try {
-      for (let i = 1; i <= 5; i++) {
-        const dPast = new Date(etNow); dPast.setDate(dPast.getDate() - i);
-        const dISO = isoDateET(dPast);
-        const rawT = await env.SIGNAL_KV.get(`tail_open_trade_${dISO}`);
-        if (!rawT) continue;
-        const trT = JSON.parse(rawT);
-        if (trT.status === 'closed') continue;
-        const resT = await settleTailEOD(env, etNow, null, dISO);
-        console.log('[tail] orphan sweep', dISO, JSON.stringify(resT));
-        if (resT.status === 'settled') {
-          try {
-            const dcRaw = await env.SIGNAL_KV.get('discord_config');
-            const dc = dcRaw ? JSON.parse(dcRaw) : null;
-            if (dc && dc.channelId) await sendDiscordDM(env, dc.channelId,
-              `🧹 **Tail Hedge** — settled orphaned ${dISO} trade (missed EOD): P/L $${resT.pnl}.`, dc.proxyUrl);
-          } catch (_) {}
-        }
-      }
-    } catch (e) { console.warn('[tail] orphan sweep', e.message); }
+    // Orphan sweep (lessons P18): settle prior-session trades stranded by a
+    // missed EOD — ALL strategies, not just tail. Runs BEFORE the backfills so
+    // a healed row's spxClose lets backfillMissingPL repair m8bfPL this same
+    // tick. Cheap when clean (8 KV reads), no subrequest-budget risk (P17).
+    try { await sweepOrphanSettles(env, etNow); }
+    catch (e) { console.warn('[orphan-sweep-eod]', e.message); }
     let backfillWR = {}, backfillPL = {};
     try { backfillWR = await backfillMissingWR(env); } catch(e) { backfillWR = { error: e.message }; }
     try { backfillPL = await backfillMissingPL(env); } catch(e) { backfillPL = { error: e.message }; }
@@ -5741,6 +5794,21 @@ async function handleScheduled(env) {
   // Diagonal COR1M gate, and the history cor1m column no longer depend on
   // the user's Mac being on (ThetaData/LaunchAgent = research-only now).
   //  • 9:30-9:36: every tick until the day's open is captured
+  // Morning orphan sweep (lessons P18): settle any prior-session trade left
+  // 'filled' by a missed EOD BEFORE today's entries can overwrite the undated
+  // strad/bobf/gxbf KV slots (BOBF enters ~10:30, straddle ~9:33). Once per
+  // day; the EOD block runs the sweep again as backstop. Token-independent
+  // (Stooq closes), so it lives outside the schwabToken gate.
+  if (isMarket) {
+    try {
+      const swKey = `orphan_sweep_${isoDateET(etNow)}`;
+      if (!(await env.SIGNAL_KV.get(swKey))) {
+        await env.SIGNAL_KV.put(swKey, '1', { expirationTtl: 86400 });
+        await sweepOrphanSettles(env, etNow);
+      }
+    } catch (e) { console.warn('[orphan-sweep-am]', e.message); }
+  }
+
   //  • after: every 5th minute → intraday series for cross detection
   if (isMarket && schwabToken) {
     try { await captureCor1mVvix(env, etNow, schwabToken); }
@@ -8219,8 +8287,29 @@ function computeWinRateFromSignals(signals, spxClose) {
   return Math.round(wins / signals.length * 100);
 }
 
-async function getSpxCloseForDate(dateISO) {
-  // Use Stooq CSV API (works from Cloudflare Workers)
+async function getSpxCloseForDate(dateISO, env = null) {
+  // Schwab daily candle first when env is available — canonical, and Stooq now
+  // sits behind a JS bot-challenge that returns HTML instead of CSV (2026-07-10,
+  // broke every backfill with "Invalid close from Stooq"). PAST days only: a
+  // same-day daily candle is a live partial print, not a close — returning it
+  // pre-16:15 would poison m8bfWR and the 90%-override that reads it.
+  if (env) {
+    try {
+      const etNowC = toET(new Date());
+      if (dateISO < isoDateET(etNowC)) {
+        const tkC = await getAccessToken(env);
+        if (tkC) {
+          const [yC, mC, dC] = dateISO.split('-').map(Number);
+          const startC = Date.UTC(yC, mC - 1, dC) - 4 * 86400000;
+          const endC = Date.UTC(yC, mC - 1, dC) + 86400000;
+          const phC = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24SPX&periodType=month&frequencyType=daily&frequency=1&startDate=${startC}&endDate=${endC}`, tkC);
+          const cdC = (phC.candles || []).find(c => isoDateET(toET(new Date(c.datetime))) === dateISO);
+          if (cdC && cdC.close) return parseFloat(cdC.close.toFixed(2));
+        }
+      }
+    } catch (_) { /* fall through to Stooq */ }
+  }
+  // Stooq CSV API (legacy fallback; may be behind a bot challenge)
   const [y, m, d] = dateISO.split('-');
   const dateCompact = `${y}${m}${d}`;
   const url = `https://stooq.com/q/d/l/?s=^spx&d1=${dateCompact}&d2=${dateCompact}&i=d`;
@@ -8261,7 +8350,8 @@ async function backfillMissingWR(env, force = false, targetDates = null) {
   for (const entry of missing) {
     try {
       // Get SPX close
-      const spxClose = await getSpxCloseForDate(entry.date);
+      // Row's own canonical close first — Stooq is unreliable (bot challenge)
+      const spxClose = entry.spxClose ?? await getSpxCloseForDate(entry.date, env);
       if (spxClose == null) { failed.push({ date: entry.date, reason: 'no SPX close' }); continue; }
 
       // Fetch ALL butterfly signals for that day from Discord
@@ -9306,7 +9396,7 @@ export default {
         const results = [];
         for (const row of rows) {
           try {
-            const spxClose = row.spxClose ?? await getSpxCloseForDate(row.date);
+            const spxClose = row.spxClose ?? await getSpxCloseForDate(row.date, env);
             const signals = await fetchAllDiscordSignalsForDate(env.DISCORD_USER_TOKEN, '1048242197029458040', row.date);
             const calc = signals.length > 0 ? computeWinRateFromSignals(signals, spxClose) : null;
             const diff = calc != null ? Math.abs(calc - row.m8bfWR) : null;
@@ -11134,6 +11224,26 @@ export default {
       try { resultS = await settleTailEOD(env, etNowS, spxCloseS, dateS); }
       catch (e) { resultS = { error: e.message }; }
       return new Response(JSON.stringify({ date: targetISO, spxClose: spxCloseS, result: resultS }, null, 2),
+        { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': 'https://rava8989.github.io' } });
+    }
+
+    if (url.pathname === '/settle-orphans' && request.method === 'POST') {
+      // Manual heal for a missed EOD (lessons P18): sweep ALL strategies'
+      // stranded trades, then run the m8bf backfills (which need the swept
+      // rows' spxClose). Origin-gated like /settle-tail. Idempotent.
+      const originO = request.headers.get('Origin') || '';
+      if (originO !== 'https://rava8989.github.io') {
+        return new Response(JSON.stringify({ error: 'forbidden' }),
+          { status: 403, headers: { 'Content-Type': 'application/json' } });
+      }
+      const etNowO = toET(new Date());
+      let sweepO = [];
+      try { sweepO = await sweepOrphanSettles(env, etNowO); }
+      catch (e) { sweepO = [{ error: e.message }]; }
+      let bplO = {}, bwrO = {};
+      try { bplO = await backfillMissingPL(env); } catch (e) { bplO = { error: e.message }; }
+      try { bwrO = await backfillMissingWR(env); } catch (e) { bwrO = { error: e.message }; }
+      return new Response(JSON.stringify({ sweep: sweepO, backfill_pl: bplO, backfill_wr: bwrO }, null, 2),
         { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': 'https://rava8989.github.io' } });
     }
 
