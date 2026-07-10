@@ -5794,21 +5794,38 @@ async function handleScheduled(env) {
   // Diagonal COR1M gate, and the history cor1m column no longer depend on
   // the user's Mac being on (ThetaData/LaunchAgent = research-only now).
   //  • 9:30-9:36: every tick until the day's open is captured
-  // Skipper heartbeat watchdog (2026-07-10): the skipper's cron scheduler
-  // stalled silently for 3.5h — worker healthy, ZERO ticks, nobody alerted
-  // (its errstreak alarm only counts ticks that RUN; a dead cron runs none).
-  // Its tick now stamps errstreak.ts every minute; alarm once/day when that
-  // goes stale >10 min during market hours. Fix = redeploy skipper.
-  if (isMarket && env.SKIPPER_KV && etMin % 10 === 0) {
+  // Skipper heartbeat watchdog + CRON PROSTHESIS (2026-07-10): Cloudflare's
+  // cron scheduler for the skipper stalled silently — worker healthy, ZERO
+  // ticks for 3.5h, nobody alerted (its errstreak alarm only counts ticks that
+  // RUN), and redeploys + trigger rewrites did NOT revive it. The skipper's
+  // tick stamps errstreak.ts each run; when that is stale >3 min (or absent —
+  // a never-ticking cron can't stamp one) during market hours, THIS cron
+  // drives skipper /api/poll with the shared LINK_SECRET, so trades keep
+  // relaying even with the skipper's scheduler dead. DM alarm once/day for
+  // visibility. Dormant whenever the skipper's own cron is healthy.
+  if (isMarket && env.SKIPPER_KV) {
     try {
       const hbRaw = await env.SKIPPER_KV.get('errstreak');
       const hb = hbRaw ? JSON.parse(hbRaw) : null;
-      const akSk = `skipper_dead_alert_${todayISO}`;
-      if (hb && hb.ts && (Date.now() - hb.ts) > 10 * 60 * 1000 && !(await env.SIGNAL_KV.get(akSk))) {
-        await env.SIGNAL_KV.put(akSk, '1', { expirationTtl: 86400 });
-        const dcSk = JSON.parse(await env.SIGNAL_KV.get('discord_config') || 'null');
-        if (dcSk && dcSk.channelId) await sendDiscordDM(env, dcSk.channelId,
-          `🚨 **Skipper cron DEAD** — no tick for ${Math.round((Date.now() - hb.ts) / 60000)} min during market hours. Trade relays are NOT going out. Fix: redeploy skipper (cd ~/Desktop/skipper && npx wrangler deploy).`, dcSk.proxyUrl);
+      const hbAge = hb && hb.ts ? (Date.now() - hb.ts) : null;
+      const hbDead = hb && (hbAge == null || hbAge > 3 * 60 * 1000);
+      if (hbDead) {
+        if (env.LINK_SECRET) {
+          try {
+            const pr = await fetch('https://skipper.ravamt4.workers.dev/api/poll', {
+              method: 'POST', headers: { 'X-Link-Secret': env.LINK_SECRET },
+            });
+            console.log('[skipper-hb] prosthesis tick →', pr.status);
+          } catch (e) { console.warn('[skipper-hb] prosthesis failed:', e.message); }
+        }
+        const akSk = `skipper_dead_alert_${todayISO}`;
+        if ((hbAge == null || hbAge > 10 * 60 * 1000) && !(await env.SIGNAL_KV.get(akSk))) {
+          await env.SIGNAL_KV.put(akSk, '1', { expirationTtl: 86400 });
+          const dcSk = JSON.parse(await env.SIGNAL_KV.get('discord_config') || 'null');
+          const ageSk = hbAge != null ? `no tick for ${Math.round(hbAge / 60000)} min` : 'no tick since heartbeat shipped';
+          if (dcSk && dcSk.channelId) await sendDiscordDM(env, dcSk.channelId,
+            `🚨 **Skipper cron DEAD** — ${ageSk}. This worker is driving skipper ticks as a fallback (trades still relay). Permanent fix: redeploy skipper.`, dcSk.proxyUrl);
+        }
       }
     } catch (e) { console.warn('[skipper-hb]', e.message); }
   }
