@@ -413,7 +413,7 @@ function renderStatus(d) {
               CASH:     { c:'#8b949e', bg:'#181a1e', label:'In cash',        sub:'market below 200-day + VIX > 25' },
               EARNINGS: { c:'#3fb950', bg:'#0f2015', label:'Holding earnings' } };
   const m = M[d.status] || M.SPY;
-  el.style.borderLeftColor = m.c;
+  el.style.borderLeft = '5px solid ' + m.c;   // full shorthand — a longhand borderLeftColor won't override the HTML border-left shorthand
   el.style.background = m.bg;
   if (d.status === 'EARNINGS' && d.names && d.names.length) {
     const chips = d.names.map(n => `<span style="display:inline-block;font-family:'JetBrains Mono',monospace;font-size:13px;background:#132b1a;color:var(--green);border:1px solid #1f5130;border-radius:8px;padding:3px 10px;margin:5px 5px 0 0">${n}</span>`).join('');
