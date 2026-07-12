@@ -5435,6 +5435,14 @@ async function announceTailIfDue(env, tailOpen, todayISO, announce) {
 
 async function freezeTailOpenIfDue(env, etNow, line = null, announce = false) {
   const todayISO = isoDateET(etNow);
+  // No 9:45 entry on non-trading days — market closed, no live chain, no
+  // snapshot. Without this the campaign stays TRIGGERED over the weekend, the
+  // status line still says "▶ TRADE", and any /tail-today poll (or a weekend/
+  // holiday tick) past 9:48 fired the spurious "no snapshot — enter manually"
+  // DM (2026-07-11/12 Sat+Sun). Gate the whole freeze/alert path on a real
+  // trading day.
+  const dow = etNow.getDay();
+  if (dow === 0 || dow === 6 || isHol(etNow)) return null;
   const existing = await env.SIGNAL_KV.get(`tail_open_trade_${todayISO}`);
   // Even if a /tail-today poll already froze the trade, the cron (announce=true)
   // must still get a chance to fan out — so route through announceTailIfDue
