@@ -915,7 +915,11 @@ async function earnBuildBoard(env, token, boardISO, opts = {}) {
 function earnBoardMsg(b, mode, stage) {
   const head = stage === 'final' ? `🌙 **[EARNINGS] FINAL BOARD — ${b.date}**`
              : `🌙 **[EARNINGS] morning — ${b.date}**`;
-  const parkLine = b.park ? `\n**Parking sleeve: ${b.park.sleeve}** `+(b.park.sleeve==='SPY'?'(market above its 200-day — hold SPY)':b.park.sleeve==='GLD'?'(market below 200-day, calm — hold GLD)':'(market below 200-day + VIX>25 — sit in cash)') : '';
+  // Leverage-alternative note (informational, user 2026-07-12): SPY parking can
+  // optionally be run 2× via a leveraged ETF SHARE (not options — those bleed on
+  // in-and-out). Only shown on SPY-sleeve days; SPY stays the default.
+  const LEV_ALT = '\n-# Optional leverage: SSO ≈2× S&P (more return, deeper drawdown) · QLD ≈2× Nasdaq (most, wildest) — see the site. SPY is the default.';
+  const parkLine = b.park ? `\n**Parking sleeve: ${b.park.sleeve}** `+(b.park.sleeve==='SPY'?'(market above its 200-day — hold SPY)'+LEV_ALT:b.park.sleeve==='GLD'?'(market below 200-day, calm — hold GLD)':'(market below 200-day + VIX>25 — sit in cash)') : '';
   if (!b.board.length) return `${head}${stage==='morning'?parkLine:''}\nNobody reports in this window. No trades tonight.`;
   // Outside-universe names stay in the board JSON (KV earn_board_<date>) for
   // audits but are NOT listed in the message — they can never be scored, so
@@ -9091,10 +9095,14 @@ function buildEarningsCardSvg(b) {
   }
   // STATE D — quiet night: nobody in-universe reports.
   if (!scored.length) {
-    const H = 168;
+    // On SPY-parking days, add one small line noting the optional 2× leveraged-ETF
+    // alternatives (informational, user 2026-07-12; SPY stays the default).
+    const spySleeve = b.park && b.park.sleeve === 'SPY';
+    const H = spySleeve ? 188 : 168;
     let s = header(C.card).replace('__H__', H);
     s += centerMsg(C.sub, 'No trades tonight', 'nobody in-universe reports');
-    s += footBar(H - 48, C.foot, C.footTxt, parkTxt);
+    s += footBar(120, C.foot, C.footTxt, parkTxt);
+    if (spySleeve) s += `<text x="${W / 2}" y="${H - 12}" text-anchor="middle" font-family="${F}" font-size="10.5" fill="${C.mute}">optional 2×: SSO (S&amp;P) · QLD (Nasdaq) — more return, more drawdown</text>`;
     return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${s}</svg>`;
   }
 
