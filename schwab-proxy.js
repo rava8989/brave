@@ -11532,6 +11532,25 @@ export default {
         { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': 'https://rava8989.github.io' } });
     }
 
+    // ── POST /scrape-backfill?from=ISO&to=ISO ── Recover missing days in
+    // scraped_signals.csv in a DEDICATED invocation. The KV-trigger path
+    // piggybacks on a heavy tick and gets killed mid-flight when the day is
+    // large (2026-07-09 recovery died silently — trigger consumed, no result,
+    // no rows). Auth: SYNC_SECRET or GEXM token.
+    if (url.pathname === '/scrape-backfill' && request.method === 'POST') {
+      const secretSB = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
+      if (!secretSB || (secretSB !== env.SYNC_SECRET && secretSB !== env.GEXM_TRIGGER_TOKEN)) {
+        return jsonResp({ error: 'Unauthorized' }, 401, {});
+      }
+      const fromSB = url.searchParams.get('from'), toSB = url.searchParams.get('to') || fromSB;
+      if (!fromSB || !/^\d{4}-\d{2}-\d{2}$/.test(fromSB)) return jsonResp({ error: 'bad from' }, 400, {});
+      try {
+        const resSB = await backfillScrapedSignals(env, fromSB, toSB);
+        await env.SIGNAL_KV.put('scrape_backfill_result', JSON.stringify({ ...resSB, ts: Date.now() }), { expirationTtl: 7 * 86400 });
+        return jsonResp(resSB, 200, {});
+      } catch (e) { return jsonResp({ error: e.message }, 500, {}); }
+    }
+
     if (url.pathname === '/settle-orphans' && request.method === 'POST') {
       // Manual heal for a missed EOD (lessons P18): sweep ALL strategies'
       // stranded trades, then run the m8bf backfills (which need the swept

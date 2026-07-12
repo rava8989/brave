@@ -456,7 +456,7 @@
       </div>
       <div class="fg">
         <label>Your Discord User ID</label>
-        <input type="text" id="discordChannelId" placeholder="e.g. 822976496653828107" autocomplete="off" />
+        <input type="text" id="discordChannelId" placeholder="e.g. 123456789012345678" autocomplete="off" />
       </div>
       <div class="schwab-modal-btns">
         <button class="btn-p" style="flex:1;" onclick="discordSave()">Save</button>
@@ -898,7 +898,7 @@
           (the "uncomfortable middle" — elevated but not spiky). Historically the strategy has <em>no edge</em> there;
           trade normally in 0–50% (calm → cheap vol sellers get paid) or 80–100% (panic → mean-reversion + skew crush pay).
           Percentile is ready by 9:30 AM ET (uses today's first VIX print at-or-after 9:30 vs the prior 20 days' <strong>closes</strong> — canonical per <code>signal-engine.js::computeVixPct20d</code>; same value the live signal banner reads).
-          <em>Re-optimized 2026-06-02 from 40–90 to 50–90 on corrected VIX data: +$12.4k, lower MaxDD, MAR 14.94 vs 12.16.</em></li>
+          <em>Re-optimized 2026-06-02 from 40–90 to 50–90 (+$12.4k on corrected VIX data), then tightened 2026-06-09 to the current <strong>50–80</strong> — the 80–90 tail was net-negative once the COR1M ≥ 10 filter applied.</em></li>
       <li><strong>Earnings filters dropped (2026-04-29)</strong> — at the new 30/40 strikes, the per-ticker earnings gates (AAPL/MSFT/TSLA/META) were costing more edge than they preserved. The deeper-ITM short collects enough extrinsic that a single mega-cap report doesn't break it. EOM/EOM-1 added in their place because month-end flow hurts deeper structures more.</li>
       <li>This filter stack is the <strong>default version</strong> of the strategy on this site — the one plotted on the
           historical backtester and the one counted in the default-diagonal equity line. All references to
@@ -964,30 +964,29 @@
       <li>Typical pattern: 5-10 small losses (~$100-500 each) followed by one big winner ($5k-$15k) that pays for all of them and adds profit. <em>Most days lose a little. A few days print huge. That's the trade.</em></li>
     </ul>
 
-    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Historical results (Sweet Spot — default, 2022-06 → 2026-06)</h4>
+    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Historical results (Balanced — default, Δ-0.10 / 7.75, 2 contracts on VIX-down, 2022-06 → 2026-06)</h4>
     <ul>
-      <li><strong>59 trades</strong> over 4 years. 8 wins, 51 losses. Win rate <strong>13.6%</strong>.</li>
-      <li><strong>Total P/L: +$50,880</strong>. Max drawdown <strong>$5,320</strong>. <strong>MAR 9.56</strong>.</li>
-      <li><strong>Biggest single win: +$15,070</strong> (2025-10-10, SPX dropped 3.05% intraday). <strong>Biggest single loss: only −$520</strong>.</li>
-      <li>Walk-forward validated — train (2022-2024) and test (2025-2026) halves both positive with similar MAR.</li>
+      <li><strong>68 trades</strong> across <strong>8 campaigns</strong> in 4 years. 8 wins, 60 losses. Win rate <strong>11.8%</strong>.</li>
+      <li><strong>Total P/L: +$79,340</strong>. Max drawdown <strong>$6,560</strong>. <strong>MAR 12.09</strong>.</li>
+      <li><strong>Biggest single win: +$24,320</strong> (2025-11-20 NVDA-crash day, 2 contracts). <strong>Biggest single loss: −$640</strong> (a 2-contract day — that's the full worst case).</li>
+      <li>Positive every year it traded (2024–2026), and the total survives dropping the single best day.</li>
       <li>Strategy was <strong>dormant 2022-06 → 2024-03</strong> — COR1M never dropped below 7.75 during the bear market era. <em>This is a low-correlation regime hedge, not an always-on insurance policy.</em> It does nothing during high-correlation environments (2022 grind down, 2008-style crashes).</li>
-      <li>On your existing portfolio's <strong>15 worst days</strong>, Sweet Spot caught <strong>9 of them</strong> and netted <strong>+$21,442</strong> in rescue P/L. The dates: 2025-11-20 NVDA crash (rescued $13,987), 2026-06-05 (last Friday's selloff, rescued $8,740), 2024-12-18 FOMC, plus others.</li>
     </ul>
 
-    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Why Sweet Spot over higher-threshold variants</h4>
+    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Why Balanced over looser variants</h4>
     <ul>
-      <li>Threshold 7.75 fires only <strong>8 times in 4 years</strong> (vs 15 at threshold 9.0). Each trigger is a high-conviction setup.</li>
-      <li><strong>Half the activity</strong> of the next-highest variant (59 vs 134 trades) for 89% of the return.</li>
-      <li><strong>Worst trade only −$520</strong> (vs −$1,880 at threshold 9.0) — much cleaner risk profile, easier to size.</li>
-      <li>Same risk-adjusted return (MAR 9.56 vs 9.55).</li>
+      <li>Threshold 7.75 arms only <strong>8 campaigns in 4 years</strong> — each trigger is a high-conviction regime break, not a routine dip.</li>
+      <li>Roughly <strong>half the activity</strong> of the widest variant (68 vs 128 trades) for <strong>83% of the return</strong> (+$79,340 vs +$95,070).</li>
+      <li><strong>One-third the drawdown</strong> ($6,560 vs $17,250) and <strong>half the worst single loss</strong> (−$640 vs −$1,320) — much cleaner to size.</li>
+      <li>More than double the risk-adjusted return (MAR <strong>12.09 vs 5.51</strong>).</li>
     </ul>
 
     <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">Why this hedges your other strategies</h4>
     <ul>
-      <li>On your 15 worst portfolio days, Tail Hedge saved <strong>+$21,442 on 9 of them</strong> (rescued days like 2025-11-20 NVDA crash, 2026-06-05 Friday selloff).</li>
-      <li>On Tail Hedge's trade days, <strong>Diagonal historically bleeds −$4,722</strong> — the conditions that fire Tail Hedge are exactly when Diagonal struggles. Tail Hedge wins fully cover that.</li>
-      <li>Straddle is the biggest co-beneficiary — fires only 15 times in this window but adds <strong>+$23,760</strong>.</li>
-      <li>M8BF runs normally and stays profitable — Tail Hedge doesn't interfere.</li>
+      <li>On the portfolio's single worst crash day in the record (2025-11-20 NVDA crash, core strategies −$3,967), the tail paid <strong>+$27,960</strong> — flipping the day to <strong>+$23,993</strong>. That one day is the hedge's whole job.</li>
+      <li>Most bad portfolio days happen <em>outside</em> a tail campaign (the trigger armed on only 2 of the 15 worst days) — it hedges crash <em>regimes</em>, not every red day. Size expectations accordingly.</li>
+      <li>Straddle is the biggest co-beneficiary — on tail-campaign days it added <strong>+$21,837</strong> across 14 fills; the same falling-VIX mornings feed both.</li>
+      <li>Diagonal is roughly flat across tail days (+$275) and M8BF runs normally — the tail doesn't interfere with either.</li>
     </ul>
 
     <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">What it is <em>not</em></h4>
@@ -1019,7 +1018,7 @@
     <h3>Recent Changes</h3>
     <ul>
       <li><strong>GXBF hybrid gating + per-day OI/Vol center routing (2026-05)</strong> — gating simplified to a clean Trigger/Block rule. <strong>Trigger:</strong> overnight VIX drop &gt; 0.65 pts <em>OR</em> OPEX+1 auto-trigger. <strong>Block:</strong> VIX ≥ 25 <em>OR</em> (OPEX+1 AND VIX gap-up ≥ 2%) <em>OR</em> EOM. <strong>OPEX-1, CPI, and NM-non-Monday are no longer banned</strong> — they fire if the trigger/block check passes. Center routing is now <strong>hybrid</strong>: OPEX-1 / VIX-expiry / FED days use the OI-weighted center (γ × open interest); all other days use the volume-weighted center (γ × volume). Both centers are computed in-house from the live 0DTE call chain via Black-Scholes γ (R=0.043, Q=0.013, ±5% of spot, snap to 5) — replacing the deleted Discord scraper. <code>history_data.json</code>'s <code>gxbfPL</code> values were rebuilt under the new rules.</li>
-      <li><strong>1/25 Put Diagonal — VIX dead-zone re-optimized (2026-06-02)</strong> — band moved from <strong>(40, 90]</strong> to <strong>(50, 90]</strong> after the May ThetaData VIX audit corrected 56 historical VIX prints. Re-running the sweep with the now-accurate VIX data found the pct=41–50% band is actually <em>profitable</em> (24 marginal trades = +$12,405 historically). Net effect on history: +$12.4k P/L, lower MaxDD ($7,515→$6,945), higher MAR (12.16→14.94). Strikes (30 ITM / 40 below), times (12:30/12:30), filter stack (OPEX-1 + EOM + EOM-1 + NM) all unchanged from the 2026-04-29 spec.</li>
+      <li><strong>1/25 Put Diagonal — VIX dead-zone re-optimized (2026-06-02)</strong> — band moved from <strong>(40, 90]</strong> to <strong>(50, 90]</strong> after the May ThetaData VIX audit corrected 56 historical VIX prints. Re-running the sweep with the now-accurate VIX data found the pct=41–50% band is actually <em>profitable</em> (24 marginal trades = +$12,405 historically). Net effect on history: +$12.4k P/L, lower MaxDD ($7,515→$6,945), higher MAR (12.16→14.94). Strikes (30 ITM / 40 below), times (12:30/12:30), filter stack (OPEX-1 + EOM + EOM-1 + NM) all unchanged from the 2026-04-29 spec. <em>Superseded 2026-06-09: band tightened to the current <strong>(50, 80]</strong> — the 80–90 tail proved net-negative under the COR1M ≥ 10 filter.</em></li>
       <li><strong>1/25 Put Diagonal — entry/exit window finalized (2026-04-23)</strong> — moved to <strong>12:30–15:00 ET window</strong> (24-hour hold, Entry Time === Exit Time, no two diagonals active at once). Long leg shortened to <strong>25 DTE</strong> (from 30). Recommended any clock time between 12:30 and 15:00, as long as Entry Time === Exit Time.</li>
       <li><strong>GXBF on OPEX+1 blocked when VIX gaps up ≥ 2% overnight</strong> — if today's VIX open is ≥ 2% above yesterday's VIX close, the automatic OPEX+1 GXBF signal is suppressed entirely.</li>
       <li><strong>SPX gap ≥ 0.9% cancels Straddle only</strong> — when the absolute SPX gap (today's open vs yesterday's close) is ≥ 0.9%, any Straddle or NM Straddle signal is cancelled. No effect on M8BF or GXBF. Gap and o2o have zero connection to butterfly.</li>
@@ -1674,11 +1673,11 @@
 
       // ── DIAGONAL (companion — runs on CPI days, has its own filter stack) ──
       // Uses SignalEngine.computeDiagonalSignal — single source of truth.
-      let _diagVixPct = null;
-      if (_vix20dCloses && _vix20dCloses.length >= 10 && !isNaN(vToday)) {
-        const below = _vix20dCloses.filter(c => c < vToday).length;
-        _diagVixPct = Math.round(100 * below / _vix20dCloses.length);
-      }
+      // Canonical percentile — SignalEngine.computeVixPct20d is the single
+      // source (CLAUDE.md rule 11); inline copies drift (May 2026 incident).
+      const _diagVixPct = (typeof SignalEngine !== 'undefined' && SignalEngine.computeVixPct20d)
+        ? SignalEngine.computeVixPct20d(vToday, _vix20dCloses).pct
+        : null;
       const _diagSig = (typeof SignalEngine !== 'undefined' && SignalEngine.computeDiagonalSignal)
         ? SignalEngine.computeDiagonalSignal(new Date(), _diagVixPct, window._cloudCor1m ?? window._histLastCor1m ?? null)
         : null;
@@ -1788,10 +1787,11 @@
     const vixPctWrap = document.getElementById('vixPct20Wrap');
     const vixPctSep  = document.getElementById('vixPctSep');
     const vixPctEl   = document.getElementById('vixPct20Display');
-    let _vixPctToday = null;
-    if (_vix20dCloses && _vix20dCloses.length >= 10 && !isNaN(vToday)) {
-      const below = _vix20dCloses.filter(c => c < vToday).length;
-      _vixPctToday = Math.round(100 * below / _vix20dCloses.length);
+    // Canonical percentile (single source — see CLAUDE.md rule 11).
+    const _vixPctToday = (typeof SignalEngine !== 'undefined' && SignalEngine.computeVixPct20d)
+      ? SignalEngine.computeVixPct20d(vToday, _vix20dCloses).pct
+      : null;
+    if (_vixPctToday != null) {
       vixPctWrap.style.display = 'flex';
       vixPctSep.style.display  = 'inline';
       vixPctEl.textContent = _vixPctToday + '%';
@@ -1804,7 +1804,7 @@
       vixPctSep.style.display  = 'none';
     }
 
-    // Diagonal regime: VIX DEAD = (50,90] AND |yest. SPX %chg| < 0.5
+    // Diagonal regime: VIX DEAD = (50,80] AND |yest. SPX %chg| < 0.5
     const regimeWrap = document.getElementById('regimeWrap');
     const regimeSep  = document.getElementById('regimeSep');
     const regimeEl   = document.getElementById('regimeDisplay');
@@ -2817,7 +2817,8 @@
     const d = _toETSafe(date);
     const day = d.getDay();
     if (day === 0 || day === 6) return false; // not Sunday or Saturday
-    const dateStr = d.toLocaleDateString('en-US', {month:'long', day:'numeric', year:'numeric'});
+    const _ML = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const dateStr = `${_ML[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
     return !SignalEngine.holidays.includes(dateStr);
   }
 

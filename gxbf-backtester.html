@@ -6,7 +6,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<!-- v2026-06-02: GXBF (Major Positive Gamma) backtester — hybrid OI/Vol center (γ-weighted), Trigger=oNight>0.65 OR OPEX+1, Block=VIX≥25 OR (OPEX+1 + gap≥2%) OR EOM. Sister page to diagonal.html which uses VIX 50-90% dead-zone (re-opt 2026-06-02 from 40-90). -->
+<!-- v2026-06-10: GXBF (Major Positive Gamma) backtester — volume-weighted center ALWAYS (hybrid OI routing retired 2026-06-10 after failing OOS; radio kept for research). Trigger=oNight>0.65 OR OPEX+1, Block=VIX≥25 OR (OPEX+1 + gap≥2%) OR EOM. Sister page to diagonal.html which uses the VIX 50-80% dead-zone (50-90 → 50-80 re-opt 2026-06-09). -->
 <title>SPX-BF // GXBF Backtester</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -576,7 +576,7 @@ body {
 
 <!-- Strategy description -->
 <section class="strategy-banner">
-  <div class="strategy-title">GXBF — 0DTE SPXW Long-Call Gamma Butterfly (hybrid)</div>
+  <div class="strategy-title">GXBF — 0DTE SPXW Long-Call Gamma Butterfly</div>
   <div class="strategy-desc">
     0DTE SPXW long-call butterfly centered on the morning <strong>Major-Positive gamma strike</strong>, with the
     center sourced from either traded volume or open interest depending on the day. The day is gated by an overnight VIX
@@ -621,7 +621,7 @@ body {
     <br><br>
     <span style="color:var(--accent);font-size:11px;font-weight:600">
       ★ Default config: <code>entry 09:35 ET (configurable 09:35–14:00 in 5-min steps), exit SPX close (0DTE), wing 5 → 100 (step 5),
-      widest risk ≤ reward wing, hybrid center, real GXBF gating ON</code>. The Entry Time dropdown studies what-if the bot fired
+      widest risk ≤ reward wing, volume-weighted center (live default), real GXBF gating ON</code>. The Entry Time dropdown studies what-if the bot fired
       later in the morning / midday. The other toggles can force vol-only, OI-only, or replace the live gating with the legacy
       manual overnight VIX-drop filter for what-if studies.
     </span>
@@ -671,7 +671,7 @@ body {
     <div class="fg-row" style="gap:16px">
       <label style="display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--text);cursor:pointer;font-weight:600">
         <input type="radio" name="centerSrc" value="hybrid" style="cursor:pointer">
-        <span>Hybrid (auto per-day)</span> <span style="font-weight:400;color:var(--text3)">(OI on OPEX-1 / VIX-exp / FED, else Volume — live default)</span>
+        <span>Hybrid (auto per-day)</span> <span style="font-weight:400;color:var(--text3)">(OI on OPEX-1 / VIX-exp / FED, else Volume — RETIRED 2026-06-10, research only)</span>
       </label>
       <label style="display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--text);cursor:pointer;font-weight:600">
         <input type="radio" name="centerSrc" value="vol" checked style="cursor:pointer">

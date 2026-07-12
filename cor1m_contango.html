@@ -509,7 +509,10 @@ function renderEquity(trades) {
 }
 
 function renderCor1mPlot() {
-  const daily = bundle.daily;
+  // Drop the builder's padded (data-less) future rows so the x-axis and the
+  // threshold line stop a month past real data (audit 2026-07-10). Same
+  // filter the ratio/term/spread plots already use.
+  const daily = bundle.daily.filter(d => d.cor1m != null);
   const x = daily.map(d => d.date);
   const y = daily.map(d => d.cor1m);
   // Color markers by regime
@@ -838,11 +841,15 @@ function renderWinnersTbl(trades) {
 
 // ───────── signal strip (today's row) ─────────
 function renderSignalStrip() {
-  const last = bundle.daily[bundle.daily.length - 1];
+  // Last row WITH data — the builder pads daily[] with empty future rows out
+  // to build-date, and the padded tail used to render as "today: R0 / —"
+  // (audit 2026-07-10). Anchor to real data and say when it's from.
+  const withData = bundle.daily.filter(d => d.cor1m != null);
+  const last = withData[withData.length - 1] || bundle.daily[bundle.daily.length - 1];
   if (!last) return;
   const regimeInfo = bundle.regimes[last.regime];
   document.getElementById('hdr-meta').textContent =
-    `Bundle ${bundle.generated_at}  •  ${bundle.daily.length} days`;
+    `Bundle ${bundle.generated_at}  •  data through ${last.date}  •  ${withData.length} data days`;
 
   const strip = document.getElementById('signal-strip');
   const ratio = last.vix_vix3m_ratio;

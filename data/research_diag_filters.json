@@ -1,0 +1,383 @@
+{
+  "meta": {
+    "entry_time": "09:45",
+    "exit_time": "09:45",
+    "ungated_coverage": [
+      "2022-06-01",
+      "2026-06-09",
+      989
+    ],
+    "spx_close_coverage": [
+      "2022-06-01",
+      "2026-06-10",
+      1011
+    ],
+    "eval_window": [
+      "2023-01-17",
+      "2026-05-22"
+    ],
+    "universe_days": 821,
+    "ungated_source_count": {
+      "REAL": 873,
+      "BS": 116
+    },
+    "note": "Every filter scored on the SAME ungated 09:45/09:45 diagonal P&L over the SAME window. SMA/RSI use PRIOR-day values (no lookahead). Baseline = canonical VIX-20 (vixPct20d band 50-80) + COR1M>=10 6-filter stack. History diagPL uses 12:30 exit so magnitudes differ from history; this run is internally consistent for filter comparison."
+  },
+  "results": [
+    {
+      "name": "RSI14 > 50",
+      "trades": 601,
+      "total": 62725,
+      "win_rate": 68.6,
+      "avg": 104.4,
+      "max_dd": 11065,
+      "per_year": {
+        "2023": {
+          "trades": 167,
+          "total": 17170,
+          "win_rate": 63.5
+        },
+        "2024": {
+          "trades": 206,
+          "total": 17970,
+          "win_rate": 69.4
+        },
+        "2025": {
+          "trades": 180,
+          "total": 21850,
+          "win_rate": 71.1
+        },
+        "2026": {
+          "trades": 48,
+          "total": 5735,
+          "win_rate": 72.9
+        }
+      }
+    },
+    {
+      "name": "BASELINE: VIX-20 + COR1M",
+      "trades": 479,
+      "total": 59773,
+      "win_rate": 69.1,
+      "avg": 124.8,
+      "max_dd": 13443,
+      "per_year": {
+        "2023": {
+          "trades": 164,
+          "total": 11053,
+          "win_rate": 64.6
+        },
+        "2024": {
+          "trades": 136,
+          "total": 18783,
+          "win_rate": 72.1
+        },
+        "2025": {
+          "trades": 137,
+          "total": 11611,
+          "win_rate": 68.6
+        },
+        "2026": {
+          "trades": 42,
+          "total": 18328,
+          "win_rate": 78.6
+        }
+      }
+    },
+    {
+      "name": "ALL DAYS (no filter)",
+      "trades": 821,
+      "total": 54811,
+      "win_rate": 66.3,
+      "avg": 66.8,
+      "max_dd": 23102,
+      "per_year": {
+        "2023": {
+          "trades": 239,
+          "total": 13493,
+          "win_rate": 60.7
+        },
+        "2024": {
+          "trades": 249,
+          "total": 18608,
+          "win_rate": 69.1
+        },
+        "2025": {
+          "trades": 247,
+          "total": 7083,
+          "win_rate": 67.2
+        },
+        "2026": {
+          "trades": 86,
+          "total": 15628,
+          "win_rate": 70.9
+        }
+      }
+    },
+    {
+      "name": "SMA5: close > SMA",
+      "trades": 502,
+      "total": 46625,
+      "win_rate": 67.3,
+      "avg": 92.9,
+      "max_dd": 16770,
+      "per_year": {
+        "2023": {
+          "trades": 142,
+          "total": 11008,
+          "win_rate": 60.6
+        },
+        "2024": {
+          "trades": 162,
+          "total": 10958,
+          "win_rate": 67.9
+        },
+        "2025": {
+          "trades": 151,
+          "total": 15040,
+          "win_rate": 71.5
+        },
+        "2026": {
+          "trades": 47,
+          "total": 9620,
+          "win_rate": 72.3
+        }
+      }
+    },
+    {
+      "name": "SMA10: close > SMA",
+      "trades": 534,
+      "total": 42248,
+      "win_rate": 67.8,
+      "avg": 79.1,
+      "max_dd": 14670,
+      "per_year": {
+        "2023": {
+          "trades": 156,
+          "total": 12175,
+          "win_rate": 62.2
+        },
+        "2024": {
+          "trades": 165,
+          "total": 10027,
+          "win_rate": 68.5
+        },
+        "2025": {
+          "trades": 167,
+          "total": 18320,
+          "win_rate": 71.9
+        },
+        "2026": {
+          "trades": 46,
+          "total": 1725,
+          "win_rate": 69.6
+        }
+      }
+    },
+    {
+      "name": "SMA9: close > SMA",
+      "trades": 525,
+      "total": 42068,
+      "win_rate": 67.6,
+      "avg": 80.1,
+      "max_dd": 11835,
+      "per_year": {
+        "2023": {
+          "trades": 151,
+          "total": 10113,
+          "win_rate": 60.9
+        },
+        "2024": {
+          "trades": 166,
+          "total": 10432,
+          "win_rate": 68.7
+        },
+        "2025": {
+          "trades": 163,
+          "total": 20862,
+          "win_rate": 72.4
+        },
+        "2026": {
+          "trades": 45,
+          "total": 660,
+          "win_rate": 68.9
+        }
+      }
+    },
+    {
+      "name": "SMA9: close < SMA",
+      "trades": 296,
+      "total": 12743,
+      "win_rate": 63.9,
+      "avg": 43.1,
+      "max_dd": 22628,
+      "per_year": {
+        "2023": {
+          "trades": 88,
+          "total": 3380,
+          "win_rate": 60.2
+        },
+        "2024": {
+          "trades": 83,
+          "total": 8175,
+          "win_rate": 69.9
+        },
+        "2025": {
+          "trades": 84,
+          "total": -13779,
+          "win_rate": 57.1
+        },
+        "2026": {
+          "trades": 41,
+          "total": 14967,
+          "win_rate": 73.2
+        }
+      }
+    },
+    {
+      "name": "SMA10: close < SMA",
+      "trades": 287,
+      "total": 12563,
+      "win_rate": 63.4,
+      "avg": 43.8,
+      "max_dd": 21348,
+      "per_year": {
+        "2023": {
+          "trades": 83,
+          "total": 1318,
+          "win_rate": 57.8
+        },
+        "2024": {
+          "trades": 84,
+          "total": 8580,
+          "win_rate": 70.2
+        },
+        "2025": {
+          "trades": 80,
+          "total": -11237,
+          "win_rate": 57.5
+        },
+        "2026": {
+          "trades": 40,
+          "total": 13902,
+          "win_rate": 72.5
+        }
+      }
+    },
+    {
+      "name": "RSI14 > 70",
+      "trades": 82,
+      "total": 9260,
+      "win_rate": 67.1,
+      "avg": 112.9,
+      "max_dd": 4367,
+      "per_year": {
+        "2023": {
+          "trades": 29,
+          "total": 1497,
+          "win_rate": 55.2
+        },
+        "2024": {
+          "trades": 30,
+          "total": 2785,
+          "win_rate": 70.0
+        },
+        "2025": {
+          "trades": 15,
+          "total": 138,
+          "win_rate": 73.3
+        },
+        "2026": {
+          "trades": 8,
+          "total": 4840,
+          "win_rate": 87.5
+        }
+      }
+    },
+    {
+      "name": "SMA5: close < SMA",
+      "trades": 319,
+      "total": 8186,
+      "win_rate": 64.6,
+      "avg": 25.7,
+      "max_dd": 20091,
+      "per_year": {
+        "2023": {
+          "trades": 97,
+          "total": 2485,
+          "win_rate": 60.8
+        },
+        "2024": {
+          "trades": 87,
+          "total": 7650,
+          "win_rate": 71.3
+        },
+        "2025": {
+          "trades": 96,
+          "total": -7957,
+          "win_rate": 60.4
+        },
+        "2026": {
+          "trades": 39,
+          "total": 6008,
+          "win_rate": 69.2
+        }
+      }
+    },
+    {
+      "name": "RSI14 < 30",
+      "trades": 11,
+      "total": -5883,
+      "win_rate": 72.7,
+      "avg": -534.8,
+      "max_dd": 9158,
+      "per_year": {
+        "2023": {
+          "trades": 2,
+          "total": 1220,
+          "win_rate": 100.0
+        },
+        "2025": {
+          "trades": 6,
+          "total": -6850,
+          "win_rate": 66.7
+        },
+        "2026": {
+          "trades": 3,
+          "total": -253,
+          "win_rate": 66.7
+        }
+      }
+    },
+    {
+      "name": "RSI14 < 50",
+      "trades": 220,
+      "total": -7914,
+      "win_rate": 60.0,
+      "avg": -36.0,
+      "max_dd": 20396,
+      "per_year": {
+        "2023": {
+          "trades": 72,
+          "total": -3677,
+          "win_rate": 54.2
+        },
+        "2024": {
+          "trades": 43,
+          "total": 637,
+          "win_rate": 67.4
+        },
+        "2025": {
+          "trades": 67,
+          "total": -14767,
+          "win_rate": 56.7
+        },
+        "2026": {
+          "trades": 38,
+          "total": 9892,
+          "win_rate": 68.4
+        }
+      }
+    }
+  ]
+}

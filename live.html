@@ -387,7 +387,12 @@ function m8bfLivePL(trade, spxNow) {
 
 // ─── SPX History + Signals fetch ─────────────────────────────────────────────
 function todayET() {
-  return getNowET().toISOString().slice(0, 10);
+  // getNowET() carries ET wall-clock values in LOCAL date fields — reading it
+  // back through toISOString() re-applies the local→UTC offset and flips the
+  // date after ~20:00 ET (blank chart/markers in the evening, audit 2026-07-10).
+  // Read the fields directly, same as isTradeToday().
+  const d = getNowET();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 const RAW = 'https://raw.githubusercontent.com/rava8989/brave/main/';
 const PROXY = 'https://schwab-proxy.ravamt4.workers.dev';

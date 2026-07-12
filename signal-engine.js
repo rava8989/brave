@@ -288,10 +288,11 @@ export function isDayAfterAnyEarnings(etDate) { return earningsSchedule.some(e =
 //                         (history_data.json: vixOpen)
 //   prior20VixCloses      newest-last list of the prior 20 trading days'
 //                         vixClose values (history_data.json: vixClose)
-//   opts.lo, opts.hi      dead-zone band (default 50 < pct ≤ 90)
-//                         CHANGED 2026-06-02 from (40, 90] to (50, 90] —
-//                         re-optimization on corrected VIX data found pct
-//                         41-50% adds +$12.4k / 24 trades / lower MaxDD.
+//   opts.lo, opts.hi      dead-zone band (default 50 < pct ≤ 80)
+//                         2026-06-02: (40, 90] → (50, 90] (corrected VIX data;
+//                         pct 41-50% adds +$12.4k / 24 trades / lower MaxDD).
+//                         2026-06-09: hi 90 → 80 (COR1M-aware sweep; the
+//                         80-90 tail was net-negative under the COR1M filter).
 //
 // Output: { pct, inDeadZone, reason }
 //   • pct          — rounded percentile, or null if data insufficient

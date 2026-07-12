@@ -69,8 +69,9 @@
   </tr></thead><tbody>
     <tr><td colspan="11" class="note">awaiting scanner…</td></tr>
   </tbody></table></div>
-  <div class="note">Gate 1: bull/bear premium ratio must sit in the 2.33×–5× band — under 2.33× lukewarm,
-    over 5× crowded (the AVGO/MU air pocket), both PASS. Deep-ITM = stock-replacement prints,
+  <div class="note">Gate 1: bull/bear premium ratio must sit in-band — <b>2.33×–5×</b> for weekly-option names (14-DTE flow),
+    <b>2.5×–6×</b> for monthly-only names (earnings-monthly flow). Under the floor = lukewarm,
+    over the cap = crowded (the AVGO/MU air pocket), both PASS. Deep-ITM = stock-replacement prints,
     strike &lt; spot × 0.92 — strengthens, absence doesn't kill.
     Gate 2 (v2.2): 2-week run-up must be negative AND ≥5% below ATH — rising into the print = PASS, no override.
     Gate 3: 4–8 quarters of 24h reactions — beat-fade names PASS regardless of flow. Gate 4 (v2.4): prior-day VIX must be under 1.2× its own 100-day average — when fear is spiking above its own recent normal, the night is skipped.</div>
@@ -118,7 +119,7 @@
     <tr><td>2025</td><td class="long">+300%</td></tr>
     <tr><td>2026</td><td class="long">+21%</td></tr>
     </tbody></table>
-    <div class="note">240 signal nights (227 weekly + 139 monthly-name trades). Two-thirds of the time you simply hold SPY; you touch the earnings basket about one night in seven; cash and gold split the downtrends. <b style="color:var(--text)">The regime/parking layer is portfolio construction</b> — tuned on the same window, not independently proven. The validated earnings edge is below.</div>
+    <div class="note">260 LONG trades across the signal nights (weekly-name 14-DTE flow + monthly-name earnings flow, per-name band). Two-thirds of the time you simply hold SPY; you touch the earnings basket about one night in seven; cash and gold split the downtrends. <b style="color:var(--text)">The regime/parking layer is portfolio construction</b> — tuned on the same window, not independently proven. The validated earnings edge is below.</div>
   </div>
   <div class="section-h" style="font-size:13px;color:var(--muted)">The validated edge underneath — the 4 gates vs 8 years</div>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:12px">
@@ -151,8 +152,9 @@
 
   <div class="note" style="margin-top:18px">
     Sizing (owner rule, 2026-07-04): 100% of account deployed on every signal night, split equally
-    across all qualifying names — no ranking, no picking, no per-name cap. Backtest at this sizing:
-    +169%/yr, max drawdown −19%; single-name nights are full-account bets by design.
+    across all qualifying names — no ranking, no picking, no per-name cap. Backtest at this sizing
+    (v2.4 gates, 7 years): <b>+91%/yr, max drawdown −29%</b> for the earnings sleeve alone
+    (+124%/yr, −35% with the full SPY/GLD/cash parking model); single-name nights are full-account bets by design.
     Exit: sell into the morning move, green or red.
   </div>
 
@@ -161,7 +163,7 @@
       <div style="font-size:22px">📖</div>
       <div>
         <b style="color:var(--text)">Complete methodology</b>
-        <div class="note">The full scientific write-up: signal construction, the exact three-gate decision
+        <div class="note">The full scientific write-up: signal construction, the exact four-gate decision
         rule, data pipeline and its honest limits, validation against ~3,000 past earnings, references.</div>
       </div>
       <div style="margin-left:auto;color:var(--accent);font-size:18px">→</div>
@@ -216,7 +218,7 @@
         <path d="M100,60 a14,14 0 1,0 12,21 a11,11 0 0,1 -12,-21 z" fill="#d29922"/>
         <text x="108" y="45" fill="#d29922" font-size="11" font-family="Inter" text-anchor="middle">earnings overnight</text>
         <circle cx="175" cy="88" r="6" fill="#f85149"/>
-        <text x="172" y="110" fill="#f85149" font-size="11" font-family="Inter" text-anchor="middle">sell 9:35am</text>
+        <text x="172" y="110" fill="#f85149" font-size="11" font-family="Inter" text-anchor="middle">sell at open</text>
         <path d="M55,84 C75,78 150,78 165,84" fill="none" stroke="#8b949e" stroke-width="1.5" stroke-dasharray="4 4"/>
       </svg>
       <div class="note" style="margin-top:8px"><b style="color:var(--text)">The bet: one night only.</b>
@@ -328,6 +330,11 @@ function loadPipeline() {
   }).catch(()=>{});
 }
 loadPipeline();
+// Whether the LIVE worker board has painted #board this cycle. render() (the
+// static snapshot) must never overwrite a painted live board — the committed
+// JSON is often stale/empty and used to clobber the live rows every load,
+// so the page said "nobody reports" even on signal nights (audit 2026-07-10).
+let _liveBoardPainted = false;
 function load() {
   fetch(WORKER + '/earnings-board', {cache: 'no-store'})
     .then(r => { if (!r.ok) throw 0; return r.json(); })
@@ -353,7 +360,8 @@ function renderLiveBoard(b) {
     `<td>${g(r.g1)}</td><td>${g(r.g2)}</td><td>${g(r.g3)}</td>` +
     `<td class="${vcls(r.verdict)}">${r.verdict}</td></tr>`).join('');
   document.getElementById('boardDate').textContent =
-    `${b.date} · live${b.final ? ' · FINAL' : ''} · VIX ${b.vix.ratio}×`;
+    `${b.date} · live${b.final ? ' · FINAL' : ''} · VIX ${b.vix && b.vix.ratio != null ? b.vix.ratio : '—'}×`;
+  _liveBoardPainted = true;
 }
 load();
 setInterval(load, 60_000);   // page refresh; data itself updates every 30 min
@@ -365,17 +373,20 @@ function render(d) {
     `${d.board.filter(r => r.verdict === 'LONG').length} LONG / ${d.board.length} scored`;
   document.getElementById('bannerNote').textContent = d.note || 'scores refresh every 30 min during market hours';
   document.getElementById('updated').textContent = 'updated ' + (d.updated_et || '—') + ' ET';
-  document.getElementById('boardDate').textContent = d.session || '';
+  if (!_liveBoardPainted) document.getElementById('boardDate').textContent = d.session || '';
 
   const vcls = v => v === 'LONG' ? 'long' : (v === 'CROWDED' ? 'crowded' : 'pass');
-  document.querySelector('#board tbody').innerHTML = (d.board || []).map(r =>
-    `<tr><td>${r.ticker}</td><td>${r.when}</td>` +
-    `<td>${fmt(r.pw_ratio)}×</td><td>${r.deep_itm_usd ? '$' + (r.deep_itm_usd/1e6).toFixed(1) + 'M' : '—'}</td>` +
-    `<td>${pct(r.runup_2w)}</td><td>${pct(r.ath_dist)}</td>` +
-    `<td>${r.base_rate == null ? '—' : (r.base_rate*100).toFixed(0) + '% (' + r.base_n + 'q)'}</td>` +
-    `<td>${g(r.g1)}</td><td>${g(r.g2)}</td><td>${g(r.g3)}</td>` +
-    `<td class="${vcls(r.verdict)}">${r.verdict}</td></tr>`).join('') ||
-    '<tr><td colspan="11" class="note">nobody reports in this window</td></tr>';
+  // Static snapshot must never clobber a fresher live board (audit 2026-07-10).
+  if (!_liveBoardPainted) {
+    document.querySelector('#board tbody').innerHTML = (d.board || []).map(r =>
+      `<tr><td>${r.ticker}</td><td>${r.when}</td>` +
+      `<td>${fmt(r.pw_ratio)}×</td><td>${r.deep_itm_usd ? '$' + (r.deep_itm_usd/1e6).toFixed(1) + 'M' : '—'}</td>` +
+      `<td>${pct(r.runup_2w)}</td><td>${pct(r.ath_dist)}</td>` +
+      `<td>${r.base_rate == null ? '—' : (r.base_rate*100).toFixed(0) + '% (' + r.base_n + 'q)'}</td>` +
+      `<td>${g(r.g1)}</td><td>${g(r.g2)}</td><td>${g(r.g3)}</td>` +
+      `<td class="${vcls(r.verdict)}">${r.verdict}</td></tr>`).join('') ||
+      '<tr><td colspan="11" class="note">nobody reports in this window</td></tr>';
+  }
 
   if (d.log_summary) {
     const ls = d.log_summary;
@@ -385,13 +396,13 @@ function render(d) {
       `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px">` +
       `<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase">Win rate</div>` +
       `<div style="font-family:'JetBrains Mono',monospace;font-size:19px;font-weight:600">${(ls.win_rate*100).toFixed(1)}%</div>` +
-      `<div class="note">${ls.n} trades</div></div>` +
+      `<div class="note">${ls.n} LONG trades — gates edge only</div></div>` +
       `<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase">Avg night (raw)</div>` +
       `<div style="font-family:'JetBrains Mono',monospace;font-size:19px;font-weight:600;color:var(--green)">+${(ls.avg_night*100).toFixed(2)}%</div>` +
       `<div class="note">best +${(ls.best*100).toFixed(0)}% · worst ${(ls.worst*100).toFixed(0)}%</div></div>` +
       `<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase">${ls.acct_label || 'account'}</div>` +
       `<div style="font-family:'JetBrains Mono',monospace;font-size:19px;font-weight:600;color:var(--green)">+$${ls.dollars_acct_total.toLocaleString()}</div>` +
-      `<div class="note">${(ls.per_year*100).toFixed(0)}%/yr compounded · ${ls.sizing_note}</div></div>` +
+      `<div class="note">${(ls.per_year*100).toFixed(0)}%/yr compounded · full 4-regime model (SPY/GLD/cash parking + earnings), not the gates alone · ${ls.sizing_note}</div></div>` +
       `<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase">Total return</div>` +
       `<div style="font-family:'JetBrains Mono',monospace;font-size:19px;font-weight:600">+${(ls.total_return*100).toFixed(1)}%</div>` +
       `<div class="note">compounded, ~${ls.years || '?'} yrs · +${(ls.per_year*100).toFixed(1)}%/yr</div></div></div>`;
