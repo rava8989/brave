@@ -244,10 +244,13 @@ def run(args) -> dict:
     # keyed by trading date (holidays skipped) → prev key = prior session's close.
     _vt_dates = sorted(vt.keys())
     _vt_prev = {_vt_dates[i]: _vt_dates[i - 1] for i in range(1, len(_vt_dates))}
-    def tail_contracts(day):
+    def is_vix_down(day):
         vo = vt.get(day, {}).get('vix_open')
         pc = vt.get(_vt_prev.get(day), {}).get('vix_close')
-        return 2 if (vo is not None and pc is not None and vo < pc) else 1
+        return vo is not None and pc is not None and vo < pc
+    def tail_contracts(day):
+        # --tail-mult N on VIX-down days (default 2 = the live rule), else 1.
+        return getattr(args, 'tail_mult', 2) if is_vix_down(day) else 1
     dates = trading_dates(args.from_date, args.to_date)
     # Detect ALL cross-down events (intraday + overnight). Same-day entry if cross at 9:30,
     # otherwise next trading day at 9:45.
@@ -310,6 +313,14 @@ def run(args) -> dict:
             snap = load_snapshot(d, args.time)
             if snap is None:
                 skipped['no_snap'] += 1
+                if c_close is not None: prev_close = c_close
+                continue
+
+            # --vix-down-only (research): skip VIX-up mornings entirely. Uses the
+            # independent is_vix_down (NOT tail_contracts==1 — with --tail-mult 1
+            # every day sizes 1 and that comparison silently skips everything).
+            if getattr(args, 'vix_down_only', False) and not is_vix_down(d):
+                skipped['not_vix_down'] = skipped.get('not_vix_down', 0) + 1
                 if c_close is not None: prev_close = c_close
                 continue
 
@@ -429,6 +440,10 @@ def main():
     p.add_argument('--cor1m-high', type=float, default=None)
     p.add_argument('--vvix-max', type=float, default=None,
                     help='Skip trades when VVIX_open ≥ this (default off; 110 is the historical breakpoint)')
+    p.add_argument('--tail-mult', dest='tail_mult', type=int, default=2,
+                    help='Contracts on overnight-VIX-down days (default 2 = live rule; 1 = flat sizing)')
+    p.add_argument('--vix-down-only', dest='vix_down_only', action='store_true',
+                    help='Research: trade ONLY overnight-VIX-down days (skip VIX-up mornings entirely)')
     args = p.parse_args()
 
     out = run(args)
