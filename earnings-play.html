@@ -61,6 +61,11 @@
     <div style="margin-left:auto" class="updated" id="updated"></div>
   </div>
 
+  <div class="section-h">Where we stand right now</div>
+  <div class="card" id="statusCard" style="padding:18px 20px">
+    <div class="note">loading current position…</div>
+  </div>
+
   <div class="section-h">Tonight's board <span class="badge" id="boardDate"></span></div>
   <div class="card" style="overflow-x:auto"><table id="board"><thead><tr>
     <th>Ticker</th><th>Reports</th><th>PW ratio</th><th>Deep-ITM $</th>
@@ -398,6 +403,40 @@ function renderLiveBoard(b) {
 }
 load();
 setInterval(load, 60_000);   // page refresh; data itself updates every 30 min
+
+// ── "Where we stand right now" status card ──
+function renderStatus(d) {
+  const el = document.getElementById('statusCard');
+  if (!el || !d) return;
+  const M = { SPY:  { dot:'#378ADD', label:'Parked in SPY',  sub:'market above its 200-day' },
+              GLD:  { dot:'#d29922', label:'Parked in GLD',  sub:'market below 200-day, calm' },
+              CASH: { dot:'#8b949e', label:'In cash',        sub:'market below 200-day + VIX > 25' } };
+  if (d.status === 'EARNINGS' && d.names && d.names.length) {
+    const chips = d.names.map(n => `<span style="display:inline-block;font-family:'JetBrains Mono',monospace;font-size:13px;background:#132b1a;color:var(--green);border:1px solid #1f5130;border-radius:8px;padding:3px 10px;margin:3px 4px 0 0">${n}</span>`).join('');
+    el.innerHTML =
+      `<div style="display:flex;align-items:center;gap:11px;margin-bottom:8px"><span style="width:11px;height:11px;border-radius:50%;background:var(--green);flex:none"></span>`+
+      `<b style="font-size:17px;color:var(--text)">Holding earnings</b>`+
+      `<span class="note" style="margin-left:auto">${d.weight}% each · sell at next open</span></div>`+
+      `<div>${chips}</div>`;
+  } else {
+    const m = M[d.status] || M.SPY;
+    const detail = (d.spot != null && d.sma != null)
+      ? ` · SPY ${d.spot} vs 200-day ${d.sma}${d.vix != null ? ' · prior VIX ' + d.vix : ''}` : '';
+    el.innerHTML =
+      `<div style="display:flex;align-items:center;gap:11px"><span style="width:11px;height:11px;border-radius:50%;background:${m.dot};flex:none"></span>`+
+      `<b style="font-size:17px;color:var(--text)">${m.label}</b>`+
+      `<span class="note" style="margin-left:auto">idle capital between signal nights</span></div>`+
+      `<div class="note" style="margin-top:6px">${m.sub}${detail}</div>`;
+  }
+}
+function loadStatus() {
+  fetch(WORKER + '/earnings-status', { cache: 'no-store' })
+    .then(r => r.ok ? r.json() : Promise.reject())
+    .then(renderStatus)
+    .catch(() => { const el = document.getElementById('statusCard'); if (el) el.innerHTML = '<div class="note">status unavailable — check back shortly</div>'; });
+}
+loadStatus();
+setInterval(loadStatus, 60_000);
 
 function render(d) {
   const b = document.getElementById('banner');

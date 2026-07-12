@@ -807,6 +807,38 @@ async function earnParkingSleeve(env, token) {
   return {sleeve, spot:+spot.toFixed(2), sma:+sma.toFixed(2), vix:vixPrior?+vixPrior.toFixed(1):null};
 }
 
+// Current position of the whole earnings package, for the "where we stand now"
+// status card. earn_open_<date> exists ONLY between the 3:45 entry and the
+// 9:32 next-morning exit (earnExitJob deletes it), so its presence = we're
+// holding the basket. Otherwise we're parked in the sleeve — read from the most
+// recent board's `park` (no fresh Schwab call needed; the sleeve moves slowly).
+async function earnCurrentStatus(env) {
+  const etNow = toET();
+  for (let back = 0; back <= 4; back++) {
+    const d = new Date(etNow); d.setDate(d.getDate() - back);
+    const raw = await env.SIGNAL_KV.get(`earn_open_${isoDateET(d)}`);
+    if (raw) {
+      try {
+        const o = JSON.parse(raw);
+        if (o.longs && o.longs.length) {
+          return { status: 'EARNINGS', names: o.longs, weight: Math.round(100 / o.longs.length),
+                   since: isoDateET(d), asOf: etNow.toISOString() };
+        }
+      } catch (_) {}
+    }
+  }
+  let park = null, boardDate = null;
+  for (let back = 0; back <= 7; back++) {
+    const d = new Date(etNow); d.setDate(d.getDate() - back);
+    const dISO = isoDateET(d);
+    const raw = await env.SIGNAL_KV.get(`earn_board_${dISO}`);
+    if (raw) { try { const b = JSON.parse(raw); if (b.park) { park = b.park; boardDate = dISO; break; } } catch (_) {} }
+  }
+  const sleeve = park ? park.sleeve : 'SPY';
+  return { status: sleeve, spot: park?.spot ?? null, sma: park?.sma ?? null,
+           vix: park?.vix ?? null, boardDate, asOf: etNow.toISOString() };
+}
+
 async function earnSend(env, msg) {
   const results = { dm: false, webhook: false };
   msg = msg + '\n\n_Not financial advice. For informational/educational purposes only. You are solely responsible for your own trades._';
@@ -10359,6 +10391,14 @@ export default {
       return jsonResp({ board: raw ? JSON.parse(raw) : null,
                         live_log: logRaw ? JSON.parse(logRaw) : [] },
         200, { 'Access-Control-Allow-Origin': '*' });
+    }
+
+    // ── GET /earnings-status ── "where the package stands right now": EARNINGS
+    // (+ held names) during a signal-night hold, else the parking sleeve
+    // (SPY/GLD/CASH). Public; the status card on earnings-play.html polls it.
+    if (url.pathname === '/earnings-status' && request.method === 'GET') {
+      const st = await earnCurrentStatus(env);
+      return jsonResp(st, 200, { 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public, max-age=120' });
     }
 
     // ── GET /earnings-scan-trigger?step=morning|rescore|final|exit|collect&date=ISO ──
