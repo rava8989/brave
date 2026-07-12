@@ -62,7 +62,7 @@
   </div>
 
   <div class="section-h">Where we stand right now</div>
-  <div class="card" id="statusCard" style="padding:18px 22px;border:1px solid #30363d;border-left:5px solid var(--accent);border-radius:12px;background:#12161c;transition:border-color .3s,background .3s">
+  <div class="card" id="statusCard" style="padding:16px 18px">
     <div class="note">loading current position…</div>
   </div>
 
@@ -408,29 +408,32 @@ setInterval(load, 60_000);   // page refresh; data itself updates every 30 min
 function renderStatus(d) {
   const el = document.getElementById('statusCard');
   if (!el || !d) return;
-  const M = { SPY:      { c:'#378ADD', bg:'#0f1b28', label:'Parked in SPY',  sub:'market above its 200-day' },
-              GLD:      { c:'#d29922', bg:'#1f1808', label:'Parked in GLD',  sub:'market below 200-day, calm' },
-              CASH:     { c:'#8b949e', bg:'#181a1e', label:'In cash',        sub:'market below 200-day + VIX > 25' },
-              EARNINGS: { c:'#3fb950', bg:'#0f2015', label:'Holding earnings' } };
-  const m = M[d.status] || M.SPY;
-  el.style.borderLeft = '5px solid ' + m.c;   // full shorthand — a longhand borderLeftColor won't override the HTML border-left shorthand
-  el.style.background = m.bg;
-  if (d.status === 'EARNINGS' && d.names && d.names.length) {
-    const chips = d.names.map(n => `<span style="display:inline-block;font-family:'JetBrains Mono',monospace;font-size:13px;background:#132b1a;color:var(--green);border:1px solid #1f5130;border-radius:8px;padding:3px 10px;margin:5px 5px 0 0">${n}</span>`).join('');
-    el.innerHTML =
-      `<div style="display:flex;align-items:center;gap:12px;margin-bottom:6px"><span style="width:13px;height:13px;border-radius:50%;background:${m.c};flex:none;box-shadow:0 0 8px ${m.c}"></span>`+
-      `<b style="font-size:22px;font-weight:600;color:var(--text);letter-spacing:-.2px">Holding earnings</b>`+
-      `<span class="note" style="margin-left:auto">${d.weight}% each · sell at next open</span></div>`+
-      `<div>${chips}</div>`;
+  const REG = [
+    { key:'SPY',      c:'#58a6ff', tint:'#132a44', label:'SPY',      sub:'parked' },
+    { key:'GLD',      c:'#d29922', tint:'#241b08', label:'GLD',      sub:'defensive' },
+    { key:'CASH',     c:'#8b949e', tint:'#1a1c20', label:'Cash',     sub:'VIX &gt; 25' },
+    { key:'EARNINGS', c:'#3fb950', tint:'#0f2015', label:'Earnings', sub:'signal night' },
+  ];
+  const active = d.status;
+  const tiles = REG.map(r => {
+    const on = r.key === active;
+    return `<div style="border-radius:9px;padding:11px 6px;text-align:center;transition:.25s;`+
+      (on ? `background:${r.tint};border:1.5px solid ${r.c}` : `background:#12161c;border:1px solid #23262d;opacity:.45`)+`">`+
+      `<div style="font-size:15px;font-weight:600;color:${r.c}">${r.label}</div>`+
+      `<div style="font-size:10px;margin-top:2px;color:${on ? r.c : '#6b7280'}">${on ? '● now' : r.sub}</div></div>`;
+  }).join('');
+  let detail;
+  if (active === 'EARNINGS' && d.names && d.names.length) {
+    const chips = d.names.map(n => `<span style="display:inline-block;font-family:'JetBrains Mono',monospace;font-size:13px;background:#132b1a;color:var(--green);border:1px solid #1f5130;border-radius:8px;padding:3px 10px;margin:4px 5px 0 0">${n}</span>`).join('');
+    detail = `<div class="note" style="margin-bottom:4px">Holding earnings — <b style="color:var(--text)">${d.weight}% each</b> · sell at next open</div><div>${chips}</div>`;
   } else {
-    const detail = (d.spot != null && d.sma != null)
-      ? `SPY ${d.spot} vs 200-day ${d.sma}${d.vix != null ? ' · prior VIX ' + d.vix : ''}` : '';
-    el.innerHTML =
-      `<div style="display:flex;align-items:center;gap:12px"><span style="width:13px;height:13px;border-radius:50%;background:${m.c};flex:none;box-shadow:0 0 8px ${m.c}"></span>`+
-      `<b style="font-size:22px;font-weight:600;color:var(--text);letter-spacing:-.2px">${m.label}</b>`+
-      `<span class="note" style="margin-left:auto">idle capital between signal nights</span></div>`+
-      `<div class="note" style="margin-top:7px">${m.sub}${detail ? ' · ' + detail : ''}</div>`;
+    const M = { SPY:'Parked in SPY — market above its 200-day',
+                GLD:'Parked in GLD — market below its 200-day, calm',
+                CASH:'In cash — market below 200-day + VIX &gt; 25' };
+    const px = (d.spot != null && d.sma != null) ? ` · SPY ${d.spot} vs 200-day ${d.sma}${d.vix != null ? ' · prior VIX ' + d.vix : ''}` : '';
+    detail = `<div class="note">${(M[active] || M.SPY)}${px}</div>`;
   }
+  el.innerHTML = `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">${tiles}</div>${detail}`;
 }
 function loadStatus() {
   fetch(WORKER + '/earnings-status', { cache: 'no-store' })
