@@ -9110,6 +9110,10 @@ function buildEarningsCardSvg(b) {
     let h = `<rect x="0" y="0" width="${W}" height="__H__" rx="16" fill="${bg}"/>`;
     h += `<text x="${P}" y="34" font-family="${F}" font-size="16" font-weight="600" fill="${C.accent}">Σ3 earnings</text>`;
     h += `<text x="${W - P}" y="34" text-anchor="end" font-family="${F}" font-size="12" fill="${C.mute}">${_cardEsc(_earnCardDate(b.date))}</text>`;
+    // Stage label so a morning PREVIEW is never mistaken for the final call
+    // (user 2026-07-13: banks all "pass" at 9am — that's provisional, 3:30 decides).
+    const stageTxt = b.final ? 'FINAL board — this is the call' : 'morning preview · final board decides at 3:30pm ET';
+    h += `<text x="${P}" y="49" font-family="${F}" font-size="10.5" fill="${b.final ? '#4ade80' : C.mute}">${stageTxt}</text>`;
     return h;
   };
   const footBar = (y, bg, txtColor, msg) => {
