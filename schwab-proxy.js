@@ -952,12 +952,15 @@ function earnBoardMsg(b, mode, stage) {
   // in-and-out). Only shown on SPY-sleeve days; SPY stays the default.
   const LEV_ALT = '\n-# Optional leverage: SSO ≈2× S&P (more return, deeper drawdown) · QLD ≈2× Nasdaq (most, wildest) — see the site. SPY is the default.';
   const parkLine = b.park ? `\n**Parking sleeve: ${b.park.sleeve}** `+(b.park.sleeve==='SPY'?'(market above its 200-day — hold SPY)'+LEV_ALT:b.park.sleeve==='GLD'?'(market below 200-day, calm — hold GLD)':'(market below 200-day + VIX>25 — sit in cash)') : '';
-  if (!b.board.length) return `${head}${stage==='morning'?parkLine:''}\nNo trades tonight.`;
+  // Final-stage sleeve line (the FINAL is the only Discord message since
+  // 2026-07-13, so quiet-day early returns must carry the sleeve too).
+  const finalPark = b.park ? `\n_Parking sleeve today: ${b.park.sleeve}${b.park.sleeve==='CASH'?' (market below 200-day + VIX>25)':b.park.sleeve==='GLD'?' (market below 200-day, calm)':' (market above 200-day)'}._` + (b.park.sleeve==='SPY' ? LEV_ALT : '') : '';
+  if (!b.board.length) return `${head}${stage==='morning'?parkLine:''}\nNo trades tonight.${stage==='final'?finalPark:''}`;
   // Outside-universe names stay in the board JSON (KV earn_board_<date>) for
   // audits but are NOT listed in the message — they can never be scored, so
   // they never change the decision (user 2026-07-10: pure noise).
   const scored = b.board.filter(r => !r.notes.some(n => n.startsWith('outside universe')));
-  if (!scored.length) return `${head}${stage==='morning'?parkLine:''}\nNo trades tonight.`;
+  if (!scored.length) return `${head}${stage==='morning'?parkLine:''}\nNo trades tonight.${stage==='final'?finalPark:''}`;
   const lines = scored.map(r => {
     const g = x => x === null ? '·' : x ? '✓' : '✗';
     return `${r.verdict === 'LONG' ? '🟢' : r.verdict === 'CROWDED' ? '🔴' : '⚪'} ` +
@@ -973,8 +976,10 @@ function earnBoardMsg(b, mode, stage) {
     tail += `\n**ACTION: buy at 3:45–3:55 close — ` +
             b.longs.map(l => `${l.ticker} ${w}%`).join(' · ') + `** · sell ALL at tomorrow's open`;
   }
-  if (stage === 'final' && !b.longs.length) tail += `\nNo earnings tonight. Stay parked in your sleeve (see morning note).`;
-  if (stage === 'final' && b.park) tail += `\n_Parking sleeve today: ${b.park.sleeve}${b.park.sleeve==='CASH'?' (market below 200-day + VIX>25)':b.park.sleeve==='GLD'?' (market below 200-day, calm)':' (market above 200-day)'}._`;
+  if (stage === 'final' && !b.longs.length) tail += `\nNo earnings tonight. Stay parked in your sleeve (below).`;
+  // Morning send is dead (2026-07-13) — the FINAL is the only message, so the
+  // SPY-sleeve leverage note lives here now (it used to ride the morning parkLine).
+  if (stage === 'final') tail += finalPark;
   return [head + (stage==='morning'?parkLine:''), ...lines, tail].join('\n');
 }
 
@@ -988,7 +993,11 @@ async function earnMorningJob(env, etNow, token) {
   try {
     const b = await earnBuildBoard(env, token, iso, { withIntraday: false });
     await env.SIGNAL_KV.put(`earn_board_${iso}`, JSON.stringify(b), { expirationTtl: 3 * 86400 });
-    await earnSendCard(env, b, 'morning');   // card when flag 'on', else text — both fall back to text
+    // NO morning Discord send (user 2026-07-13: a 9am read that can flip by
+    // 3:30 is noise — "why I need a morning board telling me something that
+    // could be wrong"). The scan still runs: KV board feeds the website
+    // (Tonight's board + status card) and primes the 15:30 FINAL, which is
+    // now the ONLY earnings message of the day.
     await env.SIGNAL_KV.put(`earnscan_done_${iso}`, 'ok', { expirationTtl: 5 * 86400 });
     await earnRefreshPipeline(env);            // refresh 2-week pipeline from live calendar
   } catch (e) {
