@@ -2671,7 +2671,13 @@ async function getAccessToken(env, forceRefresh = false) {
               access: data.access_token,
               refresh: data.refresh_token || tokens.refresh,
               expiry: Date.now() + (data.expires_in * 1000),
-              refreshExpiry: data.refresh_token
+              // Schwab ECHOES the same refresh_token on every access-token
+              // refresh — presence ≠ rotation. Resetting the 7-day clock on
+              // every echo pinned the countdown at 7.0d forever, so the
+              // ≤3.5d evening warning + ≤1.5d dashboard alert NEVER fired
+              // and the 2026-07-12 expiry hit with zero notice. Only a
+              // genuinely NEW token (real re-grant) restarts the clock.
+              refreshExpiry: (data.refresh_token && data.refresh_token !== tokens.refresh)
                 ? Date.now() + (7 * 24 * 60 * 60 * 1000)
                 : tokens.refreshExpiry,
             };
