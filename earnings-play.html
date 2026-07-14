@@ -432,6 +432,21 @@ function renderStatus(d) {
                 CASH:'In cash — market below 200-day + VIX &gt; 25' };
     const px = (d.spot != null && d.sma != null) ? ` · SPY ${d.spot} vs 200-day ${d.sma}${d.vix != null ? ' · prior VIX ' + d.vix : ''}` : '';
     detail = `<div class="note">${(M[active] || M.SPY)}${px}</div>`;
+    // % since sleeve entry — SPY sleeve also shows the optional 2× flavors
+    // (SSO/QLD, same entry date). Manual month names (no toLocaleDateString —
+    // this rerenders every 60s poll; see CLAUDE.md perf rule).
+    if (d.chg) {
+      const MO = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      const sinceTxt = d.since ? `since ${MO[+d.since.slice(5,7)-1]} ${+d.since.slice(8,10)}` : '';
+      const items = active === 'SPY'
+        ? [['SPY', d.chg.SPY, 1], ['SSO', d.chg.SSO, 0], ['QLD', d.chg.QLD, 0]]
+        : [['GLD', d.chg.GLD, 1]];
+      const chips2 = items.filter(it => it[1] != null).map(([s, v, main]) => {
+        const col = v >= 0 ? 'var(--green)' : '#f85149';
+        return `<span style="font-family:'JetBrains Mono',monospace;font-size:12.5px;border:1px solid ${main ? '#2a4a68' : '#23262d'};background:${main ? '#0f1b28' : '#12161c'};border-radius:8px;padding:4px 10px;color:var(--text)">${s} <b style="color:${col}">${v >= 0 ? '+' : ''}${v}%</b></span>`;
+      }).join('');
+      if (chips2) detail += `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:9px">${chips2}<span class="note" style="font-size:11px">${sinceTxt}${active === 'SPY' ? ' · SSO/QLD = optional 2×' : ''}</span></div>`;
+    }
   }
   el.innerHTML = `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">${tiles}</div>${detail}`;
 }

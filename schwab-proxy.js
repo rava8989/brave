@@ -807,11 +807,41 @@ async function earnParkingSleeve(env, token) {
   return {sleeve, spot:+spot.toFixed(2), sma:+sma.toFixed(2), vix:vixPrior?+vixPrior.toFixed(1):null};
 }
 
+// Live last prices for a few equity symbols — ONE Schwab quotes call.
+async function earnQuotesLast(env, token, syms) {
+  const d = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=${syms.join(',')}&fields=quote`, token, env);
+  const out = {};
+  for (const s of syms) {
+    const q = d?.[s]?.quote;
+    const px = q?.lastPrice ?? q?.closePrice ?? null;
+    if (px > 0) out[s] = +px;
+  }
+  return out;
+}
+
+// "Since we entered" tracker for the parking sleeve (owner 2026-07-14): stamp
+// entry date + entry prices (SPY/SSO/QLD/GLD) whenever the sleeve REGIME
+// changes (SPY↔GLD↔CASH). Overnight earnings baskets do NOT reset the run —
+// the sleeve label is unchanged next morning (owner: "earnings is only
+// overnight so we don't have to do it"). Stamped daily by earnMorningJob;
+// earnCurrentStatus self-heals if a flip lands before the morning stamp.
+async function earnSleeveRunStamp(env, park, token) {
+  if (!park || !park.sleeve) return null;
+  const raw = await env.SIGNAL_KV.get('earn_sleeve_run');
+  const run = raw ? JSON.parse(raw) : null;
+  if (run && run.sleeve === park.sleeve) return run;
+  let entry = {};
+  try { entry = await earnQuotesLast(env, token, ['SPY', 'SSO', 'QLD', 'GLD']); } catch (_) {}
+  const fresh = { sleeve: park.sleeve, since: isoDateET(toET()), entry };
+  await env.SIGNAL_KV.put('earn_sleeve_run', JSON.stringify(fresh));
+  return fresh;
+}
+
 // Current position of the whole earnings package, for the "where we stand now"
 // status card. earn_open_<date> exists ONLY between the 3:45 entry and the
 // 9:32 next-morning exit (earnExitJob deletes it), so its presence = we're
 // holding the basket. Otherwise we're parked in the sleeve — read from the most
-// recent board's `park` (no fresh Schwab call needed; the sleeve moves slowly).
+// recent board's `park`, plus %-since-entry from earn_sleeve_run + live quotes.
 async function earnCurrentStatus(env) {
   const etNow = toET();
   for (let back = 0; back <= 4; back++) {
@@ -835,7 +865,28 @@ async function earnCurrentStatus(env) {
     if (raw) { try { const b = JSON.parse(raw); if (b.park) { park = b.park; boardDate = dISO; break; } } catch (_) {} }
   }
   const sleeve = park ? park.sleeve : 'SPY';
-  return { status: sleeve, spot: park?.spot ?? null, sma: park?.sma ?? null,
+  // %-change since sleeve entry (owner 2026-07-14). SPY sleeve also shows the
+  // optional 2× alternatives (SSO/QLD) from the SAME entry date; CASH has no %.
+  let since = null, chg = null;
+  try {
+    const runRaw = await env.SIGNAL_KV.get('earn_sleeve_run');
+    let run = runRaw ? JSON.parse(runRaw) : null;
+    const token = await getAccessToken(env);
+    if (!run || run.sleeve !== sleeve) run = await earnSleeveRunStamp(env, park || { sleeve }, token);
+    if (run) {
+      since = run.since;
+      const want = sleeve === 'SPY' ? ['SPY', 'SSO', 'QLD'] : sleeve === 'GLD' ? ['GLD'] : [];
+      if (want.length && run.entry) {
+        const last = await earnQuotesLast(env, token, want);
+        chg = {};
+        for (const s of want) {
+          if (last[s] > 0 && run.entry[s] > 0) chg[s] = +(((last[s] / run.entry[s]) - 1) * 100).toFixed(1);
+        }
+        if (!Object.keys(chg).length) chg = null;
+      }
+    }
+  } catch (e) { console.warn('[earn-status-chg]', e.message); }
+  return { status: sleeve, since, chg, spot: park?.spot ?? null, sma: park?.sma ?? null,
            vix: park?.vix ?? null, boardDate, asOf: etNow.toISOString() };
 }
 
@@ -999,6 +1050,7 @@ async function earnMorningJob(env, etNow, token) {
     // (Tonight's board + status card) and primes the 15:30 FINAL, which is
     // now the ONLY earnings message of the day.
     await env.SIGNAL_KV.put(`earnscan_done_${iso}`, 'ok', { expirationTtl: 5 * 86400 });
+    try { await earnSleeveRunStamp(env, b.park, token); } catch (e) { console.warn('[earn-sleeve]', e.message); }
     await earnRefreshPipeline(env);            // refresh 2-week pipeline from live calendar
   } catch (e) {
     await env.SIGNAL_KV.delete(key);          // retry next tick in window
