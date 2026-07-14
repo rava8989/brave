@@ -820,16 +820,16 @@ async function earnQuotesLast(env, token, syms) {
 }
 
 // "Since we entered" tracker for the parking sleeve (owner 2026-07-14): stamp
-// entry date + entry prices (SPY/SSO/QLD/GLD) whenever the sleeve REGIME
-// changes (SPY↔GLD↔CASH). Overnight earnings baskets do NOT reset the run —
-// the sleeve label is unchanged next morning (owner: "earnings is only
-// overnight so we don't have to do it"). Stamped daily by earnMorningJob;
-// earnCurrentStatus self-heals if a flip lands before the morning stamp.
-async function earnSleeveRunStamp(env, park, token) {
+// entry date + entry prices (SPY/SSO/QLD/GLD) every time money MOVES into the
+// sleeve — a regime flip (SPY↔GLD↔CASH, morning job) OR re-entry after an
+// overnight earnings basket (exit job, force=true). Owner: "% since the last
+// move" — the true holding period of the CURRENT position, so a basket night
+// DOES restart the clock. earnCurrentStatus self-heals on label mismatch.
+async function earnSleeveRunStamp(env, park, token, force = false) {
   if (!park || !park.sleeve) return null;
   const raw = await env.SIGNAL_KV.get('earn_sleeve_run');
   const run = raw ? JSON.parse(raw) : null;
-  if (run && run.sleeve === park.sleeve) return run;
+  if (!force && run && run.sleeve === park.sleeve) return run;
   let entry = {};
   try { entry = await earnQuotesLast(env, token, ['SPY', 'SSO', 'QLD', 'GLD']); } catch (_) {}
   const fresh = { sleeve: park.sleeve, since: isoDateET(toET()), entry };
@@ -1134,6 +1134,13 @@ async function earnExitJob(env, etNow, token) {
     await earnSend(env, `🌙 **[EARNINGS] SELL AT OPEN — now.** ` +
       `Overnight results: ${outs.join(' · ')}. Green or red — out.`);
     await env.SIGNAL_KV.delete(`earn_open_${prevISO}`);
+    // Basket sold → money re-enters the sleeve NOW: force-restart the
+    // "since we entered" clock at this morning's prices (owner 2026-07-14).
+    try {
+      const bRaw = await env.SIGNAL_KV.get(`earn_board_${iso}`);
+      const park = bRaw ? JSON.parse(bRaw).park : null;
+      await earnSleeveRunStamp(env, park || await earnParkingSleeve(env, token), token, true);
+    } catch (e) { console.warn('[earn-sleeve-reset]', e.message); }
   } catch (e) {
     await env.SIGNAL_KV.delete(key);
     console.warn('[earn] exit job failed:', e.message);
