@@ -287,7 +287,11 @@ def run(args) -> dict:
         # Trigger detection: any cross-down in COR1M hourly bars maps to an entry day.
         # Entry day = same day if cross was at 9:30; otherwise next trading day.
         # State machine: only fire from WAITING; absorbed crosses don't restart.
-        if state == 'WAITING' and d in entry_days:
+        # --no-rearm (research, owner 2026-07-14): a LEVEL also fires — the day
+        # after a profitable exit re-triggers immediately if COR1M (9:30 open,
+        # live-knowable) is still ≤ threshold. No cross-from-above required.
+        no_rearm_fire = getattr(args, 'no_rearm', False) and c_open is not None and c_open <= args.threshold
+        if state == 'WAITING' and (d in entry_days or no_rearm_fire):
             state = 'TRIGGERED'
             current_trigger = {
                 'trigger_date': d, 'cor1m_at_trigger': c_open,
@@ -444,10 +448,12 @@ def main():
                     help='Contracts on overnight-VIX-down days (default 2 = live rule; 1 = flat sizing)')
     p.add_argument('--vix-down-only', dest='vix_down_only', action='store_true',
                     help='Research: trade ONLY overnight-VIX-down days (skip VIX-up mornings entirely)')
+    p.add_argument('--no-rearm', dest='no_rearm', action='store_true',
+                    help='Research: no re-arm — re-trigger immediately any day COR1M open ≤ threshold (level, not cross)')
     args = p.parse_args()
 
     out = run(args)
-    out_path = COR1M_DIR / f'regime_backtest_{args.time}{"_"+args.regimes.replace(",","_") if args.regimes else ""}.json'
+    out_path = COR1M_DIR / f'regime_backtest_{args.time}{"_"+args.regimes.replace(",","_") if args.regimes else ""}{"_norearm" if args.no_rearm else ""}.json'
     out_path.write_text(json.dumps(out, indent=2))
 
     print(f'\n{"="*78}')
