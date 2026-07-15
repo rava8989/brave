@@ -674,6 +674,19 @@
       </div>
     </div>
 
+    <!-- CARD 7: Scalp M8BF (companion — paper-tracked candidate, added 2026-07-15) -->
+    <div class="scard" id="cardScalp" title="Scalp M8BF — 30-wide 0DTE SPXW call fly bought ON the day's gamma magnet at 12:00 ET, only when the M8BF service's fly center sits exactly 5 pts from the magnet (its T1 IS the magnet) and the debit ≤ $17.00. Skips EOM, CPI, FED, and Mon–Thu of monthly OPEX week. Paper OCO bracket: TP +3.0 (+$300/lot) / SL −5.0 (−$500/lot). Traded at 10 contracts, signals via the Sigma channel + DMs. Backtest Sep 2024→Jun 2026: 87 trades, 83.9% WR, +$171/lot, PF 3.13. Full record: magnetfly.html.">
+      <div class="scard-header">
+        <span class="scard-label">🧲 Scalp M8BF <span style="font-weight:400;font-size:10px;opacity:.7;letter-spacing:normal;text-transform:none">· paper</span></span>
+        <span class="today-trade-pill" id="pillScalp" style="display:none;">▶ TODAY'S TRADE</span>
+        <span class="scard-badge" id="scalpBadge">—</span>
+      </div>
+      <div class="scard-body">
+        <div class="scard-main" id="scalpRec">Loading…</div>
+        <div class="scard-reason" id="scalpReason"></div>
+      </div>
+    </div>
+
   </div>
 
   <!-- CycleLab shape advisory (2026-06-10) — INFORMATIONAL ONLY -->
@@ -1011,11 +1024,12 @@
     <div class="strategy-image"><img src="./stat.jpg" alt="Stats" loading="lazy" /></div>
 
     <hr class="divider">
-    <h3>Scalp M8BF <span style="font-weight:400;font-size:12px;color:var(--text3)">(paper-tracked candidate, added 2026-07-15 — separate from Sigma 3; live record on <a href="magnetfly.html">magnetfly.html</a>)</span></h3>
+    <h3>Scalp M8BF <span style="font-weight:400;font-size:12px;color:var(--text3)">(now part of Sigma 3, added 2026-07-15 — traded at 10 contracts; live record on <a href="magnetfly.html">magnetfly.html</a>)</span></h3>
     <ul>
-      <li><strong>Signal:</strong> at 12:00 ET, the M8BF service's fly center sits exactly 5 pts from the day's gamma magnet (max positive OI-basis GEX strike, 10:30 snapshot) — i.e. its Target&nbsp;1 IS the magnet. Fires ~35% of days.</li>
+      <li><strong>Now part of Sigma 3.</strong> Traded at <strong>10 contracts</strong> by default, with signals delivered through the <strong>Sigma channel + DMs</strong> like the other strategies. Two heads-up alerts fire first — a <strong>9:40 ET</strong> "possible / not" read and an <strong>11:30 ET</strong> heads-up — then the <strong>12:00 ET final call</strong>.</li>
+      <li><strong>Signal:</strong> at the 12:00 ET final call, the M8BF service's fly center sits exactly 5 pts from the day's gamma magnet (max positive OI-basis GEX strike, 10:30 snapshot) — i.e. its Target&nbsp;1 IS the magnet. Fires ~35% of days.</li>
       <li><strong>Skip days:</strong> EOM (last 2 trading days) · CPI · FED · Mon–Thu of monthly OPEX week (OPEX Friday itself is traded).</li>
-      <li><strong>Trade:</strong> 30-wide SPXW 0DTE call fly at the magnet, only if debit ≤ <strong>$17.00</strong> (typ ~$12.30). Paper OCO bracket: TP <strong>+3.0</strong> (+$300/lot) / SL <strong>−5.0</strong> (−$500/lot), else settle.</li>
+      <li><strong>Trade:</strong> 30-wide SPXW 0DTE call fly at the magnet, only if debit ≤ <strong>$17.00</strong> (typ ~$12.30). OCO bracket: TP <strong>+3.0</strong> (+$300/lot) / SL <strong>−5.0</strong> (−$500/lot), else settle.</li>
       <li><strong>Backtest (Sep 2024 → Jun 2026, real NBBO + slippage):</strong> 87 trades · 83.9% WR · +$171/lot avg · t=5.40 · PF 3.13 · maxDD $1,000 · ~4/mo. Strategy-independent — never touches the Sigma 3 strategies.</li>
     </ul>
 
@@ -3779,6 +3793,39 @@
     return _tailHedgeState?.text ? `Tail Hedge │ ${_tailHedgeState.text}` : null;
   }
 
+  // ── Scalp M8BF daily signal (companion, paper-tracked) — reads the live
+  //    worker's /magnetfly-today (same feed as magnetfly.html) and mirrors the
+  //    status onto the dashboard card. GO/PRE-GO = green, NO/PRE-NO = red,
+  //    WAIT/other = grey. Refreshed on load + every 60s (see DOMContentLoaded).
+  async function updateScalpM8bfStatus() {
+    const rec    = document.getElementById('scalpRec');
+    const badge  = document.getElementById('scalpBadge');
+    const reason = document.getElementById('scalpReason');
+    const pill   = document.getElementById('pillScalp');
+    if (!rec) return;
+    try {
+      const r = await fetch('https://schwab-proxy.ravamt4.workers.dev/magnetfly-today', {cache:'no-store'});
+      const t = await r.json();
+      const st = t.status || 'WAIT';
+      const isGo = st === 'GO' || st === 'PRE-GO';
+      const isNo = st === 'NO' || st === 'PRE-NO';
+      const col  = isGo ? 'var(--green,#22c55e)' : isNo ? 'var(--red,#ef4444)' : 'var(--text3)';
+      if (badge) { badge.textContent = st; badge.style.color = col; badge.style.borderColor = col; }
+      if (pill)  pill.style.display = (st === 'GO') ? '' : 'none';
+      const heads = t.pre ? ` <span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--amber,#f59e0b);border:1px solid var(--amber,#f59e0b);border-radius:4px;padding:0 4px;">heads-up</span>` : '';
+      rec.innerHTML = `<span style="color:${col};">&#9679;</span> ${t.headline || 'waiting for noon check'}${heads}`;
+      let sub = t.detail || '';
+      if (Array.isArray(t.kpis) && t.kpis.length) {
+        sub += (sub ? ' &middot; ' : '') + t.kpis.map(k => `${k[0]}: <b>${k[1]}</b>`).join(' &middot; ');
+      }
+      if (reason) reason.innerHTML = sub;
+    } catch(e) {
+      if (badge) badge.textContent = '—';
+      rec.textContent = 'Scalp M8BF: signal unavailable. See magnetfly.html.';
+      if (reason) reason.innerHTML = '';
+    }
+  }
+
   document.addEventListener('DOMContentLoaded',()=>{
     initTheme();
     renderSched(SignalEngine.cpiSch,  'cpiSchedule');
@@ -3789,6 +3836,8 @@
     renderEarnings();
     refreshCross(); buildStatus(); buildNextEvents(); updateHeader();
     updateTailHedgeStatus();
+    updateScalpM8bfStatus();
+    setInterval(updateScalpM8bfStatus, 60000);   // Scalp M8BF live signal — refresh every 60s
     // On CPI days only Diagonal trades, and Diagonal only needs today's VIX
     // open. 2026-06-10 (user request): do NOT disable the yesterday fields —
     // auto-filled values must ALWAYS stay manually editable so the user can

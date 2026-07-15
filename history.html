@@ -145,6 +145,7 @@
     .strat-pill[data-strat="bobf"]{background:rgba(251,146,60,.15);color:#fb923c;border-color:#fb923c;}
     .strat-pill[data-strat="diagonal"]{background:rgba(74,222,128,.15);color:#4ade80;border-color:#4ade80;}
     .strat-pill[data-strat="tail"]{background:rgba(6,182,212,.15);color:#06b6d4;border-color:#06b6d4;}
+    .strat-pill[data-strat="scalp"]{background:rgba(244,114,182,.15);color:#f472b6;border-color:#f472b6;}
     .strat-pill.inactive{border-color:transparent;}
     .strat-pill.solo{box-shadow:0 0 0 3px var(--accent),0 0 12px rgba(99,102,241,.4);}
 
@@ -257,6 +258,7 @@
     <div class="strat-pill active" data-strat="bobf" onclick="toggleStrat('bobf')" ondblclick="soloStrat('bobf')">BOBF</div>
     <div class="strat-pill active" data-strat="diagonal" onclick="toggleStrat('diagonal')" ondblclick="soloStrat('diagonal')" title="1/25 put-diagonal — entry anywhere in the 12:30–15:00 ET window, exit at the same clock time next day (24-hour hold, Entry Time === Exit Time, one diagonal active at a time); sDTE=1, +10 ITM, lDTE=25, −20 below (long 10 OTM, width 20); OPEX-1 + EOM + EOM-1 + NM + VIX 50–80% + COR1M≥10 excluded (default; 2026-06-09 safer-tail retune from 30/40 + VIX 50-90)">Diagonal</div>
     <div class="strat-pill active" data-strat="tail" onclick="toggleStrat('tail')" ondblclick="soloStrat('tail')" title="Tail Hedge — Convex Tail preset (threshold 7.75, delta -0.10, VVIX<110). Buy 0DTE SPX put at 9:45 ET on any COR1M cross below 7.75 — 2 contracts when overnight VIX is down, else 1; hold to 4 PM. Companion strategy, not part of Sigma 3.">Tail Hedge</div>
+    <div class="strat-pill active" data-strat="scalp" onclick="toggleStrat('scalp')" ondblclick="soloStrat('scalp')" title="Scalp M8BF — 30-wide 0DTE SPXW call fly bought ON the day's gamma magnet at 12:00 ET when the M8BF service's fly center sits exactly 5 pts from the magnet (T1 IS the magnet) and the debit ≤ $17.00. Skips EOM, CPI, FED, and Mon–Thu of monthly OPEX week. OCO bracket TP +3.0 / SL −5.0. Traded at 10 contracts; scalpPL is already 10-lot-sized dollars. Live record on magnetfly.html.">🧲 Scalp</div>
   </div>
 
   <div class="filter-bar" id="filterBar">
@@ -419,7 +421,7 @@ let rows = [];
 let sortCol = null;
 let sortAsc = true;
 let currentMonths = 0;
-const activeStrats = { m8bf:true, strad:true, gxbf:true, bobf:true, diagonal:true, tail:true };
+const activeStrats = { m8bf:true, strad:true, gxbf:true, bobf:true, diagonal:true, tail:true, scalp:true };
 let soloKey = null;
 let activeDays = {1:true,2:true,3:true,4:true,5:true};
 let vixRegime = 'all';
@@ -475,7 +477,7 @@ function soloStrat(key) {
 }
 
 function updatePillStates() {
-  for (const k of ['m8bf','strad','gxbf','bobf','diagonal','tail']) {
+  for (const k of ['m8bf','strad','gxbf','bobf','diagonal','tail','scalp']) {
     const el = document.querySelector(`.strat-pill[data-strat="${k}"]`);
     if (!el) continue;
     el.classList.toggle('active', activeStrats[k]);
@@ -684,6 +686,7 @@ function getRowPL(row) {
   if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) { pl += row.bobfPL; hasTrade = true; }
   if (activeStrats.diagonal && row.diagPL != null && row.diagPL !== 0) { pl += row.diagPL; hasTrade = true; }  // diagPL===0 = no-trade day, not a flat trade
   if (activeStrats.tail && row.tailPL != null) { pl += row.tailPL; hasTrade = true; }
+  if (activeStrats.scalp && row.scalpPL != null) { pl += row.scalpPL; hasTrade = true; }
   return hasTrade ? pl : null;
 }
 
@@ -743,6 +746,7 @@ function computeStats(visibleRows) {
     if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) cum += row.bobfPL;
     if (activeStrats.diagonal && row.diagPL != null && row.diagPL !== 0) cum += row.diagPL;  // diagPL===0 = no-trade day (matches getRowPL)
     if (activeStrats.tail && row.tailPL != null) cum += row.tailPL;
+    if (activeStrats.scalp && row.scalpPL != null) cum += row.scalpPL;
     if (cum > peak) peak = cum;
     const dd = peak - cum;
     if (dd > maxDD) { maxDD = dd; peakAtMaxDD = peak; }
@@ -924,6 +928,7 @@ async function init() {
         bobfPL: cur.bobfPL != null ? cur.bobfPL : null,
         diagPL: cur.diagPL != null ? cur.diagPL : null,
         tailPL: cur.tailPL != null ? cur.tailPL : null,
+        scalpPL: cur.scalpPL != null ? cur.scalpPL : null,   // Scalp M8BF — already 10-lot-sized dollars
         prevWR: prevWR != null ? prevWR : null,
         signal,
         specialDayText: buildSpecialDayText(signal),
@@ -969,6 +974,7 @@ const cols = [
   { key:'bobfPL',      label:'BOBF',       type:'stratPL' },
   { key:'diagPL',      label:'Diagonal',   type:'stratPL' },
   { key:'tailPL',      label:'Tail Hedge', type:'stratPL' },
+  { key:'scalpPL',     label:'🧲 Scalp',   type:'stratPL' },
   { key:'totalPL',     label:'Total',      type:'stratPL' },
   { key:'specialDay',  label:'Special',    type:'string'  },
 ];
@@ -983,6 +989,7 @@ function getValue(row, col) {
     case 'bobfPL': return row.signal?.bobfBadge !== 'BLOCKED' ? (row.bobfPL != null ? row.bobfPL : 0.1) : -Infinity;
     case 'diagPL': return row.diagPL != null ? row.diagPL : -Infinity;
     case 'tailPL': return row.tailPL != null ? row.tailPL : -Infinity;
+    case 'scalpPL': return row.scalpPL != null ? row.scalpPL : -Infinity;
     case 'totalPL': {
       const s = row.signal || {}; let t = 0;
       if (activeStrats.m8bf && s.m8bfRan && row.m8bfPL != null) t += row.m8bfPL;
@@ -991,6 +998,7 @@ function getValue(row, col) {
       if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) t += row.bobfPL;
       if (activeStrats.diagonal && row.diagPL != null && row.diagPL !== 0) t += row.diagPL;  // 0 = no-trade day
       if (activeStrats.tail && row.tailPL != null) t += row.tailPL;
+      if (activeStrats.scalp && row.scalpPL != null) t += row.scalpPL;
       return t;
     }
     case 'specialDay': return row.specialDayText || '';
@@ -1089,7 +1097,7 @@ function renderTable() {
   });
   h += '</tr></thead><tbody>';
 
-  let totM8=0, totStrad=0, totGxbf=0, totBobf=0, totDiag=0, totTail=0;
+  let totM8=0, totStrad=0, totGxbf=0, totBobf=0, totDiag=0, totTail=0, totScalp=0;
 
   const todayStr = new Date().toISOString().slice(0, 10);
   const dash = '<td style="color:var(--text3);text-align:center">—</td>';
@@ -1106,6 +1114,7 @@ function renderTable() {
     if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) totBobf += row.bobfPL;
     if (activeStrats.diagonal && row.diagPL != null && row.diagPL !== 0) totDiag += row.diagPL;  // 0 = no-trade day
     if (activeStrats.tail && row.tailPL != null) totTail += row.tailPL;
+    if (activeStrats.scalp && row.scalpPL != null) totScalp += row.scalpPL;
   }
 
   const renderRows = tableShowAll ? rows : rows.slice(-TABLE_DEFAULT_LIMIT);
@@ -1129,7 +1138,7 @@ function renderTable() {
     h += `<td style="font-weight:700;${row.m8bfWR!=null?(row.m8bfWR>=90?'color:#22c55e':row.m8bfWR<25?'color:#ef4444':'color:var(--text)'):'color:var(--text3)'}">${row.m8bfWR!=null?row.m8bfWR+'%':'—'}</td>`;
 
     if (isFuture) {
-      h += dash + dash + dash + dash + dash + dash + dash;
+      h += dash + dash + dash + dash + dash + dash + dash + dash;
     } else {
       // 2026-06-09 audit fix (P1 #9): M8BF + Straddle cells now respect their
       // activeStrats toggle pills, matching GXBF/BOBF/Diagonal/Tail. Previously
@@ -1141,6 +1150,7 @@ function renderTable() {
       h += stratCell(activeStrats.bobf && s.bobfBadge !== 'BLOCKED', row.bobfPL);
       h += stratCell(activeStrats.diagonal && row.diagPL != null, row.diagPL);
       h += stratCell(activeStrats.tail && row.tailPL != null, row.tailPL);
+      h += stratCell(activeStrats.scalp && row.scalpPL != null, row.scalpPL);
 
       let dayTotal = 0, hasDayTrade = false;
       if (activeStrats.m8bf && s.m8bfRan && row.m8bfPL != null) { dayTotal += row.m8bfPL; hasDayTrade = true; }
@@ -1149,6 +1159,7 @@ function renderTable() {
       if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) { dayTotal += row.bobfPL; hasDayTrade = true; }
       if (activeStrats.diagonal && row.diagPL != null && row.diagPL !== 0) { dayTotal += row.diagPL; hasDayTrade = true; }  // 0 = no-trade day
       if (activeStrats.tail && row.tailPL != null) { dayTotal += row.tailPL; hasDayTrade = true; }
+      if (activeStrats.scalp && row.scalpPL != null) { dayTotal += row.scalpPL; hasDayTrade = true; }
       if (hasDayTrade) {
         const cls = dayTotal > 0 ? 'val-pos' : dayTotal < 0 ? 'val-neg' : 'val-zero';
         h += `<td class="${cls}" style="font-weight:700">$${dayTotal.toLocaleString()}</td>`;
@@ -1164,9 +1175,9 @@ function renderTable() {
   const fc = (v, active) => active ? `<td class="${valClass(v)}" style="font-weight:700">$${Math.round(v).toLocaleString()}</td>` : '<td style="color:var(--text3);text-align:center">—</td>';
   h += '</tbody><tfoot><tr>';
   h += '<td colspan="10" style="text-align:right;font-family:Inter,sans-serif;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text2)">TOTAL</td>';
-  const totAll = (activeStrats.m8bf ? totM8 : 0) + (activeStrats.strad ? totStrad : 0) + (activeStrats.gxbf ? totGxbf : 0) + (activeStrats.bobf ? totBobf : 0) + (activeStrats.diagonal ? totDiag : 0) + (activeStrats.tail ? totTail : 0);
-  h += fc(totM8, activeStrats.m8bf) + fc(totStrad, activeStrats.strad) + fc(totGxbf, activeStrats.gxbf) + fc(totBobf, activeStrats.bobf) + fc(totDiag, activeStrats.diagonal) + fc(totTail, activeStrats.tail);
-  const anyActive = activeStrats.m8bf || activeStrats.strad || activeStrats.gxbf || activeStrats.bobf || activeStrats.diagonal || activeStrats.tail;
+  const totAll = (activeStrats.m8bf ? totM8 : 0) + (activeStrats.strad ? totStrad : 0) + (activeStrats.gxbf ? totGxbf : 0) + (activeStrats.bobf ? totBobf : 0) + (activeStrats.diagonal ? totDiag : 0) + (activeStrats.tail ? totTail : 0) + (activeStrats.scalp ? totScalp : 0);
+  h += fc(totM8, activeStrats.m8bf) + fc(totStrad, activeStrats.strad) + fc(totGxbf, activeStrats.gxbf) + fc(totBobf, activeStrats.bobf) + fc(totDiag, activeStrats.diagonal) + fc(totTail, activeStrats.tail) + fc(totScalp, activeStrats.scalp);
+  const anyActive = activeStrats.m8bf || activeStrats.strad || activeStrats.gxbf || activeStrats.bobf || activeStrats.diagonal || activeStrats.tail || activeStrats.scalp;
   h += anyActive ? `<td class="${valClass(totAll)}" style="font-weight:700">$${Math.round(totAll).toLocaleString()}</td>` : `<td style="color:var(--text3);text-align:center">—</td>`;
   h += `<td></td>`; // Special Day column — no total
   h += '</tr></tfoot></table></div>';
@@ -1523,8 +1534,8 @@ function renderChart() {
 
 
 
-  const dates=[], cumM8=[], cumStrad=[], cumGxbf=[], cumBobf=[], cumDiag=[], cumTail=[], cumAll=[], ddAll=[];
-  let rm=0, rs=0, rg=0, rb=0, rd=0, rt=0, peak=0;
+  const dates=[], cumM8=[], cumStrad=[], cumGxbf=[], cumBobf=[], cumDiag=[], cumTail=[], cumScalp=[], cumAll=[], ddAll=[];
+  let rm=0, rs=0, rg=0, rb=0, rd=0, rt=0, rsc=0, peak=0;
 
   // Win/loss scatter data
   const winX=[], winY=[], lossX=[], lossY=[], athX=[], athY=[];
@@ -1540,10 +1551,11 @@ function renderChart() {
     if (activeStrats.bobf && s.bobfBadge !== 'BLOCKED' && row.bobfPL != null) { rb += row.bobfPL; dayPL += row.bobfPL; }
     if (activeStrats.diagonal && row.diagPL != null && row.diagPL !== 0) { rd += row.diagPL; dayPL += row.diagPL; }  // 0 = no-trade day
     if (activeStrats.tail && row.tailPL != null) { rt += row.tailPL; dayPL += row.tailPL; }
+    if (activeStrats.scalp && row.scalpPL != null) { rsc += row.scalpPL; dayPL += row.scalpPL; }
 
-    const total = rm+rs+rg+rb+rd+rt;
+    const total = rm+rs+rg+rb+rd+rt+rsc;
     dates.push(row.date);
-    cumM8.push(rm); cumStrad.push(rs); cumGxbf.push(rg); cumBobf.push(rb); cumDiag.push(rd); cumTail.push(rt);
+    cumM8.push(rm); cumStrad.push(rs); cumGxbf.push(rg); cumBobf.push(rb); cumDiag.push(rd); cumTail.push(rt); cumScalp.push(rsc);
     cumAll.push(total);
 
     if (total > peak) peak = total;
@@ -1601,6 +1613,7 @@ function renderChart() {
     { label:'BOBF',     data:cumBobf,  borderColor:'#fb923c', backgroundColor:'rgba(251,146,60,.1)',  tension:.3, borderWidth:2, pointRadius:0, pointHitRadius:6, hidden:!activeStrats.bobf, yAxisID:'y' },
     { label:'Diagonal', data:cumDiag,  borderColor:'#4ade80', backgroundColor:'rgba(74,222,128,.1)',  tension:.3, borderWidth:2, pointRadius:0, pointHitRadius:6, hidden:!activeStrats.diagonal, yAxisID:'y' },
     { label:'Tail Hedge', data:cumTail, borderColor:'#06b6d4', backgroundColor:'rgba(6,182,212,.1)',  tension:.3, borderWidth:2, pointRadius:0, pointHitRadius:6, hidden:!activeStrats.tail, yAxisID:'y' },
+    { label:'🧲 Scalp', data:cumScalp, borderColor:'#f472b6', backgroundColor:'rgba(244,114,182,.1)', tension:.3, borderWidth:2, pointRadius:0, pointHitRadius:6, hidden:!activeStrats.scalp, yAxisID:'y' },
     { label:'Combined', data:cumAll,   borderColor: isDark?'#e2e8f0':'#1e293b', backgroundColor: isDark?'rgba(226,232,240,.08)':'rgba(30,41,59,.08)', tension:.3, borderWidth:2.5, pointRadius:0, pointHitRadius:6, borderDash:[6,3], yAxisID:'y' },
     // Drawdown overlay
     { label:'Drawdown', data:ddAll, borderColor:'rgba(239,68,68,.6)', backgroundColor:'rgba(239,68,68,.15)', fill:'origin', tension:.3, borderWidth:1, pointRadius:0, pointHitRadius:4, yAxisID:'y2' },

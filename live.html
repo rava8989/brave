@@ -234,6 +234,10 @@
        trigger sequence is active (the one strategy that stays MANUAL) -->
 </div>
 
+<div class="main" id="scalpSection" style="display:none;">
+  <!-- Dynamically rendered by renderScalp() — Scalp M8BF paper trade (magnetfly-today) -->
+</div>
+
 
 <script>
 // ─── Diagonal section styles ────────────────────────────────────────────
@@ -251,6 +255,8 @@
     #diagonalSection  .diag-title span{color:#fb7185;}
     #tailSection      .diag-card{border-top:3px solid #ef4444;background:linear-gradient(180deg,rgba(239,68,68,.08) 0%,var(--bg2) 60%);}
     #tailSection      .diag-title span{color:#ef4444;}
+    #scalpSection     .diag-card{border-top:3px solid #bc8cff;background:linear-gradient(180deg,rgba(188,140,255,.07) 0%,var(--bg2) 60%);}
+    #scalpSection     .diag-title span{color:#bc8cff;}
     /* M8BF lives inside #mainContent — apply violet accent to both the
        butterfly card (when triggered) and the diag-card (when waiting). */
     #mainContent .bf-card,
@@ -718,6 +724,79 @@ function renderTail() {
     html.push(`<div style="font-size:13px;color:var(--text);font-weight:600;">Buy 0DTE SPXW put, Δ −0.10, at <u>9:45 ET</u> — <strong>2 contracts when overnight VIX is down</strong>, else 1. Auto-placed, repeat daily until the first profitable day.</div>`);
     html.push(candRow);
     html.push(`<div style="font-size:11.5px;color:var(--text3);margin-top:6px;">Skip rule: no entry when VVIX ≥ 110 (now ${tail.vvix ?? '—'}). COR1M ${tail.cor1m ?? '—'}${since}.</div>`);
+  }
+  html.push(`</div>`);
+  sec.innerHTML = html.join('');
+}
+
+// ─── Scalp M8BF (companion paper trade — /magnetfly-today feed). 30-wide 0DTE
+// call fly bought ON the gamma magnet at noon, sized at 10 lots. entry/tp/sl/
+// lastMid are in POINTS; pnl is PER-LOT dollars (×10 for the 10-lot display).
+// Same 30s cadence as every other section. ─────────────────────────────────
+const SCALP_LOTS = 10, SCALP_WIDTH = 30;
+let scalp = null;
+async function loadScalp() {
+  try {
+    const r = await fetchWithRetry(PROXY + '/magnetfly-today', { cache: 'no-store' });
+    if (r.ok) scalp = await r.json();
+  } catch (e) { console.warn('[live] /magnetfly-today fetch failed:', e); }
+}
+
+function renderScalp() {
+  const sec = document.getElementById('scalpSection');
+  if (!scalp) { sec.style.display = 'none'; return; }
+  sec.style.display = '';
+  const t = scalp.trade || null;   // attached by the worker only when it is today's trade
+  const isGo = scalp.status === 'GO';
+
+  const html = [];
+  html.push(`<div class="diag-card">`);
+  html.push(`<div class="diag-header">`);
+  html.push(`<div class="diag-title">🧲 <span>Scalp M8BF</span></div>`);
+
+  if (isGo && t) {
+    // Open or closed paper position on the magnet.
+    const legs = `${t.magnet - SCALP_WIDTH} / ${t.magnet} / ${t.magnet + SCALP_WIDTH}`;
+    let badge, badgeClass, statusText;
+    if (t.status === 'closed') {
+      badge = 'CLOSED'; badgeClass = (t.pnl != null && t.pnl >= 0) ? 'open' : 'error';
+      const exitLbl = t.exit === 'TP' ? 'TP hit' : t.exit === 'SL' ? 'stopped' : 'settled';
+      statusText = `30-wide fly ${legs} · ${exitLbl} @ ${t.exitTime || '—'} ET · ${SCALP_LOTS} lots`;
+    } else {
+      badge = 'OPEN · LIVE'; badgeClass = 'open';
+      statusText = `30-wide fly ${legs} · entered $${t.entry.toFixed(2)} @ ${t.openedAt || '12:00'} ET · ${SCALP_LOTS} lots`;
+    }
+    html.push(`<span class="diag-badge ${badgeClass}">${badge}</span>`);
+    html.push(`<div style="flex:1"></div>`);
+    html.push(`<span style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;">magnet ${t.magnet} · M8BF ${t.center}</span>`);
+    html.push(`</div>`);
+    html.push(`<div style="font-size:12.5px;color:var(--text2);margin-bottom:4px;">${statusText}</div>`);
+
+    // 10-lot P&L: closed = pnl×lots; open = unrealized (lastMid−entry)×100×lots when a live mid exists.
+    let pnl10 = null, pnlSub = '';
+    if (t.status === 'closed' && t.pnl != null) { pnl10 = t.pnl * SCALP_LOTS; pnlSub = `final · ${SCALP_LOTS} lots`; }
+    else if (t.lastMid != null && t.entry != null) { pnl10 = Math.round((t.lastMid - t.entry) * 100) * SCALP_LOTS; pnlSub = `unrealized · ${SCALP_LOTS} lots`; }
+    const plClass = pnl10 == null ? '' : pnl10 > 0 ? 'diag-pl-pos' : pnl10 < 0 ? 'diag-pl-neg' : '';
+
+    html.push(`<div class="diag-grid">`);
+    html.push(`<div class="diag-stat"><div class="diag-stat-label">P&L (${SCALP_LOTS} lots)</div><div class="diag-stat-value ${plClass}">${pnl10 == null ? '—' : fmt$(pnl10)}</div><div class="diag-stat-sub">${pnl10 == null ? 'awaiting quote' : pnlSub}</div></div>`);
+    html.push(`<div class="diag-stat"><div class="diag-stat-label">Entry debit</div><div class="diag-stat-value">$${(t.entry * 100).toFixed(0)}</div><div class="diag-stat-sub">$${t.entry.toFixed(2)} × ${SCALP_LOTS} lots</div></div>`);
+    if (t.lastMid != null && t.status !== 'closed') {
+      html.push(`<div class="diag-stat"><div class="diag-stat-label">Current mid</div><div class="diag-stat-value">$${(t.lastMid * 100).toFixed(0)}</div><div class="diag-stat-sub">$${t.lastMid.toFixed(2)} mid</div></div>`);
+    }
+    html.push(`<div class="diag-stat"><div class="diag-stat-label">TP / SL</div><div class="diag-stat-value" style="font-size:15px;">$${t.tp != null ? t.tp.toFixed(2) : '—'} / $${t.sl != null ? t.sl.toFixed(2) : '—'}</div><div class="diag-stat-sub">+$${(3 * 100 * SCALP_LOTS).toLocaleString()} / −$${(5 * 100 * SCALP_LOTS).toLocaleString()}</div></div>`);
+    html.push(`</div>`);
+  } else {
+    // No trade today — surface the day's status (NO / heads-up / watching).
+    const isNo = scalp.status === 'NO' || scalp.status === 'PRE-NO';
+    const badge = isNo ? 'NO TRADE' : (scalp.pre ? 'HEADS-UP' : 'WATCHING');
+    const badgeClass = isNo ? 'skip' : 'pending';
+    html.push(`<span class="diag-badge ${badgeClass}">${badge}</span>`);
+    html.push(`<div style="flex:1"></div>`);
+    html.push(`<span style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;">${SCALP_LOTS} lots · paper</span>`);
+    html.push(`</div>`);
+    html.push(`<div style="font-size:13px;color:var(--text2);padding:2px 0;">${scalp.headline || 'waiting for the 12:00 ET check'}</div>`);
+    if (scalp.detail) html.push(`<div style="font-size:11.5px;color:var(--text3);margin-top:4px;">${scalp.detail}</div>`);
   }
   html.push(`</div>`);
   sec.innerHTML = html.join('');
@@ -2253,7 +2332,7 @@ async function tick() {
   // Re-check trade state every tick — catches trigger/close without page refresh
   const prevTriggered = trade?.triggered;
   const prevStatus = trade?.status;
-  await Promise.all([loadTrade(), loadDiagonal(), loadStraddle(), loadBobf(), loadGxbf(), loadTail()]);
+  await Promise.all([loadTrade(), loadDiagonal(), loadStraddle(), loadBobf(), loadGxbf(), loadTail(), loadScalp()]);
   // Wrap each render so the user's "show per-leg fills" <details> toggle
   // doesn't reset every 30s tick.
   preserveDetailsState('diagonalSection', renderDiagonal);
@@ -2261,6 +2340,7 @@ async function tick() {
   preserveDetailsState('bobfSection',     renderBobf);
   preserveDetailsState('gxbfSection',     renderGxbf);
   preserveDetailsState('tailSection',     renderTail);
+  preserveDetailsState('scalpSection',    renderScalp);
   const stateChanged = (trade?.triggered !== prevTriggered) || (trade?.status !== prevStatus);
   if (stateChanged) { render(); }
 
@@ -2317,6 +2397,7 @@ function reorderStrategySections() {
     { id: 'straddleSection', active: () => !!straddle?.open || straddle?.lastClosed?.closeDate === today },
     { id: 'diagonalSection', active: () => !!diagonal?.open || diagonal?.lastClosed?.closeDate === today || diagonal?.lastClosed?.openDate === today },
     { id: 'tailSection',     active: () => !!tail?.active },
+    { id: 'scalpSection',    active: () => !!(scalp?.status === 'GO' && scalp?.trade) },
   ];
   // Collect skip elements (preserve their original order)
   const skipEls = [];
@@ -2335,7 +2416,7 @@ function reorderStrategySections() {
 async function init() {
   try {
     checkOAuthCallback();
-    await Promise.all([loadTrade(), loadSPXHistory(), loadSignals(), loadDiagonal(), loadStraddle(), loadBobf(), loadGxbf(), loadTail()]);
+    await Promise.all([loadTrade(), loadSPXHistory(), loadSignals(), loadDiagonal(), loadStraddle(), loadBobf(), loadGxbf(), loadTail(), loadScalp()]);
     updateLiveBadge();
     createSPXChart();
     rebuildSPXChart();
@@ -2345,6 +2426,7 @@ async function init() {
     renderBobf();
     renderGxbf();
     renderTail();
+    renderScalp();
     try { renderLiveTotal(); } catch (e) { console.warn('renderLiveTotal init failed:', e); }
     try { reorderStrategySections(); } catch (e) { console.warn('reorderStrategySections init failed:', e); }
     await tick();

@@ -5775,6 +5775,7 @@ async function sweepOrphanSettles(env, etNow) {
 // ════════════════════════════════════════════════════════════════════
 const MF_SIGNALS_CHANNEL = '1048242197029458040';   // same feed the M8BF archive scrapes
 const MF_TP = 3.0, MF_SL = 5.0, MF_WIDTH = 30, MF_DEBIT_CAP = 17.0;
+const MF_LOTS = 10;   // default position size (Sigma 3 tracking, 2026-07-15)
 
 function mfOpexWeekMidBlock(etNow) {
   // Mon-Thu of the monthly OPEX week (OPEX Friday itself is traded).
@@ -5812,22 +5813,12 @@ function mfFlyQuote(chain, todayISO, K) {
   return { mid, slip: halfspread * 0.25 };
 }
 
+// Scalp M8BF is a Sigma 3 signal now (2026-07-15): route through the SAME
+// fan-out as every other Sigma 3 trade — the signals channel + every
+// subscriber DM, with the compliance disclaimer. No separate scalp webhook.
 async function postMagnetFly(env, message) {
-  let posted = false;
-  try {
-    const hook = await env.SIGNAL_KV.get('mf_webhook_url');
-    if (hook) {
-      const r = await fetch(hook, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: message }) });
-      posted = r.ok;
-    }
-  } catch (e) { console.warn('[mf] webhook post failed:', e.message); }
-  try {
-    const dcRaw = await env.SIGNAL_KV.get('discord_config');
-    const dc = dcRaw ? JSON.parse(dcRaw) : null;
-    if (dc?.channelId) { await sendDiscordDM(env, dc.channelId, message, dc.proxyUrl); posted = true; }
-  } catch (e) { console.warn('[mf] DM post failed:', e.message); }
-  return posted;
+  try { await fanoutSubscribers(env, message); return true; }
+  catch (e) { console.warn('[scalp] fanout failed:', e.message); return false; }
 }
 
 async function mfSetToday(env, todayISO, obj) {
@@ -5864,7 +5855,25 @@ async function mfReadInputs(env, token, etNow, preChain, cut) {
   return { magnet, magnetSrc, center, sigTime, entry };
 }
 
-// 11:45 ET heads-up — a LEAN advisory, not the trade. Idempotent via
+// Morning status (~9:40 ET) — "possible today or not", from the calendar
+// alone (magnet + M8BF center aren't known yet). Posts to Sigma channel + DMs.
+async function handleMagnetFlyMorning(env, etNow) {
+  const todayISO = isoDateET(etNow);
+  const block = mfCalendarBlock(etNow);
+  if (block) {
+    await mfSetToday(env, todayISO, { status: 'NO', pre: true,
+      headline: `No Scalp M8BF today (${block})`, detail: 'calendar filter, known in advance' });
+    await postMagnetFly(env, `🧲 **Scalp M8BF** ${todayISO} — **not today** · ${block} (calendar)`);
+    return { morning: 'NO', reason: block };
+  }
+  await mfSetToday(env, todayISO, { status: 'WAIT', pre: true,
+    headline: 'Scalp M8BF possible today', detail: 'calendar clear · 11:30 heads-up, then 12:00 final' });
+  await postMagnetFly(env, `🧲 **Scalp M8BF** ${todayISO} — **possible today** (calendar clear). ` +
+    `11:30 ET heads-up next, 12:00 ET the final call.`);
+  return { morning: 'POSSIBLE' };
+}
+
+// 11:30 ET heads-up — a LEAN advisory, not the trade. Idempotent via
 // mf_prealert_<date>. Honest confidence bands (measured on 182 days: an
 // early call matches the noon verdict ~88% of the time):
 //   calendar block → certain NO
@@ -5882,12 +5891,12 @@ async function handleMagnetFlyPreAlert(env, token, etNow, preChain) {
     await postMagnetFly(env, `🧲 **Scalp M8BF** ${todayISO} — **heads-up: NO TRADE today** · ${block} (calendar, certain)`);
     return { pre: 'NO', reason: block };
   }
-  const inp = await mfReadInputs(env, token, etNow, preChain, '11:45');
+  const inp = await mfReadInputs(env, token, etNow, preChain, '11:30');
   if (inp.error) return { error: inp.error };
   const { magnet, center, entry } = inp;
   if (center == null) {
     await mfSetToday(env, todayISO, { status: 'WAIT', pre: true,
-      headline: 'Heads-up — no M8BF signal yet at 11:45', detail: 'watching for the noon check' });
+      headline: 'Heads-up — no M8BF signal yet at 11:30', detail: 'watching for the noon check' });
     return { pre: 'PEND' };
   }
   const dist = Math.abs(center - magnet);
@@ -5910,10 +5919,10 @@ async function handleMagnetFlyPreAlert(env, token, etNow, preChain) {
   }
   await mfSetToday(env, todayISO, {
     status: (lean.startsWith('LIKELY GO')) ? 'PRE-GO' : 'PRE-NO', pre: true, headline,
-    detail: `11:45 heads-up · noon check is final · ~88% of early calls hold`,
+    detail: `11:30 heads-up · noon check is final · ~88% of early calls hold`,
     kpis: [['magnet', magnet], ['M8BF center', center], ['distance', dist + ' pts'],
            ['30w debit', entry != null ? '$' + entry.toFixed(2) : 'n/a']] });
-  await postMagnetFly(env, `🧲 **Scalp M8BF** ${todayISO} — **${emoji} 11:45 heads-up: ${lean}**\n` +
+  await postMagnetFly(env, `🧲 **Scalp M8BF** ${todayISO} — **${emoji} 11:30 heads-up: ${lean}**\n` +
     `${headline}\n_magnet ${magnet} · center ${center} · noon check is final (~88% of early calls hold)_`);
   return { pre: lean, dist, entry };
 }
@@ -5986,9 +5995,9 @@ async function handleMagnetFlyNoon(env, token, etNow, preChain) {
     kpis: [['magnet', magnet], ['M8BF center', center], ['debit', '$' + entry.toFixed(2)],
            ['TP / SL', `+3.0 / −5.0`]] });
   await postMagnetFly(env,
-    `🧲 **Scalp M8BF** ${todayISO} — **GO (paper)**\n` +
-    `BUY SPXW 0DTE call fly **${magnet - MF_WIDTH} / ${magnet} / ${magnet + MF_WIDTH}** @ ~$${entry.toFixed(2)}\n` +
-    `OCO: TP $${trade.tp.toFixed(2)} (+$300/lot) · SL $${trade.sl.toFixed(2)} (−$500/lot)\n` +
+    `🧲 **Scalp M8BF** ${todayISO} — **GO**\n` +
+    `BUY **${MF_LOTS}x** SPXW 0DTE call fly **${magnet - MF_WIDTH} / ${magnet} / ${magnet + MF_WIDTH}** @ ~$${entry.toFixed(2)}\n` +
+    `OCO: TP $${trade.tp.toFixed(2)} (+$${(MF_TP*100*MF_LOTS).toLocaleString()}) · SL $${trade.sl.toFixed(2)} (−$${(MF_SL*100*MF_LOTS).toLocaleString()})\n` +
     `magnet ${magnet} (${magnetSrc}) · M8BF center ${center} @${sigTime} · backtest 84% WR, 87 trades`);
   return { opened: true, trade };
 }
@@ -6014,7 +6023,8 @@ async function refreshMagnetFlyLiveQuotes(env, token, etNow, preChain) {
     tr.status = 'closed'; tr.exit = exit; tr.pnl = Math.round(pnl);
     tr.exitTime = `${etNow.getHours()}:${String(etNow.getMinutes()).padStart(2, '0')}`;
     await mfAppendClosed(env, tr);
-    await postMagnetFly(env, `🧲 **Scalp M8BF** ${todayISO} — **${exit === 'TP' ? '✅ TP hit' : '🛑 stopped'}** ${exit === 'TP' ? '+$300' : '−$500'}/lot @ ${tr.exitTime} ET (fly ${tr.lastMid.toFixed(2)})`);
+    const dollars = tr.pnl * MF_LOTS;
+    await postMagnetFly(env, `🧲 **Scalp M8BF** ${todayISO} — **${exit === 'TP' ? '✅ TP hit' : '🛑 stopped'}** ${dollars >= 0 ? '+' : '−'}$${Math.abs(dollars).toLocaleString()} (${MF_LOTS} lots) @ ${tr.exitTime} ET (fly ${tr.lastMid.toFixed(2)})`);
   }
   await env.SIGNAL_KV.put('mf_open_trade', JSON.stringify(tr));
 }
@@ -6033,7 +6043,8 @@ async function settleMagnetFlyEod(env, etNow, preChain) {
   tr.exitTime = '16:15';
   await mfAppendClosed(env, tr);
   await env.SIGNAL_KV.put('mf_open_trade', JSON.stringify(tr));
-  await postMagnetFly(env, `🧲 **Scalp M8BF** ${tr.openDate} — settled ${tr.pnl >= 0 ? '+' : '−'}$${Math.abs(tr.pnl)}/lot (rare: bracket never filled)`);
+  const dollars = tr.pnl * MF_LOTS;
+  await postMagnetFly(env, `🧲 **Scalp M8BF** ${tr.openDate} — settled ${dollars >= 0 ? '+' : '−'}$${Math.abs(dollars).toLocaleString()} (${MF_LOTS} lots, rare: bracket never filled)`);
 }
 
 async function mfAppendClosed(env, tr) {
@@ -6045,6 +6056,10 @@ async function mfAppendClosed(env, tr) {
       exit: tr.exit, exitTime: tr.exitTime, pnl: tr.pnl });
     await env.SIGNAL_KV.put('mf_closed_log', JSON.stringify(log));
   }
+  // Sigma 3 history: write scalpPL (10-lot dollars) for the day — same safe
+  // row-level path the other strategies use (KV-first → GitHub mirror).
+  try { await upsertHistoryGitHub(env, tr.openDate, { scalpPL: tr.pnl * MF_LOTS }); }
+  catch (e) { console.warn('[scalp] history write failed:', e.message); }
 }
 
 async function handleScheduled(env) {
@@ -6349,10 +6364,22 @@ async function handleScheduled(env) {
     }
   }
 
-  // ── Scalp M8BF 11:45 heads-up: 11:43–11:52 ET, idempotent via mf_prealert_<date>.
+  // ── Scalp M8BF morning status: 9:38–9:50 ET, idempotent via mf_morning_<date>.
+  //    Calendar-only "possible today / not today" to the Sigma channel + DMs.
+  const mfMornKey = `mf_morning_${todayISO}`;
+  if (etHour === 9 && etMin >= 38 && etMin < 50) {
+    try {
+      if (!(await env.SIGNAL_KV.get(mfMornKey))) {
+        await handleMagnetFlyMorning(env, etNow);
+        await env.SIGNAL_KV.put(mfMornKey, 'done', { expirationTtl: 86400 });
+      }
+    } catch (e) { console.warn('[mf-morning] threw:', e.message); }
+  }
+
+  // ── Scalp M8BF 11:30 heads-up: 11:28–11:38 ET, idempotent via mf_prealert_<date>.
   //    Advisory only — writes no trade; the noon check remains the source of truth.
   const mfPreKey = `mf_prealert_${todayISO}`;
-  if (etHour === 11 && etMin >= 43 && etMin < 52) {
+  if (etHour === 11 && etMin >= 28 && etMin < 38) {
     try {
       if (!(await env.SIGNAL_KV.get(mfPreKey))) {
         const pre = await handleMagnetFlyPreAlert(env, schwabToken, etNow, masterChain);
