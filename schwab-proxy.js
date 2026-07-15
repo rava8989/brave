@@ -11348,8 +11348,9 @@ export default {
           `**12:00 ET — the trade** (same shape as M8BF, paste into ToS):\n` +
           `**PNBF**\n` +
           `BUY +10 BUTTERFLY SPX 100 (Weeklys) 17 JUL 26 ${ex.magnet - 30}/${ex.magnet}/${ex.magnet + 30} CALL @${ex.entry.toFixed(2)} LMT\n` +
-          `TP ${(ex.entry + 3).toFixed(2)} · SL ${(ex.entry - 5).toFixed(2)}\n\n` +
-          `-# No-signal days: PNBF row reads NO on the card, no separate message.`;
+          `TP ${(ex.entry + 3).toFixed(2)} · SL ${(ex.entry - 5).toFixed(2)}` +
+          FANOUT_DISCLAIMER +      // live GO gets this via fanout; the sample bypasses fanout, so append it here too
+          `\n\n-# No-signal days: PNBF row reads NO on the card, no separate message.`;
         const r = await sendDiscordDM(env, dc.channelId, msg, dc.proxyUrl);
         return jsonResp({ ok: r.ok, dmOnly: true });
       }
