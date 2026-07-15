@@ -1131,7 +1131,10 @@ function renderTable() {
     if (activeStrats.scalp && row.scalpPL != null) totScalp += row.scalpPL;
   }
 
-  const renderRows = tableShowAll ? rows : rows.slice(-TABLE_DEFAULT_LIMIT);
+  // Show the TOP N of the current sort (default = newest-first) so the mobile
+  // limit keeps the most-recent rows, matching the "older hidden" label below.
+  // (Was slice(-N) = the oldest N — backwards vs the newest-first default.)
+  const renderRows = tableShowAll ? rows : rows.slice(0, TABLE_DEFAULT_LIMIT);
 
   for (const row of renderRows) {
     const s = row.signal || {};
