@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Magnet Fly — Signal & Log</title>
+<script src="nav.js?v=20260715" defer></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
+<style>
+  :root {
+    --bg: #0d1117; --card: #161b22; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+    --green: #3fb950; --red: #f85149; --amber: #d29922; --purple: #bc8cff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text);
+         font-size: 13px; padding: 24px 16px 60px; }
+  .wrap { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 20px; font-weight: 600; }
+  h1 .tag { font-size: 11px; color: var(--muted); font-weight: 400; margin-left: 8px; }
+  h2 { font-size: 15px; font-weight: 600; margin: 26px 0 10px; }
+  .sub { color: var(--muted); margin: 4px 0 20px; }
+  .card { background: var(--card); border: 1px solid var(--border);
+          border-radius: 10px; padding: 16px 18px; margin-bottom: 14px; }
+  .note { color: var(--muted); font-size: 12px; line-height: 1.65; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  table { width: 100%; border-collapse: collapse; font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+  th { text-align: right; color: var(--muted); font-weight: 500; padding: 6px 8px;
+       border-bottom: 1px solid var(--border); white-space: nowrap; }
+  td { text-align: right; padding: 6px 8px; border-bottom: 1px solid #21262d; white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  .g { color: var(--green); } .r { color: var(--red); } .a { color: var(--amber); }
+  .banner { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .banner .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--amber);
+                 flex: none; animation: pulse 2s infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .banner.go .dot { background: var(--green); animation: none; }
+  .banner.no .dot { background: var(--red); animation: none; }
+  .banner.wait .dot { background: var(--muted); }
+  .banner b { font-size: 15px; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin: 8px 0 0; }
+  .kpi { background: #0d1117; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+  .kpi .l { color: var(--muted); font-size: 11px; }
+  .kpi .v { font-size: 17px; font-weight: 600; font-family: 'JetBrains Mono', monospace; margin-top: 2px; }
+  .rules { line-height: 1.8; font-size: 13px; }
+  .rules b { color: var(--accent); }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px;
+          border: 1px solid var(--border); color: var(--muted); margin: 0 4px 4px 0; }
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 800px) { .split { grid-template-columns: 1fr; } }
+  #eq { width: 100%; height: 180px; }
+  .scroll { max-height: 420px; overflow-y: auto; }
+  a { color: var(--accent); text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Magnet Fly <span class="tag">30-wide 0DTE fly on the gamma magnet · T1-confirmed · locked v3 (2026-07-15)</span></h1>
+  <p class="sub">Trades only when two independent models point at the same strike: the dealer-gamma magnet (max positive OI-basis GEX) and the M8BF service's T1. One bracket order a day, ~4 times a month.</p>
+
+  <div class="card" id="todayCard">
+    <div class="banner wait" id="banner"><span class="dot"></span><b id="bannerText">Loading today's signal…</b><span class="note" id="bannerSub"></span></div>
+    <div class="kpis" id="todayKpis" style="display:none"></div>
+  </div>
+
+  <h2>Live paper record</h2>
+  <div class="card">
+    <div class="kpis" id="liveKpis"></div>
+    <div class="scroll" style="margin-top:12px">
+      <table id="liveTable"><thead><tr>
+        <th>date</th><th>day</th><th>magnet</th><th>M8BF ctr</th><th>debit</th><th>exit</th><th>time</th><th>P/L</th><th>cum</th>
+      </tr></thead><tbody id="liveBody"><tr><td colspan="9" class="note">no live paper trades yet — tracking starts at the next qualifying noon</td></tr></tbody></table>
+    </div>
+  </div>
+
+  <h2>The rules (all must hold at 12:00 ET)</h2>
+  <div class="card rules">
+    1. <b>Alignment:</b> the M8BF fly center sits exactly <span class="mono">5 pts</span> from the day's magnet — i.e. the service's T1 <i>is</i> the magnet. (T1 is always center ±5; verified on all 4,309 archived signals.)<br>
+    2. <b>Calendar clear:</b> not EOM, not CPI day, not FED day, not Mon–Thu of monthly OPEX week. <span class="mono">OPEX Friday itself is traded</span> (7 of 8 won).<br>
+    3. <b>Price:</b> the 30-wide CALL fly at the magnet (K−30 / K / K+30) costs <span class="mono">≤ $17.00</span> — typical fill ~$12.30. Costlier day = skip.<br>
+    4. <b>Exit:</b> OCO bracket — take profit <span class="mono">+3.0 pts (+$300/lot)</span>, stop <span class="mono">−5.0 pts (−$500/lot)</span>, hold to 4:15 settle if neither fills (never happened in 87 backtest trades).<br><br>
+    <span class="pill">tested & rejected: VIX level</span><span class="pill">overnight VIX</span><span class="pill">gamma sign</span><span class="pill">magnet dominance</span><span class="pill">2nd-node distance</span><span class="pill">Mag-7 earnings</span><span class="pill">per-weekday times</span><span class="pill">widths 10–25, 35–50</span><span class="pill">hold-to-settle</span><span class="pill">tiny TP without stop</span>
+  </div>
+
+  <h2>Why it works</h2>
+  <div class="card note">
+    The magnet is the strike with the largest positive dealer-gamma (OI basis, 10:30 snapshot) — where hedging flow pins price. The Discord M8BF service independently publishes a fly whose T1 target expresses <i>its</i> pin estimate. On ~35% of days they agree to the strike; on those days a fly bought ON the magnet at midday grinds up as the pin holds, and a +3 pop fills 4 times out of 5. Proof it's the alignment and not "midday flies are good": the identical trade on non-aligned days <b class="r">loses money in every period tested</b> (H2 far-control: −$186/lot, 31% WR). The cheap-debit rule works because a cheap fly on an aligned day means vol is priced low while the pin is already holding.
+    <br><br>Full research trail (rounds 1 → 3h, incl. every dead end): <span class="mono">tasks/MAGNET_FLY_RESEARCH.md</span> (private).
+  </div>
+
+  <h2>Backtest — 87 trades, Sep 2024 → Jun 2026 <span class="tag">real NBBO, slippage included, per 1 lot</span></h2>
+  <div class="card">
+    <div class="kpis">
+      <div class="kpi"><div class="l">win rate</div><div class="v g">83.9%</div></div>
+      <div class="kpi"><div class="l">total</div><div class="v g">+$14,900</div></div>
+      <div class="kpi"><div class="l">avg / trade</div><div class="v">+$171</div></div>
+      <div class="kpi"><div class="l">t-stat</div><div class="v">5.40</div></div>
+      <div class="kpi"><div class="l">profit factor</div><div class="v">3.13</div></div>
+      <div class="kpi"><div class="l">max drawdown</div><div class="v">$1,000</div></div>
+      <div class="kpi"><div class="l">worst streak</div><div class="v">2</div></div>
+      <div class="kpi"><div class="l">months green</div><div class="v">19 / 22</div></div>
+    </div>
+    <canvas id="eq" style="margin-top:14px"></canvas>
+    <div class="note" style="margin-top:4px">equity curve, $ per lot · halves: H1 +$140/trade (t 2.9) · H2 +$205/trade (t 5.1) · yearly +$800 / +$9,100 / +$5,000</div>
+  </div>
+
+  <div class="card">
+    <div class="split">
+      <div>
+        <b style="font-size:13px">Backtest log</b>
+        <div class="note" style="margin:2px 0 8px">every signal day — no cherry-picking; SL rows in red</div>
+      </div>
+      <div style="text-align:right" class="note">73 TP · 14 SL · 0 settles</div>
+    </div>
+    <div class="scroll">
+      <table><thead><tr>
+        <th>#</th><th>date</th><th>day</th><th>magnet</th><th>M8BF ctr</th><th>debit</th><th>exit</th><th>time</th><th>P/L</th><th>cum</th><th></th>
+      </tr></thead><tbody id="btBody"></tbody></table>
+    </div>
+  </div>
+
+  <div class="card note">
+    <b>Honesty box.</b> The core edge (T1==magnet day selection + midday entry) was validated on an untouched second half; the final trimmings (TP/SL exact levels, width, mid-OPEX filter) were tuned with full-sample visibility, so expect live results below backtest. The live paper record above is the clean forward test — it starts empty and every row is written by the worker at the time it happens, never edited.
+  </div>
+</div>
+
+<script>
+const WORKER = 'https://schwab-proxy.ravamt4.workers.dev';
+const BT = [["2024-09-12","Thu",5575.0,5570.0,976,"TP","14:55",300,""],["2024-09-13","Fri",5650.0,5645.0,1211,"SL","14:35",-500,""],["2024-09-23","Mon",5725.0,5720.0,1651,"TP","14:25",300,""],["2024-09-26","Thu",5760.0,5755.0,1488,"SL","12:25",-500,""],["2024-10-01","Tue",5750.0,5745.0,451,"TP","14:15",300,""],["2024-10-08","Tue",5750.0,5745.0,1609,"TP","14:40",300,""],["2024-10-18","Fri",5850.0,5855.0,1606,"SL","12:55",-500,"OPEX"],["2024-10-22","Tue",5850.0,5845.0,1637,"TP","13:05",300,""],["2024-10-29","Tue",5850.0,5845.0,1325,"TP","12:55",300,""],["2024-11-06","Wed",5900.0,5905.0,1258,"SL","15:00",-500,""],["2024-11-19","Tue",5900.0,5895.0,1642,"SL","13:50",-500,""],["2024-11-21","Thu",5950.0,5945.0,1103,"TP","12:35",300,""],["2024-11-26","Tue",6000.0,6005.0,1568,"TP","14:20",300,""],["2024-12-03","Tue",6050.0,6045.0,1574,"TP","12:35",300,""],["2024-12-06","Fri",6100.0,6095.0,1674,"TP","13:20",300,""],["2024-12-26","Thu",6050.0,6055.0,1641,"TP","14:55",300,""],["2025-01-03","Fri",5940.0,5945.0,1313,"TP","13:30",300,""],["2025-01-06","Mon",6000.0,6005.0,1019,"TP","12:20",300,""],["2025-01-08","Wed",5945.0,5950.0,821,"SL","12:25",-500,""],["2025-01-17","Fri",6000.0,6005.0,1343,"TP","14:10",300,"OPEX"],["2025-01-23","Thu",6110.0,6115.0,1388,"TP","13:00",300,""],["2025-01-28","Tue",6050.0,6055.0,1386,"TP","14:05",300,""],["2025-02-05","Wed",6055.0,6060.0,1554,"TP","13:40",300,""],["2025-02-06","Thu",6080.0,6085.0,1519,"TP","13:20",300,""],["2025-02-13","Thu",6095.0,6090.0,1324,"TP","13:40",300,""],["2025-03-05","Wed",5840.0,5845.0,266,"TP","12:55",300,""],["2025-03-24","Mon",5750.0,5755.0,1092,"TP","13:00",300,""],["2025-04-23","Wed",5400.0,5395.0,616,"TP","14:05",300,""],["2025-04-24","Thu",5450.0,5445.0,853,"SL","15:50",-500,""],["2025-04-25","Fri",5545.0,5550.0,302,"TP","13:10",300,""],["2025-05-01","Thu",5610.0,5615.0,829,"TP","15:55",300,""],["2025-05-05","Mon",5675.0,5670.0,1311,"TP","13:35",300,""],["2025-05-08","Thu",5700.0,5705.0,989,"TP","13:40",300,""],["2025-06-04","Wed",6000.0,5995.0,1102,"TP","13:50",300,""],["2025-06-05","Thu",6000.0,5995.0,1444,"SL","12:50",-500,""],["2025-06-06","Fri",6000.0,5995.0,1342,"TP","13:40",300,""],["2025-06-10","Tue",6050.0,6045.0,814,"TP","12:40",300,""],["2025-06-24","Tue",6085.0,6080.0,1691,"TP","16:00",300,""],["2025-06-25","Wed",6120.0,6115.0,826,"SL","14:10",-500,""],["2025-06-26","Thu",6140.0,6135.0,1669,"TP","13:05",300,""],["2025-07-02","Wed",6225.0,6220.0,1688,"TP","13:50",300,""],["2025-07-08","Tue",6260.0,6265.0,840,"TP","12:30",300,""],["2025-07-09","Wed",6275.0,6270.0,581,"TP","14:10",300,""],["2025-07-23","Wed",6330.0,6335.0,1373,"TP","12:35",300,""],["2025-07-25","Fri",6400.0,6395.0,1122,"TP","12:25",300,""],["2025-08-06","Wed",6350.0,6345.0,1693,"TP","13:35",300,""],["2025-08-08","Fri",6400.0,6395.0,1353,"TP","12:20",300,""],["2025-08-15","Fri",6450.0,6455.0,1561,"TP","14:50",300,"OPEX"],["2025-08-22","Fri",6500.0,6495.0,735,"SL","15:10",-500,""],["2025-09-23","Tue",6700.0,6695.0,1256,"SL","13:20",-500,""],["2025-10-02","Thu",6710.0,6705.0,1646,"TP","13:35",300,""],["2025-10-08","Wed",6745.0,6740.0,1644,"TP","13:55",300,""],["2025-10-17","Fri",6700.0,6695.0,393,"TP","15:15",300,"OPEX"],["2025-10-20","Mon",6750.0,6745.0,1165,"TP","13:05",300,""],["2025-10-27","Mon",6875.0,6870.0,1331,"TP","14:00",300,""],["2025-10-28","Tue",6895.0,6900.0,1424,"TP","12:35",300,""],["2025-11-05","Wed",6825.0,6820.0,1464,"TP","13:15",300,""],["2025-11-11","Tue",6830.0,6825.0,1426,"SL","14:00",-500,""],["2025-11-12","Wed",6850.0,6845.0,1106,"TP","13:25",300,""],["2025-11-14","Fri",6760.0,6755.0,927,"TP","14:15",300,""],["2025-11-24","Mon",6700.0,6705.0,1356,"TP","14:00",300,""],["2025-11-25","Tue",6750.0,6745.0,1284,"TP","12:30",300,""],["2025-12-03","Wed",6850.0,6845.0,1336,"TP","12:20",300,""],["2025-12-19","Fri",6850.0,6845.0,1103,"TP","12:20",300,"OPEX"],["2025-12-22","Mon",6865.0,6860.0,1433,"TP","13:25",300,""],["2026-01-16","Fri",6950.0,6955.0,1611,"TP","13:40",300,"OPEX"],["2026-01-22","Thu",6920.0,6925.0,1475,"TP","13:55",300,""],["2026-02-20","Fri",6900.0,6905.0,1144,"TP","14:15",300,"OPEX"],["2026-02-24","Tue",6900.0,6895.0,1304,"TP","12:25",300,""],["2026-03-02","Mon",6900.0,6895.0,1081,"TP","12:55",300,""],["2026-03-04","Wed",6900.0,6895.0,966,"TP","13:50",300,""],["2026-03-10","Tue",6850.0,6845.0,951,"TP","13:20",300,""],["2026-03-23","Mon",6600.0,6605.0,736,"TP","13:35",300,""],["2026-04-01","Wed",6600.0,6605.0,1213,"TP","13:35",300,""],["2026-04-06","Mon",6600.0,6605.0,1197,"TP","13:45",300,""],["2026-04-17","Fri",7125.0,7120.0,1230,"TP","13:50",300,"OPEX"],["2026-04-22","Wed",7150.0,7145.0,823,"TP","15:55",300,""],["2026-04-24","Fri",7150.0,7155.0,1129,"TP","13:10",300,""],["2026-05-01","Fri",7280.0,7275.0,1080,"SL","12:35",-500,""],["2026-05-05","Tue",7250.0,7255.0,1626,"SL","15:10",-500,""],["2026-05-06","Wed",7350.0,7345.0,1514,"TP","13:45",300,""],["2026-05-08","Fri",7400.0,7395.0,1522,"TP","13:20",300,""],["2026-05-20","Wed",7415.0,7420.0,1144,"TP","13:25",300,""],["2026-05-22","Fri",7500.0,7495.0,1247,"TP","13:45",300,""],["2026-05-27","Wed",7530.0,7525.0,1022,"TP","12:40",300,""],["2026-06-01","Mon",7590.0,7595.0,1631,"TP","13:25",300,""],["2026-06-12","Fri",7450.0,7445.0,485,"TP","13:05",300,""]];
+
+// backtest table + equity
+(function(){
+  const tb = document.getElementById('btBody');
+  let cum = 0; const pts = [];
+  BT.forEach((r, i) => {
+    cum += r[7]; pts.push(cum);
+    const tr = document.createElement('tr');
+    const cls = r[7] > 0 ? 'g' : 'r';
+    tr.innerHTML = `<td>${i+1}</td><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td>`+
+      `<td>$${r[4]}</td><td class="${cls}">${r[5]}</td><td>${r[6]}</td>`+
+      `<td class="${cls}">${r[7]>0?'+':'−'}$${Math.abs(r[7])}</td><td>${cum<0?'−':''}$${Math.abs(cum).toLocaleString()}</td><td class="a">${r[8]||''}</td>`;
+    tb.appendChild(tr);
+  });
+  function drawEq() {
+  const cv = document.getElementById('eq'), ctx = cv.getContext('2d');
+  const W = cv.width = (cv.offsetWidth || cv.parentElement.clientWidth || 1000) * 2, H = cv.height = 360;
+  const max = Math.max(...pts), min = Math.min(0, ...pts);
+  const x = i => 8 + i * (W - 16) / (pts.length - 1);
+  const y = v => H - 8 - (v - min) * (H - 16) / (max - min);
+  ctx.strokeStyle = '#30363d'; ctx.beginPath(); ctx.moveTo(0, y(0)); ctx.lineTo(W, y(0)); ctx.stroke();
+  ctx.strokeStyle = '#3fb950'; ctx.lineWidth = 2.5; ctx.beginPath();
+  pts.forEach((v, i) => i ? ctx.lineTo(x(i), y(v)) : ctx.moveTo(x(i), y(v)));
+  ctx.stroke();
+  }
+  if (document.readyState === 'complete') drawEq();
+  else window.addEventListener('load', drawEq);
+})();
+
+// today card + live history
+async function refresh(){
+  try {
+    const t = await fetch(WORKER + '/magnetfly-today', {cache:'no-store'}).then(r => r.json());
+    const b = document.getElementById('banner'), bt = document.getElementById('bannerText'),
+          bs = document.getElementById('bannerSub'), k = document.getElementById('todayKpis');
+    b.className = 'banner ' + (t.status === 'GO' ? 'go' : t.status === 'NO' ? 'no' : 'wait');
+    bt.textContent = t.headline || 'waiting for noon check';
+    bs.textContent = t.detail || '';
+    if (t.kpis) {
+      k.style.display = '';
+      k.innerHTML = t.kpis.map(x => `<div class="kpi"><div class="l">${x[0]}</div><div class="v">${x[1]}</div></div>`).join('');
+    }
+  } catch(e) {
+    document.getElementById('bannerText').textContent = 'worker unreachable';
+  }
+  try {
+    const h = await fetch(WORKER + '/magnetfly-history', {cache:'no-store'}).then(r => r.json());
+    if (Array.isArray(h.trades) && h.trades.length) {
+      const tb = document.getElementById('liveBody'); tb.innerHTML = '';
+      let cum = 0, wins = 0;
+      h.trades.forEach(r => {
+        cum += r.pnl; if (r.pnl > 0) wins++;
+        const cls = r.pnl > 0 ? 'g' : 'r';
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${r.date}</td><td>${r.day||''}</td><td>${r.magnet}</td><td>${r.center}</td>`+
+          `<td>$${r.debit}</td><td class="${cls}">${r.exit}</td><td>${r.exitTime||''}</td>`+
+          `<td class="${cls}">${r.pnl>0?'+':'−'}$${Math.abs(r.pnl)}</td><td>${cum<0?'−':''}$${Math.abs(cum).toLocaleString()}</td>`;
+        tb.appendChild(tr);
+      });
+      const n = h.trades.length;
+      document.getElementById('liveKpis').innerHTML = [
+        ['paper trades', n], ['win rate', (100*wins/n).toFixed(0)+'%'],
+        ['total', (cum>=0?'+':'−')+'$'+Math.abs(cum).toLocaleString()],
+        ['vs backtest avg', '+$171/trade'],
+      ].map(x => `<div class="kpi"><div class="l">${x[0]}</div><div class="v">${x[1]}</div></div>`).join('');
+    }
+  } catch(e) {}
+}
+refresh();
+setInterval(refresh, 60000);
+</script>
+</body>
+</html>

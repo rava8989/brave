@@ -5761,6 +5761,209 @@ async function sweepOrphanSettles(env, etNow) {
   return results;
 }
 
+// ════════════════════════════════════════════════════════════════════
+// MAGNET FLY (paper) — FINAL v3 recipe, locked 2026-07-15.
+// 30-wide CALL fly at the gamma magnet, 12:00 ET, only when the M8BF
+// service's fly center is exactly 5 pts from the magnet (T1==magnet),
+// calendar clear (EOM last-2-days / CPI / FED / Mon-Thu of OPEX week),
+// debit ≤ $17. Paper OCO bracket TP +3.0 / SL −5.0, else settle.
+// INDEPENDENT strategy: touches no other strategy's state, ever.
+// KV: mf_magnet_<date> (10:30 magnet snap) · mf_today_<date> (status for
+// the page) · mf_open_trade · mf_closed_log (paper record, KV = truth) ·
+// mf_webhook_url (Discord channel feed; DM fallback via discord_config).
+// Full spec + backtest: tasks/MAGNET_FLY_RESEARCH.md (private), magnetfly.html.
+// ════════════════════════════════════════════════════════════════════
+const MF_SIGNALS_CHANNEL = '1048242197029458040';   // same feed the M8BF archive scrapes
+const MF_TP = 3.0, MF_SL = 5.0, MF_WIDTH = 30, MF_DEBIT_CAP = 17.0;
+
+function mfOpexWeekMidBlock(etNow) {
+  // Mon-Thu of the monthly OPEX week (OPEX Friday itself is traded).
+  for (const s of opexSch) {
+    const o = parseLong(s);
+    if (!o || o.getMonth() !== etNow.getMonth() || o.getFullYear() !== etNow.getFullYear()) continue;
+    const monday = new Date(o); monday.setDate(o.getDate() - 4);   // OPEX is a Friday
+    if (etNow >= new Date(monday.getFullYear(), monday.getMonth(), monday.getDate())
+        && isoDateET(etNow) < isoDateET(o)) return true;
+  }
+  return false;
+}
+
+function mfCalendarBlock(etNow) {
+  if (isEomN(0, etNow) || isEomN(1, etNow)) return 'EOM (last 2 trading days)';
+  if (cpiSch.includes(todayLong(etNow))) return 'CPI day';
+  if (fedSch.includes(todayLong(etNow))) return 'FED day';
+  if (mfOpexWeekMidBlock(etNow)) return 'mid-OPEX week (Mon-Thu)';
+  return null;
+}
+
+function mfExactLeg(expDateMap, expISO, strike) {
+  const q = pickContractFromChain(expDateMap, expISO, strike);
+  return (q && q.strike === strike && q.bid != null && q.ask != null && q.ask > 0) ? q : null;
+}
+
+// Fly quote at exact legs K±W: {mid, entryEff (slippage-adjusted), spreads}
+function mfFlyQuote(chain, todayISO, K) {
+  const lo = mfExactLeg(chain.callExpDateMap, todayISO, K - MF_WIDTH);
+  const ce = mfExactLeg(chain.callExpDateMap, todayISO, K);
+  const hi = mfExactLeg(chain.callExpDateMap, todayISO, K + MF_WIDTH);
+  if (!lo || !ce || !hi) return null;
+  const mid = lo.mid - 2 * ce.mid + hi.mid;
+  const halfspread = ((lo.ask - lo.bid) + (ce.ask - ce.bid) + (hi.ask - hi.bid)) / 2;
+  return { mid, slip: halfspread * 0.25 };
+}
+
+async function postMagnetFly(env, message) {
+  let posted = false;
+  try {
+    const hook = await env.SIGNAL_KV.get('mf_webhook_url');
+    if (hook) {
+      const r = await fetch(hook, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: message }) });
+      posted = r.ok;
+    }
+  } catch (e) { console.warn('[mf] webhook post failed:', e.message); }
+  try {
+    const dcRaw = await env.SIGNAL_KV.get('discord_config');
+    const dc = dcRaw ? JSON.parse(dcRaw) : null;
+    if (dc?.channelId) { await sendDiscordDM(env, dc.channelId, message, dc.proxyUrl); posted = true; }
+  } catch (e) { console.warn('[mf] DM post failed:', e.message); }
+  return posted;
+}
+
+async function mfSetToday(env, todayISO, obj) {
+  await env.SIGNAL_KV.put(`mf_today_${todayISO}`, JSON.stringify({ date: todayISO, ...obj }),
+    { expirationTtl: 3 * 86400 });
+}
+
+// Noon check — idempotent via mf_done_<date>; caller retries within window.
+async function handleMagnetFlyNoon(env, token, etNow, preChain) {
+  const todayISO = isoDateET(etNow);
+  const block = mfCalendarBlock(etNow);
+  if (block) {
+    await mfSetToday(env, todayISO, { status: 'NO', headline: `No Magnet Fly — ${block}`,
+      detail: 'calendar filter (recipe rule 2)' });
+    return { skipped: block };
+  }
+  // magnet from the 10:30 snapshot (falls back to live gex_current if missed)
+  let magnet = null, magnetSrc = '10:30 snap';
+  const snapRaw = await env.SIGNAL_KV.get(`mf_magnet_${todayISO}`);
+  if (snapRaw) magnet = JSON.parse(snapRaw).magnet;
+  if (magnet == null) {
+    const curRaw = await env.SIGNAL_KV.get('gex_current');
+    const cur = curRaw ? JSON.parse(curRaw) : null;
+    if (cur?.maxPosStrike != null) { magnet = cur.maxPosStrike; magnetSrc = 'live fallback'; }
+  }
+  if (magnet == null) return { error: 'no magnet available' };
+
+  // M8BF center at/before 12:00 from the Discord feed (same parser as archive)
+  if (!env.DISCORD_USER_TOKEN) return { error: 'no DISCORD_USER_TOKEN' };
+  const rows = await scrapeRawRowsForDate(env.DISCORD_USER_TOKEN, MF_SIGNALS_CHANNEL, todayISO);
+  let center = null, sigTime = null;
+  for (const line of rows || []) {
+    const c = line.split(',');
+    if (c.length < 25 || !c[2] || c[2] > '12:00') continue;
+    const bc = parseFloat(c[24]);
+    if (Number.isFinite(bc)) { center = bc; sigTime = c[2]; }
+  }
+  if (center == null) return { error: 'no M8BF signal rows yet' };
+
+  const dist = Math.abs(center - magnet);
+  if (dist !== 5) {
+    await mfSetToday(env, todayISO, { status: 'NO',
+      headline: `No Magnet Fly — T1 ≠ magnet (center ${center} vs magnet ${magnet}, dist ${dist})`,
+      detail: `magnet ${magnetSrc} · M8BF signal @${sigTime}`,
+      kpis: [['magnet', magnet], ['M8BF center', center], ['distance', dist + ' pts']] });
+    await postMagnetFly(env, `🧲 **Magnet Fly** ${todayISO} — **NO TRADE** · T1≠magnet (center ${center}, magnet ${magnet}, dist ${dist})`);
+    return { skipped: 'no alignment', center, magnet };
+  }
+
+  const chain = preChain || await fetchMasterSpxChain(token, env);
+  const q = mfFlyQuote(chain, todayISO, magnet);
+  if (!q) return { error: `fly legs missing at K=${magnet}` };
+  const entry = Math.round((q.mid + q.slip) * 100) / 100;
+  if (entry > MF_DEBIT_CAP) {
+    await mfSetToday(env, todayISO, { status: 'NO',
+      headline: `No Magnet Fly — 30w costs $${entry.toFixed(2)} > $${MF_DEBIT_CAP} cap`,
+      detail: `aligned (center ${center} == magnet±5) but too expensive`,
+      kpis: [['magnet', magnet], ['M8BF center', center], ['fly debit', '$' + entry.toFixed(2)], ['cap', '$17.00']] });
+    await postMagnetFly(env, `🧲 **Magnet Fly** ${todayISO} — **NO TRADE** · aligned but 30w costs $${entry.toFixed(2)} > $17 cap`);
+    return { skipped: 'debit cap', entry };
+  }
+
+  const trade = {
+    openDate: todayISO, magnet, center, entry,
+    tp: Math.round((entry + MF_TP) * 100) / 100, sl: Math.round((entry - MF_SL) * 100) / 100,
+    status: 'open', openedAt: `${etNow.getHours()}:${String(etNow.getMinutes()).padStart(2, '0')}`,
+    paper: true,
+  };
+  await env.SIGNAL_KV.put('mf_open_trade', JSON.stringify(trade));
+  await mfSetToday(env, todayISO, { status: 'GO',
+    headline: `GO — 30w fly at ${magnet}, debit $${entry.toFixed(2)}`,
+    detail: `TP $${trade.tp.toFixed(2)} (+$300/lot) · SL $${trade.sl.toFixed(2)} (−$500/lot) · M8BF @${sigTime}`,
+    kpis: [['magnet', magnet], ['M8BF center', center], ['debit', '$' + entry.toFixed(2)],
+           ['TP / SL', `+3.0 / −5.0`]] });
+  await postMagnetFly(env,
+    `🧲 **Magnet Fly** ${todayISO} — **GO (paper)**\n` +
+    `BUY SPXW 0DTE call fly **${magnet - MF_WIDTH} / ${magnet} / ${magnet + MF_WIDTH}** @ ~$${entry.toFixed(2)}\n` +
+    `OCO: TP $${trade.tp.toFixed(2)} (+$300/lot) · SL $${trade.sl.toFixed(2)} (−$500/lot)\n` +
+    `magnet ${magnet} (${magnetSrc}) · M8BF center ${center} @${sigTime} · backtest 84% WR, 87 trades`);
+  return { opened: true, trade };
+}
+
+// Paper bracket watcher — every market tick after noon. Conservative like
+// the backtest: exit checks use slippage-adjusted mid, SL checked first.
+async function refreshMagnetFlyLiveQuotes(env, token, etNow, preChain) {
+  const raw = await env.SIGNAL_KV.get('mf_open_trade');
+  if (!raw) return;
+  const tr = JSON.parse(raw);
+  const todayISO = isoDateET(etNow);
+  if (tr.status !== 'open' || tr.openDate !== todayISO) return;
+  const chain = preChain || await fetchMasterSpxChain(token, env);
+  const q = mfFlyQuote(chain, todayISO, tr.magnet);
+  if (!q) return;
+  const m = q.mid - q.slip;
+  tr.lastMid = Math.round(q.mid * 100) / 100;
+  tr.lastQuoteAt = Date.now();
+  let exit = null, pnl = 0;
+  if (m <= tr.entry - MF_SL) { exit = 'SL'; pnl = -MF_SL * 100; }
+  else if (m >= tr.entry + MF_TP) { exit = 'TP'; pnl = MF_TP * 100; }
+  if (exit) {
+    tr.status = 'closed'; tr.exit = exit; tr.pnl = Math.round(pnl);
+    tr.exitTime = `${etNow.getHours()}:${String(etNow.getMinutes()).padStart(2, '0')}`;
+    await mfAppendClosed(env, tr);
+    await postMagnetFly(env, `🧲 **Magnet Fly** ${todayISO} — **${exit === 'TP' ? '✅ TP hit' : '🛑 stopped'}** ${exit === 'TP' ? '+$300' : '−$500'}/lot @ ${tr.exitTime} ET (fly ${tr.lastMid.toFixed(2)})`);
+  }
+  await env.SIGNAL_KV.put('mf_open_trade', JSON.stringify(tr));
+}
+
+// EOD settle fallback (never fired in the 87-trade backtest).
+async function settleMagnetFlyEod(env, etNow, preChain) {
+  const raw = await env.SIGNAL_KV.get('mf_open_trade');
+  if (!raw) return;
+  const tr = JSON.parse(raw);
+  if (tr.status !== 'open' || tr.openDate !== isoDateET(etNow)) return;
+  const spot = preChain?.spot;
+  if (!spot) return;
+  const intr = Math.max(0, MF_WIDTH - Math.abs(spot - tr.magnet));
+  tr.status = 'closed'; tr.exit = 'SETTLE';
+  tr.pnl = Math.round((intr - tr.entry) * 100);
+  tr.exitTime = '16:15';
+  await mfAppendClosed(env, tr);
+  await env.SIGNAL_KV.put('mf_open_trade', JSON.stringify(tr));
+  await postMagnetFly(env, `🧲 **Magnet Fly** ${tr.openDate} — settled ${tr.pnl >= 0 ? '+' : '−'}$${Math.abs(tr.pnl)}/lot (rare: bracket never filled)`);
+}
+
+async function mfAppendClosed(env, tr) {
+  const logRaw = await env.SIGNAL_KV.get('mf_closed_log');
+  const log = logRaw ? JSON.parse(logRaw) : [];
+  if (!log.some(x => x.date === tr.openDate)) {
+    log.push({ date: tr.openDate, day: ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date(tr.openDate + 'T12:00:00').getUTCDay()],
+      magnet: tr.magnet, center: tr.center, debit: Math.round(tr.entry * 100),
+      exit: tr.exit, exitTime: tr.exitTime, pnl: tr.pnl });
+    await env.SIGNAL_KV.put('mf_closed_log', JSON.stringify(log));
+  }
+}
+
 async function handleScheduled(env) {
   const etNow = toET();
   const dow = etNow.getDay();
@@ -6004,6 +6207,21 @@ async function handleScheduled(env) {
     } catch (e) { console.warn('[gex-daily]', e.message); }
     // Research capture: 9:45-ish SPX put snapshot (Tail Hedge dataset, ThetaData-free)
     try { await captureTailPutSnap(env, etNow, masterChain); } catch (e) { console.warn('[tail-snap]', e.message); }
+    // Magnet Fly: 10:30 magnet snapshot (recipe uses the 10:30 OI-basis magnet)
+    try {
+      const hM = etNow.getHours(), mM = etNow.getMinutes();
+      if (hM === 10 && mM >= 25 && mM < 45) {
+        const kM = `mf_magnet_${isoDateET(etNow)}`;
+        if (!(await env.SIGNAL_KV.get(kM))) {
+          const cur = await env.SIGNAL_KV.get('gex_current');
+          const g = cur ? JSON.parse(cur) : null;
+          if (g?.maxPosStrike != null) {
+            await env.SIGNAL_KV.put(kM, JSON.stringify({ magnet: g.maxPosStrike, t: g.timestamp,
+              totalGex: g.totalGex ?? null }), { expirationTtl: 3 * 86400 });
+          }
+        }
+      }
+    } catch (e) { console.warn('[mf-magnet]', e.message); }
     // Tail Hedge live-trade parity: freeze today's open at/after 9:45 (robust —
     // no page-poll needed) and refresh its intraday P&L every tick.
     try { await freezeTailOpenIfDue(env, etNow, null, true); } catch (e) { console.warn('[tail-freeze]', e.message); }
@@ -6046,6 +6264,28 @@ async function handleScheduled(env) {
         console.warn('[diag] handler threw:', e.message);
       }
     }
+  }
+
+  // ── Magnet Fly noon check: 12:00–12:15 ET window, idempotent via mf_done_<date>.
+  //    Transient errors (scrape empty, chain gap) leave the slot unmarked so the
+  //    next tick retries inside the window. Independent of every other strategy.
+  let mfResult = {};
+  const mfDoneKey = `mf_done_${todayISO}`;
+  if (etHour === 12 && etMin < 15) {
+    try {
+      if (!(await env.SIGNAL_KV.get(mfDoneKey))) {
+        mfResult = await handleMagnetFlyNoon(env, schwabToken, etNow, masterChain);
+        if (!mfResult.error) {
+          await env.SIGNAL_KV.put(mfDoneKey, 'done', { expirationTtl: 86400 });
+        } else {
+          console.warn('[mf] not marking done — retry next tick:', mfResult.error);
+        }
+      }
+    } catch (e) { console.warn('[mf] noon handler threw:', e.message); }
+  }
+  // Magnet Fly EOD settle fallback (only if the bracket never filled)
+  if (etHour === 16 && etMin >= 16 && etMin < 40) {
+    try { await settleMagnetFlyEod(env, etNow, masterChain); } catch (e) { console.warn('[mf-eod]', e.message); }
   }
 
   // ── Refresh live quotes on the open diagonal, straddle, AND BOBF every market tick ──
@@ -6096,6 +6336,7 @@ async function handleScheduled(env) {
       await refreshBobfLiveQuotes(env, schwabToken, etNow, masterChain);
       await refreshGxbfLiveQuotes(env, schwabToken, etNow, masterChain);
       await refreshM8bfLiveQuotes(env, schwabToken, etNow, masterChain);
+      if (etHour >= 12) await refreshMagnetFlyLiveQuotes(env, schwabToken, etNow, masterChain);
     } catch (e) {
       console.warn('[live] refresh failed:', e.message);
     }
@@ -10893,6 +11134,64 @@ export default {
     // (no Discord scrape). Phantom prior-day/closed-slot cleanup +
     // staleness self-refresh during market hours. STRATEGY INDEPENDENCE:
     // surfaces only GXBF's own state.
+    if (url.pathname === '/magnetfly-today' && request.method === 'GET') {
+      const publicCors = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Max-Age': '86400',
+      };
+      try {
+        const etNowM = toET(new Date());
+        const todayM = isoDateET(etNowM);
+        const todayRaw = await env.SIGNAL_KV.get(`mf_today_${todayM}`);
+        const openRaw = await env.SIGNAL_KV.get('mf_open_trade');
+        const open = openRaw ? JSON.parse(openRaw) : null;
+        let out = todayRaw ? JSON.parse(todayRaw) : {
+          date: todayM, status: 'WAIT',
+          headline: (etNowM.getDay() === 0 || etNowM.getDay() === 6 || isHol(etNowM))
+            ? 'market closed' : 'waiting for the 12:00 ET check',
+          detail: 'magnet snapshot at 10:30 · alignment + price check at noon',
+        };
+        if (open && open.openDate === todayM) {
+          out.trade = open;
+          if (open.status === 'open') {
+            out.headline = `OPEN — 30w fly at ${open.magnet}, entry $${open.entry.toFixed(2)}` +
+              (open.lastMid != null ? ` · now $${open.lastMid.toFixed(2)}` : '');
+          } else if (open.status === 'closed') {
+            out.headline = `${open.exit === 'TP' ? 'TP hit +$300' : open.exit === 'SL' ? 'stopped −$500' : 'settled ' + open.pnl} @ ${open.exitTime} ET`;
+          }
+        }
+        return jsonResp(out, 200, publicCors);
+      } catch (e) {
+        return jsonResp({ error: e.message }, 500, publicCors);
+      }
+    }
+
+    if (url.pathname === '/magnetfly-history' && request.method === 'GET') {
+      const publicCors = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Max-Age': '86400',
+      };
+      try {
+        const logRaw = await env.SIGNAL_KV.get('mf_closed_log');
+        return jsonResp({ trades: logRaw ? JSON.parse(logRaw) : [] }, 200, publicCors);
+      } catch (e) {
+        return jsonResp({ error: e.message }, 500, publicCors);
+      }
+    }
+
+    if (url.pathname === '/magnetfly-test' && request.method === 'POST') {
+      const secret = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
+      if (secret !== env.SYNC_SECRET) return jsonResp({ error: 'unauthorized' }, 401);
+      const posted = await postMagnetFly(env,
+        `🧲 **Magnet Fly** — test card. Feed is wired (webhook ${await env.SIGNAL_KV.get('mf_webhook_url') ? 'SET' : 'NOT set — DM fallback'}). ` +
+        `Recipe: 30w fly at magnet @12:00 when T1==magnet, debit ≤ $17, TP +3 / SL −5.`);
+      return jsonResp({ ok: true, posted });
+    }
+
     if (url.pathname === '/gxbf-today' && request.method === 'GET') {
       const publicCors = {
         'Access-Control-Allow-Origin': '*',
