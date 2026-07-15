@@ -5762,7 +5762,7 @@ async function sweepOrphanSettles(env, etNow) {
 }
 
 // ════════════════════════════════════════════════════════════════════
-// MAGNET FLY (paper) — FINAL v3 recipe, locked 2026-07-15.
+// SCALP M8BF (paper) — FINAL v3 recipe, locked 2026-07-15.
 // 30-wide CALL fly at the gamma magnet, 12:00 ET, only when the M8BF
 // service's fly center is exactly 5 pts from the magnet (T1==magnet),
 // calendar clear (EOM last-2-days / CPI / FED / Mon-Thu of OPEX week),
@@ -5878,8 +5878,8 @@ async function handleMagnetFlyPreAlert(env, token, etNow, preChain) {
   const block = mfCalendarBlock(etNow);
   if (block) {
     await mfSetToday(env, todayISO, { status: 'NO', pre: true,
-      headline: `Heads-up — no Magnet Fly today (${block})`, detail: 'certain: calendar filter, known in advance' });
-    await postMagnetFly(env, `🧲 **Magnet Fly** ${todayISO} — **heads-up: NO TRADE today** · ${block} (calendar, certain)`);
+      headline: `Heads-up — no Scalp M8BF today (${block})`, detail: 'certain: calendar filter, known in advance' });
+    await postMagnetFly(env, `🧲 **Scalp M8BF** ${todayISO} — **heads-up: NO TRADE today** · ${block} (calendar, certain)`);
     return { pre: 'NO', reason: block };
   }
   const inp = await mfReadInputs(env, token, etNow, preChain, '11:45');
@@ -5913,7 +5913,7 @@ async function handleMagnetFlyPreAlert(env, token, etNow, preChain) {
     detail: `11:45 heads-up · noon check is final · ~88% of early calls hold`,
     kpis: [['magnet', magnet], ['M8BF center', center], ['distance', dist + ' pts'],
            ['30w debit', entry != null ? '$' + entry.toFixed(2) : 'n/a']] });
-  await postMagnetFly(env, `🧲 **Magnet Fly** ${todayISO} — **${emoji} 11:45 heads-up: ${lean}**\n` +
+  await postMagnetFly(env, `🧲 **Scalp M8BF** ${todayISO} — **${emoji} 11:45 heads-up: ${lean}**\n` +
     `${headline}\n_magnet ${magnet} · center ${center} · noon check is final (~88% of early calls hold)_`);
   return { pre: lean, dist, entry };
 }
@@ -5923,7 +5923,7 @@ async function handleMagnetFlyNoon(env, token, etNow, preChain) {
   const todayISO = isoDateET(etNow);
   const block = mfCalendarBlock(etNow);
   if (block) {
-    await mfSetToday(env, todayISO, { status: 'NO', headline: `No Magnet Fly — ${block}`,
+    await mfSetToday(env, todayISO, { status: 'NO', headline: `No Scalp M8BF — ${block}`,
       detail: 'calendar filter (recipe rule 2)' });
     return { skipped: block };
   }
@@ -5953,10 +5953,10 @@ async function handleMagnetFlyNoon(env, token, etNow, preChain) {
   const dist = Math.abs(center - magnet);
   if (dist !== 5) {
     await mfSetToday(env, todayISO, { status: 'NO',
-      headline: `No Magnet Fly — T1 ≠ magnet (center ${center} vs magnet ${magnet}, dist ${dist})`,
+      headline: `No Scalp M8BF — T1 ≠ magnet (center ${center} vs magnet ${magnet}, dist ${dist})`,
       detail: `magnet ${magnetSrc} · M8BF signal @${sigTime}`,
       kpis: [['magnet', magnet], ['M8BF center', center], ['distance', dist + ' pts']] });
-    await postMagnetFly(env, `🧲 **Magnet Fly** ${todayISO} — **NO TRADE** · T1≠magnet (center ${center}, magnet ${magnet}, dist ${dist})`);
+    await postMagnetFly(env, `🧲 **Scalp M8BF** ${todayISO} — **NO TRADE** · T1≠magnet (center ${center}, magnet ${magnet}, dist ${dist})`);
     return { skipped: 'no alignment', center, magnet };
   }
 
@@ -5966,10 +5966,10 @@ async function handleMagnetFlyNoon(env, token, etNow, preChain) {
   const entry = Math.round((q.mid + q.slip) * 100) / 100;
   if (entry > MF_DEBIT_CAP) {
     await mfSetToday(env, todayISO, { status: 'NO',
-      headline: `No Magnet Fly — 30w costs $${entry.toFixed(2)} > $${MF_DEBIT_CAP} cap`,
+      headline: `No Scalp M8BF — 30w costs $${entry.toFixed(2)} > $${MF_DEBIT_CAP} cap`,
       detail: `aligned (center ${center} == magnet±5) but too expensive`,
       kpis: [['magnet', magnet], ['M8BF center', center], ['fly debit', '$' + entry.toFixed(2)], ['cap', '$17.00']] });
-    await postMagnetFly(env, `🧲 **Magnet Fly** ${todayISO} — **NO TRADE** · aligned but 30w costs $${entry.toFixed(2)} > $17 cap`);
+    await postMagnetFly(env, `🧲 **Scalp M8BF** ${todayISO} — **NO TRADE** · aligned but 30w costs $${entry.toFixed(2)} > $17 cap`);
     return { skipped: 'debit cap', entry };
   }
 
@@ -5986,7 +5986,7 @@ async function handleMagnetFlyNoon(env, token, etNow, preChain) {
     kpis: [['magnet', magnet], ['M8BF center', center], ['debit', '$' + entry.toFixed(2)],
            ['TP / SL', `+3.0 / −5.0`]] });
   await postMagnetFly(env,
-    `🧲 **Magnet Fly** ${todayISO} — **GO (paper)**\n` +
+    `🧲 **Scalp M8BF** ${todayISO} — **GO (paper)**\n` +
     `BUY SPXW 0DTE call fly **${magnet - MF_WIDTH} / ${magnet} / ${magnet + MF_WIDTH}** @ ~$${entry.toFixed(2)}\n` +
     `OCO: TP $${trade.tp.toFixed(2)} (+$300/lot) · SL $${trade.sl.toFixed(2)} (−$500/lot)\n` +
     `magnet ${magnet} (${magnetSrc}) · M8BF center ${center} @${sigTime} · backtest 84% WR, 87 trades`);
@@ -6014,7 +6014,7 @@ async function refreshMagnetFlyLiveQuotes(env, token, etNow, preChain) {
     tr.status = 'closed'; tr.exit = exit; tr.pnl = Math.round(pnl);
     tr.exitTime = `${etNow.getHours()}:${String(etNow.getMinutes()).padStart(2, '0')}`;
     await mfAppendClosed(env, tr);
-    await postMagnetFly(env, `🧲 **Magnet Fly** ${todayISO} — **${exit === 'TP' ? '✅ TP hit' : '🛑 stopped'}** ${exit === 'TP' ? '+$300' : '−$500'}/lot @ ${tr.exitTime} ET (fly ${tr.lastMid.toFixed(2)})`);
+    await postMagnetFly(env, `🧲 **Scalp M8BF** ${todayISO} — **${exit === 'TP' ? '✅ TP hit' : '🛑 stopped'}** ${exit === 'TP' ? '+$300' : '−$500'}/lot @ ${tr.exitTime} ET (fly ${tr.lastMid.toFixed(2)})`);
   }
   await env.SIGNAL_KV.put('mf_open_trade', JSON.stringify(tr));
 }
@@ -6033,7 +6033,7 @@ async function settleMagnetFlyEod(env, etNow, preChain) {
   tr.exitTime = '16:15';
   await mfAppendClosed(env, tr);
   await env.SIGNAL_KV.put('mf_open_trade', JSON.stringify(tr));
-  await postMagnetFly(env, `🧲 **Magnet Fly** ${tr.openDate} — settled ${tr.pnl >= 0 ? '+' : '−'}$${Math.abs(tr.pnl)}/lot (rare: bracket never filled)`);
+  await postMagnetFly(env, `🧲 **Scalp M8BF** ${tr.openDate} — settled ${tr.pnl >= 0 ? '+' : '−'}$${Math.abs(tr.pnl)}/lot (rare: bracket never filled)`);
 }
 
 async function mfAppendClosed(env, tr) {
@@ -6290,7 +6290,7 @@ async function handleScheduled(env) {
     } catch (e) { console.warn('[gex-daily]', e.message); }
     // Research capture: 9:45-ish SPX put snapshot (Tail Hedge dataset, ThetaData-free)
     try { await captureTailPutSnap(env, etNow, masterChain); } catch (e) { console.warn('[tail-snap]', e.message); }
-    // Magnet Fly: 10:30 magnet snapshot (recipe uses the 10:30 OI-basis magnet)
+    // Scalp M8BF: 10:30 magnet snapshot (recipe uses the 10:30 OI-basis magnet)
     try {
       const hM = etNow.getHours(), mM = etNow.getMinutes();
       if (hM === 10 && mM >= 25 && mM < 45) {
@@ -6349,7 +6349,7 @@ async function handleScheduled(env) {
     }
   }
 
-  // ── Magnet Fly 11:45 heads-up: 11:43–11:52 ET, idempotent via mf_prealert_<date>.
+  // ── Scalp M8BF 11:45 heads-up: 11:43–11:52 ET, idempotent via mf_prealert_<date>.
   //    Advisory only — writes no trade; the noon check remains the source of truth.
   const mfPreKey = `mf_prealert_${todayISO}`;
   if (etHour === 11 && etMin >= 43 && etMin < 52) {
@@ -6362,7 +6362,7 @@ async function handleScheduled(env) {
     } catch (e) { console.warn('[mf-pre] threw:', e.message); }
   }
 
-  // ── Magnet Fly noon check: 12:00–12:15 ET window, idempotent via mf_done_<date>.
+  // ── Scalp M8BF noon check: 12:00–12:15 ET window, idempotent via mf_done_<date>.
   //    Transient errors (scrape empty, chain gap) leave the slot unmarked so the
   //    next tick retries inside the window. Independent of every other strategy.
   let mfResult = {};
@@ -6379,7 +6379,7 @@ async function handleScheduled(env) {
       }
     } catch (e) { console.warn('[mf] noon handler threw:', e.message); }
   }
-  // Magnet Fly EOD settle fallback (only if the bracket never filled)
+  // Scalp M8BF EOD settle fallback (only if the bracket never filled)
   if (etHour === 16 && etMin >= 16 && etMin < 40) {
     try { await settleMagnetFlyEod(env, etNow, masterChain); } catch (e) { console.warn('[mf-eod]', e.message); }
   }
@@ -11283,7 +11283,7 @@ export default {
       const secret = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
       if (secret !== env.SYNC_SECRET) return jsonResp({ error: 'unauthorized' }, 401);
       const posted = await postMagnetFly(env,
-        `🧲 **Magnet Fly** — test card. Feed is wired (webhook ${await env.SIGNAL_KV.get('mf_webhook_url') ? 'SET' : 'NOT set — DM fallback'}). ` +
+        `🧲 **Scalp M8BF** — test card. Feed is wired (webhook ${await env.SIGNAL_KV.get('mf_webhook_url') ? 'SET' : 'NOT set — DM fallback'}). ` +
         `Recipe: 30w fly at magnet @12:00 when T1==magnet, debit ≤ $17, TP +3 / SL −5.`);
       return jsonResp({ ok: true, posted });
     }
