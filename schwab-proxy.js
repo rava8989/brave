@@ -5860,16 +5860,16 @@ async function mfReadInputs(env, token, etNow, preChain, cut) {
 async function handleMagnetFlyMorning(env, etNow) {
   const todayISO = isoDateET(etNow);
   const block = mfCalendarBlock(etNow);
+  // NO standalone 9:40 post anymore (owner 2026-07-15) — the PNBF row is now in
+  // the morning Plan card. We still write mf_today KV so the card + page + the
+  // 11:30/12:00 alerts read this state.
   if (block) {
     await mfSetToday(env, todayISO, { status: 'NO', pre: true,
       headline: `No PNBF today (${block})`, detail: 'calendar filter, known in advance' });
-    await postMagnetFly(env, `🧲 **PNBF** ${todayISO} — **not today** · ${block} (calendar)`);
     return { morning: 'NO', reason: block };
   }
   await mfSetToday(env, todayISO, { status: 'POSSIBLE', pre: true,
     headline: 'PNBF possible today', detail: 'calendar clear · 11:30 heads-up, then 12:00 final' });
-  await postMagnetFly(env, `🧲 **PNBF** ${todayISO} — **possible today** (calendar clear). ` +
-    `11:30 ET heads-up next, 12:00 ET the final call.`);
   return { morning: 'POSSIBLE' };
 }
 
@@ -5994,11 +5994,11 @@ async function handleMagnetFlyNoon(env, token, etNow, preChain) {
     detail: `TP $${trade.tp.toFixed(2)} (+$300/lot) · SL $${trade.sl.toFixed(2)} (−$500/lot) · M8BF @${sigTime}`,
     kpis: [['magnet', magnet], ['M8BF center', center], ['debit', '$' + entry.toFixed(2)],
            ['TP / SL', `+3.0 / −5.0`]] });
+  // Lean GO (owner 2026-07-15): the trade + TP/SL, nothing else.
   await postMagnetFly(env,
-    `🧲 **PNBF** ${todayISO} — **GO**\n` +
-    `BUY **${MF_LOTS}x** SPXW 0DTE call fly **${magnet - MF_WIDTH} / ${magnet} / ${magnet + MF_WIDTH}** @ ~$${entry.toFixed(2)}\n` +
-    `OCO: TP $${trade.tp.toFixed(2)} (+$${(MF_TP*100*MF_LOTS).toLocaleString()}) · SL $${trade.sl.toFixed(2)} (−$${(MF_SL*100*MF_LOTS).toLocaleString()})\n` +
-    `magnet ${magnet} (${magnetSrc}) · M8BF center ${center} @${sigTime} · backtest 84% WR, 87 trades`);
+    `🧲 **PNBF — GO**\n` +
+    `BUY **${MF_LOTS}x** SPXW 0DTE fly **${magnet - MF_WIDTH}/${magnet}/${magnet + MF_WIDTH}** @ $${entry.toFixed(2)}\n` +
+    `TP $${trade.tp.toFixed(2)} · SL $${trade.sl.toFixed(2)}`);
   return { opened: true, trade };
 }
 
@@ -7196,7 +7196,8 @@ async function handleScheduled(env) {
   // the morning signal can never go silent.
   let result = null;
   try {
-    const cardData = buildMorningCardData(signal, vixValues, tailLineCanon);
+    const cardData = buildMorningCardData(signal, vixValues, tailLineCanon,
+      { block: mfCalendarBlock(toET(new Date())) });
     const png = await renderMorningCardPng(cardData);
     // Footer rides as the message content (renders ABOVE the image in Discord)
     // so the live link + disclaimer sit on top of the card, link clickable.
@@ -9438,7 +9439,7 @@ function _cardWrap(value, fs, firstMax, contMax) {
 function buildMorningCardSvg(d) {
   const W = 460, P = 18;
   const C = { card: '#1e1f22', yesBg: '#2a2c30', noBg: '#26282c', text: '#f2f3f5',
-    sub: '#b5bac1', mute: '#80848e', nameNo: '#dadde1', green: '#4ade80', red: '#f87171' };
+    sub: '#b5bac1', mute: '#80848e', nameNo: '#dadde1', green: '#4ade80', red: '#f87171', amber: '#f5b942' };
   const F = 'Inter, DejaVu Sans, sans-serif';
   let s = '';
   s += `<text x="${P}" y="36" font-family="${F}" font-size="17" font-weight="600" fill="${C.text}">${_cardEsc(d.title)}</text>`;
@@ -9448,13 +9449,19 @@ function buildMorningCardSvg(d) {
   if (d.vixPrior) s += `<text x="${W - P}" y="65" text-anchor="end" font-family="${F}" font-size="9.5" fill="#6b7078">${_cardEsc(d.vixPrior)}</text>`;
   const innerW = W - 2 * P, y0 = 76, rowH = 38, step = 44;
   d.rows.forEach((r, i) => {
-    const top = y0 + i * step, bg = r.yes ? C.yesBg : C.noBg, bar = r.yes ? C.green : C.red;
-    const tag = r.yes ? 'YES' : 'NO', pillW = r.yes ? 42 : 34, pillX = P + innerW - 10 - pillW;
+    // 3-state: 'possible' (amber) for affirmative-but-not-final, else yes/no.
+    const st = r.state || (r.yes ? 'yes' : 'no');
+    const isYes = st === 'yes', isPoss = st === 'possible';
+    const top = y0 + i * step, bg = (isYes || isPoss) ? C.yesBg : C.noBg;
+    const bar = isYes ? C.green : isPoss ? C.amber : C.red;
+    const tag = isYes ? 'YES' : isPoss ? 'POSSIBLE' : 'NO';
+    const pillW = isPoss ? 74 : isYes ? 42 : 34, pillX = P + innerW - 10 - pillW;
+    const pillBg = isYes ? 'rgba(74,222,128,0.14)' : isPoss ? 'rgba(245,185,66,0.15)' : 'rgba(248,113,113,0.13)';
     s += `<rect x="${P}" y="${top}" width="${innerW}" height="${rowH}" rx="8" fill="${bg}"/>`;
     s += `<rect x="${P}" y="${top + 1}" width="4" height="${rowH - 2}" rx="2" fill="${bar}"/>`;
     s += `<clipPath id="rc${i}"><rect x="${P + 10}" y="${top}" width="${pillX - 8 - (P + 10)}" height="${rowH}"/></clipPath>`;
-    s += `<text x="${P + 14}" y="${top + 24}" clip-path="url(#rc${i})" font-family="${F}" font-size="14"><tspan font-weight="600" fill="${r.yes ? C.text : C.nameNo}">${_cardEsc(r.n)}</tspan><tspan font-size="13" fill="${C.sub}">  ${_cardEsc(r.det)}</tspan></text>`;
-    s += `<rect x="${pillX}" y="${top + 10}" width="${pillW}" height="18" rx="6" fill="${r.yes ? 'rgba(74,222,128,0.14)' : 'rgba(248,113,113,0.13)'}"/>`;
+    s += `<text x="${P + 14}" y="${top + 24}" clip-path="url(#rc${i})" font-family="${F}" font-size="14"><tspan font-weight="600" fill="${(isYes || isPoss) ? C.text : C.nameNo}">${_cardEsc(r.n)}</tspan><tspan font-size="13" fill="${C.sub}">  ${_cardEsc(r.det)}</tspan></text>`;
+    s += `<rect x="${pillX}" y="${top + 10}" width="${pillW}" height="18" rx="6" fill="${pillBg}"/>`;
     s += `<text x="${pillX + pillW / 2}" y="${top + 23}" text-anchor="middle" font-family="${F}" font-size="11" font-weight="600" fill="${bar}">${tag}</text>`;
   });
   const tileY = y0 + d.rows.length * step + 4, tileH = 38, gap = 7, tileW = (innerW - (d.tiles.length - 1) * gap) / d.tiles.length;
@@ -9699,7 +9706,7 @@ async function earnSendCard(env, b, stage, dmOnly = false) {
 // starting with "No " = blocked = red/NO). M8BF is shown as CONDITIONAL
 // ("watching … on flow signal") because it only fires if a flow signal lands
 // in its window — it is NOT a scheduled trade.
-function buildMorningCardData(signal, vixValues, tailLine) {
+function buildMorningCardData(signal, vixValues, tailLine, pnbf) {
   const isNo = t => !t || /^No\s/i.test(String(t).trim());
   const strip = (t, name) => {
     let d = String(t || '').trim();
@@ -9736,6 +9743,15 @@ function buildMorningCardData(signal, vixValues, tailLine) {
       tdet = strip(tl.replace(/^Tail\s*Hedge\s*[│|]?\s*/i, ''), 'Tail Hedge') || 'no trade';
     }
     rows.push({ n: 'Tail Hedge', det: tdet, yes: tYes });
+  }
+  // PNBF (2026-07-15): fold the old standalone 9:40 "possible today" alert into
+  // this card as its own row. Morning knows only the CALENDAR — T1==magnet is
+  // decided at noon — so a clear calendar reads POSSIBLE (amber), a blocked one
+  // reads NO. pnbf = { block: string|null } from mfCalendarBlock at card time.
+  if (pnbf) {
+    rows.push(pnbf.block
+      ? { n: 'PNBF', det: pnbf.block, state: 'no' }
+      : { n: 'PNBF', det: 'watching · noon decides (T1 on magnet)', state: 'possible' });
   }
   const vix = (vixValues.todayOpen != null) ? String(vixValues.todayOpen) : '—';
   // Overnight VIX direction in plain words. oNight = priorClose − todayOpen:
@@ -9957,6 +9973,7 @@ const SAMPLE_MORNING_CARD = {
     { n: 'GXBF', det: 'fires 9:36 AM', yes: true }, { n: 'M8BF', det: 'window 11:00–11:30', yes: true },
     { n: 'Straddle', det: 'overnight VIX drop > 0.65', yes: false }, { n: 'BOBF', det: 'OPEX', yes: false },
     { n: 'Diagonal', det: 'COR1M 6.79 < 10', yes: false }, { n: 'Tail Hedge', det: '9:45 · 0DTE put Δ-0.10', yes: true },
+    { n: 'PNBF', det: 'watching · noon decides (T1 on magnet)', state: 'possible' },
   ],
   tiles: [['SPX GAP', '+0.91%', '#4ade80']],
   stats: [
@@ -11319,19 +11336,16 @@ export default {
         const dcRaw = await env.SIGNAL_KV.get('discord_config');
         const dc = dcRaw ? JSON.parse(dcRaw) : null;
         if (!dc?.channelId) return jsonResp({ error: 'no owner DM channel' }, 500);
-        const ex = { date: 'EXAMPLE', magnet: 7550, center: 7555, entry: 14.85 };
+        const ex = { magnet: 7550, entry: 14.85 };
         const msg =
-          `🧲 **PNBF — EXAMPLE of a full signal day** (test, DM-only — real alerts land here + Sigma channel)\n\n` +
-          `**1️⃣ 9:40 ET** — 🧲 **PNBF** ${ex.date} — **possible today** (calendar clear). ` +
-          `11:30 ET heads-up next, 12:00 ET the final call. _[badge: POSSIBLE]_\n\n` +
-          `**2️⃣ 11:30 ET** — 🧲 **PNBF** ${ex.date} — **🟢 11:30 heads-up: LIKELY GO**\n` +
-          `Likely GO at noon — aligned, 30w ~$${ex.entry.toFixed(2)}\n` +
-          `_magnet ${ex.magnet} · center ${ex.center} · noon check is final (~88% of early calls hold)_ _[badge: POSSIBLE]_\n\n` +
-          `**3️⃣ 12:00 ET** — 🧲 **PNBF** ${ex.date} — **GO**\n` +
-          `BUY **10x** SPXW 0DTE call fly **${ex.magnet - 30} / ${ex.magnet} / ${ex.magnet + 30}** @ ~$${ex.entry.toFixed(2)}\n` +
-          `OCO: TP $${(ex.entry + 3).toFixed(2)} (+$3,000) · SL $${(ex.entry - 5).toFixed(2)} (−$5,000)\n` +
-          `magnet ${ex.magnet} (10:30 snap) · M8BF center ${ex.center} @09:35 · backtest 84% WR, 87 trades\n\n` +
-          `-# On no-signal days you get one short message (calendar skip or T1≠magnet) and the card shows NO.`;
+          `🧲 **PNBF — EXAMPLE of a signal day** (test, DM-only — real alerts land here + Sigma channel)\n\n` +
+          `**Morning Plan card** — PNBF shows as a row: _watching · noon decides_ with a **POSSIBLE** badge (calendar clear).\n\n` +
+          `**11:30 ET heads-up** — 🧲 **PNBF** — 🟢 leaning GO, aligned, 30w ~$${ex.entry.toFixed(2)}. _Noon is final._\n\n` +
+          `**12:00 ET — the trade:**\n` +
+          `🧲 **PNBF — GO**\n` +
+          `BUY **10x** SPXW 0DTE fly **${ex.magnet - 30}/${ex.magnet}/${ex.magnet + 30}** @ $${ex.entry.toFixed(2)}\n` +
+          `TP $${(ex.entry + 3).toFixed(2)} · SL $${(ex.entry - 5).toFixed(2)}\n\n` +
+          `-# No-signal days: PNBF row reads NO on the card, no separate message.`;
         const r = await sendDiscordDM(env, dc.channelId, msg, dc.proxyUrl);
         return jsonResp({ ok: r.ok, dmOnly: true });
       }
