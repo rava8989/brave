@@ -10037,7 +10037,10 @@ export default {
     if (url.pathname === '/test-card-discord' && request.method === 'GET') {
       // AUTH (2026-07-06 audit): side-effecting Discord send — gate it so a
       // stranger can't spam the channel / burn the bot's rate budget.
-      if ((request.headers.get('X-Sync-Secret') || url.searchParams.get('secret')) !== env.SYNC_SECRET) {
+      // Accept GEXM_TRIGGER_TOKEN too (zshrc SYNC_SECRET is stale) — both
+      // owner-only, same as earnings-card-test / magnetfly-test.
+      const _tcSec = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
+      if (!_tcSec || (_tcSec !== env.SYNC_SECRET && _tcSec !== env.GEXM_TRIGGER_TOKEN)) {
         return new Response('Unauthorized', { status: 401 });
       }
       try {
