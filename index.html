@@ -735,7 +735,7 @@
   <!-- STRATEGY DOC -->
   <section class="strategy-doc">
     <h2>Sigma 3 — SPX 0DTE Strategy Overview</h2>
-    <p>Sigma 3 consists of five SPX strategies — four 0DTE (<strong>M8 Butterfly (M8BF)</strong>, <strong>Straddle</strong>, <strong>GXBF (GEX Butterfly)</strong>, <strong>BOBF</strong>) plus a 1-day <strong>Diagonal</strong>.</p>
+    <p>Sigma 3 consists of six SPX strategies — five 0DTE (<strong>M8 Butterfly (M8BF)</strong>, <strong>Straddle</strong>, <strong>GXBF (GEX Butterfly)</strong>, <strong>BOBF</strong>, <strong>PNBF (Pin Butterfly)</strong>) plus a 1-day <strong>Diagonal</strong>.</p>
 
     <hr class="divider">
     <h3>M8 Butterfly (M8BF)</h3>
@@ -928,6 +928,15 @@
     </ul>
 
     <hr class="divider">
+    <h3>PNBF (Pin Butterfly) <span style="font-weight:400;font-size:12px;color:var(--text3)">(now part of Sigma 3, added 2026-07-15 — traded at 10 contracts; live record on <a href="magnetfly.html">magnetfly.html</a>)</span></h3>
+    <ul>
+      <li><strong>Now part of Sigma 3.</strong> Traded at <strong>10 contracts</strong> by default, with signals delivered through the <strong>Sigma channel + DMs</strong> like the other strategies. Two heads-up alerts fire first — a <strong>9:40 ET</strong> "possible / not" read and an <strong>11:30 ET</strong> heads-up — then the <strong>12:00 ET final call</strong>.</li>
+      <li><strong>Signal:</strong> at the 12:00 ET final call, the M8BF service's fly center sits exactly 5 pts from the day's gamma magnet (max positive OI-basis GEX strike, 10:30 snapshot) — i.e. its Target&nbsp;1 IS the magnet. Fires ~35% of days.</li>
+      <li><strong>Skip days:</strong> EOM (last 2 trading days) · CPI · FED · Mon–Thu of monthly OPEX week (OPEX Friday itself is traded).</li>
+      <li><strong>Trade:</strong> 30-wide SPXW 0DTE call fly at the magnet, only if debit ≤ <strong>$17.00</strong> (typ ~$12.30). OCO bracket: TP <strong>+3.0</strong> (+$300/lot) / SL <strong>−5.0</strong> (−$500/lot), else settle.</li>
+      <li><strong>Backtest (Sep 2024 → Jun 2026, real NBBO + slippage):</strong> 87 trades · 83.9% WR · +$171/lot avg · t=5.40 · PF 3.13 · maxDD $1,000 · ~4/mo. Strategy-independent — never blocks or displaces M8BF / Straddle / GXBF / BOBF.</li>
+    </ul>
+    <hr class="divider">
     <h3>Tail Hedge — Sweet Spot (default) <span style="font-weight:400;font-size:12px;color:var(--text3)">(companion strategy, separate from Sigma 3 — buys cheap 0DTE SPX puts when stock correlation crashes)</span></h3>
     <p>
       A <strong>tail-risk hedge</strong> that lays out cheap insurance on days when S&amp;P 500 stocks
@@ -1023,15 +1032,6 @@
     <div class="strategy-image"><img src="./move.jpg" alt="M8BF modification" loading="lazy" /></div>
     <div class="strategy-image"><img src="./stat.jpg" alt="Stats" loading="lazy" /></div>
 
-    <hr class="divider">
-    <h3>PNBF (Pin Butterfly) <span style="font-weight:400;font-size:12px;color:var(--text3)">(now part of Sigma 3, added 2026-07-15 — traded at 10 contracts; live record on <a href="magnetfly.html">magnetfly.html</a>)</span></h3>
-    <ul>
-      <li><strong>Now part of Sigma 3.</strong> Traded at <strong>10 contracts</strong> by default, with signals delivered through the <strong>Sigma channel + DMs</strong> like the other strategies. Two heads-up alerts fire first — a <strong>9:40 ET</strong> "possible / not" read and an <strong>11:30 ET</strong> heads-up — then the <strong>12:00 ET final call</strong>.</li>
-      <li><strong>Signal:</strong> at the 12:00 ET final call, the M8BF service's fly center sits exactly 5 pts from the day's gamma magnet (max positive OI-basis GEX strike, 10:30 snapshot) — i.e. its Target&nbsp;1 IS the magnet. Fires ~35% of days.</li>
-      <li><strong>Skip days:</strong> EOM (last 2 trading days) · CPI · FED · Mon–Thu of monthly OPEX week (OPEX Friday itself is traded).</li>
-      <li><strong>Trade:</strong> 30-wide SPXW 0DTE call fly at the magnet, only if debit ≤ <strong>$17.00</strong> (typ ~$12.30). OCO bracket: TP <strong>+3.0</strong> (+$300/lot) / SL <strong>−5.0</strong> (−$500/lot), else settle.</li>
-      <li><strong>Backtest (Sep 2024 → Jun 2026, real NBBO + slippage):</strong> 87 trades · 83.9% WR · +$171/lot avg · t=5.40 · PF 3.13 · maxDD $1,000 · ~4/mo. Strategy-independent — never touches the Sigma 3 strategies.</li>
-    </ul>
 
     <hr class="divider">
     <p>All trades held to expiration.</p>
