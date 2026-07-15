@@ -5994,17 +5994,15 @@ async function handleMagnetFlyNoon(env, token, etNow, preChain) {
     detail: `TP $${trade.tp.toFixed(2)} (+$300/lot) · SL $${trade.sl.toFixed(2)} (−$500/lot) · M8BF @${sigTime}`,
     kpis: [['magnet', magnet], ['M8BF center', center], ['debit', '$' + entry.toFixed(2)],
            ['TP / SL', `+3.0 / −5.0`]] });
-  // Lean GO (owner 2026-07-15): a ToS-pasteable order in a code block + TP/SL.
-  // Same string shape as the M8BF service copy (Butterfly SPX 100 (Weeklys),
-  // CALL strikes high→low), see [[feedback_tos_copy_spx_weeklys]]. 0DTE →
-  // expiration is today.
+  // GO = EXACT M8BF-message shape (owner 2026-07-15, screenshot): bold name,
+  // plain order line, "BUTTERFLY" uppercase, CALL strikes LOW→HIGH, SPX 100
+  // (Weeklys), @debit LMT. 0DTE → expiration is today. Plain text (NOT a code
+  // block — Discord copies it fine and the fence looked wrong). TP/SL below.
   const _MON = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
   const tosD = `${+todayISO.slice(8,10)} ${_MON[+todayISO.slice(5,7)-1]} ${todayISO.slice(2,4)}`;
-  const tos = `BUY +${MF_LOTS} Butterfly SPX 100 (Weeklys) ${tosD} ${magnet + MF_WIDTH}/${magnet}/${magnet - MF_WIDTH} CALL @${entry.toFixed(2)} LMT`;
+  const tos = `BUY +${MF_LOTS} BUTTERFLY SPX 100 (Weeklys) ${tosD} ${magnet - MF_WIDTH}/${magnet}/${magnet + MF_WIDTH} CALL @${entry.toFixed(2)} LMT`;
   await postMagnetFly(env,
-    `🧲 **PNBF — GO**\n` +
-    '```\n' + tos + '\n```\n' +
-    `TP $${trade.tp.toFixed(2)} · SL $${trade.sl.toFixed(2)}`);
+    `**PNBF**\n${tos}\nTP ${trade.tp.toFixed(2)} · SL ${trade.sl.toFixed(2)}`);
   return { opened: true, trade };
 }
 
@@ -11347,12 +11345,10 @@ export default {
           `🧲 **PNBF — EXAMPLE of a signal day** (test, DM-only — real alerts land here + Sigma channel)\n\n` +
           `**Morning Plan card** — PNBF shows as a row: _watching · noon decides_ with a **POSSIBLE** badge (calendar clear).\n\n` +
           `**11:30 ET heads-up** — 🧲 **PNBF** — 🟢 leaning GO, aligned, 30w ~$${ex.entry.toFixed(2)}. _Noon is final._\n\n` +
-          `**12:00 ET — the trade** (paste the order block straight into ToS):\n` +
-          `🧲 **PNBF — GO**\n` +
-          '```\n' +
-          `BUY +10 Butterfly SPX 100 (Weeklys) 17 JUL 26 ${ex.magnet + 30}/${ex.magnet}/${ex.magnet - 30} CALL @${ex.entry.toFixed(2)} LMT\n` +
-          '```\n' +
-          `TP $${(ex.entry + 3).toFixed(2)} · SL $${(ex.entry - 5).toFixed(2)}\n\n` +
+          `**12:00 ET — the trade** (same shape as M8BF, paste into ToS):\n` +
+          `**PNBF**\n` +
+          `BUY +10 BUTTERFLY SPX 100 (Weeklys) 17 JUL 26 ${ex.magnet - 30}/${ex.magnet}/${ex.magnet + 30} CALL @${ex.entry.toFixed(2)} LMT\n` +
+          `TP ${(ex.entry + 3).toFixed(2)} · SL ${(ex.entry - 5).toFixed(2)}\n\n` +
           `-# No-signal days: PNBF row reads NO on the card, no separate message.`;
         const r = await sendDiscordDM(env, dc.channelId, msg, dc.proxyUrl);
         return jsonResp({ ok: r.ok, dmOnly: true });
