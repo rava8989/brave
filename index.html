@@ -3809,7 +3809,8 @@
       const st = t.status || 'WAIT';
       const isGo = st === 'GO' || st === 'PRE-GO';
       const isNo = st === 'NO' || st === 'PRE-NO';
-      const col  = isGo ? 'var(--green,#22c55e)' : isNo ? 'var(--red,#ef4444)' : 'var(--text3)';
+      const isPoss = st === 'POSSIBLE';   // affirmative-but-not-final (owner 2026-07-15) — amber, not green
+      const col  = isGo ? 'var(--green,#22c55e)' : isNo ? 'var(--red,#ef4444)' : isPoss ? 'var(--amber,#f59e0b)' : 'var(--text3)';
       if (badge) { badge.textContent = st; badge.style.color = col; badge.style.borderColor = col; }
       if (pill)  pill.style.display = (st === 'GO') ? '' : 'none';
       const heads = t.pre ? ` <span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--amber,#f59e0b);border:1px solid var(--amber,#f59e0b);border-radius:4px;padding:0 4px;">heads-up</span>` : '';

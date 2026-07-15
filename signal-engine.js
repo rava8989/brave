@@ -815,10 +815,13 @@ export function calculateSignal({ vixToday, vixYOpen, vixYClose, spxGapPct, etDa
   } else {
     // Type-specific labels so the dashboard / Discord message reflect which
     // BOBF variant is actually queued for today.
-    if (bobfType === 'friday')        { bobfRec = "BOBF (Friday RSI)";       bobfBadge = "FRIDAY RSI"; }
-    else if (bobfType === 'vix_up')   { bobfRec = "BOBF (VIX up)";           bobfBadge = "VIX UP"; }
-    else if (bobfType === 'vix_down') { bobfRec = "BOBF (VIX down)";         bobfBadge = "VIX DOWN"; }
-    else                              { bobfRec = "BOBF in play";            bobfBadge = "IN PLAY"; }
+    // Badge = certainty level, rec = setup type. "POSSIBLE" (owner 2026-07-15):
+    // an affirmative badge before the entry confirms read like a done deal —
+    // nothing is 100% until the fill, so the yes-state says POSSIBLE.
+    if (bobfType === 'friday')        { bobfRec = "BOBF (Friday RSI)";       bobfBadge = "POSSIBLE"; }
+    else if (bobfType === 'vix_up')   { bobfRec = "BOBF (VIX up)";           bobfBadge = "POSSIBLE"; }
+    else if (bobfType === 'vix_down') { bobfRec = "BOBF (VIX down)";         bobfBadge = "POSSIBLE"; }
+    else                              { bobfRec = "BOBF in play";            bobfBadge = "POSSIBLE"; }
   }
 
   // ── Build dimmed card texts for inactive strategies ──

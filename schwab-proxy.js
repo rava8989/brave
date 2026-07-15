@@ -5866,7 +5866,7 @@ async function handleMagnetFlyMorning(env, etNow) {
     await postMagnetFly(env, `🧲 **PNBF** ${todayISO} — **not today** · ${block} (calendar)`);
     return { morning: 'NO', reason: block };
   }
-  await mfSetToday(env, todayISO, { status: 'WAIT', pre: true,
+  await mfSetToday(env, todayISO, { status: 'POSSIBLE', pre: true,
     headline: 'PNBF possible today', detail: 'calendar clear · 11:30 heads-up, then 12:00 final' });
   await postMagnetFly(env, `🧲 **PNBF** ${todayISO} — **possible today** (calendar clear). ` +
     `11:30 ET heads-up next, 12:00 ET the final call.`);
@@ -5895,7 +5895,7 @@ async function handleMagnetFlyPreAlert(env, token, etNow, preChain) {
   if (inp.error) return { error: inp.error };
   const { magnet, center, entry } = inp;
   if (center == null) {
-    await mfSetToday(env, todayISO, { status: 'WAIT', pre: true,
+    await mfSetToday(env, todayISO, { status: 'POSSIBLE', pre: true,
       headline: 'Heads-up — no M8BF signal yet at 11:30', detail: 'watching for the noon check' });
     return { pre: 'PEND' };
   }
@@ -5918,7 +5918,7 @@ async function handleMagnetFlyPreAlert(env, token, etNow, preChain) {
     headline = `Likely no trade — center ${center} is ${dist} pts off magnet ${magnet}`;
   }
   await mfSetToday(env, todayISO, {
-    status: (lean.startsWith('LIKELY GO')) ? 'PRE-GO' : 'PRE-NO', pre: true, headline,
+    status: (lean.startsWith('LIKELY GO')) ? 'POSSIBLE' : 'PRE-NO', pre: true, headline,
     detail: `11:30 heads-up · noon check is final · ~88% of early calls hold`,
     kpis: [['magnet', magnet], ['M8BF center', center], ['distance', dist + ' pts'],
            ['30w debit', entry != null ? '$' + entry.toFixed(2) : 'n/a']] });

@@ -168,7 +168,7 @@ async function refresh(){
     const b = document.getElementById('banner'), bt = document.getElementById('bannerText'),
           bs = document.getElementById('bannerSub'), k = document.getElementById('todayKpis');
     const cls = t.status === 'GO' ? 'go' : t.status === 'NO' ? (t.pre ? 'preno' : 'no')
-              : t.status === 'PRE-GO' ? 'prego' : t.status === 'PRE-NO' ? 'preno' : 'wait';
+              : t.status === 'PRE-GO' || t.status === 'POSSIBLE' ? 'prego' : t.status === 'PRE-NO' ? 'preno' : 'wait';
     b.className = 'banner ' + cls;
     bt.innerHTML = (t.pre ? '<span class="heads">11:45 heads-up</span> ' : '') +
       (t.headline || 'waiting for noon check');
