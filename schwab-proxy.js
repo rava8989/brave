@@ -11308,7 +11308,33 @@ export default {
 
     if (url.pathname === '/magnetfly-test' && request.method === 'POST') {
       const secret = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
-      if (secret !== env.SYNC_SECRET) return jsonResp({ error: 'unauthorized' }, 401);
+      if (!secret || (secret !== env.SYNC_SECRET && secret !== env.GEXM_TRIGGER_TOKEN)) {
+        return jsonResp({ error: 'unauthorized' }, 401);
+      }
+      // ?dm=1 — OWNER DM ONLY example of the full signal-day alert set
+      // (9:40 / 11:30 / 12:00 as they'd read on a live GO day). Never the
+      // channel, never subscribers — same dmOnly discipline as the earnings
+      // card test.
+      if (url.searchParams.get('dm') === '1') {
+        const dcRaw = await env.SIGNAL_KV.get('discord_config');
+        const dc = dcRaw ? JSON.parse(dcRaw) : null;
+        if (!dc?.channelId) return jsonResp({ error: 'no owner DM channel' }, 500);
+        const ex = { date: 'EXAMPLE', magnet: 7550, center: 7555, entry: 14.85 };
+        const msg =
+          `🧲 **PNBF — EXAMPLE of a full signal day** (test, DM-only — real alerts land here + Sigma channel)\n\n` +
+          `**1️⃣ 9:40 ET** — 🧲 **PNBF** ${ex.date} — **possible today** (calendar clear). ` +
+          `11:30 ET heads-up next, 12:00 ET the final call. _[badge: POSSIBLE]_\n\n` +
+          `**2️⃣ 11:30 ET** — 🧲 **PNBF** ${ex.date} — **🟢 11:30 heads-up: LIKELY GO**\n` +
+          `Likely GO at noon — aligned, 30w ~$${ex.entry.toFixed(2)}\n` +
+          `_magnet ${ex.magnet} · center ${ex.center} · noon check is final (~88% of early calls hold)_ _[badge: POSSIBLE]_\n\n` +
+          `**3️⃣ 12:00 ET** — 🧲 **PNBF** ${ex.date} — **GO**\n` +
+          `BUY **10x** SPXW 0DTE call fly **${ex.magnet - 30} / ${ex.magnet} / ${ex.magnet + 30}** @ ~$${ex.entry.toFixed(2)}\n` +
+          `OCO: TP $${(ex.entry + 3).toFixed(2)} (+$3,000) · SL $${(ex.entry - 5).toFixed(2)} (−$5,000)\n` +
+          `magnet ${ex.magnet} (10:30 snap) · M8BF center ${ex.center} @09:35 · backtest 84% WR, 87 trades\n\n` +
+          `-# On no-signal days you get one short message (calendar skip or T1≠magnet) and the card shows NO.`;
+        const r = await sendDiscordDM(env, dc.channelId, msg, dc.proxyUrl);
+        return jsonResp({ ok: r.ok, dmOnly: true });
+      }
       const posted = await postMagnetFly(env,
         `🧲 **PNBF** — test card. Feed is wired (webhook ${await env.SIGNAL_KV.get('mf_webhook_url') ? 'SET' : 'NOT set — DM fallback'}). ` +
         `Recipe: 30w fly at magnet @12:00 when T1==magnet, debit ≤ $17, TP +3 / SL −5.`);
