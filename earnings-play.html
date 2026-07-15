@@ -392,14 +392,21 @@ function load() {
 function renderLiveBoard(b) {
   const vcls = v => v === 'LONG' ? 'long' : (v === 'CROWDED' ? 'crowded' : 'pass');
   const g = x => x === null ? '·' : x ? '<span class="g-ok">✓</span>' : '<span class="g-no">✗</span>';
-  document.querySelector('#board tbody').innerHTML = b.board.map(r =>
+  // Only scoreable (in-universe) names are worth eyes — outside-universe rows
+  // can never gate to LONG, so they're noise here just like in the Discord
+  // messages (owner 2026-07-15). One muted count line keeps the audit trail.
+  const scored = b.board.filter(r => !(r.notes || []).some(n => n.startsWith('outside universe')));
+  const outside = b.board.length - scored.length;
+  document.querySelector('#board tbody').innerHTML = (scored.length ? scored.map(r =>
     `<tr><td>${r.ticker}</td><td>${r.when}</td><td>${r.pw_ratio ?? '—'}${r.pw_ratio ? '×' : ''}</td>` +
     `<td>${r.deep_itm_usd ? '$' + (r.deep_itm_usd/1e6).toFixed(1) + 'M' : '—'}</td>` +
     `<td>${r.runup_2w != null ? (r.runup_2w*100).toFixed(1) + '%' : '—'}</td>` +
     `<td>${r.ath_dist != null ? (r.ath_dist*100).toFixed(0) + '%' : '—'}</td>` +
     `<td>${r.base_rate ?? '—'}${r.base_n ? ' (' + r.base_n + 'q)' : ''}</td>` +
     `<td>${g(r.g1)}</td><td>${g(r.g2)}</td><td>${g(r.g3)}</td>` +
-    `<td class="${vcls(r.verdict)}">${r.verdict}</td></tr>`).join('');
+    `<td class="${vcls(r.verdict)}">${r.verdict}</td></tr>`).join('')
+    : `<tr><td colspan="11" class="note" style="padding:14px">no in-universe reporters in this window</td></tr>`) +
+    (outside ? `<tr><td colspan="11" class="note" style="padding:8px 6px;font-size:11px">+ ${outside} outside-universe reporter${outside > 1 ? 's' : ''} hidden — no track record, can never be scored</td></tr>` : '');
   document.getElementById('boardDate').textContent =
     `${b.date} · live${b.final ? ' · FINAL' : ''} · VIX ${b.vix && b.vix.ratio != null ? b.vix.ratio : '—'}×`;
   _liveBoardPainted = true;
@@ -465,8 +472,9 @@ setInterval(loadStatus, 60_000);
 function render(d) {
   const b = document.getElementById('banner');
   b.classList.add('live');
+  const _scoreable = (d.board || []).filter(r => !(r.notes || []).some(n => n.startsWith('outside universe')));
   document.getElementById('bannerTitle').textContent = d.headline ||
-    `${d.board.filter(r => r.verdict === 'LONG').length} LONG / ${d.board.length} scored`;
+    `${_scoreable.filter(r => r.verdict === 'LONG').length} LONG / ${_scoreable.length} scored`;
   document.getElementById('bannerNote').textContent = d.note || 'scores refresh every 30 min during market hours';
   document.getElementById('updated').textContent = 'updated ' + (d.updated_et || '—') + ' ET';
   if (!_liveBoardPainted) document.getElementById('boardDate').textContent = d.session || '';
@@ -474,14 +482,17 @@ function render(d) {
   const vcls = v => v === 'LONG' ? 'long' : (v === 'CROWDED' ? 'crowded' : 'pass');
   // Static snapshot must never clobber a fresher live board (audit 2026-07-10).
   if (!_liveBoardPainted) {
-    document.querySelector('#board tbody').innerHTML = (d.board || []).map(r =>
+    const scored = (d.board || []).filter(r => !(r.notes || []).some(n => n.startsWith('outside universe')));
+    const outside = (d.board || []).length - scored.length;
+    document.querySelector('#board tbody').innerHTML = (scored.map(r =>
       `<tr><td>${r.ticker}</td><td>${r.when}</td>` +
       `<td>${fmt(r.pw_ratio)}×</td><td>${r.deep_itm_usd ? '$' + (r.deep_itm_usd/1e6).toFixed(1) + 'M' : '—'}</td>` +
       `<td>${pct(r.runup_2w)}</td><td>${pct(r.ath_dist)}</td>` +
       `<td>${r.base_rate == null ? '—' : (r.base_rate*100).toFixed(0) + '% (' + r.base_n + 'q)'}</td>` +
       `<td>${g(r.g1)}</td><td>${g(r.g2)}</td><td>${g(r.g3)}</td>` +
       `<td class="${vcls(r.verdict)}">${r.verdict}</td></tr>`).join('') ||
-      '<tr><td colspan="11" class="note">nobody reports in this window</td></tr>';
+      '<tr><td colspan="11" class="note">no in-universe reporters in this window</td></tr>') +
+      (outside ? `<tr><td colspan="11" class="note" style="padding:8px 6px;font-size:11px">+ ${outside} outside-universe reporter${outside > 1 ? 's' : ''} hidden — no track record, can never be scored</td></tr>` : '');
   }
 
   if (d.log_summary) {
