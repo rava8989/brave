@@ -5835,6 +5835,89 @@ async function mfSetToday(env, todayISO, obj) {
     { expirationTtl: 3 * 86400 });
 }
 
+// Shared input read: magnet (10:30 snap), M8BF center ≤cut, fly debit. Pure
+// read, no side effects — used by both the pre-alert and the noon check.
+async function mfReadInputs(env, token, etNow, preChain, cut) {
+  const todayISO = isoDateET(etNow);
+  let magnet = null, magnetSrc = '10:30 snap';
+  const snapRaw = await env.SIGNAL_KV.get(`mf_magnet_${todayISO}`);
+  if (snapRaw) magnet = JSON.parse(snapRaw).magnet;
+  if (magnet == null) {
+    const curRaw = await env.SIGNAL_KV.get('gex_current');
+    const cur = curRaw ? JSON.parse(curRaw) : null;
+    if (cur?.maxPosStrike != null) { magnet = cur.maxPosStrike; magnetSrc = 'live fallback'; }
+  }
+  if (magnet == null) return { error: 'no magnet available' };
+  if (!env.DISCORD_USER_TOKEN) return { error: 'no DISCORD_USER_TOKEN' };
+  const rows = await scrapeRawRowsForDate(env.DISCORD_USER_TOKEN, MF_SIGNALS_CHANNEL, todayISO);
+  let center = null, sigTime = null;
+  for (const line of rows || []) {
+    const c = line.split(',');
+    if (c.length < 25 || !c[2] || c[2] > cut) continue;
+    const bc = parseFloat(c[24]);
+    if (Number.isFinite(bc)) { center = bc; sigTime = c[2]; }
+  }
+  if (center == null) return { magnet, magnetSrc, center: null };
+  const chain = preChain || await fetchMasterSpxChain(token, env);
+  const q = mfFlyQuote(chain, todayISO, magnet);
+  const entry = q ? Math.round((q.mid + q.slip) * 100) / 100 : null;
+  return { magnet, magnetSrc, center, sigTime, entry };
+}
+
+// 11:45 ET heads-up — a LEAN advisory, not the trade. Idempotent via
+// mf_prealert_<date>. Honest confidence bands (measured on 182 days: an
+// early call matches the noon verdict ~88% of the time):
+//   calendar block → certain NO
+//   aligned + debit ≤ $15.5   → LIKELY GO
+//   aligned + debit $15.5–17  → LIKELY GO (borderline on price)
+//   aligned + debit > $17     → leaning NO (aligned but pricey)
+//   not aligned, |c−mag| ≤ 15 → ON THE FENCE (center could snap onto magnet)
+//   not aligned, |c−mag| > 15 → likely NO trade
+async function handleMagnetFlyPreAlert(env, token, etNow, preChain) {
+  const todayISO = isoDateET(etNow);
+  const block = mfCalendarBlock(etNow);
+  if (block) {
+    await mfSetToday(env, todayISO, { status: 'NO', pre: true,
+      headline: `Heads-up — no Magnet Fly today (${block})`, detail: 'certain: calendar filter, known in advance' });
+    await postMagnetFly(env, `🧲 **Magnet Fly** ${todayISO} — **heads-up: NO TRADE today** · ${block} (calendar, certain)`);
+    return { pre: 'NO', reason: block };
+  }
+  const inp = await mfReadInputs(env, token, etNow, preChain, '11:45');
+  if (inp.error) return { error: inp.error };
+  const { magnet, center, entry } = inp;
+  if (center == null) {
+    await mfSetToday(env, todayISO, { status: 'WAIT', pre: true,
+      headline: 'Heads-up — no M8BF signal yet at 11:45', detail: 'watching for the noon check' });
+    return { pre: 'PEND' };
+  }
+  const dist = Math.abs(center - magnet);
+  let lean, headline, emoji;
+  if (dist === 5 && entry != null && entry <= 15.5) {
+    lean = 'LIKELY GO'; emoji = '🟢';
+    headline = `Likely GO at noon — aligned, 30w ~$${entry.toFixed(2)}`;
+  } else if (dist === 5 && entry != null && entry <= 17) {
+    lean = 'LIKELY GO (borderline price)'; emoji = '🟡';
+    headline = `Leaning GO — aligned but 30w ~$${entry.toFixed(2)}, near the $17 cap`;
+  } else if (dist === 5) {
+    lean = 'LEANING NO (too pricey)'; emoji = '🟠';
+    headline = `Aligned but 30w ~$${entry != null ? entry.toFixed(2) : '?'} > $17 — leaning NO, watch for it to cheapen`;
+  } else if (dist <= 15) {
+    lean = 'ON THE FENCE'; emoji = '🟡';
+    headline = `On the fence — M8BF center ${center} is ${dist} off magnet ${magnet}; could snap on by noon`;
+  } else {
+    lean = 'LIKELY NO'; emoji = '⚪';
+    headline = `Likely no trade — center ${center} is ${dist} pts off magnet ${magnet}`;
+  }
+  await mfSetToday(env, todayISO, {
+    status: (lean.startsWith('LIKELY GO')) ? 'PRE-GO' : 'PRE-NO', pre: true, headline,
+    detail: `11:45 heads-up · noon check is final · ~88% of early calls hold`,
+    kpis: [['magnet', magnet], ['M8BF center', center], ['distance', dist + ' pts'],
+           ['30w debit', entry != null ? '$' + entry.toFixed(2) : 'n/a']] });
+  await postMagnetFly(env, `🧲 **Magnet Fly** ${todayISO} — **${emoji} 11:45 heads-up: ${lean}**\n` +
+    `${headline}\n_magnet ${magnet} · center ${center} · noon check is final (~88% of early calls hold)_`);
+  return { pre: lean, dist, entry };
+}
+
 // Noon check — idempotent via mf_done_<date>; caller retries within window.
 async function handleMagnetFlyNoon(env, token, etNow, preChain) {
   const todayISO = isoDateET(etNow);
@@ -6264,6 +6347,19 @@ async function handleScheduled(env) {
         console.warn('[diag] handler threw:', e.message);
       }
     }
+  }
+
+  // ── Magnet Fly 11:45 heads-up: 11:43–11:52 ET, idempotent via mf_prealert_<date>.
+  //    Advisory only — writes no trade; the noon check remains the source of truth.
+  const mfPreKey = `mf_prealert_${todayISO}`;
+  if (etHour === 11 && etMin >= 43 && etMin < 52) {
+    try {
+      if (!(await env.SIGNAL_KV.get(mfPreKey))) {
+        const pre = await handleMagnetFlyPreAlert(env, schwabToken, etNow, masterChain);
+        if (!pre.error) await env.SIGNAL_KV.put(mfPreKey, 'done', { expirationTtl: 86400 });
+        else console.warn('[mf-pre] retry next tick:', pre.error);
+      }
+    } catch (e) { console.warn('[mf-pre] threw:', e.message); }
   }
 
   // ── Magnet Fly noon check: 12:00–12:15 ET window, idempotent via mf_done_<date>.

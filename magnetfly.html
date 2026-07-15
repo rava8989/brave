@@ -38,6 +38,10 @@
   .banner.go .dot { background: var(--green); animation: none; }
   .banner.no .dot { background: var(--red); animation: none; }
   .banner.wait .dot { background: var(--muted); }
+  .banner.prego .dot { background: var(--green); }
+  .banner.preno .dot { background: var(--amber); }
+  .banner .heads { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--amber);
+                   border: 1px solid var(--amber); border-radius: 4px; padding: 1px 6px; }
   .banner b { font-size: 15px; }
   .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin: 8px 0 0; }
   .kpi { background: #0d1117; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
@@ -57,7 +61,7 @@
 <body>
 <div class="wrap">
   <h1>Magnet Fly <span class="tag">30-wide 0DTE fly on the gamma magnet · T1-confirmed · locked v3 (2026-07-15)</span></h1>
-  <p class="sub">Trades only when two independent models point at the same strike: the dealer-gamma magnet (max positive OI-basis GEX) and the M8BF service's T1. One bracket order a day, ~4 times a month.</p>
+  <p class="sub">Trades only when two independent models point at the same strike: the dealer-gamma magnet (max positive OI-basis GEX) and the M8BF service's T1. One bracket order a day, ~4 times a month. <span style="color:var(--amber)">Two alerts per day: an 11:45 ET heads-up (likely GO / likely NO — right ~88% of the time) and the final 12:00 ET call.</span></p>
 
   <div class="card" id="todayCard">
     <div class="banner wait" id="banner"><span class="dot"></span><b id="bannerText">Loading today's signal…</b><span class="note" id="bannerSub"></span></div>
@@ -163,8 +167,11 @@ async function refresh(){
     const t = await fetch(WORKER + '/magnetfly-today', {cache:'no-store'}).then(r => r.json());
     const b = document.getElementById('banner'), bt = document.getElementById('bannerText'),
           bs = document.getElementById('bannerSub'), k = document.getElementById('todayKpis');
-    b.className = 'banner ' + (t.status === 'GO' ? 'go' : t.status === 'NO' ? 'no' : 'wait');
-    bt.textContent = t.headline || 'waiting for noon check';
+    const cls = t.status === 'GO' ? 'go' : t.status === 'NO' ? (t.pre ? 'preno' : 'no')
+              : t.status === 'PRE-GO' ? 'prego' : t.status === 'PRE-NO' ? 'preno' : 'wait';
+    b.className = 'banner ' + cls;
+    bt.innerHTML = (t.pre ? '<span class="heads">11:45 heads-up</span> ' : '') +
+      (t.headline || 'waiting for noon check');
     bs.textContent = t.detail || '';
     if (t.kpis) {
       k.style.display = '';
