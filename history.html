@@ -287,7 +287,8 @@
   </div>
 
   <div class="rolling-pills" id="rollingPills">
-    <button class="schwab-btn primary" data-rolling="0" onclick="setRolling(0)">All Time</button>
+    <button class="schwab-btn primary" data-rolling="ytd" onclick="setYTD()">YTD</button>
+    <button class="schwab-btn" data-rolling="0" onclick="setRolling(0)">All Time</button>
     <button class="schwab-btn" data-rolling="30" onclick="setRolling(30)">30D</button>
     <button class="schwab-btn" data-rolling="60" onclick="setRolling(60)">60D</button>
     <button class="schwab-btn" data-rolling="90" onclick="setRolling(90)">90D</button>
@@ -426,6 +427,7 @@ let soloKey = null;
 let activeDays = {1:true,2:true,3:true,4:true,5:true};
 let vixRegime = 'all';
 let rollingWindow = 0;
+let ytdMode = true;   // default view = year-to-date (owner 2026-07-15)
 let logScale = false;
 let barChartMode = 'monthly';
 let cumChart = null;
@@ -512,8 +514,18 @@ function clearDateRange() {
 
 function setRolling(days) {
   rollingWindow = days;
+  ytdMode = false;
   document.querySelectorAll('.rolling-pills .schwab-btn').forEach(b => {
-    b.classList.toggle('primary', parseInt(b.dataset.rolling) === days);
+    b.classList.toggle('primary', b.dataset.rolling !== 'ytd' && parseInt(b.dataset.rolling) === days);
+  });
+  applyFilters();
+}
+
+function setYTD() {
+  ytdMode = true;
+  rollingWindow = 0;
+  document.querySelectorAll('.rolling-pills .schwab-btn').forEach(b => {
+    b.classList.toggle('primary', b.dataset.rolling === 'ytd');
   });
   applyFilters();
 }
@@ -564,9 +576,11 @@ function applyFilters() {
   if (dateStart) filtered = filtered.filter(r => r.date >= dateStart);
   if (dateEnd) filtered = filtered.filter(r => r.date <= dateEnd);
 
-  // Step 5: rolling window (apply to the already-filtered set)
-  if (rollingWindow > 0) {
-    const sorted = filtered.slice().sort((a,b) => b.date.localeCompare(a.date));
+  // Step 5: YTD or rolling window (mutually exclusive — same pill group)
+  if (ytdMode) {
+    const yStart = new Date().getFullYear() + '-01-01';
+    filtered = filtered.filter(r => r.date >= yStart);
+  } else if (rollingWindow > 0) {
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - rollingWindow);
     const cutStr = cutoffDate.toISOString().slice(0,10);
