@@ -235,7 +235,7 @@
 </div>
 
 <div class="main" id="scalpSection" style="display:none;">
-  <!-- Dynamically rendered by renderScalp() — Scalp M8BF paper trade (magnetfly-today) -->
+  <!-- Dynamically rendered by renderScalp() — PNBF paper trade (magnetfly-today) -->
 </div>
 
 
@@ -729,7 +729,7 @@ function renderTail() {
   sec.innerHTML = html.join('');
 }
 
-// ─── Scalp M8BF (companion paper trade — /magnetfly-today feed). 30-wide 0DTE
+// ─── PNBF (companion paper trade — /magnetfly-today feed). 30-wide 0DTE
 // call fly bought ON the gamma magnet at noon, sized at 10 lots. entry/tp/sl/
 // lastMid are in POINTS; pnl is PER-LOT dollars (×10 for the 10-lot display).
 // Same 30s cadence as every other section. ─────────────────────────────────
@@ -752,7 +752,7 @@ function renderScalp() {
   const html = [];
   html.push(`<div class="diag-card">`);
   html.push(`<div class="diag-header">`);
-  html.push(`<div class="diag-title">🧲 <span>Scalp M8BF</span></div>`);
+  html.push(`<div class="diag-title">🧲 <span>PNBF</span></div>`);
 
   if (isGo && t) {
     // Open or closed paper position on the magnet.

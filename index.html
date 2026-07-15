@@ -674,10 +674,10 @@
       </div>
     </div>
 
-    <!-- CARD 7: Scalp M8BF (companion — paper-tracked candidate, added 2026-07-15) -->
-    <div class="scard" id="cardScalp" title="Scalp M8BF — 30-wide 0DTE SPXW call fly bought ON the day's gamma magnet at 12:00 ET, only when the M8BF service's fly center sits exactly 5 pts from the magnet (its T1 IS the magnet) and the debit ≤ $17.00. Skips EOM, CPI, FED, and Mon–Thu of monthly OPEX week. Paper OCO bracket: TP +3.0 (+$300/lot) / SL −5.0 (−$500/lot). Traded at 10 contracts, signals via the Sigma channel + DMs. Backtest Sep 2024→Jun 2026: 87 trades, 83.9% WR, +$171/lot, PF 3.13. Full record: magnetfly.html.">
+    <!-- CARD 7: PNBF (companion — paper-tracked candidate, added 2026-07-15) -->
+    <div class="scard" id="cardScalp" title="PNBF — 30-wide 0DTE SPXW call fly bought ON the day's gamma magnet at 12:00 ET, only when the M8BF service's fly center sits exactly 5 pts from the magnet (its T1 IS the magnet) and the debit ≤ $17.00. Skips EOM, CPI, FED, and Mon–Thu of monthly OPEX week. Paper OCO bracket: TP +3.0 (+$300/lot) / SL −5.0 (−$500/lot). Traded at 10 contracts, signals via the Sigma channel + DMs. Backtest Sep 2024→Jun 2026: 87 trades, 83.9% WR, +$171/lot, PF 3.13. Full record: magnetfly.html.">
       <div class="scard-header">
-        <span class="scard-label">🧲 Scalp M8BF <span style="font-weight:400;font-size:10px;opacity:.7;letter-spacing:normal;text-transform:none">· paper</span></span>
+        <span class="scard-label">🧲 PNBF <span style="font-weight:400;font-size:10px;opacity:.7;letter-spacing:normal;text-transform:none">· paper</span></span>
         <span class="today-trade-pill" id="pillScalp" style="display:none;">▶ TODAY'S TRADE</span>
         <span class="scard-badge" id="scalpBadge">—</span>
       </div>
@@ -1024,7 +1024,7 @@
     <div class="strategy-image"><img src="./stat.jpg" alt="Stats" loading="lazy" /></div>
 
     <hr class="divider">
-    <h3>Scalp M8BF <span style="font-weight:400;font-size:12px;color:var(--text3)">(now part of Sigma 3, added 2026-07-15 — traded at 10 contracts; live record on <a href="magnetfly.html">magnetfly.html</a>)</span></h3>
+    <h3>PNBF (Pin Butterfly) <span style="font-weight:400;font-size:12px;color:var(--text3)">(now part of Sigma 3, added 2026-07-15 — traded at 10 contracts; live record on <a href="magnetfly.html">magnetfly.html</a>)</span></h3>
     <ul>
       <li><strong>Now part of Sigma 3.</strong> Traded at <strong>10 contracts</strong> by default, with signals delivered through the <strong>Sigma channel + DMs</strong> like the other strategies. Two heads-up alerts fire first — a <strong>9:40 ET</strong> "possible / not" read and an <strong>11:30 ET</strong> heads-up — then the <strong>12:00 ET final call</strong>.</li>
       <li><strong>Signal:</strong> at the 12:00 ET final call, the M8BF service's fly center sits exactly 5 pts from the day's gamma magnet (max positive OI-basis GEX strike, 10:30 snapshot) — i.e. its Target&nbsp;1 IS the magnet. Fires ~35% of days.</li>
@@ -3793,7 +3793,7 @@
     return _tailHedgeState?.text ? `Tail Hedge │ ${_tailHedgeState.text}` : null;
   }
 
-  // ── Scalp M8BF daily signal (companion, paper-tracked) — reads the live
+  // ── PNBF daily signal (companion, paper-tracked) — reads the live
   //    worker's /magnetfly-today (same feed as magnetfly.html) and mirrors the
   //    status onto the dashboard card. GO/PRE-GO = green, NO/PRE-NO = red,
   //    WAIT/other = grey. Refreshed on load + every 60s (see DOMContentLoaded).
@@ -3821,7 +3821,7 @@
       if (reason) reason.innerHTML = sub;
     } catch(e) {
       if (badge) badge.textContent = '—';
-      rec.textContent = 'Scalp M8BF: signal unavailable. See magnetfly.html.';
+      rec.textContent = 'PNBF: signal unavailable. See magnetfly.html.';
       if (reason) reason.innerHTML = '';
     }
   }
@@ -3837,7 +3837,7 @@
     refreshCross(); buildStatus(); buildNextEvents(); updateHeader();
     updateTailHedgeStatus();
     updateScalpM8bfStatus();
-    setInterval(updateScalpM8bfStatus, 60000);   // Scalp M8BF live signal — refresh every 60s
+    setInterval(updateScalpM8bfStatus, 60000);   // PNBF live signal — refresh every 60s
     // On CPI days only Diagonal trades, and Diagonal only needs today's VIX
     // open. 2026-06-10 (user request): do NOT disable the yesterday fields —
     // auto-filled values must ALWAYS stay manually editable so the user can

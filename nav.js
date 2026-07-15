@@ -14,7 +14,7 @@
     ['cyclicality.html',           '◐ CycleLab'],
     ['gex.html',                   'Γ GEX'],
     ['earnings-play.html',         '🌙 Earnings'],
-    ['magnetfly.html',             '🧲 Scalp M8BF'],
+    ['magnetfly.html',             '🧲 PNBF'],
   ];
   function build() {
     const here = (location.pathname.split('/').pop() || 'index.html');

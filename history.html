@@ -258,7 +258,7 @@
     <div class="strat-pill active" data-strat="bobf" onclick="toggleStrat('bobf')" ondblclick="soloStrat('bobf')">BOBF</div>
     <div class="strat-pill active" data-strat="diagonal" onclick="toggleStrat('diagonal')" ondblclick="soloStrat('diagonal')" title="1/25 put-diagonal — entry anywhere in the 12:30–15:00 ET window, exit at the same clock time next day (24-hour hold, Entry Time === Exit Time, one diagonal active at a time); sDTE=1, +10 ITM, lDTE=25, −20 below (long 10 OTM, width 20); OPEX-1 + EOM + EOM-1 + NM + VIX 50–80% + COR1M≥10 excluded (default; 2026-06-09 safer-tail retune from 30/40 + VIX 50-90)">Diagonal</div>
     <div class="strat-pill active" data-strat="tail" onclick="toggleStrat('tail')" ondblclick="soloStrat('tail')" title="Tail Hedge — Convex Tail preset (threshold 7.75, delta -0.10, VVIX<110). Buy 0DTE SPX put at 9:45 ET on any COR1M cross below 7.75 — 2 contracts when overnight VIX is down, else 1; hold to 4 PM. Companion strategy, not part of Sigma 3.">Tail Hedge</div>
-    <div class="strat-pill active" data-strat="scalp" onclick="toggleStrat('scalp')" ondblclick="soloStrat('scalp')" title="Scalp M8BF — 30-wide 0DTE SPXW call fly bought ON the day's gamma magnet at 12:00 ET when the M8BF service's fly center sits exactly 5 pts from the magnet (T1 IS the magnet) and the debit ≤ $17.00. Skips EOM, CPI, FED, and Mon–Thu of monthly OPEX week. OCO bracket TP +3.0 / SL −5.0. Traded at 10 contracts; scalpPL is already 10-lot-sized dollars. Live record on magnetfly.html.">🧲 Scalp</div>
+    <div class="strat-pill active" data-strat="scalp" onclick="toggleStrat('scalp')" ondblclick="soloStrat('scalp')" title="PNBF — 30-wide 0DTE SPXW call fly bought ON the day's gamma magnet at 12:00 ET when the M8BF service's fly center sits exactly 5 pts from the magnet (T1 IS the magnet) and the debit ≤ $17.00. Skips EOM, CPI, FED, and Mon–Thu of monthly OPEX week. OCO bracket TP +3.0 / SL −5.0. Traded at 10 contracts; scalpPL is already 10-lot-sized dollars. Live record on magnetfly.html.">🧲 PNBF</div>
   </div>
 
   <div class="filter-bar" id="filterBar">
@@ -928,7 +928,7 @@ async function init() {
         bobfPL: cur.bobfPL != null ? cur.bobfPL : null,
         diagPL: cur.diagPL != null ? cur.diagPL : null,
         tailPL: cur.tailPL != null ? cur.tailPL : null,
-        scalpPL: cur.scalpPL != null ? cur.scalpPL : null,   // Scalp M8BF — already 10-lot-sized dollars
+        scalpPL: cur.scalpPL != null ? cur.scalpPL : null,   // PNBF — already 10-lot-sized dollars
         prevWR: prevWR != null ? prevWR : null,
         signal,
         specialDayText: buildSpecialDayText(signal),
@@ -974,7 +974,7 @@ const cols = [
   { key:'bobfPL',      label:'BOBF',       type:'stratPL' },
   { key:'diagPL',      label:'Diagonal',   type:'stratPL' },
   { key:'tailPL',      label:'Tail Hedge', type:'stratPL' },
-  { key:'scalpPL',     label:'🧲 Scalp',   type:'stratPL' },
+  { key:'scalpPL',     label:'🧲 PNBF',   type:'stratPL' },
   { key:'totalPL',     label:'Total',      type:'stratPL' },
   { key:'specialDay',  label:'Special',    type:'string'  },
 ];
@@ -1613,7 +1613,7 @@ function renderChart() {
     { label:'BOBF',     data:cumBobf,  borderColor:'#fb923c', backgroundColor:'rgba(251,146,60,.1)',  tension:.3, borderWidth:2, pointRadius:0, pointHitRadius:6, hidden:!activeStrats.bobf, yAxisID:'y' },
     { label:'Diagonal', data:cumDiag,  borderColor:'#4ade80', backgroundColor:'rgba(74,222,128,.1)',  tension:.3, borderWidth:2, pointRadius:0, pointHitRadius:6, hidden:!activeStrats.diagonal, yAxisID:'y' },
     { label:'Tail Hedge', data:cumTail, borderColor:'#06b6d4', backgroundColor:'rgba(6,182,212,.1)',  tension:.3, borderWidth:2, pointRadius:0, pointHitRadius:6, hidden:!activeStrats.tail, yAxisID:'y' },
-    { label:'🧲 Scalp', data:cumScalp, borderColor:'#f472b6', backgroundColor:'rgba(244,114,182,.1)', tension:.3, borderWidth:2, pointRadius:0, pointHitRadius:6, hidden:!activeStrats.scalp, yAxisID:'y' },
+    { label:'🧲 PNBF', data:cumScalp, borderColor:'#f472b6', backgroundColor:'rgba(244,114,182,.1)', tension:.3, borderWidth:2, pointRadius:0, pointHitRadius:6, hidden:!activeStrats.scalp, yAxisID:'y' },
     { label:'Combined', data:cumAll,   borderColor: isDark?'#e2e8f0':'#1e293b', backgroundColor: isDark?'rgba(226,232,240,.08)':'rgba(30,41,59,.08)', tension:.3, borderWidth:2.5, pointRadius:0, pointHitRadius:6, borderDash:[6,3], yAxisID:'y' },
     // Drawdown overlay
     { label:'Drawdown', data:ddAll, borderColor:'rgba(239,68,68,.6)', backgroundColor:'rgba(239,68,68,.15)', fill:'origin', tension:.3, borderWidth:1, pointRadius:0, pointHitRadius:4, yAxisID:'y2' },
