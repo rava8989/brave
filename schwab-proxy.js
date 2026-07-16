@@ -12014,7 +12014,7 @@ export default {
          '/cot-refresh-now', '/watchdog-now', '/weekly-digest-now', '/vix-decomp-now',
          '/remirror-history'].includes(url.pathname)) {
       const s = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
-      if (!s || s !== env.SYNC_SECRET) return jsonResp({ error: 'Unauthorized' }, 401, corsHeaders);
+      if (!s || (s !== env.SYNC_SECRET && s !== env.GEXM_TRIGGER_TOKEN)) return jsonResp({ error: 'Unauthorized' }, 401, corsHeaders);
     }
 
     if (url.pathname === '/cyclicality-append-now' && request.method === 'GET') {
