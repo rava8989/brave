@@ -13637,27 +13637,22 @@ export default {
           } catch (_) {}
           // Score our own advisory claims (GEX regime + Day-type + Vol-flow cells)
           try { await scoreAdvisories(env); } catch (e) { console.warn('[scorecard]', e.message); }
+          // EVENING PREVIEW MESSAGE KILLED (owner 2026-07-16: "I don't find any
+          // of these messages useful"). All the underlying work above (health
+          // checks, COR1M capture, research persists, vol-flow decomp, tilt)
+          // still runs — it feeds the dashboard, morning message, and research.
+          // The ONLY message that survives is the Schwab token-expiry warning,
+          // now a standalone DM whenever it fires (≤3.5 days left) — that
+          // warning is what the 2026-07-12 token death lacked.
           const dcRaw = await env.SIGNAL_KV.get('discord_config');
           if (dcRaw) {
             const dc = JSON.parse(dcRaw);
-            if (dc.channelId) {
-              let scoreLine = null;
-              try { scoreLine = await scorecardLine(env, etP); } catch (_) {}
-              const msg = `🌙 **Tomorrow — ${todayLong(tm)} (${tradeWdLabel(tm)})**\n` +
-                (tags.length ? tags.map(t => `• ${t}`).join('\n') : '• No special days — all strategies on their own merits') +
-                `\n${health.join(' · ')}` +
-                (tokenWarn ? `\n${tokenWarn}` : '') +
-                (tiltP ? `\n${tiltP.replace('   │', ':')}` : '') +
-                (volP ? `\n${volP}` : '') +
-                (scoreLine ? `\n${scoreLine}` : '');
-              await sendDiscordDM(env, dc.channelId, msg, dc.proxyUrl);
-              // ≤1 day left → a second, standalone ping so it can't be missed
-              // inside the preview wall of text.
-              if (tokenDaysLeft != null && tokenDaysLeft <= 1) {
-                await sendDiscordDM(env, dc.channelId,
-                  `🚨 **SCHWAB TOKEN DIES WITHIN 24H** — without re-auth the bot cannot trade tomorrow.\nDashboard → Connect Schwab.`,
-                  dc.proxyUrl);
-              }
+            if (dc.channelId && tokenWarn) {
+              await sendDiscordDM(env, dc.channelId,
+                (tokenDaysLeft != null && tokenDaysLeft <= 1)
+                  ? `🚨 **SCHWAB TOKEN DIES WITHIN 24H** — without re-auth the bot cannot trade tomorrow.\nDashboard → Connect Schwab.`
+                  : tokenWarn,
+                dc.proxyUrl);
             }
           }
         }
