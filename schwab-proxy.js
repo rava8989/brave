@@ -5886,9 +5886,12 @@ async function handleMagnetFlyPreAlert(env, token, etNow, preChain) {
   const todayISO = isoDateET(etNow);
   const block = mfCalendarBlock(etNow);
   if (block) {
+    // NO post on calendar-blocked days (owner 2026-07-15: "I don't need a
+    // heads-up on days we don't trade, like mid-OPEX week"). These skips are
+    // known days in advance and the morning Plan card row already reads NO.
+    // KV write stays so the card + magnetfly.html show the state.
     await mfSetToday(env, todayISO, { status: 'NO', pre: true,
-      headline: `Heads-up — no PNBF today (${block})`, detail: 'certain: calendar filter, known in advance' });
-    await postMagnetFly(env, `🧲 **PNBF** ${todayISO} — **heads-up: NO TRADE today** · ${block} (calendar, certain)`);
+      headline: `No PNBF today (${block})`, detail: 'calendar filter, known in advance' });
     return { pre: 'NO', reason: block };
   }
   const inp = await mfReadInputs(env, token, etNow, preChain, '11:30');
