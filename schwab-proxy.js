@@ -7926,7 +7926,6 @@ function calculateGEX(chainData, spot, onlyNearest = false) {
       netGexVol: Math.round(s.netGexVol),   // per-strike flow GEX (signed volume — today's book)
     })),
     events: [],
-    commentary: null,
     updatedAt: new Date().toISOString(),
     expiry: expiriesToUse[0],
     expiryCount: expiriesToUse.length,
@@ -8090,35 +8089,8 @@ async function handleGEXUpdate(env, token, preChain = null) {
     } catch (e) { console.warn('[gex] event log save failed:', e.message); }
   }
 
-  // 5b. Generate AI commentary (every 15 min + on big events, 200/day hard limit)
-  // Reuse prevRaw from step 5 to carry forward existing commentary
-  const prevParsed = prevRaw ? JSON.parse(prevRaw) : null;
-  try {
-    const commentary = await generateGEXCommentary(env, gexData, events);
-    if (commentary) {
-      gexData.commentary = commentary;
-      gexData.commentaryAt = new Date().toISOString();
-      // Append to daily commentary log
-      try {
-        const etNow2 = toET();
-        const todayISO2 = `${etNow2.getFullYear()}-${String(etNow2.getMonth()+1).padStart(2,'0')}-${String(etNow2.getDate()).padStart(2,'0')}`;
-        const cLogKey = `gex_commentary_${todayISO2}`;
-        const cLogRaw = await env.SIGNAL_KV.get(cLogKey);
-        const cLog = cLogRaw ? JSON.parse(cLogRaw) : [];
-        cLog.push({ text: commentary, ts: gexData.commentaryAt, spot: gexData.spot, regime: gexData.regime });
-        await env.SIGNAL_KV.put(cLogKey, JSON.stringify(cLog), { expirationTtl: 86400 });
-      } catch (e2) { console.warn('[gex] commentary log save failed:', e2.message); }
-    } else if (prevParsed?.commentary) {
-      gexData.commentary = prevParsed.commentary;
-      gexData.commentaryAt = prevParsed.commentaryAt || null;
-    }
-  } catch (e) {
-    console.warn('[proxy] Commentary generation failed:', e.message || e);
-    if (prevParsed?.commentary) {
-      gexData.commentary = prevParsed.commentary;
-      gexData.commentaryAt = prevParsed.commentaryAt || null;
-    }
-  }
+  // (5b AI commentary REMOVED — owner 2026-07-17. The generator had been dead
+  // since April and the carry-forward served a 3-month-stale snapshot forever.)
 
   // 5c. Append today's traded-volume snapshot to a daily intraday flow series,
   //     AND classify it by trade-side. SNAPSHOT PROXY (not tick-level Lee-Ready):
@@ -8214,124 +8186,6 @@ async function handleGEXUpdate(env, token, preChain = null) {
   // durable GEX record; intraday state lives in KV where it belongs.
 
   return { gex: 'updated', regime: gexData.regime, totalGex: gexData.totalGex, events };
-}
-
-// ════════════════════════════════════════════════════════════════════
-// CLAUDE API COMMENTARY — 200 calls/day hard limit
-// Generates dealer hedging commentary from GEX data.
-// Runs every 15 min + immediately on big events (regime_flip, gex_surge, wall_break).
-// ════════════════════════════════════════════════════════════════════
-
-const ANTHROPIC_DAILY_LIMIT = 200;
-
-async function getAnthropicCallCount(env) {
-  const etNow = toET(new Date());
-  const dateKey = `anthropic_calls_${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
-  const raw = await env.SIGNAL_KV.get(dateKey);
-  return { count: raw ? parseInt(raw) : 0, dateKey };
-}
-
-async function incrementAnthropicCallCount(env, dateKey, currentCount) {
-  await env.SIGNAL_KV.put(dateKey, String(currentCount + 1), { expirationTtl: 172800 }); // auto-expire after 48h
-}
-
-async function generateGEXCommentary(env, gexData, events) {
-  const apiKey = env.ANTHROPIC_API_KEY;
-  if (!apiKey) return null;
-
-  // ── Hard daily limit check ──
-  const { count, dateKey } = await getAnthropicCallCount(env);
-  if (count >= ANTHROPIC_DAILY_LIMIT) {
-    console.warn(`[proxy] Anthropic daily limit reached (${count}/${ANTHROPIC_DAILY_LIMIT})`);
-    return null;
-  }
-
-  // ── Should we generate? Every 15 min OR on big events ──
-  const hasBigEvent = events.includes('regime_flip') || events.includes('wall_break') || events.includes('gex_surge');
-  const lastCommentaryRaw = await env.SIGNAL_KV.get('gex_last_commentary_ts');
-  const lastCommentaryTs = lastCommentaryRaw ? parseInt(lastCommentaryRaw) : 0;
-  const timeSinceCommentary = Date.now() - lastCommentaryTs;
-
-  if (!hasBigEvent && timeSinceCommentary < 300_000) { // 5 min = 300,000 ms
-    return null; // not time yet, no big event
-  }
-
-  // ── Build prompt ──
-  const top5Walls = (gexData.walls || []).slice(0, 5).map(w =>
-    `  ${w.strike}: net ${w.netGex > 0 ? '+' : ''}${(w.netGex/1e6).toFixed(1)}M (${w.direction})`
-  ).join('\n');
-
-  const eventDesc = events.length > 0
-    ? `EVENTS JUST DETECTED: ${events.join(', ')}`
-    : 'No new events';
-
-  const prompt = `You are a professional options market analyst. Analyze this real-time SPX Gamma Exposure (GEX) data and provide a concise dealer hedging commentary.
-
-CURRENT GEX SNAPSHOT:
-- SPX Spot: ${gexData.spot}
-- Regime: ${gexData.regime} (${gexData.regime === 'PIN' ? 'dealers are long gamma → they sell rallies/buy dips → stabilizing, expect mean reversion' : 'dealers are short gamma → they buy rallies/sell dips → amplifying, expect trending/volatile moves'})
-- Total GEX: ${(gexData.totalGex/1e6).toFixed(1)}M
-- GEX Flip Strike: ${gexData.flipStrike || 'N/A'}
-- Max Positive Gamma: ${gexData.maxPosStrike} (${(gexData.maxPosGex/1e6).toFixed(1)}M) — dealers sell here
-- Max Negative Gamma: ${gexData.maxNegStrike} (${(gexData.maxNegGex/1e6).toFixed(1)}M) — dealers buy here
-- 1-min % change: ${gexData.pctChange1m != null ? gexData.pctChange1m + '%' : 'N/A'}
-- 5-min % change: ${gexData.pctChange5m != null ? gexData.pctChange5m + '%' : 'N/A'}
-
-TOP 5 GEX WALLS:
-${top5Walls}
-
-${eventDesc}
-
-Provide exactly 2-3 sentences of actionable dealer hedging commentary. Focus on:
-1. What dealers are likely doing RIGHT NOW based on spot vs key levels
-2. Expected price behavior given the regime and GEX profile
-3. Key strikes to watch
-
-Then add a final line starting with "Bottom line:" — a single short plain-English sentence (no jargon) summarizing what this means for price direction. Example: "Bottom line: expect choppy sideways action around 5500."
-
-Be direct and technical in the main commentary. No disclaimers. Use trader language.`;
-
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
-    let resp;
-    try {
-      resp = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 300,
-          messages: [{ role: 'user', content: prompt }],
-        }),
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-    } catch (e) { clearTimeout(timeout); throw e; }
-
-    if (!resp.ok) {
-      const errText = await resp.text();
-      console.warn(`[proxy] Anthropic API error ${resp.status}: ${errText.slice(0, 200)}`);
-      return null;
-    }
-
-    const result = await resp.json();
-    const text = result.content?.[0]?.text || null;
-
-    // ── Increment call count AFTER successful call ──
-    await incrementAnthropicCallCount(env, dateKey, count);
-    await env.SIGNAL_KV.put('gex_last_commentary_ts', String(Date.now()));
-
-    console.log(`[proxy] Anthropic call ${count + 1}/${ANTHROPIC_DAILY_LIMIT} — commentary generated`);
-    return text;
-  } catch (e) {
-    console.warn('[proxy] Anthropic API call failed:', e.message || e);
-    return null;
-  }
 }
 
 async function commitGexToGitHub(env, gexData) {
@@ -13066,8 +12920,6 @@ export default {
           parsed.gexMode = actualMode; // tells frontend which mode is actually served
           const logRaw = await env.SIGNAL_KV.get(`gex_events_${todayISO2}`);
           if (logRaw) parsed.eventLog = JSON.parse(logRaw);
-          const cLogRaw = await env.SIGNAL_KV.get(`gex_commentary_${todayISO2}`);
-          if (cLogRaw) parsed.commentaryLog = JSON.parse(cLogRaw);
           // Intraday call-vs-put flow series for the "Call vs Put Flow — Today" chart
           const flowRaw = await env.SIGNAL_KV.get(`gex_flow_${todayISO2}`);
           parsed.flowSeries = flowRaw ? JSON.parse(flowRaw) : [];
