@@ -8212,6 +8212,37 @@ function computeShadowT1(g) {
   return { sp: Math.round(spot * 100) / 100, cw, pw, t1, t2, ctr };
 }
 
+// Browser view for /shadow-t1 (raw JSON stays the default for scripts/curl).
+function shadowT1Html(out) {
+  const m = out.match || {};
+  const chip = (l, v) => `<div class="tile"><b>${v == null ? '—' : v}</b><span>${l}</span></div>`;
+  const pct = (v) => v == null ? null : v + '%';
+  const eq = (a, b) => a != null && a === b;
+  const pair = (s, f) => `<td>${s ?? '—'}</td><td class="${eq(s, f) ? 'ok' : 'bad'}">${f ?? '—'}</td>`;
+  const rows = (out.joined || []).map(j =>
+    `<tr><td>${j.slot}</td><td>${j.shadow.sp}</td>` + pair(j.shadow.cw, j.feed.cw) +
+    pair(j.shadow.pw, j.feed.pw) + pair(j.shadow.t1, j.feed.t1) + pair(j.shadow.ctr, j.feed.ctr) + '</tr>').join('');
+  return `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Shadow T1 · ${out.date}</title><style>
+body{background:#0d1117;color:#e6edf3;font:14px -apple-system,system-ui,sans-serif;margin:24px auto;max-width:880px;padding:0 12px}
+h1{font-size:17px;margin:0 0 4px} .sub{color:#8b949e;font-size:12.5px;margin-bottom:18px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:10px;margin-bottom:18px}
+.tile{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:10px;text-align:center}
+.tile b{display:block;font-size:18px;font-family:ui-monospace,Menlo,monospace}
+.tile span{color:#8b949e;font-size:10.5px;text-transform:uppercase;letter-spacing:.5px}
+table{border-collapse:collapse;width:100%;font-family:ui-monospace,Menlo,monospace;font-size:12.5px}
+th,td{padding:5px 8px;text-align:right;border-bottom:1px solid #21262d}
+th{color:#8b949e;font-weight:500;font-size:11px}
+td:first-child,th:first-child{text-align:left}
+.ok{color:#3fb950}.bad{color:#f85149}
+</style>
+<h1>Shadow T1 vs Discord feed — ${out.date}</h1>
+<div class="sub">shadow = our own 0DTE GEX walls · feed = his prints · pairs are shadow → feed, green feed = exact match · ?date=YYYY-MM-DD for other days</div>
+<div class="tiles">${chip('slots', m.slots ?? out.n)}${chip('call wall', pct(m.callWallPct))}${chip('put wall', pct(m.putWallPct))}${chip('T1', pct(m.t1Pct))}${chip('center', pct(m.centerPct))}${chip('center ±5', pct(m.centerWithin5Pct))}</div>
+<table><tr><th>slot</th><th>spot</th><th colspan="2">call wall</th><th colspan="2">put wall</th><th colspan="2">T1</th><th colspan="2">center</th></tr>
+${rows || '<tr><td colspan="10">no joined slots yet — snapshots land every 5 min during market hours</td></tr>'}</table>`;
+}
+
 async function logShadowT1(env, gex0dte) {
   const et = toET(new Date());
   const mm = et.getMinutes();
@@ -12858,6 +12889,11 @@ export default {
             centerPct: Math.round(100 * ctrOk / n), centerWithin5Pct: Math.round(100 * ctr5 / n),
           } : { slots: 0 };
           out.joined = joined;
+        }
+        const wantsHtml = (request.headers.get('Accept') || '').includes('text/html')
+          && url.searchParams.get('fmt') !== 'json';
+        if (wantsHtml) {
+          return new Response(shadowT1Html(out), { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8', ...cors } });
         }
         return new Response(JSON.stringify(out), { status: 200, headers: { 'Content-Type': 'application/json', ...cors } });
       } catch (e) {
