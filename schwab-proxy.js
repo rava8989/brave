@@ -8188,6 +8188,102 @@ async function handleGEXUpdate(env, token, preChain = null) {
   return { gex: 'updated', regime: gexData.regime, totalGex: gexData.totalGex, events };
 }
 
+// ── Phone MCP connector ──────────────────────────────────────────────
+// Minimal MCP (JSON-RPC over streamable HTTP) so claude.ai chats on the
+// owner's phone can read the live feeds + banked research. Auth = secret
+// URL path segment (env.MCP_TOKEN). Read-only tools; nothing mutates.
+const MCP_TOOLS = [
+  { name: 'gex_now',
+    description: "Live SPX GEX dashboard snapshot: spot, regime, total GEX, top walls, charm/vanna, signed options flow. Call this first for any 'what is happening right now' question.",
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+  { name: 'plan_today',
+    description: "Today's Sigma 3 signal state: M8BF feed count + latest center/T1, PNBF status headline.",
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+  { name: 'research_notes',
+    description: 'House research context: validated verdicts with numbers, strategy recipes, the t>=4 deployment bar, and the column legend + example filters for research_days. Read this BEFORE any analysis or backtest-style answer.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+  { name: 'research_days',
+    description: "751-day per-day research table (CSV, 2023-06 to 2026-07): 14:00 GEX/wall geometry, M8BF center gap, every strategy's daily P/L, the 13:20 straddle/put study, calendar flags. Answer 'how did X perform on days like this' by filtering rows and computing n / win rate / mean / median yourself. Column legend lives in research_notes.",
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+];
+
+async function mcpToolText(env, name) {
+  if (name === 'research_notes') {
+    return (await env.SIGNAL_KV.get('research_notes_v1')) || 'notes not loaded';
+  }
+  if (name === 'research_days') {
+    return (await env.SIGNAL_KV.get('research_days_v1')) || 'table not loaded';
+  }
+  if (name === 'gex_now') {
+    const raw = await env.SIGNAL_KV.get('gex_current');
+    if (!raw) return 'no GEX snapshot available (market closed and no cache?)';
+    const g = JSON.parse(raw);
+    const walls = (g.walls || []).slice(0, 8)
+      .map(w => `${w.strike} ${(w.netGex / 1e9).toFixed(1)}B ${w.direction}`).join(' · ');
+    const todayISO = isoDateET(toET(new Date()));
+    let flowLine = 'no flow ticks yet';
+    try {
+      const fr = await env.SIGNAL_KV.get(`gex_flow_${todayISO}`);
+      const fs = fr ? JSON.parse(fr).slice(-5) : [];
+      if (fs.length) {
+        const cb = fs.reduce((a, t) => a + (t.cb || 0) - (t.cs || 0), 0);
+        const pb = fs.reduce((a, t) => a + (t.pb || 0) - (t.ps || 0), 0);
+        flowLine = `signed flow last ${fs.length} ticks: calls net ${cb >= 0 ? '+' : ''}${cb} · puts net ${pb >= 0 ? '+' : ''}${pb} (buys minus sells)`;
+      }
+    } catch (_) {}
+    return [
+      `as of ${g.updatedAt} · SPX ${g.spot} · regime ${g.regime} · total GEX ${(g.totalGex / 1e9).toFixed(1)}B`,
+      `flip ${g.flipStrike ?? 'none'} · maxPos ${g.maxPosStrike} · maxNeg ${g.maxNegStrike} · charm ${(g.charm / 1e12).toFixed(2)}T · vanna ${(g.vanna / 1e12).toFixed(2)}T · P/C vol ${g.pcRatio}`,
+      `top walls: ${walls}`, flowLine,
+    ].join('\n');
+  }
+  if (name === 'plan_today') {
+    const todayISO = isoDateET(toET(new Date()));
+    const parts = [`${todayISO} (ET)`];
+    try {
+      const sRaw = await env.SIGNAL_KV.get('signals_today');
+      if (sRaw) {
+        const s = JSON.parse(sRaw);
+        const sig = s.signals || [];
+        const last = sig[sig.length - 1];
+        parts.push(`M8BF feed: ${sig.length} signals${last ? ` · latest ${last.time} center ${last.center} T1 ${last.t1}${last.banned ? ' (banned strike)' : ''}` : ''}`);
+      }
+    } catch (_) {}
+    try {
+      const mRaw = await env.SIGNAL_KV.get(`mf_today_${todayISO}`);
+      if (mRaw) { const m = JSON.parse(mRaw); parts.push(`PNBF: ${m.status}${m.headline ? ' — ' + m.headline : ''}`); }
+    } catch (_) {}
+    return parts.join('\n');
+  }
+  return `unknown tool ${name}`;
+}
+
+async function handleMcpMessage(env, msg) {
+  if (!msg || typeof msg.method !== 'string') {
+    return { jsonrpc: '2.0', id: msg?.id ?? null, error: { code: -32600, message: 'invalid request' } };
+  }
+  if (msg.method.startsWith('notifications/')) return null;
+  const ok = (result) => ({ jsonrpc: '2.0', id: msg.id, result });
+  if (msg.method === 'initialize') {
+    return ok({
+      protocolVersion: msg.params?.protocolVersion || '2025-03-26',
+      capabilities: { tools: { listChanged: false } },
+      serverInfo: { name: 'sigma3-feeds', title: 'Sigma 3 live feeds + research', version: '1.0.0' },
+    });
+  }
+  if (msg.method === 'ping') return ok({});
+  if (msg.method === 'tools/list') return ok({ tools: MCP_TOOLS });
+  if (msg.method === 'tools/call') {
+    try {
+      const text = await mcpToolText(env, msg.params?.name);
+      return ok({ content: [{ type: 'text', text }] });
+    } catch (e) {
+      return ok({ content: [{ type: 'text', text: `tool error: ${e.message}` }], isError: true });
+    }
+  }
+  return { jsonrpc: '2.0', id: msg.id ?? null, error: { code: -32601, message: `unknown method ${msg.method}` } };
+}
+
 async function commitGexToGitHub(env, gexData) {
   const ghToken = env.GITHUB_TOKEN;
   if (!ghToken) return;
@@ -12776,6 +12872,28 @@ export default {
 
     // ── GET /gex ── Public endpoint, returns current GEX data from KV
     // Auto-refreshes if data is stale (>3 min) during market hours (cron is unreliable on free tier)
+    // ── Phone MCP connector (claude.ai custom connector; secret-path auth) ──
+    if (env.MCP_TOKEN && url.pathname === `/mcp/${env.MCP_TOKEN}`) {
+      if (request.method === 'OPTIONS') {
+        return new Response(null, { status: 204, headers: {
+          'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, Mcp-Session-Id, MCP-Protocol-Version' } });
+      }
+      if (request.method !== 'POST') return new Response('sigma3 mcp', { status: 200 });
+      let msg;
+      try { msg = await request.json(); } catch (_) {
+        return new Response(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'parse error' } }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      const replies = Array.isArray(msg)
+        ? (await Promise.all(msg.map(m => handleMcpMessage(env, m)))).filter(r => r !== null)
+        : await handleMcpMessage(env, msg);
+      if (replies === null || (Array.isArray(replies) && replies.length === 0)) {
+        return new Response(null, { status: 202 });
+      }
+      return new Response(JSON.stringify(replies), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+
     if (url.pathname === '/gex' && request.method === 'GET') {
       const publicCors = {
         'Access-Control-Allow-Origin': '*',
