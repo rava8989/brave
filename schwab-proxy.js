@@ -7994,6 +7994,12 @@ async function handleGEXUpdate(env, token, preChain = null) {
   // Store 0DTE snapshot separately
   if (gex0dte) {
     await env.SIGNAL_KV.put('gex_current_0dte', JSON.stringify(gex0dte));
+    // ── Shadow T1 engine (2026-07-17): reverse-engineered M8BF wall recipe,
+    // validated on 50 archive days @14:00 — Puts wall = argmax |put GEX| (90%),
+    // Calls wall = argmax call GEX (84%), T1 = wall nearest spot, center = T1
+    // shifted 5 toward spot. Logged every 5 min to KV for paper comparison vs
+    // the Discord feed (GET /shadow-t1). KV only — never posts to Discord.
+    try { await logShadowT1(env, gex0dte); } catch (e) { console.warn('[shadowT1]', e.message); }
   }
 
   // Store SPX price tick for live.html chart (replaces dead live_updater.py → spx_history.json)
@@ -8186,6 +8192,39 @@ async function handleGEXUpdate(env, token, preChain = null) {
   // durable GEX record; intraday state lives in KV where it belongs.
 
   return { gex: 'updated', regime: gexData.regime, totalGex: gexData.totalGex, events };
+}
+
+// ── Shadow T1 engine ─────────────────────────────────────────────────
+// Replicates the M8BF service's T1/T2/center from our own 0DTE GEX profile
+// (reverse-engineered 2026-07-17, 50-day validation: put wall 90% / call wall
+// 84% exact). Paper-trial only: 5-min KV log + /shadow-t1 comparison endpoint.
+function computeShadowT1(g) {
+  const spot = g.spot;
+  let cw = null, pw = null, cg = 0, pg = 0;
+  for (const s of g.strikes || []) {
+    if (s.callGex > cg) { cg = s.callGex; cw = s.strike; }
+    if (s.putGex < pg) { pg = s.putGex; pw = s.strike; }
+  }
+  if (cw == null || pw == null || !spot) return null;
+  const t1 = Math.abs(cw - spot) <= Math.abs(pw - spot) ? cw : pw;
+  const t2 = t1 === cw ? pw : cw;
+  const ctr = t1 - 5 * Math.sign(t1 - spot || 1);
+  return { sp: Math.round(spot * 100) / 100, cw, pw, t1, t2, ctr };
+}
+
+async function logShadowT1(env, gex0dte) {
+  const et = toET(new Date());
+  const mm = et.getMinutes();
+  if (mm % 5 !== 0) return;                     // 5-min cadence, matches the feed
+  const snap = computeShadowT1(gex0dte);
+  if (!snap) return;
+  const day = isoDateET(et);
+  const slot = `${String(et.getHours()).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+  const key = `shadow_t1_${day}`;
+  const cur = JSON.parse((await env.SIGNAL_KV.get(key)) || '{}');
+  if (cur[slot]) return;                        // one snapshot per slot
+  cur[slot] = snap;
+  await env.SIGNAL_KV.put(key, JSON.stringify(cur), { expirationTtl: 35 * 86400 });
 }
 
 async function commitGexToGitHub(env, gexData) {
@@ -12776,6 +12815,56 @@ export default {
 
     // ── GET /gex ── Public endpoint, returns current GEX data from KV
     // Auto-refreshes if data is stale (>3 min) during market hours (cron is unreliable on free tier)
+    // ── Shadow T1 vs Discord feed comparison (paper trial, read-only) ──
+    if (url.pathname === '/shadow-t1' && request.method === 'GET') {
+      const cors = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+      };
+      try {
+        const date = url.searchParams.get('date') || isoDateET(toET(new Date()));
+        const shadow = JSON.parse((await env.SIGNAL_KV.get(`shadow_t1_${date}`)) || '{}');
+        const out = { date, n: Object.keys(shadow).length, slots: shadow };
+        if (env.DISCORD_USER_TOKEN && url.searchParams.get('join') !== '0') {
+          const rows = await scrapeRawRowsForDate(env.DISCORD_USER_TOKEN, MF_SIGNALS_CHANNEL, date);
+          const feed = {};
+          for (const line of rows || []) {
+            const c = line.split(',');
+            if (c.length < 25 || !c[2] || !c[15]) continue;
+            const [h, m] = c[2].split(':').map(Number);
+            const slot = `${String(h).padStart(2, '0')}:${String(m - m % 5).padStart(2, '0')}`;
+            feed[slot] = { cw: parseFloat(c[11]) || null, pw: parseFloat(c[12]) || null,
+                           t1: parseFloat(c[15]) || null, ctr: parseFloat(c[24]) || null };
+          }
+          let n = 0, cwOk = 0, pwOk = 0, t1Ok = 0, ctrOk = 0, ctr5 = 0;
+          const joined = [];
+          for (const slot of Object.keys(shadow).sort()) {
+            const f = feed[slot];
+            if (!f) continue;
+            const s = shadow[slot];
+            n++;
+            if (f.cw === s.cw) cwOk++;
+            if (f.pw === s.pw) pwOk++;
+            if (f.t1 === s.t1) t1Ok++;
+            if (f.ctr === s.ctr) ctrOk++;
+            if (f.ctr != null && Math.abs(f.ctr - s.ctr) <= 5) ctr5++;
+            joined.push({ slot, shadow: s, feed: f });
+          }
+          out.match = n ? {
+            slots: n,
+            callWallPct: Math.round(100 * cwOk / n), putWallPct: Math.round(100 * pwOk / n),
+            t1Pct: Math.round(100 * t1Ok / n),
+            centerPct: Math.round(100 * ctrOk / n), centerWithin5Pct: Math.round(100 * ctr5 / n),
+          } : { slots: 0 };
+          out.joined = joined;
+        }
+        return new Response(JSON.stringify(out), { status: 200, headers: { 'Content-Type': 'application/json', ...cors } });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json', ...cors } });
+      }
+    }
+
     if (url.pathname === '/gex' && request.method === 'GET') {
       const publicCors = {
         'Access-Control-Allow-Origin': '*',
