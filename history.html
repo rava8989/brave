@@ -326,6 +326,16 @@
     <div id="prNote" style="font-size:11px;color:var(--text3);margin-top:8px;"></div>
   </div>
 
+  <div class="chart-card" id="edgeHealthCard" style="display:none">
+    <div class="chart-card-header">
+      <span class="chart-card-title">Edge Health — rolling 90d vs each strategy's own normal
+        <span style="font-weight:400;color:var(--text3);font-size:11px">(0 = its historical norm · band = ±1σ ordinary variation · below −1σ for weeks = investigate · uses FULL history, unaffected by date filters; strategy pills toggle lines)</span></span>
+    </div>
+    <div style="position:relative;height:300px">
+      <canvas id="edgeHealthCanvas"></canvas>
+    </div>
+  </div>
+
   <div class="chart-card" id="barChartCard" style="display:none">
     <div class="chart-card-header">
       <span class="chart-card-title">P/L Distribution</span>
@@ -432,6 +442,7 @@ let logScale = false;
 let barChartMode = 'monthly';
 let cumChart = null;
 let barChart = null;
+let edgeHealthChart = null;
 let sortedRows = []; // module-level for tooltip reference
 // allocWeights is retained because the position-sizing helper
 // _sizingUseOptimizer() still reads it; the Allocation Optimizer panel that
@@ -1232,6 +1243,7 @@ const _mobileRendered = new Set();
 
 const CHART_SECTIONS = [
   { id: 'chartCard',      fn: () => renderChart(),       name: 'chart' },
+  { id: 'edgeHealthCard', fn: () => renderEdgeHealth(),  name: 'edgeHealth' },
   { id: 'barChartCard',   fn: () => renderBarChart(),    name: 'barChart' },
   { id: 'heatmapSection', fn: () => renderHeatmap(),     name: 'heatmap' },
 ];
@@ -1455,6 +1467,7 @@ function renderAll() {
     safeRender('heatmap',     renderHeatmap);
     loadChartJS().then(() => {
       safeRender('chart',       renderChart);
+      safeRender('edgeHealth',  renderEdgeHealth);
       safeRender('barChart',    renderBarChart);
     }).catch(e => console.error('[history] Chart.js load failed', e));
   }
@@ -1766,6 +1779,109 @@ function renderBarChart() {
 
   if (barChart) { barChart.destroy(); barChart = null; }
   barChart = new Chart(document.getElementById('barChartCanvas'), cfg);
+}
+
+// ══════════════════════════════════════════════════════════════
+// EDGE HEALTH — rolling 90d P/L vs each strategy's OWN history (z-score).
+// Baseline = mean/std of ALL rolling-90d windows over the strategy's full
+// history (deliberately ignores date filters — a filtered baseline would
+// lie); strategy pills toggle lines. 0 = its norm, ±1σ band = ordinary
+// variation; weeks below −1σ = edge misbehaving, investigate.
+// ══════════════════════════════════════════════════════════════
+const EDGE_STRATS = [
+  ['m8bf',     'M8BF',     'm8bfPL',  '#a78bfa'],
+  ['strad',    'Straddle', 'stradPL', '#22d3ee'],
+  ['gxbf',     'GXBF',     'gxbfPL',  '#2dd4bf'],
+  ['bobf',     'BOBF',     'bobfPL',  '#fb923c'],
+  ['diagonal', 'Diagonal', 'diagPL',  '#4ade80'],
+  ['tail',     'Tail',     'tailPL',  '#f87171'],
+  ['scalp',    'PNBF',     'scalpPL', '#f43f5e'],
+];
+const EDGE_WINDOW_DAYS = 90;    // calendar days per rolling window
+const EDGE_MIN_SAMPLES = 40;    // min baseline windows before a line qualifies
+const EDGE_SHOW_LAST   = 252;   // trading days displayed (~12 months)
+
+function renderEdgeHealth() {
+  const card = document.getElementById('edgeHealthCard');
+  if (!card || typeof Chart === 'undefined') return;
+  const rows = allRows.slice().sort((a, b) => a.date.localeCompare(b.date));
+  if (rows.length < 120) { card.style.display = 'none'; return; }
+  const dayMs = 86400000;
+  const toMs = d => { const p = d.split('-'); return Date.UTC(+p[0], +p[1] - 1, +p[2]); };
+  const dates = rows.map(r => r.date), ms = dates.map(toMs);
+
+  const series = {};   // key -> { z: (date-aligned array|nulls), w: 90d dollars }
+  for (const [key, , fld] of EDGE_STRATS) {
+    const pls = rows.map(r => (r[fld] != null ? r[fld] : 0));
+    let first = -1;
+    for (let i = 0; i < rows.length; i++) if (rows[i][fld] != null && rows[i][fld] !== 0) { first = i; break; }
+    if (first < 0) continue;
+    // prefix sums from the strategy's first trade
+    const pre = new Array(rows.length + 1).fill(0);
+    for (let i = 0; i < rows.length; i++) pre[i + 1] = pre[i] + (i >= first ? pls[i] : 0);
+    const W = new Array(rows.length).fill(null);
+    let lo = first;
+    for (let i = first; i < rows.length; i++) {
+      if (ms[i] - ms[first] < EDGE_WINDOW_DAYS * dayMs) continue;    // window not yet full
+      while (ms[i] - ms[lo] >= EDGE_WINDOW_DAYS * dayMs) lo++;
+      W[i] = pre[i + 1] - pre[lo];
+    }
+    const samples = W.filter(v => v != null);
+    if (samples.length < EDGE_MIN_SAMPLES) continue;
+    const mu = samples.reduce((s, v) => s + v, 0) / samples.length;
+    const sd = Math.sqrt(samples.reduce((s, v) => s + (v - mu) * (v - mu), 0) / samples.length);
+    if (sd <= 0) continue;
+    series[key] = { z: W.map(v => v == null ? null : (v - mu) / sd), w: W };
+  }
+  if (!Object.keys(series).length) { card.style.display = 'none'; return; }
+  card.style.display = '';
+
+  const start = Math.max(0, rows.length - EDGE_SHOW_LAST);
+  const labels = dates.slice(start);
+  const css = getComputedStyle(document.documentElement);
+  const gridCol = css.getPropertyValue('--border').trim() || '#333';
+  const datasets = [
+    // ±1σ band + zero line (drawn first so strategy lines sit on top)
+    { label: '_band+', data: labels.map(() => 1), borderColor: 'transparent', pointRadius: 0,
+      fill: '+1', backgroundColor: 'rgba(139,148,158,0.09)', order: 99 },
+    { label: '_band-', data: labels.map(() => -1), borderColor: 'transparent', pointRadius: 0, fill: false, order: 99 },
+    { label: '_zero', data: labels.map(() => 0), borderColor: 'rgba(139,148,158,0.55)', borderDash: [6, 4],
+      borderWidth: 1.2, pointRadius: 0, fill: false, order: 98 },
+  ];
+  for (const [key, name, , color] of EDGE_STRATS) {
+    if (!series[key] || activeStrats[key] === false) continue;
+    datasets.push({
+      label: name, data: series[key].z.slice(start), borderColor: color, backgroundColor: color,
+      borderWidth: 2, pointRadius: 0, pointHitRadius: 6, spanGaps: false, fill: false, tension: 0.25,
+      _w: series[key].w.slice(start),
+    });
+  }
+  const cfg = {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      interaction: { mode: 'nearest', intersect: false },
+      plugins: {
+        legend: { labels: { filter: it => !it.text.startsWith('_'),
+                            color: css.getPropertyValue('--text2').trim() || '#aaa', boxWidth: 14 } },
+        tooltip: { filter: it => !it.dataset.label.startsWith('_'),
+          callbacks: { label: ctx => {
+            const w = ctx.dataset._w ? ctx.dataset._w[ctx.dataIndex] : null;
+            const z = ctx.parsed.y;
+            return `${ctx.dataset.label}: ${z >= 0 ? '+' : ''}${z.toFixed(2)}σ` +
+                   (w != null ? `  ($${Math.round(w).toLocaleString()} last 90d)` : '');
+          } } },
+      },
+      scales: {
+        x: { ticks: { color: css.getPropertyValue('--text3').trim() || '#888', maxTicksLimit: 10 }, grid: { color: gridCol } },
+        y: { title: { display: true, text: 'σ vs own history', color: css.getPropertyValue('--text3').trim() || '#888' },
+             ticks: { color: css.getPropertyValue('--text3').trim() || '#888' }, grid: { color: gridCol } },
+      },
+    },
+  };
+  if (edgeHealthChart) { edgeHealthChart.destroy(); edgeHealthChart = null; }
+  edgeHealthChart = new Chart(document.getElementById('edgeHealthCanvas'), cfg);
 }
 
 // ══════════════════════════════════════════════════════════════
