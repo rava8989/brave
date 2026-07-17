@@ -329,8 +329,9 @@
   <div class="chart-card" id="edgeHealthCard" style="display:none">
     <div class="chart-card-header">
       <span class="chart-card-title">Edge Health — rolling 90d vs each strategy's own normal
-        <span style="font-weight:400;color:var(--text3);font-size:11px">(0 = its historical norm · band = ±1σ ordinary variation · below −1σ for weeks = investigate · uses FULL history, unaffected by date filters; strategy pills toggle lines)</span></span>
+        <span style="font-weight:400;color:var(--text3);font-size:11px">(0 = its historical norm · band = ±1σ ordinary variation · below −1σ for weeks = investigate · uses FULL history, unaffected by filters)</span></span>
     </div>
+    <div id="edgeHealthToggles" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px"></div>
     <div style="position:relative;height:300px">
       <canvas id="edgeHealthCanvas"></canvas>
     </div>
@@ -1801,6 +1802,18 @@ const EDGE_WINDOW_DAYS = 90;    // calendar days per rolling window
 const EDGE_MIN_SAMPLES = 40;    // min baseline windows before a line qualifies
 const EDGE_SHOW_LAST   = 252;   // trading days displayed (~12 months)
 
+// Per-chart line toggles (owner 2026-07-17: "it's crowded, sometimes I want
+// less") — independent of the page's global strategy pills, persisted.
+function edgeTogglesGet() {
+  try { return JSON.parse(localStorage.getItem('edgeHealthOn') || '{}'); } catch (_) { return {}; }
+}
+function edgeToggleFlip(key) {
+  const t = edgeTogglesGet();
+  t[key] = t[key] === false;   // false→true, undefined/true→false
+  localStorage.setItem('edgeHealthOn', JSON.stringify(t));
+  renderEdgeHealth();
+}
+
 function renderEdgeHealth() {
   const card = document.getElementById('edgeHealthCard');
   if (!card || typeof Chart === 'undefined') return;
@@ -1836,6 +1849,16 @@ function renderEdgeHealth() {
   if (!Object.keys(series).length) { card.style.display = 'none'; return; }
   card.style.display = '';
 
+  // Per-chart toggle chips (qualified strategies only; dimmed = off)
+  const tOn = edgeTogglesGet();
+  const tEl = document.getElementById('edgeHealthToggles');
+  if (tEl) {
+    tEl.innerHTML = EDGE_STRATS.filter(([k]) => series[k]).map(([k, name, , color]) => {
+      const on = tOn[k] !== false;
+      return `<span onclick="edgeToggleFlip('${k}')" style="cursor:pointer;user-select:none;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;padding:3px 10px;border-radius:14px;border:1.5px solid ${color};color:${on ? color : 'var(--text3)'};background:${on ? color + '22' : 'transparent'};opacity:${on ? 1 : 0.4}">${name}</span>`;
+    }).join('');
+  }
+
   const start = Math.max(0, rows.length - EDGE_SHOW_LAST);
   const labels = dates.slice(start);
   const css = getComputedStyle(document.documentElement);
@@ -1849,7 +1872,7 @@ function renderEdgeHealth() {
       borderWidth: 1.2, pointRadius: 0, fill: false, order: 98 },
   ];
   for (const [key, name, , color] of EDGE_STRATS) {
-    if (!series[key] || activeStrats[key] === false) continue;
+    if (!series[key] || tOn[key] === false) continue;
     datasets.push({
       label: name, data: series[key].z.slice(start), borderColor: color, backgroundColor: color,
       borderWidth: 2, pointRadius: 0, pointHitRadius: 6, spanGaps: false, fill: false, tension: 0.25,
