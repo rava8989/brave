@@ -5813,6 +5813,29 @@ function mfFlyQuote(chain, todayISO, K) {
   return { mid, slip: halfspread * 0.25 };
 }
 
+// Claim-token send gate — same protocol as the morning signal (~line 6683).
+// A naive check-then-act KV gate lets EVERY overlapping cron tick pass before
+// the first one writes its marker (KV is eventually consistent and edge-caches
+// misses for ~60s), which is exactly how the PNBF 11:30/noon posts went out
+// 6×/4× on their first live day (2026-07-17). Write a unique claim BEFORE any
+// slow work, wait for propagation, verify we won. Returns true iff this tick
+// owns the slot. Caller puts 'sent' (86400s) on success, or deletes the key on
+// a posted-nothing error so the next tick retries; a tick that dies mid-send
+// leaves a claim that goes stale after 40s and is taken over.
+async function claimSendSlot(env, key) {
+  const cur = await env.SIGNAL_KV.get(key, { cacheTtl: 30 });
+  if (cur === 'sent' || cur === 'done') return false;
+  if (cur && cur.startsWith('claim:')) {
+    const ts = parseInt(cur.split(':')[2] || '0', 10);
+    if (!ts || Date.now() - ts <= 40_000) return false;   // fresh claim in flight
+    // stale claim (owner crashed mid-send) — fall through and take over
+  }
+  const mine = `claim:${crypto.randomUUID()}:${Date.now()}`;
+  await env.SIGNAL_KV.put(key, mine, { expirationTtl: 90 });
+  await new Promise(r => setTimeout(r, 1500));            // let racers write too
+  return (await env.SIGNAL_KV.get(key, { cacheTtl: 30 })) === mine;
+}
+
 // PNBF is a Sigma 3 signal now (2026-07-15): route through the SAME
 // fan-out as every other Sigma 3 trade — the signals channel + every
 // subscriber DM, with the compliance disclaimer. No separate scalp webhook.
@@ -6376,9 +6399,9 @@ async function handleScheduled(env) {
   const mfMornKey = `mf_morning_${todayISO}`;
   if (etHour === 9 && etMin >= 38 && etMin < 50) {
     try {
-      if (!(await env.SIGNAL_KV.get(mfMornKey))) {
+      if (await claimSendSlot(env, mfMornKey)) {
         await handleMagnetFlyMorning(env, etNow);
-        await env.SIGNAL_KV.put(mfMornKey, 'done', { expirationTtl: 86400 });
+        await env.SIGNAL_KV.put(mfMornKey, 'sent', { expirationTtl: 86400 });
       }
     } catch (e) { console.warn('[mf-morning] threw:', e.message); }
   }
@@ -6388,10 +6411,14 @@ async function handleScheduled(env) {
   const mfPreKey = `mf_prealert_${todayISO}`;
   if (etHour === 11 && etMin >= 28 && etMin < 38) {
     try {
-      if (!(await env.SIGNAL_KV.get(mfPreKey))) {
+      if (await claimSendSlot(env, mfPreKey)) {
         const pre = await handleMagnetFlyPreAlert(env, schwabToken, etNow, masterChain);
-        if (!pre.error) await env.SIGNAL_KV.put(mfPreKey, 'done', { expirationTtl: 86400 });
-        else console.warn('[mf-pre] retry next tick:', pre.error);
+        if (!pre.error) await env.SIGNAL_KV.put(mfPreKey, 'sent', { expirationTtl: 86400 });
+        else {
+          // error paths post nothing — release the claim so the next tick retries
+          await env.SIGNAL_KV.delete(mfPreKey);
+          console.warn('[mf-pre] retry next tick:', pre.error);
+        }
       }
     } catch (e) { console.warn('[mf-pre] threw:', e.message); }
   }
@@ -6403,11 +6430,13 @@ async function handleScheduled(env) {
   const mfDoneKey = `mf_done_${todayISO}`;
   if (etHour === 12 && etMin < 15) {
     try {
-      if (!(await env.SIGNAL_KV.get(mfDoneKey))) {
+      if (await claimSendSlot(env, mfDoneKey)) {
         mfResult = await handleMagnetFlyNoon(env, schwabToken, etNow, masterChain);
         if (!mfResult.error) {
-          await env.SIGNAL_KV.put(mfDoneKey, 'done', { expirationTtl: 86400 });
+          await env.SIGNAL_KV.put(mfDoneKey, 'sent', { expirationTtl: 86400 });
         } else {
+          // error paths post nothing — release the claim so the next tick retries
+          await env.SIGNAL_KV.delete(mfDoneKey);
           console.warn('[mf] not marking done — retry next tick:', mfResult.error);
         }
       }
