@@ -8234,9 +8234,65 @@ const MCP_TOOLS = [
   { name: 'research_days',
     description: "751-day per-day research table (CSV, 2023-06 to 2026-07): 14:00 GEX/wall geometry, M8BF center gap, every strategy's daily P/L, the 13:20 straddle/put study, calendar flags. Answer 'how did X perform on days like this' by filtering rows and computing n / win rate / mean / median yourself. Column legend lives in research_notes.",
     inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+  { name: 'quote',
+    description: 'Live Schwab quote for any stock or index symbol (e.g. NVDA, SPY, SPX, VIX — $ prefix for indices is added automatically). Returns last, change, bid/ask, day range, volume.',
+    inputSchema: { type: 'object', properties: { symbol: { type: 'string', description: 'ticker symbol' } },
+                   required: ['symbol'], additionalProperties: false } },
+  { name: 'spx_today',
+    description: "Today's intraday SPX tape: 5-minute price series since the open plus open/high/low/last summary. Use for 'what did SPX do since X' questions.",
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+  { name: 'vix_now',
+    description: 'Live VIX term structure via Schwab: VIX9D / VIX / VIX3M / VIX6M / VVIX / COR1M with the contango and 9D-spread readings the Tail Hedge and Diagonal use.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
 ];
 
-async function mcpToolText(env, name) {
+const _MCP_IDX = new Set(['SPX', 'VIX', 'VIX9D', 'VIX3M', 'VIX6M', 'VVIX', 'COR1M', 'VIXEQ', 'DJI', 'NDX', 'RUT']);
+function mcpFmtQuote(sym, q) {
+  if (!q) return `${sym}: no quote`;
+  const pct = q.netPercentChange ?? q.netPercentChangeInDouble;
+  return `${sym}: last ${q.lastPrice} (${q.netChange >= 0 ? '+' : ''}${q.netChange}${pct != null ? ` / ${pct.toFixed(2)}%` : ''})` +
+    ` · bid/ask ${q.bidPrice}/${q.askPrice} · day ${q.lowPrice}-${q.highPrice} · prev close ${q.closePrice}` +
+    (q.totalVolume ? ` · vol ${q.totalVolume.toLocaleString()}` : '');
+}
+
+async function mcpToolText(env, name, args) {
+  if (name === 'quote') {
+    const raw = String(args?.symbol || '').trim().toUpperCase().replace(/^\$/, '');
+    if (!raw) return 'symbol required';
+    const sym = _MCP_IDX.has(raw) ? '$' + raw : raw;
+    const token = await getAccessToken(env);
+    const d = await fetchSchwabJSON(
+      `https://api.schwabapi.com/marketdata/v1/quotes?symbols=${encodeURIComponent(sym)}&fields=quote`, token, env);
+    const q = d?.[sym]?.quote;
+    return mcpFmtQuote(sym, q) + (q?.quoteTime ? `\n(quote time ${new Date(q.quoteTime).toISOString()})` : '');
+  }
+  if (name === 'spx_today') {
+    const todayISO = isoDateET(toET(new Date()));
+    const raw = await env.SIGNAL_KV.get(`spx_history_${todayISO}`);
+    const ser = raw ? JSON.parse(raw) : [];
+    if (!ser.length) return `no SPX ticks stored for ${todayISO} (market closed or pre-open)`;
+    const px = ser.map(p => p.price);
+    const head = `SPX ${todayISO} · first ${ser[0].time} ${px[0]} · last ${ser[ser.length - 1].time} ${px[px.length - 1]}` +
+      ` · high ${Math.max(...px)} · low ${Math.min(...px)}`;
+    const tape = ser.map(p => `${p.time} ${p.price}`).join(' · ');
+    return `${head}\n5-min tape: ${tape}`;
+  }
+  if (name === 'vix_now') {
+    const syms = ['$VIX9D', '$VIX', '$VIX3M', '$VIX6M', '$VVIX', '$COR1M'];
+    const token = await getAccessToken(env);
+    const d = await fetchSchwabJSON(
+      `https://api.schwabapi.com/marketdata/v1/quotes?symbols=${encodeURIComponent(syms.join(','))}&fields=quote`, token, env);
+    const v = {};
+    for (const s of syms) v[s] = d?.[s]?.quote?.lastPrice ?? null;
+    const lines = syms.map(s => `${s.slice(1)}: ${v[s] ?? 'n/a'}`);
+    if (v.$VIX != null && v.$VIX3M != null) {
+      lines.push(`contango (VIX3M−VIX): ${(v.$VIX3M - v.$VIX).toFixed(2)} (${v.$VIX3M > v.$VIX ? 'contango' : 'BACKWARDATION'})`);
+    }
+    if (v.$VIX != null && v.$VIX9D != null) {
+      lines.push(`VIX−VIX9D spread: ${(v.$VIX - v.$VIX9D).toFixed(2)} (negative = short-term stress)`);
+    }
+    return lines.join('\n');
+  }
   if (name === 'research_notes') {
     return (await env.SIGNAL_KV.get('research_notes_v1')) || 'notes not loaded';
   }
@@ -8304,7 +8360,7 @@ async function handleMcpMessage(env, msg) {
   if (msg.method === 'tools/list') return ok({ tools: MCP_TOOLS });
   if (msg.method === 'tools/call') {
     try {
-      const text = await mcpToolText(env, msg.params?.name);
+      const text = await mcpToolText(env, msg.params?.name, msg.params?.arguments);
       return ok({ content: [{ type: 'text', text }] });
     } catch (e) {
       return ok({ content: [{ type: 'text', text: `tool error: ${e.message}` }], isError: true });
