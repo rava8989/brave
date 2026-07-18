@@ -303,7 +303,24 @@ async function captureTailPutSnap(env, etNow, masterChain) {
                   b: c.bid ?? null, a: c.ask ?? null });
     }
   }
-  if (!puts.length) return;
+  if (!puts.length) {
+    // audit P1-f: a greeks/IV-less fallback chain empties the Δ picker exactly
+    // when Schwab is down — the one day the redundancy matters. Never silent:
+    // one owner DM per day so a triggered tail can be placed manually.
+    if (await claimSendSlot(env, `tail_snap_alert_${todayISO}`)) {
+      try {
+        const dcRaw = await env.SIGNAL_KV.get('discord_config');
+        const dc = dcRaw ? JSON.parse(dcRaw) : null;
+        if (dc?.channelId) {
+          await sendDiscordDM(env, dc.channelId,
+            `⚠️ **Tail snapshot EMPTY at 9:45** (chain source: ${masterChain._source || '?'} — likely a greeks-less fallback). ` +
+            `If COR1M triggered today, the tail put must be placed MANUALLY.`, dc.proxyUrl);
+          await env.SIGNAL_KV.put(`tail_snap_alert_${todayISO}`, 'sent', { expirationTtl: 86400 });
+        }
+      } catch (e2) { console.warn('[tail-snap-alert]', e2.message); }
+    }
+    return;
+  }
   puts.sort((x, y) => x.e.localeCompare(y.e) || x.k - y.k);
   const hhmm = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
   await env.SIGNAL_KV.put(k, JSON.stringify({ at: hhmm, spot: masterChain.spot ?? null, puts: puts.slice(0, 60) }),
@@ -2086,7 +2103,7 @@ async function enforceRiskCap(env, etNow, strategy, newTradeMaxLossUsd) {
     await logEvent(env, 'warn', 'risk-cap', `${strategy} ${warnOnly ? 'WARNING (trade proceeds)' : 'open BLOCKED'}`, { strategy, totalUsd, parts, newTradeMaxLossUsd, cap: cfg.maxOpenRiskUsd, mode: cfg.mode });
     // Discord note, once per strategy per day
     const alertKey = `risk_cap_alert_${strategy}_${todayISO}`;
-    if (!(await env.SIGNAL_KV.get(alertKey))) {
+    if (await claimSendSlot(env, alertKey)) {
       try {
         const dcRaw = await env.SIGNAL_KV.get('discord_config');
         if (dcRaw) {
@@ -5824,11 +5841,14 @@ function mfFlyQuote(chain, todayISO, K) {
 // leaves a claim that goes stale after 40s and is taken over.
 async function claimSendSlot(env, key) {
   const cur = await env.SIGNAL_KV.get(key, { cacheTtl: 30 });
-  if (cur === 'sent' || cur === 'done') return false;
   if (cur && cur.startsWith('claim:')) {
     const ts = parseInt(cur.split(':')[2] || '0', 10);
     if (!ts || Date.now() - ts <= 40_000) return false;   // fresh claim in flight
     // stale claim (owner crashed mid-send) — fall through and take over
+  } else if (cur) {
+    // any other non-empty value ('sent', 'done', 'window-passed', 'blackout:…')
+    // is a terminal marker written by us or by the handler itself — slot is spent
+    return false;
   }
   const mine = `claim:${crypto.randomUUID()}:${Date.now()}`;
   await env.SIGNAL_KV.put(key, mine, { expirationTtl: 90 });
@@ -6373,18 +6393,19 @@ async function handleScheduled(env) {
   const diagDoneKey = `diag_done_${todayISO}`;
   const isDiagonalEntry = (etHour === 12 && etMin >= 30 && etMin < 40);
   if (isDiagonalEntry) {
-    const diagDone = await env.SIGNAL_KV.get(diagDoneKey);
-    if (!diagDone) {
+    // claim-token gate (P22): naive check-then-act let overlapping ticks race
+    if (await claimSendSlot(env, diagDoneKey)) {
       try {
         diagResult = await handleDiagonalTrade(env, etNow, masterChain);
         // Only mark done when we either (a) opened a new trade, (b) cleanly
         // skipped per signal, OR (c) closed a prior trade without error.
-        // Transient errors (token, chain, GitHub) leave the slot unmarked so
-        // the next 2-min tick retries within the 12:30–12:40 window.
+        // Transient errors (token, chain, GitHub) release the claim so the
+        // next 2-min tick retries within the 12:30–12:40 window.
         const hadError = !!(diagResult.error || diagResult.openError || diagResult.closeError);
         if (!hadError) {
-          await env.SIGNAL_KV.put(diagDoneKey, 'done', { expirationTtl: 86400 });
+          await env.SIGNAL_KV.put(diagDoneKey, 'sent', { expirationTtl: 86400 });
         } else {
+          await env.SIGNAL_KV.delete(diagDoneKey);
           console.warn('[diag] not marking done — will retry next tick:', JSON.stringify(diagResult));
         }
       } catch (e) {
@@ -6528,8 +6549,11 @@ async function handleScheduled(env) {
   // (morning_signal_data_<date>). Never consults M8BF/Straddle/BOBF state.
   let gxbfResult = {};
   if (isMarket && gxbfInWindow(etNow)) {
-    const gxbfDone = await env.SIGNAL_KV.get(`gxbf_done_${todayISO}`);
-    if (!gxbfDone) {
+    // claim-token gate (P22). The handler writes its own terminal markers
+    // ('done'/'window-passed'/'blackout:…') into gxbf_done_<date>; on retryable
+    // outcomes we release our claim so the next tick can try again.
+    const gxbfKey = `gxbf_done_${todayISO}`;
+    if (await claimSendSlot(env, gxbfKey)) {
       try {
         const msdRaw = await env.SIGNAL_KV.get(`morning_signal_data_${todayISO}`);
         const msd = msdRaw ? JSON.parse(msdRaw) : null;
@@ -6539,6 +6563,11 @@ async function handleScheduled(env) {
           gxbfResult = { status: 'not-gxbf-theme', theme: msd ? msd.theme : 'pending' };
         }
       } catch (e) { gxbfResult = { gxbf: 'error', error: e.message }; console.warn('[gxbf] entry failed:', e.message); }
+      // release our claim unless the handler replaced it with a terminal marker
+      try {
+        const curV = await env.SIGNAL_KV.get(gxbfKey);
+        if (curV && curV.startsWith('claim:')) await env.SIGNAL_KV.delete(gxbfKey);
+      } catch (_) {}
     }
   }
 
