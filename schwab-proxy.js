@@ -6370,8 +6370,15 @@ async function handleScheduled(env) {
           const cur = await env.SIGNAL_KV.get('gex_current');
           const g = cur ? JSON.parse(cur) : null;
           if (g?.maxPosStrike != null) {
+            // Store BOTH magnets for the live 0DTE-vs-all-expiry comparison
+            // (2026-07-20): magnet = all-expiry (what PNBF uses today);
+            // magnet0dte = 0DTE-only (the basis the backtest was validated on).
+            const cur0 = await env.SIGNAL_KV.get('gex_current_0dte');
+            const g0 = cur0 ? JSON.parse(cur0) : null;
             await env.SIGNAL_KV.put(kM, JSON.stringify({ magnet: g.maxPosStrike, t: g.timestamp,
-              totalGex: g.totalGex ?? null }), { expirationTtl: 3 * 86400 });
+              totalGex: g.totalGex ?? null,
+              magnet0dte: g0?.maxPosStrike ?? null, totalGex0dte: g0?.totalGex ?? null }),
+              { expirationTtl: 30 * 86400 });
           }
         }
       }
