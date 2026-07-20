@@ -4721,7 +4721,10 @@ async function handleBobfEntry(env, etNow, preChain = null) {
 
   const doneKey = `bobf_done_${todayISO}`;
   const done = await env.SIGNAL_KV.get(doneKey);
-  if (done) return { ...out, status: 'already-done', why: done };
+  // A `claim:` value is OUR OWN caller's in-flight claim token (P22 gate), not a
+  // completed run — treat only terminal markers as done. (2026-07-20: the claim
+  // gate made this self-check abort every tick → GXBF never fired on OPEX+1.)
+  if (done && !done.startsWith('claim:')) return { ...out, status: 'already-done', why: done };
 
   // Guard: if today's open BOBF trade already exists, don't re-evaluate —
   // refreshBobfLiveQuotes handles working→filled transitions. Without this
@@ -5210,7 +5213,10 @@ async function handleGxbfEntry(env, etNow, signal, preChain = null) {
   const doneKey = `gxbf_done_${todayISO}`;
 
   const done = await env.SIGNAL_KV.get(doneKey);
-  if (done) return { ...out, status: 'already-done', why: done };
+  // A `claim:` value is OUR OWN caller's in-flight claim token (P22 gate), not a
+  // completed run — treat only terminal markers as done. (2026-07-20: the claim
+  // gate made this self-check abort every tick → GXBF never fired on OPEX+1.)
+  if (done && !done.startsWith('claim:')) return { ...out, status: 'already-done', why: done };
 
   // 2026-06-09 belt-and-suspenders: even if the caller's window gate is
   // wrong or removed, refuse to fire before 09:35 ET. This guarantees the
