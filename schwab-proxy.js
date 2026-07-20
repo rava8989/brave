@@ -5888,12 +5888,18 @@ async function mfSetToday(env, todayISO, obj) {
 async function mfReadInputs(env, token, etNow, preChain, cut) {
   const todayISO = isoDateET(etNow);
   let magnet = null, magnetSrc = '10:30 snap';
+  // PNBF magnet MUST be the 0DTE max-positive-gamma strike — the basis the
+  // recipe was backtested on (2026-07-20 fix). The all-expiry magnet drifts to
+  // far monthly-OPEX call walls (7600 vs the true 7500 on 2026-07-20) and cost a
+  // real aligned trade that day. Prefer magnet0dte from the snapshot; fall back
+  // to the 0DTE live snapshot; legacy snapshots (magnet0dte absent) use .magnet.
   const snapRaw = await env.SIGNAL_KV.get(`mf_magnet_${todayISO}`);
-  if (snapRaw) magnet = JSON.parse(snapRaw).magnet;
+  if (snapRaw) { const s = JSON.parse(snapRaw); magnet = s.magnet0dte ?? s.magnet;
+    magnetSrc = s.magnet0dte != null ? '10:30 snap (0DTE)' : '10:30 snap (legacy all-exp)'; }
   if (magnet == null) {
-    const curRaw = await env.SIGNAL_KV.get('gex_current');
+    const curRaw = await env.SIGNAL_KV.get('gex_current_0dte');
     const cur = curRaw ? JSON.parse(curRaw) : null;
-    if (cur?.maxPosStrike != null) { magnet = cur.maxPosStrike; magnetSrc = 'live fallback'; }
+    if (cur?.maxPosStrike != null) { magnet = cur.maxPosStrike; magnetSrc = 'live fallback (0DTE)'; }
   }
   if (magnet == null) return { error: 'no magnet available' };
   if (!env.DISCORD_USER_TOKEN) return { error: 'no DISCORD_USER_TOKEN' };
@@ -5996,14 +6002,17 @@ async function handleMagnetFlyNoon(env, token, etNow, preChain) {
       detail: 'calendar filter (recipe rule 2)' });
     return { skipped: block };
   }
-  // magnet from the 10:30 snapshot (falls back to live gex_current if missed)
+  // magnet = 0DTE max-positive-gamma strike (the backtested basis; 2026-07-20
+  // fix). Prefer the snapshot's magnet0dte; fall back to the 0DTE live snapshot;
+  // legacy snapshots (no magnet0dte) use the old .magnet.
   let magnet = null, magnetSrc = '10:30 snap';
   const snapRaw = await env.SIGNAL_KV.get(`mf_magnet_${todayISO}`);
-  if (snapRaw) magnet = JSON.parse(snapRaw).magnet;
+  if (snapRaw) { const s = JSON.parse(snapRaw); magnet = s.magnet0dte ?? s.magnet;
+    magnetSrc = s.magnet0dte != null ? '10:30 snap (0DTE)' : '10:30 snap (legacy all-exp)'; }
   if (magnet == null) {
-    const curRaw = await env.SIGNAL_KV.get('gex_current');
+    const curRaw = await env.SIGNAL_KV.get('gex_current_0dte');
     const cur = curRaw ? JSON.parse(curRaw) : null;
-    if (cur?.maxPosStrike != null) { magnet = cur.maxPosStrike; magnetSrc = 'live fallback'; }
+    if (cur?.maxPosStrike != null) { magnet = cur.maxPosStrike; magnetSrc = 'live fallback (0DTE)'; }
   }
   if (magnet == null) return { error: 'no magnet available' };
 
