@@ -5845,21 +5845,29 @@ function mfFlyQuote(chain, todayISO, K) {
 // owns the slot. Caller puts 'sent' (86400s) on success, or deletes the key on
 // a posted-nothing error so the next tick retries; a tick that dies mid-send
 // leaves a claim that goes stale after 40s and is taken over.
+// Claim-token send gate. CRITICAL: CLAIM_STALE_MS must exceed the SLOWEST
+// handler this gate wraps, or a still-running claim looks "stale" to the next
+// cron tick, which takes over and DOUBLE-SENDS. PNBF's noon/11:30 handlers
+// scrape Discord + fetch the full SPX chain = up to ~90s; the old 40s window
+// let them post 2–5× (2026-07-20). 180s covers any handler here; a genuinely
+// crashed tick unblocks either via the caller's explicit delete (error paths)
+// or after this window. Reads are UNCACHED so a 'sent' marker is seen at once.
+const CLAIM_STALE_MS = 180_000;
 async function claimSendSlot(env, key) {
-  const cur = await env.SIGNAL_KV.get(key, { cacheTtl: 30 });
+  const cur = await env.SIGNAL_KV.get(key, { cacheTtl: 0 });
   if (cur && cur.startsWith('claim:')) {
     const ts = parseInt(cur.split(':')[2] || '0', 10);
-    if (!ts || Date.now() - ts <= 40_000) return false;   // fresh claim in flight
-    // stale claim (owner crashed mid-send) — fall through and take over
+    if (!ts || Date.now() - ts <= CLAIM_STALE_MS) return false;   // claim in flight
+    // older than any real handler run → the owner crashed; take over
   } else if (cur) {
     // any other non-empty value ('sent', 'done', 'window-passed', 'blackout:…')
-    // is a terminal marker written by us or by the handler itself — slot is spent
+    // is a terminal marker written by us or the handler itself — slot is spent
     return false;
   }
   const mine = `claim:${crypto.randomUUID()}:${Date.now()}`;
-  await env.SIGNAL_KV.put(key, mine, { expirationTtl: 90 });
+  await env.SIGNAL_KV.put(key, mine, { expirationTtl: 300 });
   await new Promise(r => setTimeout(r, 1500));            // let racers write too
-  return (await env.SIGNAL_KV.get(key, { cacheTtl: 30 })) === mine;
+  return (await env.SIGNAL_KV.get(key, { cacheTtl: 0 })) === mine;   // last-write-wins
 }
 
 // PNBF is a Sigma 3 signal now (2026-07-15): route through the SAME
