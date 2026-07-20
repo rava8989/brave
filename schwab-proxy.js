@@ -9798,7 +9798,13 @@ function buildMorningCardData(signal, vixValues, tailLine, pnbf) {
     rows.push({ n: 'M8BF', det, yes: m8Active });
   }
   rows.push({ n: 'Straddle', det: strip(signal.stradText, 'Straddle') || '—', yes: !isNo(signal.stradText) });
-  rows.push({ n: 'BOBF', det: strip(signal.bobfRec, 'BOBF') || '—', yes: !isNo(signal.bobfRec) });
+  {
+    // Owner rule (2026-07-15, re-broken 07-20): BOBF is never YES on the morning
+    // card — its own later decision is final. Affirmative renders amber POSSIBLE.
+    const bobfAff = !isNo(signal.bobfRec);
+    rows.push({ n: 'BOBF', det: strip(signal.bobfRec, 'BOBF') || '—',
+                yes: bobfAff, state: bobfAff ? 'possible' : 'no' });
+  }
   if (signal.diagText) rows.push({ n: 'Diagonal', det: strip(signal.diagText, 'Diagonal') || '—', yes: !isNo(signal.diagText) });
   if (tailLine) {
     const tl = String(tailLine);
