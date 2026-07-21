@@ -13004,6 +13004,20 @@ export default {
 
     // ── GET /gex ── Public endpoint, returns current GEX data from KV
     // Auto-refreshes if data is stale (>3 min) during market hours (cron is unreliable on free tier)
+    // ── Debug: exercise claimSendSlot in the real runtime (authed; P26 rule 3) ──
+    if (url.pathname === '/debug-claim' && request.method === 'GET') {
+      const sec = url.searchParams.get('secret');
+      if (!sec || (sec !== env.GEXM_TRIGGER_TOKEN && sec !== env.SYNC_SECRET)) {
+        return new Response('forbidden', { status: 403 });
+      }
+      const key = 'debug_claim_' + (url.searchParams.get('key') || 'test');
+      const won = await claimSendSlot(env, key);
+      const val = await env.SIGNAL_KV.get(key);
+      if (url.searchParams.get('clean') === '1') await env.SIGNAL_KV.delete(key);
+      return new Response(JSON.stringify({ won, storedValue: val }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+
     // ── Phone MCP connector (claude.ai custom connector; secret-path auth) ──
     if (env.MCP_TOKEN && url.pathname === `/mcp/${env.MCP_TOKEN}`) {
       if (request.method === 'OPTIONS') {
