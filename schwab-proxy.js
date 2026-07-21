@@ -3940,7 +3940,7 @@ async function refreshDiagonalLiveQuotes(env, token, preChain = null) {
   const todayISO = isoDateET(toET());
   if (trade.openDate && trade.openDate < todayISO) {
     const diagDone = await env.SIGNAL_KV.get(`diag_done_${todayISO}`);
-    if (diagDone) {
+    if (diagDone && !diagDone.startsWith('claim:')) {   // claim: = lifecycle IN FLIGHT, not done (P24)
       console.warn(`[diag] phantom open trade detected (openDate=${trade.openDate}, diag_done set) — clearing`);
       await logEvent(env, 'warn', 'diag-phantom', 'phantom open trade cleared at refresh path',
                      { openDate: trade.openDate });
@@ -11747,7 +11747,7 @@ export default {
         // and keeps getting refreshed. Detect on first endpoint hit and clear.
         if (open && open.openDate && open.openDate < todayDT && open.status === 'open') {
           const diagDone = await env.SIGNAL_KV.get(`diag_done_${todayDT}`);
-          if (diagDone) {
+          if (diagDone && !diagDone.startsWith('claim:')) {   // claim: = in flight, not done (P24)
             console.warn(`[diag-today] phantom open trade (openDate=${open.openDate}) — clearing`);
             await env.SIGNAL_KV.delete('diagonal_open_trade');
             await logEvent(env, 'warn', 'diag-phantom', 'phantom open trade cleared at endpoint',
