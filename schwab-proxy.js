@@ -163,26 +163,33 @@ async function captureCor1mVvix(env, etNow, token) {
   if (series.length > 120) series = series.slice(-120);
   await env.SIGNAL_KV.put(serKey, JSON.stringify(series), { expirationTtl: 7 * 86400 });
 
-  // Cross-DOWN detection — boundary semantics match detect_cross_entries
-  // (≥ on the "above" side, ≤ on the "below" side, not both exactly equal).
-  if (prev != null
-      && prev >= COR1M_TRIGGER_THRESHOLD && cor <= COR1M_TRIGGER_THRESHOLD
-      && !(prev === COR1M_TRIGGER_THRESHOLD && cor === COR1M_TRIGGER_THRESHOLD)) {
+  // LEVEL arming (owner 2026-07-20, "re-arm while under threshold"): the Tail
+  // Hedge stays armed whenever COR1M ≤ threshold, not just on the cross-down.
+  // After a profitable exit (state RESOLVED), it re-arms the NEXT day if COR1M
+  // is still ≤ threshold — because the complacency regime (and its tail risk)
+  // persists. Backtest --no-rearm: +$79,550 vs +$79,340, SAME worst day/DD;
+  // near-flat P/L but closes the "insured on entry, naked while still complacent"
+  // gap. Level subsumes the old cross-down. A same-day guard (resolvedOn<today)
+  // prevents re-arming the instant a trade resolves.
+  if (cor <= COR1M_TRIGGER_THRESHOLD) {
     const stRaw = await env.SIGNAL_KV.get('tail_trigger_state');
     const st = stRaw ? JSON.parse(stRaw) : null;
-    if (!st || st.state !== 'TRIGGERED') {
+    const canArm = !st || st.state === 'WAITING'
+      || (st.state === 'RESOLVED' && st.resolvedOn && st.resolvedOn < todayISO);
+    if (canArm) {
+      const reArm = !!(st && st.state === 'RESOLVED');   // vs a fresh cross-in
       await env.SIGNAL_KV.put('tail_trigger_state', JSON.stringify({
         state: 'TRIGGERED', since: todayISO, value: cor,
         detectedAt: new Date().toISOString(), source: 'cloud-quote',
       }));
-      _tailHedgeCache = { value: null, fetchedAt: 0 };  // re-arm: drop stale 'No trade' line (mirrors settle path)
+      _tailHedgeCache = { value: null, fetchedAt: 0 };  // drop stale 'No trade' line (mirrors settle path)
       try {
         const dcRaw = await env.SIGNAL_KV.get('discord_config');
         if (dcRaw) {
           const dc = JSON.parse(dcRaw);
           if (dc.channelId) {
             await sendDiscordDM(env, dc.channelId,
-              `📉 **COR1M crossed below ${COR1M_TRIGGER_THRESHOLD}** (now ${cor}, ${hhmm} ET).\nTail Hedge trigger ACTIVE — buy the 9:45 ET put daily until first profit (skip days with VVIX ≥ 110${vvix != null ? `; VVIX now ${vvix}` : ''}).`,
+              `📉 **COR1M ${reArm ? 're-armed' : 'below'} ${COR1M_TRIGGER_THRESHOLD}** (now ${cor}, ${hhmm} ET).\nTail Hedge trigger ACTIVE — buy the 9:45 ET put daily; after each profit it re-arms the next day while COR1M stays ≤ ${COR1M_TRIGGER_THRESHOLD} (skip days with VVIX ≥ 110${vvix != null ? `; VVIX now ${vvix}` : ''}).`,
               dc.proxyUrl);
           }
         }

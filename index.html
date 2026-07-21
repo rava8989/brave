@@ -662,7 +662,7 @@
     </div>
 
     <!-- CARD 6: Tail Hedge (companion — added 2026-06-08) -->
-    <div class="scard" id="cardTail" title="Tail Hedge (Convex Tail — DEFAULT, Δ-0.10). Watch COR1M hourly bars; whenever it crosses from above to at-or-below 7.75 (intraday or overnight), enter at the next 9:45 AM ET. VVIX gate: block when VVIX_open ≥ 110. Buy 0DTE SPXW put delta -0.10 — 2 contracts when overnight VIX is down (else 1), hold to 4 PM. Keep buying daily until first profitable day. Recommended preset (2026-06-16 sweep, 2× VIX-down sizing): +$79,340, MAR 12.1, max DD $6,560, worst day -$640 — the cheaper 10-delta wing beats -0.20 on return AND drawdown. Full backtester: cor1m_contango.html.">
+    <div class="scard" id="cardTail" title="Tail Hedge (Convex Tail — DEFAULT, Δ-0.10). Watch COR1M hourly bars; whenever it crosses from above to at-or-below 7.75 (intraday or overnight), enter at the next 9:45 AM ET. VVIX gate: block when VVIX_open ≥ 110. Buy 0DTE SPXW put delta -0.10 — 2 contracts when overnight VIX is down (else 1), hold to 4 PM. Keep buying daily until the first profitable day; then RE-ARM the next day and keep buying as long as COR1M stays ≤ 7.75 (only stop when it rises back above 7.75) — so it never goes naked while complacency persists. Recommended preset (2026-06-16 sweep, 2× VIX-down sizing; re-arm added 2026-07-20): +$79,550, 74 trades, max DD $6,560, worst day -$640 — the cheaper 10-delta wing beats -0.20 on return AND drawdown. Full backtester: cor1m_contango.html.">
       <div class="scard-header">
         <span class="scard-label">Tail Hedge <span style="font-weight:400;font-size:10px;opacity:.7;letter-spacing:normal;text-transform:none">· companion · Sweet Spot</span></span>
         <span class="today-trade-pill" id="pillTail" style="display:none;">▶ TODAY'S TRADE</span>
@@ -981,7 +981,7 @@
     <h4 style="margin:14px 0 6px;font-size:13px;color:var(--text)">State machine — keep buying until you win</h4>
     <ul>
       <li><strong>Once TRIGGERED, buy a put every trading morning</strong> (2 contracts when overnight VIX is down, else 1) until one of them pays off.</li>
-      <li><strong>First profitable day → exit to WAITING</strong>. No more trades until the next fresh cross.</li>
+      <li><strong>First profitable day → bank it, then RE-ARM the next day if COR1M is still ≤ 7.75</strong> (owner 2026-07-20). It only fully stands down when COR1M rises back above 7.75 — so the hedge stays live through a persistent complacency regime instead of going naked after one small win.</li>
       <li><strong>VVIX block does NOT exit</strong> — if VVIX ≥ 110 today, just skip today's buy, stay TRIGGERED.</li>
       <li>Typical pattern: 5-10 small losses (~$100-500 each) followed by one big winner ($5k-$15k) that pays for all of them and adds profit. <em>Most days lose a little. A few days print huge. That's the trade.</em></li>
     </ul>
@@ -1016,7 +1016,7 @@
       <li><strong>Not an always-on hedge</strong> — only fires during low-correlation regimes (most of 2024 onward). Sat dormant during 2022 bear market.</li>
       <li><strong>Not a part of Sigma 3</strong> — separate sizing, separate signal. Companion strategy, layered on top.</li>
       <li><strong>Not protection against gradual decline</strong> — it pays on sharp 1-day shocks (FOMC surprises, geopolitical events). Won't help on slow grinding bear markets.</li>
-      <li><strong>Not requiring a profit to exit</strong> — wait, actually yes it does: stays in buying mode until first profitable day.</li>
+      <li><strong>Not a one-and-done per regime</strong> — it takes the first profit, then re-arms the next day while COR1M stays ≤ 7.75, only standing fully down when COR1M rises back above 7.75.</li>
     </ul>
 
     <hr class="divider">

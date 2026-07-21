@@ -150,7 +150,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);font-
   <div class="banner-desc">
     <strong>The strategy:</strong> Buy a cheap 0DTE SPX put at 9:45 AM ET whenever stock correlation (COR1M) crashes below <strong>7.75</strong> — but only if VVIX is under <strong>110</strong>. Size <strong>2 contracts when overnight VIX is down</strong> (today's open below yesterday's close — the edge concentrates there), else 1. Hold to 4 PM close. Most days you lose $100-500 (the put expires worthless). A few days print <strong>$5k-$30k</strong> when the market shocks. Over 4 years: <strong>+$79,340 across 68 trades</strong>, worst single loss <strong>−$640</strong>.
     <br>
-    <strong>The trigger (catches EVERY cross):</strong> Watch COR1M's hourly bars. The moment it transitions from above 7.75 to at-or-below 7.75 — overnight OR intraday — you're in buying mode. If the cross is on the 9:30 bar → trade same day at 9:45. If it's at 10:30 or later → trade next trading day. Keep buying every morning until the first profitable day, then back to waiting for the next cross.
+    <strong>The trigger (catches EVERY cross):</strong> Watch COR1M's hourly bars. The moment it transitions from above 7.75 to at-or-below 7.75 — overnight OR intraday — you're in buying mode. If the cross is on the 9:30 bar → trade same day at 9:45. If it's at 10:30 or later → trade next trading day. Keep buying every morning until the first profitable day; then RE-ARM the next day and keep buying as long as COR1M stays ≤ 7.75 — you only stand fully down (wait for a fresh cross) once COR1M rises back above 7.75. This keeps the hedge live through a lasting complacency regime instead of going naked after one small win.
     <br>
     <strong>The page:</strong> All numbers are NO-LOOK-AHEAD (uses only 9:30 opens) with conservative fills (entry mid rounded UP to $0.10, P/L floored to $10 for commissions + slippage). Pick any preset above to compare — Balanced is the default and recommended baseline.
   </div>
@@ -954,7 +954,10 @@ function runSandbox({ threshold, delta_target, vvix_max, regimes_allowed }) {
   for (const dayObj of bundle.daily) {
     const d = dayObj.date;
 
-    if (state === 'WAITING' && entryDays.has(d)) {
+    // Arm on the cross-down OR re-arm on level (deployed re-arm rule 2026-07-20):
+    // whenever COR1M ≤ threshold and we're WAITING, (re-)enter buying mode.
+    if (state === 'WAITING'
+        && (entryDays.has(d) || (dayObj.cor1m != null && dayObj.cor1m <= threshold))) {
       state = 'TRIGGERED';
       currentTrigger = {
         trigger_date: d,

@@ -99,9 +99,9 @@ PRESETS = [
     {
         'id': 'balanced',
         'name': 'Balanced',
-        'desc': '★ RECOMMENDED (sweep winner 2026-06-16; 2 contracts on overnight-VIX-down days, else 1). thr 7.75, delta -0.10, VVIX<110. +$79,340, MAR 12.09, max DD $6,560, worst day -$640. Cheaper 10-delta wing = half the bleed, ~90% of crash payoff. Best total AND best risk-adjusted; robust both halves (7 separate selloffs).',
+        'desc': '★ RECOMMENDED (sweep winner 2026-06-16; 2 contracts on overnight-VIX-down days, else 1). thr 7.75, delta -0.10, VVIX<110. RE-ARM rule (owner 2026-07-20): after each profit it re-arms the next day while COR1M stays ≤ 7.75, so it never goes naked during a persistent complacency regime. +$79,550, 74 trades, worst day -$640. Near-flat vs the old exit-on-first-profit-then-wait-for-recross (+$79,340) but closes the "insured on entry, exposed while still complacent" gap at no cost to worst day or drawdown.',
         'threshold': 7.75, 'delta': -0.10, 'time': '0945',
-        'regimes': [], 'vvix_max': 110,
+        'regimes': [], 'vvix_max': 110, 'no_rearm': True,
         'recommended': True,
     },
     {
@@ -191,6 +191,7 @@ def main():
             from_date=args.from_date, to_date=args.to_date,
             threshold=pr['threshold'], delta=pr['delta'], time=pr['time'],
             regimes=regimes_str, exit_on_cross_up=False,
+            no_rearm=pr.get('no_rearm', False),
             cor1m_low=args.cor1m_low, cor1m_high=args.cor1m_high,
             vvix_max=pr.get('vvix_max'),
         )
