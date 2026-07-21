@@ -5861,7 +5861,11 @@ function mfFlyQuote(chain, todayISO, K) {
 // or after this window. Reads are UNCACHED so a 'sent' marker is seen at once.
 const CLAIM_STALE_MS = 180_000;
 async function claimSendSlot(env, key) {
-  const cur = await env.SIGNAL_KV.get(key, { cacheTtl: 0 });
+  try { return await _claimSendSlotInner(env, key); }
+  catch (e) { console.warn('[claimSendSlot]', key, e.message); return false; }  // a gate error must never kill the tick (P26)
+}
+async function _claimSendSlotInner(env, key) {
+  const cur = await env.SIGNAL_KV.get(key);   // plain read — cacheTtl<60 THROWS on CF KV (P26)
   if (cur && cur.startsWith('claim:')) {
     const ts = parseInt(cur.split(':')[2] || '0', 10);
     if (!ts || Date.now() - ts <= CLAIM_STALE_MS) return false;   // claim in flight
@@ -5874,7 +5878,7 @@ async function claimSendSlot(env, key) {
   const mine = `claim:${crypto.randomUUID()}:${Date.now()}`;
   await env.SIGNAL_KV.put(key, mine, { expirationTtl: 300 });
   await new Promise(r => setTimeout(r, 1500));            // let racers write too
-  return (await env.SIGNAL_KV.get(key, { cacheTtl: 0 })) === mine;   // last-write-wins
+  return (await env.SIGNAL_KV.get(key)) === mine;   // last-write-wins
 }
 
 // PNBF is a Sigma 3 signal now (2026-07-15): route through the SAME
