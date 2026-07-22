@@ -5913,14 +5913,28 @@ async function mfReadInputs(env, token, etNow, preChain, cut) {
     if (cur?.maxPosStrike != null) { magnet = cur.maxPosStrike; magnetSrc = 'live fallback (0DTE)'; }
   }
   if (magnet == null) return { error: 'no magnet available' };
-  if (!env.DISCORD_USER_TOKEN) return { error: 'no DISCORD_USER_TOKEN' };
-  const rows = await scrapeRawRowsForDate(env.DISCORD_USER_TOKEN, MF_SIGNALS_CHANNEL, todayISO);
+  // M8BF center from signals_today (maintained by pollDiscordSignals every
+  // tick) — the 10-page Discord re-scrape made this the slowest handler in
+  // the worker and got noon ticks killed mid-fanout (P27 dupes). Scrape only
+  // as a fallback when the poller has nothing for today.
   let center = null, sigTime = null;
-  for (const line of rows || []) {
-    const c = line.split(',');
-    if (c.length < 25 || !c[2] || c[2] > cut) continue;
-    const bc = parseFloat(c[24]);
-    if (Number.isFinite(bc)) { center = bc; sigTime = c[2]; }
+  try {
+    const stRaw = await env.SIGNAL_KV.get('signals_today');
+    const st = stRaw ? JSON.parse(stRaw) : null;
+    if (st && st.date === todayISO && Array.isArray(st.signals)) {
+      for (const sg of st.signals) {
+        if (sg.time && sg.time <= cut && Number.isFinite(sg.center)) { center = sg.center; sigTime = sg.time; }
+      }
+    }
+  } catch (_) {}
+  if (center == null && env.DISCORD_USER_TOKEN) {
+    const rows = await scrapeRawRowsForDate(env.DISCORD_USER_TOKEN, MF_SIGNALS_CHANNEL, todayISO);
+    for (const line of rows || []) {
+      const c = line.split(',');
+      if (c.length < 25 || !c[2] || c[2] > cut) continue;
+      const bc = parseFloat(c[24]);
+      if (Number.isFinite(bc)) { center = bc; sigTime = c[2]; }
+    }
   }
   if (center == null) return { magnet, magnetSrc, center: null };
   const chain = preChain || await fetchMasterSpxChain(token, env);
@@ -5970,8 +5984,11 @@ async function handleMagnetFlyPreAlert(env, token, etNow, preChain) {
   }
   const inp = await mfReadInputs(env, token, etNow, preChain, '11:30');
   if (inp.error) return { error: inp.error };
+  const preKey = `mf_prealert_${todayISO}`;
+  const markPre = () => env.SIGNAL_KV.put(preKey, 'sent', { expirationTtl: 86400 });
   const { magnet, center, entry } = inp;
   if (center == null) {
+    await markPre();                                    // decision made: no heads-up today
     await mfSetToday(env, todayISO, { status: 'POSSIBLE', pre: true,
       headline: 'Heads-up — no M8BF signal yet at 11:30', detail: 'watching for the noon check' });
     return { pre: 'PEND' };
@@ -5994,6 +6011,7 @@ async function handleMagnetFlyPreAlert(env, token, etNow, preChain) {
     lean = 'LIKELY NO'; emoji = '⚪';
     headline = `Likely no trade — center ${center} is ${dist} pts off magnet ${magnet}`;
   }
+  await markPre();                                    // marker BEFORE the post (P27)
   await mfSetToday(env, todayISO, {
     status: (lean.startsWith('LIKELY GO')) ? 'POSSIBLE' : 'PRE-NO', pre: true, headline,
     detail: `11:30 heads-up · noon check is final · ~88% of early calls hold`,
@@ -6004,43 +6022,31 @@ async function handleMagnetFlyPreAlert(env, token, etNow, preChain) {
   return { pre: lean, dist, entry };
 }
 
-// Noon check — idempotent via mf_done_<date>; caller retries within window.
+// Noon check — DEDUP CONTRACT (P27, matches GXBF: the only PNBF sender that
+// never duped writes its terminal marker BEFORE posting): decision → write
+// mf_done_<date>='sent' → THEN mfSetToday/post. If the invocation dies
+// mid-fanout the marker already exists, so a takeover tick can never re-post.
+// Worst case a message is lost once — never duplicated. Caller releases the
+// claim only on pre-decision errors (which post nothing).
 async function handleMagnetFlyNoon(env, token, etNow, preChain) {
   const todayISO = isoDateET(etNow);
+  const doneKey = `mf_done_${todayISO}`;
+  const mark = () => env.SIGNAL_KV.put(doneKey, 'sent', { expirationTtl: 86400 });
   const block = mfCalendarBlock(etNow);
   if (block) {
+    await mark();
     await mfSetToday(env, todayISO, { status: 'NO', headline: `No PNBF — ${block}`,
       detail: 'calendar filter (recipe rule 2)' });
     return { skipped: block };
   }
-  // magnet = 0DTE max-positive-gamma strike (the backtested basis; 2026-07-20
-  // fix). Prefer the snapshot's magnet0dte; fall back to the 0DTE live snapshot;
-  // legacy snapshots (no magnet0dte) use the old .magnet.
-  let magnet = null, magnetSrc = '10:30 snap';
-  const snapRaw = await env.SIGNAL_KV.get(`mf_magnet_${todayISO}`);
-  if (snapRaw) { const s = JSON.parse(snapRaw); magnet = s.magnet0dte ?? s.magnet;
-    magnetSrc = s.magnet0dte != null ? '10:30 snap (0DTE)' : '10:30 snap (legacy all-exp)'; }
-  if (magnet == null) {
-    const curRaw = await env.SIGNAL_KV.get('gex_current_0dte');
-    const cur = curRaw ? JSON.parse(curRaw) : null;
-    if (cur?.maxPosStrike != null) { magnet = cur.maxPosStrike; magnetSrc = 'live fallback (0DTE)'; }
-  }
-  if (magnet == null) return { error: 'no magnet available' };
-
-  // M8BF center at/before 12:00 from the Discord feed (same parser as archive)
-  if (!env.DISCORD_USER_TOKEN) return { error: 'no DISCORD_USER_TOKEN' };
-  const rows = await scrapeRawRowsForDate(env.DISCORD_USER_TOKEN, MF_SIGNALS_CHANNEL, todayISO);
-  let center = null, sigTime = null;
-  for (const line of rows || []) {
-    const c = line.split(',');
-    if (c.length < 25 || !c[2] || c[2] > '12:00') continue;
-    const bc = parseFloat(c[24]);
-    if (Number.isFinite(bc)) { center = bc; sigTime = c[2]; }
-  }
+  const inp = await mfReadInputs(env, token, etNow, preChain, '12:00');
+  if (inp.error) return { error: inp.error };
+  const { magnet, magnetSrc, center, sigTime, entry } = inp;
   if (center == null) return { error: 'no M8BF signal rows yet' };
 
   const dist = Math.abs(center - magnet);
   if (dist !== 5) {
+    await mark();                                        // marker BEFORE post
     await mfSetToday(env, todayISO, { status: 'NO',
       headline: `No PNBF — T1 ≠ magnet (center ${center} vs magnet ${magnet}, dist ${dist})`,
       detail: `magnet ${magnetSrc} · M8BF signal @${sigTime}`,
@@ -6049,11 +6055,9 @@ async function handleMagnetFlyNoon(env, token, etNow, preChain) {
     return { skipped: 'no alignment', center, magnet };
   }
 
-  const chain = preChain || await fetchMasterSpxChain(token, env);
-  const q = mfFlyQuote(chain, todayISO, magnet);
-  if (!q) return { error: `fly legs missing at K=${magnet}` };
-  const entry = Math.round((q.mid + q.slip) * 100) / 100;
+  if (entry == null) return { error: `fly legs missing at K=${magnet}` };
   if (entry > MF_DEBIT_CAP) {
+    await mark();                                        // marker BEFORE post
     await mfSetToday(env, todayISO, { status: 'NO',
       headline: `No PNBF — 30w costs $${entry.toFixed(2)} > $${MF_DEBIT_CAP} cap`,
       detail: `aligned (center ${center} == magnet±5) but too expensive`,
@@ -6069,6 +6073,7 @@ async function handleMagnetFlyNoon(env, token, etNow, preChain) {
     paper: true,
   };
   await env.SIGNAL_KV.put('mf_open_trade', JSON.stringify(trade));
+  await mark();                                          // marker BEFORE the GO post
   await mfSetToday(env, todayISO, { status: 'GO',
     headline: `GO — 30w fly at ${magnet}, debit $${entry.toFixed(2)}`,
     detail: `TP $${trade.tp.toFixed(2)} (+$300/lot) · SL $${trade.sl.toFixed(2)} (−$500/lot) · M8BF @${sigTime}`,
@@ -6076,8 +6081,7 @@ async function handleMagnetFlyNoon(env, token, etNow, preChain) {
            ['TP / SL', `+3.0 / −5.0`]] });
   // GO = EXACT M8BF-message shape (owner 2026-07-15, screenshot): bold name,
   // plain order line, "BUTTERFLY" uppercase, CALL strikes LOW→HIGH, SPX 100
-  // (Weeklys), @debit LMT. 0DTE → expiration is today. Plain text (NOT a code
-  // block — Discord copies it fine and the fence looked wrong). TP/SL below.
+  // (Weeklys), @debit LMT. 0DTE → expiration is today. Plain text. TP/SL below.
   const _MON = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
   const tosD = `${+todayISO.slice(8,10)} ${_MON[+todayISO.slice(5,7)-1]} ${todayISO.slice(2,4)}`;
   const tos = `BUY +${MF_LOTS} BUTTERFLY SPX 100 (Weeklys) ${tosD} ${magnet - MF_WIDTH}/${magnet}/${magnet + MF_WIDTH} CALL @${entry.toFixed(2)} LMT`;
@@ -6474,10 +6478,10 @@ async function handleScheduled(env) {
   if (etHour === 11 && etMin >= 28 && etMin < 38) {
     try {
       if (await claimSendSlot(env, mfPreKey)) {
+        // handler writes the 'sent' marker ITSELF before posting (P27) —
+        // caller only releases the claim on pre-decision errors (post nothing)
         const pre = await handleMagnetFlyPreAlert(env, schwabToken, etNow, masterChain);
-        if (!pre.error) await env.SIGNAL_KV.put(mfPreKey, 'sent', { expirationTtl: 86400 });
-        else {
-          // error paths post nothing — release the claim so the next tick retries
+        if (pre.error) {
           await env.SIGNAL_KV.delete(mfPreKey);
           console.warn('[mf-pre] retry next tick:', pre.error);
         }
@@ -6493,11 +6497,9 @@ async function handleScheduled(env) {
   if (etHour === 12 && etMin < 15) {
     try {
       if (await claimSendSlot(env, mfDoneKey)) {
+        // handler writes the 'sent' marker ITSELF before posting (P27)
         mfResult = await handleMagnetFlyNoon(env, schwabToken, etNow, masterChain);
-        if (!mfResult.error) {
-          await env.SIGNAL_KV.put(mfDoneKey, 'sent', { expirationTtl: 86400 });
-        } else {
-          // error paths post nothing — release the claim so the next tick retries
+        if (mfResult.error) {
           await env.SIGNAL_KV.delete(mfDoneKey);
           console.warn('[mf] not marking done — retry next tick:', mfResult.error);
         }
