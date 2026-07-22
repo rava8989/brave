@@ -292,6 +292,20 @@
     </div>
   </div>
 
+  <!-- Net Premium Flow — Today (Unusual-Whales style, SPX 0DTE) -->
+  <div class="chart-section" id="netPremSection" style="display:none;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
+      <h2 style="margin-bottom:0;"><span>Net Premium</span> — Today (SPX 0DTE)</h2>
+      <span id="netPremReadout" style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--text2);"></span>
+    </div>
+    <div class="chart-wrap" style="height:320px;">
+      <canvas id="netPremChart"></canvas>
+    </div>
+    <div class="bottom-info" style="text-align:left;padding:8px 0 0;">
+      Cumulative net <b style="color:var(--green)">call</b> premium and net <b style="color:var(--red)">put</b> premium since the open ($ = buys lifting the ask − sells hitting the bid), against SPX (grey, right axis). Rising green = aggressive call buying; rising red = aggressive put buying. SPX index options only, 1-min snapshots — builds through the session (premium capture started 2026-07-22, so full days begin the next session).
+    </div>
+  </div>
+
   <!-- Charm by Strike -->
   <div class="chart-section" id="charmStrikeSection" style="display:none;">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
@@ -387,6 +401,7 @@ let gexChart = null;
 let gammaCurveChart = null;
 let flowChart = null;
 let flow0dteChart = null;
+let netPremChart = null;
 let charmStrikeChart = null;
 let charmTimeChart = null;
 let gammaLevelMapDrawn = false; // SVG is rebuilt from scratch each render; this flag is informational only
@@ -988,6 +1003,92 @@ function renderFlow0dteChart(data) {
   });
 }
 
+// ── Net Premium Flow — Today (SPX 0DTE, Unusual-Whales style) ──
+//    Cumulative net CALL premium (green) + net PUT premium (red) since open, vs SPX.
+//    Hidden until the worker has written premium fields (cbP/csP/pbP/psP) to flowSeries
+//    (capture started 2026-07-22 → populates from the next session's open onward).
+function renderNetPremChart(data) {
+  const section = document.getElementById('netPremSection');
+  const series = Array.isArray(data.flowSeries) ? data.flowSeries : [];
+  const hasPrem = series.length >= 2 && series.some(b => b && typeof b.cbP === 'number');
+  if (!hasPrem) {
+    section.style.display = 'none';
+    if (netPremChart) { netPremChart.destroy(); netPremChart = null; }
+    return;
+  }
+  section.style.display = 'block';
+
+  const labels = [], callPrem = [], putPrem = [], spx = [];
+  let rc = 0, rp = 0;
+  for (const b of series) {
+    // only accumulate bars that carry premium fields (pre-capture bars have none)
+    if (typeof b.cbP === 'number') { rc += (b.cbP || 0) - (b.csP || 0); rp += (b.pbP || 0) - (b.psP || 0); }
+    callPrem.push(rc / 1e6);   // $M
+    putPrem.push(rp / 1e6);
+    spx.push(typeof b.spot === 'number' ? b.spot : null);
+    const d = _toETSafe(new Date((b.ts || 0) * 1000));
+    labels.push(String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'));
+  }
+  const cNow = callPrem.length ? callPrem[callPrem.length - 1] : 0;
+  const pNow = putPrem.length ? putPrem[putPrem.length - 1] : 0;
+  const $m = v => (v >= 0 ? '+' : '−') + '$' + Math.abs(v).toFixed(1) + 'M';
+  const readout = document.getElementById('netPremReadout');
+  readout.innerHTML = `call ${$m(cNow)} · put ${$m(pNow)} · ` +
+    `<span style="color:${cNow - pNow > 0 ? 'var(--green)' : cNow - pNow < 0 ? 'var(--red)' : 'var(--text2)'}">` +
+    `${cNow - pNow > 0 ? 'call-side aggressive' : cNow - pNow < 0 ? 'put-side aggressive' : 'balanced'}</span>`;
+
+  const ds = [
+    { label: 'Net call premium', data: callPrem, yAxisID: 'y', borderColor: '#22c55e',
+      borderWidth: 2, pointRadius: 0, tension: 0.25, fill: false },
+    { label: 'Net put premium', data: putPrem, yAxisID: 'y', borderColor: '#ef4444',
+      borderWidth: 2, pointRadius: 0, tension: 0.25, fill: false },
+    { label: 'SPX', data: spx, yAxisID: 'ySpx', borderColor: 'rgba(148,163,184,0.85)',
+      borderWidth: 1.5, pointRadius: 0, tension: 0.25, fill: false, borderDash: [5, 3] },
+  ];
+  if (netPremChart) {
+    netPremChart.data.labels = labels;
+    netPremChart.data.datasets.forEach((d, i) => { d.data = ds[i].data; });
+    netPremChart.update('none');
+    return;
+  }
+  const ctx = document.getElementById('netPremChart').getContext('2d');
+  netPremChart = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets: ds },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: true, labels: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 11 }, boxWidth: 12 } },
+        tooltip: {
+          backgroundColor: '#1e293b', borderColor: '#2d3f55', borderWidth: 1,
+          titleFont: { family: 'JetBrains Mono', size: 12, weight: 'bold' },
+          bodyFont: { family: 'JetBrains Mono', size: 11 },
+          titleColor: '#e2e8f0', bodyColor: '#94a3b8', padding: 10, cornerRadius: 8,
+          callbacks: {
+            title: items => items[0].label + ' ET',
+            label: item => item.dataset.label === 'SPX'
+              ? 'SPX ' + (item.raw == null ? '—' : Number(item.raw).toFixed(2))
+              : item.dataset.label + ' ' + (item.raw >= 0 ? '+' : '−') + '$' + Math.abs(item.raw).toFixed(2) + 'M',
+          }
+        },
+        annotation: { annotations: { zeroLine: { type: 'line', yMin: 0, yMax: 0, yScaleID: 'y',
+          borderColor: 'rgba(148,163,184,0.5)', borderWidth: 1, borderDash: [4, 4] } } },
+      },
+      scales: {
+        x: { grid: { color: 'rgba(45,63,85,0.3)', drawBorder: false },
+             ticks: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 10 }, maxRotation: 45, autoSkip: true, maxTicksLimit: 14 } },
+        y: { position: 'left', grid: { color: 'rgba(45,63,85,0.3)', drawBorder: false },
+             ticks: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 10 },
+                      callback: v => (v >= 0 ? '+' : '−') + '$' + Math.abs(v).toFixed(0) + 'M' } },
+        ySpx: { position: 'right', grid: { drawOnChartArea: false, drawBorder: false },
+                ticks: { color: 'rgba(148,163,184,0.7)', font: { family: 'JetBrains Mono', size: 10 } } },
+      },
+      animation: { duration: 300 },
+    }
+  });
+}
+
 // ── Charm by strike (graceful-degrade: hide if server omits/empties data.strikes or has no cex) ──
 function renderCharmStrikeChart(data) {
   const section = document.getElementById('charmStrikeSection');
@@ -1576,7 +1677,7 @@ async function tryLoadCached() {
     renderCards(data);
     renderChart(data);
     renderGammaCurve(data);
-    renderFlowChart(data); renderFlow0dteChart(data);
+    renderFlowChart(data); renderFlow0dteChart(data); renderNetPremChart(data);
     renderCharmStrikeChart(data);
     renderCharmTimeChart(data);
     renderGammaLevelMap(data);
@@ -1618,7 +1719,7 @@ async function fetchAndRender() {
                   const data = await retry.json();
                   renderTopBar(data); renderCards(data); renderChart(data);
                   renderGammaCurve(data);
-                  renderFlowChart(data); renderFlow0dteChart(data);
+                  renderFlowChart(data); renderFlow0dteChart(data); renderNetPremChart(data);
                   renderCharmStrikeChart(data);
                   renderCharmTimeChart(data);
                   renderGammaLevelMap(data);
@@ -1676,7 +1777,7 @@ async function fetchAndRender() {
     renderCards(data);
     renderChart(data);
     renderGammaCurve(data);
-    renderFlowChart(data); renderFlow0dteChart(data);
+    renderFlowChart(data); renderFlow0dteChart(data); renderNetPremChart(data);
     renderCharmStrikeChart(data);
     renderCharmTimeChart(data);
     renderGammaLevelMap(data);

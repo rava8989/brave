@@ -8185,6 +8185,7 @@ async function handleGEXUpdate(env, token, preChain = null) {
       const hadPrev = !!prevSnap;
       const newSnap = {};
       let cb = 0, cs = 0, cn = 0, pb = 0, ps = 0, pn = 0; // this-bar buy/sell/neutral, calls & puts (contracts)
+      let cbP = 0, csP = 0, pbP = 0, psP = 0;             // this-bar sided PREMIUM $ (dV × price × 100)
       for (const ct of flowContracts) {
         const v = Math.max(ct.v || 0, 0);
         newSnap[ct.k] = v;
@@ -8204,8 +8205,10 @@ async function handleGEXUpdate(env, token, preChain = null) {
         else if (l != null && mid != null && l > mid) side = 'buy';
         else if (l != null && mid != null && l < mid) side = 'sell';
         else side = 'neutral';
-        if (ct.k.endsWith('|C')) { if (side === 'buy') cb += dV; else if (side === 'sell') cs += dV; else cn += dV; }
-        else                     { if (side === 'buy') pb += dV; else if (side === 'sell') ps += dV; else pn += dV; }
+        const px = (l != null && l > 0) ? l : (mid != null && mid > 0 ? mid : 0);
+        const prem = dV * px * 100;                          // premium $ traded this bar at this strike
+        if (ct.k.endsWith('|C')) { if (side === 'buy') { cb += dV; cbP += prem; } else if (side === 'sell') { cs += dV; csP += prem; } else cn += dV; }
+        else                     { if (side === 'buy') { pb += dV; pbP += prem; } else if (side === 'sell') { ps += dV; psP += prem; } else pn += dV; }
       }
       await env.SIGNAL_KV.put(snapKey, JSON.stringify(newSnap), { expirationTtl: 172800 }); // ~2 days
 
@@ -8220,7 +8223,10 @@ async function handleGEXUpdate(env, token, preChain = null) {
         ? Math.round(gex0dte.charm / gex0dte.tYears / 365) : null;
       flow.push({ ts: Math.floor(Date.now() / 1000), cv: gexData.callVol, pv: gexData.putVol,
                   ch: ch0dte,
-                  cb, cs, pb, ps, cn, pn });   // sided deltas: call/put buy/sell/neutral this bar
+                  cb, cs, pb, ps, cn, pn,       // sided deltas: call/put buy/sell/neutral this bar (contracts)
+                  cbP: Math.round(cbP), csP: Math.round(csP),   // sided PREMIUM $ this bar (for the net-premium panel)
+                  pbP: Math.round(pbP), psP: Math.round(psP),
+                  spot: gexData.spot });        // SPX at this bar (price line on the flow panel)
       // 500 > ~390 bars/full trading day — the cap is a safety BOUND, not a window.
       // At 250 the trim kicked in ~13:40 ET and silently dropped the morning, breaking
       // every "since the open" cumulative sum + the Level Map flow arrow (Fix 2).
@@ -8290,6 +8296,9 @@ const MCP_TOOLS = [
   { name: 'vix_now',
     description: 'Live VIX term structure via Schwab: VIX9D / VIX / VIX3M / VIX6M / VVIX / COR1M with the contango and 9D-spread readings the Tail Hedge and Diagonal use.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+  { name: 'flow_today',
+    description: "Today's SPX 0DTE net options-premium flow (like the Unusual Whales net-premium chart, but SPX). Cumulative net CALL premium and net PUT premium ($ = buys−sells), net volume, and where SPX is — read for 'who's aggressive today, calls or puts'. Buys = lifting the ask, sells = hitting the bid.",
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
 ];
 
 const _MCP_IDX = new Set(['SPX', 'VIX', 'VIX9D', 'VIX3M', 'VIX6M', 'VVIX', 'COR1M', 'VIXEQ', 'DJI', 'NDX', 'RUT']);
@@ -8322,6 +8331,29 @@ async function mcpToolText(env, name, args) {
       ` · high ${Math.max(...px)} · low ${Math.min(...px)}`;
     const tape = ser.map(p => `${p.time} ${p.price}`).join(' · ');
     return `${head}\n5-min tape: ${tape}`;
+  }
+  if (name === 'flow_today') {
+    const todayISO = isoDateET(toET(new Date()));
+    const raw = await env.SIGNAL_KV.get(`gex_flow_${todayISO}`);
+    const fs = raw ? JSON.parse(raw) : [];
+    if (!fs.length) return `no SPX flow captured yet for ${todayISO} (market closed or pre-open)`;
+    let ncp = 0, npp = 0, ncv = 0, npv = 0;      // cumulative net call/put premium $, net call/put volume (contracts)
+    for (const t of fs) {
+      ncp += (t.cbP || 0) - (t.csP || 0);
+      npp += (t.pbP || 0) - (t.psP || 0);
+      ncv += (t.cb || 0) - (t.cs || 0);
+      npv += (t.pb || 0) - (t.ps || 0);
+    }
+    const last = fs[fs.length - 1];
+    const $m = (v) => (v < 0 ? '-' : '+') + '$' + (Math.abs(v) / 1e6).toFixed(1) + 'M';
+    const bias = ncp - npp;
+    return [
+      `SPX 0DTE net-premium flow · ${todayISO} · ${fs.length} bars · spot ${last.spot ?? '?'}`,
+      `cumulative NET CALL premium: ${$m(ncp)}   (net call volume ${ncv >= 0 ? '+' : ''}${ncv.toLocaleString()})`,
+      `cumulative NET PUT  premium: ${$m(npp)}   (net put  volume ${npv >= 0 ? '+' : ''}${npv.toLocaleString()})`,
+      `bias (call − put premium): ${$m(bias)} → ${bias > 0 ? 'call-side aggressive' : bias < 0 ? 'put-side aggressive' : 'balanced'}`,
+      `(premium = buys lifting the ask minus sells hitting the bid; SPX index options only, 1-min snapshots)`,
+    ].join('\n');
   }
   if (name === 'vix_now') {
     const syms = ['$VIX9D', '$VIX', '$VIX3M', '$VIX6M', '$VVIX', '$COR1M'];
