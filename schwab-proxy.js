@@ -8266,8 +8266,11 @@ async function handleGEXUpdate(env, token, preChain = null) {
 // URL path segment (env.MCP_TOKEN). Read-only tools; nothing mutates.
 const MCP_TOOLS = [
   { name: 'gex_now',
-    description: "Live SPX GEX dashboard snapshot: spot, regime, total GEX, top walls, charm/vanna, signed options flow. Call this first for any 'what is happening right now' question.",
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+    description: "Live SPX GEX snapshot: spot, regime, total GEX, top walls, charm/vanna, signed options flow. DEFAULT = 0DTE-only book (what every Sigma 3 strategy trades: PNBF magnet, M8BF walls, GXBF). Pass mode:'all' for the full multi-expiry board (includes far monthly walls like the OPEX strikes). Call this first for any 'what is happening right now' question.",
+    inputSchema: { type: 'object', properties: {
+      mode: { type: 'string', enum: ['0dte', 'all'],
+              description: "'0dte' (default) = same-day expiry book · 'all' = every expiration" } },
+      additionalProperties: false } },
   { name: 'plan_today',
     description: "Today's Sigma 3 signal state: M8BF feed count + latest center/T1, PNBF status headline.",
     inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
@@ -8343,7 +8346,14 @@ async function mcpToolText(env, name, args) {
     return (await env.SIGNAL_KV.get('research_days_v1')) || 'table not loaded';
   }
   if (name === 'gex_now') {
-    const raw = await env.SIGNAL_KV.get('gex_current');
+    const mode = (args?.mode === 'all') ? 'all' : '0dte';
+    let raw = null, label = mode;
+    if (mode === '0dte') {
+      raw = await env.SIGNAL_KV.get('gex_current_0dte');
+      if (!raw) { raw = await env.SIGNAL_KV.get('gex_current'); label = 'all (0DTE snapshot unavailable)'; }
+    } else {
+      raw = await env.SIGNAL_KV.get('gex_current');
+    }
     if (!raw) return 'no GEX snapshot available (market closed and no cache?)';
     const g = JSON.parse(raw);
     const walls = (g.walls || []).slice(0, 8)
@@ -8360,7 +8370,7 @@ async function mcpToolText(env, name, args) {
       }
     } catch (_) {}
     return [
-      `as of ${g.updatedAt} · SPX ${g.spot} · regime ${g.regime} · total GEX ${(g.totalGex / 1e9).toFixed(1)}B`,
+      `book: ${label === '0dte' ? '0DTE only (strategy basis)' : label} · as of ${g.updatedAt} · SPX ${g.spot} · regime ${g.regime} · total GEX ${(g.totalGex / 1e9).toFixed(1)}B`,
       `flip ${g.flipStrike ?? 'none'} · maxPos ${g.maxPosStrike} · maxNeg ${g.maxNegStrike} · charm ${(g.charm / 1e12).toFixed(2)}T · vanna ${(g.vanna / 1e12).toFixed(2)}T · P/C vol ${g.pcRatio}`,
       `top walls: ${walls}`, flowLine,
     ].join('\n');
