@@ -107,9 +107,9 @@ export const earningsSchedule = [
   { date:"April 30, 2026",    company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:true  },
   { date:"May 20, 2026",      company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:true  },
   // ── Q3 2026 (Jul/Aug reports — estimates) ──
-  { date:"July 22, 2026",     company:"Tesla",     ticker:"TSLA", timing:"AH", confirmed:false },
-  { date:"July 23, 2026",     company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:false },
-  { date:"July 28, 2026",     company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:false },
+  { date:"July 22, 2026",     company:"Tesla",     ticker:"TSLA", timing:"AH", confirmed:true  },
+  { date:"July 22, 2026",     company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:true  },
+  { date:"July 29, 2026",     company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:true  },
   { date:"July 29, 2026",     company:"Meta",      ticker:"META", timing:"AH", confirmed:false },
   { date:"July 30, 2026",     company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:false },
   { date:"July 30, 2026",     company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:false },
