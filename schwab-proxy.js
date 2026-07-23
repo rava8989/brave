@@ -2263,6 +2263,46 @@ async function computeGexGateVerdict(env) {
   return { verdict: rank < 0.20 ? 'SKIP' : 'GO', gex, rank, n: prior.length, date: todayISO };
 }
 
+// Gate verdict FOR a given session date: ref = last series entry strictly
+// before dateISO, ranked among its own <=120 predecessors. Deterministic, and
+// guarded to the go-live date so recovery/backfill paths can never retro-gate
+// history recorded under the old rules.
+const GEXGATE_LIVE_FROM = '2026-07-24';
+async function gexGateSkipFor(env, dateISO) {
+  try {
+    if (!dateISO || dateISO < GEXGATE_LIVE_FROM) return false;
+    const serRaw = await env.SIGNAL_KV.get('gex1030_series_v1');
+    if (!serRaw) return false;
+    const ser = JSON.parse(serRaw);
+    const prior = Object.keys(ser).filter(d => d < dateISO).sort();
+    if (prior.length < 21) return false;
+    const ref = ser[prior[prior.length - 1]];
+    const base = prior.slice(0, -1).slice(-120).map(d => ser[d]);
+    const rank = base.filter(x => x <= ref).length / base.length;
+    return rank < 0.20;
+  } catch (e) { console.warn('[gexgate-skipFor]', e.message); return false; }
+}
+// Post-process a calculateSignal() result: on gate-skip days M8BF reads NO and,
+// when M8BF held the primary rec, the whole trade path is neutralized so the
+// window sender / bot / card all see a no-trade day. Other strategies untouched.
+function applyGexGateToSignal(signal, skip) {
+  if (!skip || !signal) return signal;
+  const GATE_TXT = 'No M8BF (GEX gate — thin dealer gamma)';
+  if (!/^No\s/i.test(String(signal.m8bfText || '').trim())) signal.m8bfText = GATE_TXT;
+  if (signal.theme === 'm8bf') {
+    signal.theme = 'block';
+    signal.rec = GATE_TXT;
+    signal.badge = 'NO TRADE';
+    signal.entryT = '';
+    signal.blockT = 'gexgate';
+    signal.blockD = 'prev-day 10:30 0DTE GEX in bottom 20% of trailing 120d';
+    signal.crossed = true;
+    signal.strikeInfo = null;
+  }
+  signal.m8bfStrikeInfo = null;
+  return signal;
+}
+
 async function fanoutSubscribers(env, message) {
   // Single chokepoint: append the disclaimer here so NO trade path (tail, skipper
   // trades, any future caller) can reach the broadcast channel OR a subscriber DM
@@ -3426,6 +3466,7 @@ async function handleEOD(env, etNow) {
             etDate: etNow,
             prevWR: prevWR_s2,
           });
+          applyGexGateToSignal(sig, await gexGateSkipFor(env, isoDateET(etNow)));
           // FIX (2026-06-09 audit P0 #3): m8bfBanned alone misses the 90%-WR
           // override. The override applies when prevWR >= 90, not CPI, and
           // GXBF didn't take precedence (sig.theme !== 'gxbf' — equivalent to
@@ -6786,6 +6827,7 @@ async function handleScheduled(env) {
               vixToday: vixT, vixYOpen: vixYO, vixYClose: vixYC,
               spxGapPct: spxGap, etDate: etNow,
             });
+            applyGexGateToSignal(recoverySig, await gexGateSkipFor(env, isoDateET(etNow)));
             if (recoverySig.theme !== 'strad') {
               await env.SIGNAL_KV.put(stradSkipKey, JSON.stringify({
                 theme: recoverySig.theme,
@@ -7315,6 +7357,7 @@ async function handleScheduled(env) {
     rsi14,
     cor1m: cor1mOpenToday,
   });
+  applyGexGateToSignal(signal, await gexGateSkipFor(env, isoDateET(etNow)));
 
   // 5a. Persist the morning signal so /straddle-today and other endpoints
   // can read EXACTLY what the morning cron computed (including the live
@@ -7553,6 +7596,7 @@ async function handleScheduled(env) {
         etDate: etNow, prevWR, vixPct20d, rsi14,
         cor1m: cor1mOpenToday,
       });
+      applyGexGateToSignal(signalOther, await gexGateSkipFor(env, isoDateET(etNow)));
       signalOther._tiltLine = signal._tiltLine;   // same advisory on the 2nd copy
       signalOther._gexLine = signal._gexLine;
       signalOther._cycleLine = signal._cycleLine;
@@ -7623,6 +7667,7 @@ async function handleScheduled(env) {
               vixToday: freshVix, vixYOpen, vixYClose, spxGapPct,
               etDate: etNow, prevWR, vixPct20d, rsi14,
             });
+            applyGexGateToSignal(freshSig, await gexGateSkipFor(env, isoDateET(etNow)));
             if (freshSig.theme !== 'strad') {
               validatorAborted = true;
               console.warn(`[strad-validate] ABORT: theme flipped (morning vix ${vixToday} → fresh ${freshVix.toFixed(2)}, theme=${freshSig.theme})`);
@@ -11280,6 +11325,7 @@ export default {
           vixToday: vT, vixYOpen: vYO, vixYClose: vYC,
           spxGapPct: gap, etDate: etNowDT,
         });
+        applyGexGateToSignal(sig, await gexGateSkipFor(env, isoDateET(etNowDT)));
         if (sig.theme !== 'strad') {
           return jsonResp({ ok: false, reason: 'signal-not-strad', theme: sig.theme, rec: sig.rec }, 200, { 'Access-Control-Allow-Origin': '*' });
         }
@@ -13116,6 +13162,28 @@ export default {
     // ── GET /gex ── Public endpoint, returns current GEX data from KV
     // Auto-refreshes if data is stale (>3 min) during market hours (cron is unreliable on free tier)
     // ── Debug: exercise claimSendSlot in the real runtime (authed; P26 rule 3) ──
+    // ── GEX gate: PUBLIC today-verdict (dashboard M8BF card overlay). Read-only,
+    // non-sensitive (one boolean + percentile), CORS like /magnetfly-today. ──
+    if (url.pathname === '/gexgate-today' && request.method === 'GET') {
+      const pub = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, OPTIONS' };
+      try {
+        const qd = url.searchParams.get('date');
+        const forDate = (qd && /^\d{4}-\d{2}-\d{2}$/.test(qd)) ? qd : isoDateET(toET(new Date()));
+        let rank = null;
+        const serRaw = await env.SIGNAL_KV.get('gex1030_series_v1');
+        if (serRaw && forDate >= GEXGATE_LIVE_FROM) {
+          const ser = JSON.parse(serRaw);
+          const prior = Object.keys(ser).filter(d => d < forDate).sort();
+          if (prior.length >= 21) {
+            const ref = ser[prior[prior.length - 1]];
+            const base = prior.slice(0, -1).slice(-120).map(d => ser[d]);
+            rank = base.filter(x => x <= ref).length / base.length;
+          }
+        }
+        return jsonResp({ forDate, skip: rank != null && rank < 0.20,
+          rank: rank != null ? Math.round(rank * 100) : null, liveFrom: GEXGATE_LIVE_FROM }, 200, pub);
+      } catch (e) { return jsonResp({ error: e.message }, 500, {}); }
+    }
     // ── GEX gate: status probe (seam check + live verdict preview) ──
     if (url.pathname === '/gexgate-status' && request.method === 'GET') {
       const sec = url.searchParams.get('secret');
@@ -13549,6 +13617,7 @@ export default {
             spxGapPct,
             etDate,
           });
+          applyGexGateToSignal(signal, await gexGateSkipFor(env, dateKey));
 
           rows.push({
             date: dateKey,

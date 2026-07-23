@@ -1976,6 +1976,23 @@
       }
     }
 
+    // ── GEX gate overlay (2026-07-23): the gate verdict lives in worker KV
+    // (prev-day 10:30 0DTE GEX percentile), which the inline engine can't see.
+    // Fetch the public verdict and, on SKIP days, override the M8BF card only.
+    (async () => {
+      try {
+        const r = await fetch('https://schwab-proxy.ravamt4.workers.dev/gexgate-today', { cache: 'no-store' });
+        if (!r.ok) return;
+        const g = await r.json();
+        if (g && g.skip) {
+          cardM8bf.className    = 'scard active-block';
+          m8bfBadge.textContent = 'BLOCKED';
+          m8bfRec.innerHTML     = `<span class="crossed">No M8BF (GEX gate)</span>`;
+          m8bfReason.innerHTML  = `<span class="block-hard">⛔ GEX gate — prev-day 10:30 0DTE GEX p${g.rank} (bottom 20% of 120d) — thin gamma, skip</span>`;
+        }
+      } catch (_) { /* gate overlay is best-effort; card falls back to engine view */ }
+    })();
+
     // ── CARD 2: Straddle ──
     if (sig.cpiDay) {
       cardStrad.className     = 'scard active-block';
