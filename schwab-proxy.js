@@ -2247,6 +2247,22 @@ async function postSignalsChannel(env, message) {
 // request 2026-07-07). `-#` renders as small subtext in Discord (channel + DM).
 const FANOUT_DISCLAIMER = '\n-# ⚠️ Not financial advice — for educational purposes only. Trade at your own risk.';
 
+// ── M8BF GEX gate (2026-07-23): verdict for the NEXT session from the durable
+// 10:30 0DTE GEX series. rank = percentile of TODAY's value among up to 120
+// entries strictly before today (causal); SKIP when rank < 0.20 with >= 20 obs.
+async function computeGexGateVerdict(env) {
+  const serRaw = await env.SIGNAL_KV.get('gex1030_series_v1');
+  if (!serRaw) return null;
+  const ser = JSON.parse(serRaw);
+  const todayISO = isoDateET(toET(new Date()));
+  const gex = ser[todayISO];
+  if (gex == null) return { verdict: null, reason: 'no 10:30 GEX captured today' };
+  const prior = Object.keys(ser).filter(d => d < todayISO).sort().slice(-120).map(d => ser[d]);
+  if (prior.length < 20) return { verdict: null, reason: `warmup ${prior.length}/20` };
+  const rank = prior.filter(x => x <= gex).length / prior.length;
+  return { verdict: rank < 0.20 ? 'SKIP' : 'GO', gex, rank, n: prior.length, date: todayISO };
+}
+
 async function fanoutSubscribers(env, message) {
   // Single chokepoint: append the disclaimer here so NO trade path (tail, skipper
   // trades, any future caller) can reach the broadcast channel OR a subscriber DM
@@ -6243,6 +6259,35 @@ async function handleScheduled(env) {
     }
   }
 
+  // ── 17:05–17:25 ET: M8BF GEX-gate verdict for the NEXT session (owner DM).
+  // Rule (audited 2026-07-23): today's 10:30 0DTE total GEX ranked against the
+  // trailing 120 series entries strictly before today; bottom 20% → SKIP.
+  // Owner-only DM (decision support, not a subscriber signal). P27: terminal
+  // marker written BEFORE the post; claim gate around the whole handler.
+  if (etHour === 17 && etMin >= 5 && etMin < 25 && etNow.getDay() >= 1 && etNow.getDay() <= 5) {
+    const gateKey = `gexgate_dm_${todayISO}`;
+    const doneG = await env.SIGNAL_KV.get(gateKey);
+    if (!doneG || doneG.startsWith('claim:')) {
+      if (await claimSendSlot(env, gateKey)) {
+        try {
+          const v = await computeGexGateVerdict(env);
+          await env.SIGNAL_KV.put(gateKey, 'sent', { expirationTtl: 86400 });  // marker BEFORE post (P27)
+          if (v && v.verdict) {
+            const dcRaw = await env.SIGNAL_KV.get('discord_config');
+            const dc = dcRaw ? JSON.parse(dcRaw) : null;
+            if (dc?.channelId) {
+              const bn = (x) => `${(x / 1e9).toFixed(2)}B`;
+              const msg = v.verdict === 'SKIP'
+                ? `🚪 **M8BF GEX gate — next session: SKIP** 🚫\nToday's 10:30 0DTE GEX ${bn(v.gex)} = p${Math.round(v.rank * 100)} of trailing ${v.n} — bottom 20% = thin gamma, wild-day risk.`
+                : `🚪 **M8BF GEX gate — next session: GO** ✅\nToday's 10:30 0DTE GEX ${bn(v.gex)} = p${Math.round(v.rank * 100)} of trailing ${v.n} (skip only < p20).`;
+              await sendDiscordDM(env, dc.channelId, msg, dc.proxyUrl);
+            }
+          }
+        } catch (e) { console.warn('[gexgate-dm]', e.message); }
+      }
+    }
+  }
+
   // ── Master SPX chain fetch — ONE call per market tick, shared across all
   //    chain-consuming handlers (GEX, diagonal, straddle, BOBF). Cuts Schwab
   //    API usage from ~7 chain calls per tick to 2 (one CALL + one PUT).
@@ -6415,6 +6460,28 @@ async function handleScheduled(env) {
         }
       }
     } catch (e) { console.warn('[mf-magnet]', e.message); }
+    // GEX gate (2026-07-23, owner-approved): persist the 10:30 0DTE total GEX
+    // into a durable series (mf_magnet_* keys expire after 30d; the gate needs a
+    // 120-day trailing window). Seeded from the 2023-06→2026-07 research bank.
+    try {
+      const hG = etNow.getHours(), mG = etNow.getMinutes();
+      if (hG === 10 && mG >= 26 && mG < 50) {
+        const dG = isoDateET(etNow);
+        const snapG = await env.SIGNAL_KV.get(`mf_magnet_${dG}`);
+        const gexG = snapG ? JSON.parse(snapG).totalGex0dte : null;
+        if (gexG != null) {
+          const serRaw = await env.SIGNAL_KV.get('gex1030_series_v1');
+          const ser = serRaw ? JSON.parse(serRaw) : {};
+          if (ser[dG] == null) {
+            ser[dG] = gexG;
+            const keys = Object.keys(ser).sort();
+            const trimmed = {};
+            for (const k of keys.slice(-1000)) trimmed[k] = ser[k];
+            await env.SIGNAL_KV.put('gex1030_series_v1', JSON.stringify(trimmed));
+          }
+        }
+      }
+    } catch (e) { console.warn('[gexgate-series]', e.message); }
     // Tail Hedge live-trade parity: freeze today's open at/after 9:45 (robust —
     // no page-poll needed) and refresh its intraday P&L every tick.
     try { await freezeTailOpenIfDue(env, etNow, null, true); } catch (e) { console.warn('[tail-freeze]', e.message); }
@@ -13049,6 +13116,54 @@ export default {
     // ── GET /gex ── Public endpoint, returns current GEX data from KV
     // Auto-refreshes if data is stale (>3 min) during market hours (cron is unreliable on free tier)
     // ── Debug: exercise claimSendSlot in the real runtime (authed; P26 rule 3) ──
+    // ── GEX gate: status probe (seam check + live verdict preview) ──
+    if (url.pathname === '/gexgate-status' && request.method === 'GET') {
+      const sec = url.searchParams.get('secret');
+      if (!sec || (sec !== env.SYNC_SECRET && sec !== env.GEXM_TRIGGER_TOKEN)) {
+        return jsonResp({ error: 'Unauthorized' }, 401, {});
+      }
+      try {
+        const serRaw = await env.SIGNAL_KV.get('gex1030_series_v1');
+        const ser = serRaw ? JSON.parse(serRaw) : {};
+        const keys = Object.keys(ser).sort();
+        const v = await computeGexGateVerdict(env);
+        // live mf_magnet snapshots for the seam check (last 12 calendar days)
+        const liveRecent = {};
+        for (let i = 0; i < 12; i++) {
+          const d = new Date(Date.now() - i * 86400000);
+          const iso = d.toISOString().slice(0, 10);
+          const raw = await env.SIGNAL_KV.get(`mf_magnet_${iso}`);
+          if (raw) { const j = JSON.parse(raw); liveRecent[iso] = j.totalGex0dte ?? null; }
+        }
+        return jsonResp({ seriesLen: keys.length, first: keys[0] ?? null, last: keys[keys.length - 1] ?? null,
+          lastVals: Object.fromEntries(keys.slice(-5).map(k => [k, ser[k]])), verdict: v, liveRecent }, 200, {});
+      } catch (e) { return jsonResp({ error: e.message }, 500, {}); }
+    }
+    // ── GEX gate: one-time series seed from the research bank ──
+    if (url.pathname === '/gexgate-seed' && request.method === 'POST') {
+      const sec = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
+      if (!sec || (sec !== env.SYNC_SECRET && sec !== env.GEXM_TRIGGER_TOKEN)) {
+        return jsonResp({ error: 'Unauthorized' }, 401, {});
+      }
+      try {
+        const body = await request.json();
+        if (!body || typeof body !== 'object') return jsonResp({ error: 'bad body' }, 400, {});
+        const serRaw = await env.SIGNAL_KV.get('gex1030_series_v1');
+        const ser = serRaw ? JSON.parse(serRaw) : {};
+        let added = 0;
+        for (const [k, val] of Object.entries(body)) {
+          if (/^\d{4}-\d{2}-\d{2}$/.test(k) && typeof val === 'number') {
+            if (ser[k] == null) added++;
+            ser[k] = val;
+          }
+        }
+        const keys = Object.keys(ser).sort();
+        const trimmed = {};
+        for (const k of keys.slice(-1200)) trimmed[k] = ser[k];
+        await env.SIGNAL_KV.put('gex1030_series_v1', JSON.stringify(trimmed));
+        return jsonResp({ ok: true, added, total: Object.keys(trimmed).length }, 200, {});
+      } catch (e) { return jsonResp({ error: e.message }, 500, {}); }
+    }
     if (url.pathname === '/debug-claim' && request.method === 'GET') {
       const sec = url.searchParams.get('secret');
       if (!sec || (sec !== env.GEXM_TRIGGER_TOKEN && sec !== env.SYNC_SECRET)) {
