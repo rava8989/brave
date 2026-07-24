@@ -2287,6 +2287,7 @@ async function gexGateSkipFor(env, dateISO) {
 // window sender / bot / card all see a no-trade day. Other strategies untouched.
 function applyGexGateToSignal(signal, skip) {
   if (!skip || !signal) return signal;
+  signal.gexGateSkip = true;                 // explicit flag: EOD/no-trade accounting
   const GATE_TXT = 'No M8BF (GEX gate — thin dealer gamma)';
   if (!/^No\s/i.test(String(signal.m8bfText || '').trim())) signal.m8bfText = GATE_TXT;
   if (signal.theme === 'm8bf') {
@@ -3474,7 +3475,8 @@ async function handleEOD(env, etNow) {
           // applies, M8BF fires even on a calendar-banned day.
           const gxbfTookPrecedence = (sig.theme === 'gxbf');
           const ninetyOverrideFires = (prevWR_s2 != null && prevWR_s2 >= 90 && !sig.cpiDay && !gxbfTookPrecedence);
-          const m8bfWouldNotFire = (sig.m8bfBanned || sig.cpiDay) && !ninetyOverrideFires;
+          // GEX gate is absolute — a regime filter, never overridden by the 90% rule.
+          const m8bfWouldNotFire = sig.gexGateSkip || ((sig.m8bfBanned || sig.cpiDay) && !ninetyOverrideFires);
           if (m8bfWouldNotFire) {
             m8bfBlockedByLive = true;
             console.log(`[eod] M8BF blocked: m8bfBanned=${sig.m8bfBanned}, cpiDay=${sig.cpiDay}, 90%override=${ninetyOverrideFires}, gxbfTook=${gxbfTookPrecedence}`);
@@ -6313,7 +6315,17 @@ async function handleScheduled(env) {
         try {
           const v = await computeGexGateVerdict(env);
           await env.SIGNAL_KV.put(gateKey, 'sent', { expirationTtl: 86400 });  // marker BEFORE post (P27)
-          if (v && v.verdict) {
+          if (!v || !v.verdict) {
+            // Fail LOUD: a gate that silently can't compute looks identical to GO.
+            const dcRaw0 = await env.SIGNAL_KV.get('discord_config');
+            const dc0 = dcRaw0 ? JSON.parse(dcRaw0) : null;
+            if (dc0?.channelId) {
+              await sendDiscordDM(env, dc0.channelId,
+                `⚠️ **M8BF GEX gate — no verdict for next session** (${v?.reason || 'series unavailable'}). ` +
+                `10:30 GEX capture may have failed — check /gexgate-status. Card will treat the day as GO.`,
+                dc0.proxyUrl);
+            }
+          } else if (v && v.verdict) {
             const dcRaw = await env.SIGNAL_KV.get('discord_config');
             const dc = dcRaw ? JSON.parse(dcRaw) : null;
             if (dc?.channelId) {
