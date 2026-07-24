@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>How to read the Intraday GEX cone — Σ3</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+  :root{--bg:#0f172a;--bg2:#1e293b;--bg3:#162032;--border:#2d3f55;--text:#e2e8f0;--text2:#94a3b8;--text3:#475569;--accent:#6366f1;}
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;}
+  .header{display:flex;align-items:center;gap:16px;padding:12px 24px;background:var(--bg2);border-bottom:1px solid var(--border);}
+  .logo{font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700;color:var(--accent);text-decoration:none;}
+  .back{font-size:12px;color:var(--text2);text-decoration:none;padding:5px 12px;border-radius:6px;border:1px solid var(--border);}
+  .back:hover{background:var(--bg3);color:var(--text);}
+  .wrap{max-width:900px;margin:0 auto;padding:28px 20px 60px;}
+  h1{font-family:'JetBrains Mono',monospace;font-size:22px;margin-bottom:6px;}
+  h1 span{color:var(--accent);}
+  .sub{color:var(--text2);font-size:14px;margin-bottom:22px;line-height:1.6;}
+  .legend{display:flex;flex-wrap:wrap;gap:16px;font-size:12px;color:var(--text2);margin-bottom:18px;}
+  .legend span{display:flex;align-items:center;gap:6px;}
+  .sw{width:12px;height:12px;border-radius:3px;display:inline-block;}
+  .card{background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:16px;}
+  .card .tag{font-family:'JetBrains Mono',monospace;font-size:13px;margin-bottom:2px;}
+  .card .why{font-size:12.5px;color:var(--text2);margin-bottom:10px;line-height:1.55;}
+  .chart{position:relative;width:100%;height:200px;}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin:6px 0 22px;}
+  .stat{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px 16px;}
+  .stat .k{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px;}
+  .stat .v{font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;}
+  .stat .d{font-size:12px;color:var(--text2);margin-top:4px;}
+  .note{font-size:12.5px;color:var(--text2);line-height:1.65;border-top:1px solid var(--border);padding-top:14px;margin-top:8px;}
+  .red{color:#ef4444;} .green{color:#22c55e;} .blue{color:#60a5fa;} .amber{color:#f59e0b;}
+</style>
+</head>
+<body>
+<header class="header">
+  <a class="logo" href="index.html">Σ3</a>
+  <a class="back" href="gex.html">← back to GEX</a>
+</header>
+<div class="wrap">
+  <h1><span>Intraday GEX cone</span> — how to read it</h1>
+  <p class="sub">The cone shows what total 0DTE dealer gamma <i>usually</i> does through the day (last 250 sessions), and where <i>today</i> sits against that history. One question, one glance: <b>are the orange dots inside the blue band?</b></p>
+
+  <div class="legend">
+    <span><span class="sw" style="background:rgba(59,130,246,0.35);"></span>blue band = normal zone (middle 60% of days)</span>
+    <span><span class="sw" style="background:rgba(59,130,246,0.85);height:3px;border-radius:2px;"></span>blue line = typical day (median)</span>
+    <span><span class="sw" style="background:#f59e0b;border-radius:50%;"></span>orange dots = today (10:30 anchor + live readings)</span>
+  </div>
+
+  <div class="card">
+    <div class="tag blue">1 · Orange inside blue — normal day</div>
+    <div class="why">Dealer gamma is tracking its usual range. Dealers dampen moves, pins behave, M8BF trades on its normal rules.</div>
+    <div class="chart"><canvas id="cn1"></canvas></div>
+  </div>
+
+  <div class="card">
+    <div class="tag red">2 · Orange far below blue — thin gamma → NO M8BF</div>
+    <div class="why">Without dealer gamma, hedging flows amplify moves instead of pinning them. This is the regime the GEX gate skips: the fly is not posted and the day books as a no-trade. (M8BF only — Straddle, GXBF, BOBF and the Tail hedge run their own rules.)</div>
+    <div class="chart"><canvas id="cn2"></canvas></div>
+  </div>
+
+  <div class="card">
+    <div class="tag green">3 · Orange above blue — fat gamma</div>
+    <div class="why">More dealer gamma than 80% of recent sessions. The strongest pin conditions — historically the best butterfly days.</div>
+    <div class="chart"><canvas id="cn3"></canvas></div>
+  </div>
+
+  <p class="sub" style="margin:18px 0 10px;"><b>Why it matters</b> — every M8BF-style fly at every 5-minute slot (no filters, ~35,900 trades, Sep 2024 – Jul 2026), grouped by where the day sat:</p>
+  <div class="stats">
+    <div class="stat"><div class="k">Below the band</div><div class="v red">47.6% WR</div><div class="d">avg −$97/trade · the only losing zone — gated</div></div>
+    <div class="stat"><div class="k">Inside the band</div><div class="v">54.7% WR</div><div class="d">avg +$83/trade · business as usual</div></div>
+    <div class="stat"><div class="k">Above the band</div><div class="v green">62.6% WR</div><div class="d">avg +$158/trade · best fly conditions</div></div>
+  </div>
+
+  <p class="note">The gate reads one point of this picture — the previous session's 10:30 reading ranked against its trailing 120 days — and locks tomorrow's GO / SKIP verdict the evening before. The cone is the full movie: the gate decides, the cone explains. Orange dots fill in each half-hour while the GEX page is open (0DTE · OI basis). Band and stats rebuilt from a 726-day intraday GEX history.</p>
+</div>
+<script>
+const T=['10:00','10:30','11:00','11:30','12:00','12:30','13:00','13:30','14:00','14:30','15:00','15:30'];
+const P80=[7.2,6.8,7.6,7.1,6.9,7.6,7.0,7.5,7.2,7.4,7.0,8.4];
+const P20=[0.6,0.2,1.1,0.7,0.4,1.0,0.6,1.1,0.8,1.0,0.6,1.4];
+const P50=[3.6,3.2,4.6,4.0,3.7,4.8,3.8,4.4,3.9,4.1,3.5,5.2];
+const PATHS={cn1:[4.2,3.0,4.9,4.4,3.2,4.5,3.4,4.9,4.2,4.6,3.9,5.6],
+             cn2:[-15.2,-16.5,-14.8,-15.6,-16.2,-15.9,-16.4,-15.8,-16.1,-15.7,-16.3,-16.0],
+             cn3:[9.4,8.8,10.2,9.6,9.1,10.4,9.7,10.8,10.1,10.6,9.8,11.6]};
+for (const id of ['cn1','cn2','cn3']) {
+  new Chart(document.getElementById(id),{type:'line',data:{labels:T,datasets:[
+   {data:P80,borderWidth:0,pointRadius:0,fill:'+1',backgroundColor:'rgba(59,130,246,0.16)',tension:.35},
+   {data:P20,borderWidth:0,pointRadius:0,tension:.35},
+   {data:P50,borderColor:'rgba(59,130,246,0.85)',borderWidth:2,pointRadius:0,tension:.35},
+   {data:PATHS[id],borderColor:'#f59e0b',backgroundColor:'#f59e0b',borderWidth:2,pointRadius:4,tension:.3}
+  ]},options:{responsive:true,maintainAspectRatio:false,
+   plugins:{legend:{display:false},tooltip:{enabled:false}},
+   scales:{x:{grid:{display:false},ticks:{color:'#64748b',font:{size:10},maxRotation:0}},
+     y:{min:-20,max:14,ticks:{color:'#64748b',font:{size:10},callback:v=>'$'+v+'B',stepSize:10},
+        grid:{color:'rgba(148,163,184,0.10)'}}}}});
+}
+</script>
+</body>
+</html>
