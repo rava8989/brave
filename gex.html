@@ -222,6 +222,38 @@
     </div>
   </div>
 
+  <!-- GEX Gate — live skip-rule strip + trailing distribution + persistence -->
+  <div class="chart-section" id="gateStripSection" style="display:none;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
+      <h2 style="margin-bottom:0;"><span>GEX</span> Gate — thin-gamma skip rule</h2>
+      <span id="gateStripBanner" style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--text2);"></span>
+    </div>
+    <div class="cards-row" style="margin-bottom:12px;">
+      <div class="level-card" id="gateTodayCard">
+        <div class="lc-title">Today's session</div>
+        <div class="lc-strike" id="gateTodayVerdict">--</div>
+        <div class="lc-desc" id="gateTodayDesc">verdict locked yesterday 5:05 PM ET</div>
+      </div>
+      <div class="level-card" id="gateTomorrowCard">
+        <div class="lc-title">Next session preview</div>
+        <div class="lc-strike" id="gateTomorrowVerdict">--</div>
+        <div class="lc-desc" id="gateTomorrowDesc">from today's 10:30 reading</div>
+      </div>
+      <div class="level-card">
+        <div class="lc-title">Regime persistence</div>
+        <div class="lc-strike" id="gateStreak">--</div>
+        <div class="lc-value" id="gatePersist">--</div>
+        <div class="lc-desc">thin days cluster — why yesterday's reading gates today</div>
+      </div>
+    </div>
+    <div class="chart-wrap" style="height:240px;">
+      <canvas id="gateHistoChart"></canvas>
+    </div>
+    <div class="bottom-info" style="text-align:left;padding:8px 0 0;">
+      The rule: when the previous session's 10:30 ET 0DTE total GEX ranks in the bottom 20% of the trailing 120 days, M8BF skips the day. Histogram = the current 120-day window; the marker is the latest 10:30 reading, the shaded zone is skip territory.
+    </div>
+  </div>
+
   <!-- Gamma Level Map (vertical price ladder — summarizes GEX profile + gamma curve) -->
   <div class="chart-section" id="gammaLevelMapSection" style="display:none;">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
@@ -332,6 +364,34 @@
     <div id="charmTimeNote" style="display:none;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text2);padding:24px 0;text-align:center;">capturing… (fills in through the session)</div>
     <div class="bottom-info" style="text-align:left;padding:8px 0 0;">
       0DTE charm per tick — $-delta drift per day (time factored out): green = positive (pin firms), red = negative (decay feeds the move). Reflects real hedging pressure, not units shrinking into the close.
+    </div>
+  </div>
+
+  <!-- Intraday GEX cone — typical day-shape vs today -->
+  <div class="chart-section" id="gexConeSection" style="display:none;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
+      <h2 style="margin-bottom:0;"><span>Intraday</span> GEX cone — today vs typical</h2>
+      <span id="gexConeBanner" style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--text2);"></span>
+    </div>
+    <div class="chart-wrap" style="height:300px;">
+      <canvas id="gexConeChart"></canvas>
+    </div>
+    <div class="bottom-info" style="text-align:left;padding:8px 0 0;">
+      Band = middle 60% (p20–p80) of total 0DTE GEX by time of day over the last 250 sessions; line = median. Dots = today's path (10:30 anchor + live readings while the page is open, 0DTE·OI basis). Below the band all day = the thin-gamma regime the gate is built to catch.
+    </div>
+  </div>
+
+  <!-- What the regime pays — M8BF by prev-day GEX percentile -->
+  <div class="chart-section" id="regimePaysSection" style="display:none;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
+      <h2 style="margin-bottom:0;"><span>What</span> the regime pays — M8BF by prev-day GEX rank</h2>
+      <span id="regimePaysBanner" style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--text2);"></span>
+    </div>
+    <div class="chart-wrap" style="height:260px;">
+      <canvas id="regimePaysChart"></canvas>
+    </div>
+    <div class="bottom-info" style="text-align:left;padding:8px 0 0;">
+      Average M8BF result per traded day, bucketed by where the previous session's 10:30 GEX ranked in its trailing 120 days (Aug 2024 – Jul 2026, includes strike-ban reconstruction). The bottom-20% zone is what the gate now skips.
     </div>
   </div>
 
@@ -492,6 +552,7 @@ function basisVals(data) {
 }
 
 function renderTopBar(data) {
+  recordConePoint(data);   // cone panel: log today's 0DTE·OI reading per 30-min slot
   const bv = basisVals(data);
   const spot = data.spot != null ? data.spot : null;
   const regime = bv.regime || '--';
@@ -1667,6 +1728,186 @@ function showMarketClosed() {
   document.getElementById('gexDataBar').style.display = 'none';
 }
 
+/* ── GEX Gate panels: strip + histogram + persistence + cone + regime-pays ──
+   Static history from gex_history_panels.json (built from the 726-day banked
+   intraday GEX grid); live series tail from /gexgate-hist; today's official
+   verdict from /gexgate-today. Independent of the live GEX fetch — renders on
+   closed days too. */
+const GATE_HIST_URL  = 'https://schwab-proxy.ravamt4.workers.dev/gexgate-hist';
+const GATE_TODAY_URL = 'https://schwab-proxy.ravamt4.workers.dev/gexgate-today';
+const PANELS_URL     = 'gex_history_panels.json';
+const CONE_SLOTS = ['10:00','10:30','11:00','11:30','12:00','12:30','13:00','13:30','14:00','14:30','15:00','15:30'];
+let gatePanelsInited = false;
+let coneChartRef = null;
+
+function etISODate() {
+  const et = _toETSafe(new Date());
+  return et.getFullYear() + '-' + String(et.getMonth()+1).padStart(2,'0') + '-' + String(et.getDate()).padStart(2,'0');
+}
+function conePathKey() { return 'gexConePath_' + etISODate(); }
+
+// Record today's live 0DTE·OI total GEX into the cone path (one value per 30-min slot).
+function recordConePoint(data) {
+  try {
+    if (gexMode !== '0dte' || !data || data.totalGex == null || !data.updatedAt) return;
+    const et = _toETSafe(new Date(data.updatedAt));
+    const mins = et.getHours()*60 + et.getMinutes();
+    if (mins < 600 || mins > 15*60+35) return;              // grid covers 10:00–15:30
+    const slotMin = Math.floor(mins/30)*30;
+    const slot = String(Math.floor(slotMin/60)).padStart(2,'0') + ':' + String(slotMin%60).padStart(2,'0');
+    if (!CONE_SLOTS.includes(slot)) return;
+    const path = JSON.parse(localStorage.getItem(conePathKey()) || '{}');
+    path[slot] = Math.round(data.totalGex/1e8)/10;           // $B, 1dp
+    localStorage.setItem(conePathKey(), JSON.stringify(path));
+    if (coneChartRef) {
+      coneChartRef.data.datasets[3].data = CONE_SLOTS.map(s => path[s] ?? null);
+      coneChartRef.update('none');
+    }
+  } catch (_) {}
+}
+
+async function initGatePanels() {
+  if (gatePanelsInited) return;
+  gatePanelsInited = true;
+  let hist = null, today = null, panels = null;
+  try { hist   = await (await fetch(GATE_HIST_URL)).json(); } catch (_) {}
+  try { today  = await (await fetch(GATE_TODAY_URL)).json(); } catch (_) {}
+  try { panels = await (await fetch(PANELS_URL, {cache:'no-store'})).json(); } catch (_) {}
+
+  // ── Gate strip + histogram + persistence (needs the series tail) ──
+  if (hist && Array.isArray(hist.tail) && hist.tail.length >= 140) {
+    const tail = hist.tail;                                   // [[date, gex], ...] ascending
+    const vals = tail.map(t => t[1]);
+    const n = tail.length;
+    // thin flag per reading: rank among the previous 120 readings
+    const thin = new Array(n).fill(null);
+    for (let i = 120; i < n; i++) {
+      const win = vals.slice(i-120, i);
+      const rank = win.filter(x => x <= vals[i]).length / win.length;
+      thin[i] = rank < 0.20;
+    }
+    // persistence: P(thin | prev thin) and current thin streak
+    let both = 0, prevThin = 0;
+    for (let i = 121; i < n; i++) {
+      if (thin[i-1]) { prevThin++; if (thin[i]) both++; }
+    }
+    let streak = 0;
+    for (let i = n-1; i >= 120 && thin[i]; i--) streak++;
+    const pPersist = prevThin ? Math.round(both/prevThin*100) : null;
+    const baseRate = Math.round(thin.filter(x => x === true).length / thin.filter(x => x !== null).length * 100);
+    document.getElementById('gateStreak').textContent  = streak + (streak === 1 ? ' thin day' : ' thin days in a row');
+    document.getElementById('gatePersist').textContent = pPersist != null
+      ? `P(thin tomorrow | thin today) ${pPersist}% vs ${baseRate}% base` : '--';
+    // today's official verdict
+    const tEl = document.getElementById('gateTodayVerdict');
+    if (today && today.skip != null) {
+      tEl.textContent = today.skip ? 'SKIP 🚫' : 'GO ✅';
+      tEl.style.color = today.skip ? '#ef4444' : '#22c55e';
+      document.getElementById('gateTodayDesc').textContent = today.rank != null
+        ? `prev-day reading at p${today.rank} of trailing 120d` : `gate live from ${today.liveFrom}`;
+    }
+    // next-session preview from the latest reading
+    const latest = vals[n-1], latestDate = tail[n-1][0];
+    const win = vals.slice(n-121, n-1);
+    const rank = Math.round(win.filter(x => x <= latest).length / win.length * 100);
+    const nEl = document.getElementById('gateTomorrowVerdict');
+    nEl.textContent = rank < 20 ? 'SKIP 🚫' : 'GO ✅';
+    nEl.style.color = rank < 20 ? '#ef4444' : '#22c55e';
+    document.getElementById('gateTomorrowDesc').textContent =
+      `${latestDate} 10:30 = ${fmtGex(latest)} → p${rank} of trailing 120d (locked 5:05 PM ET)`;
+    document.getElementById('gateStripBanner').textContent =
+      `series: ${hist.tail[0][0]} → ${latestDate}`;
+    // histogram of the trailing 120 window + marker at the latest reading
+    const histWin = vals.slice(n-121, n-1).map(v => v/1e9);
+    const latB = latest/1e9;
+    const cutoff = [...histWin].sort((a,b) => a-b)[Math.floor(histWin.length*0.20)];
+    const lo = Math.min(...histWin, latB), hi = Math.max(...histWin, latB);
+    const NB = 24, bw = (hi-lo)/NB || 1;
+    const bins = new Array(NB).fill(0);
+    histWin.forEach(v => bins[Math.min(NB-1, Math.floor((v-lo)/bw))]++);
+    const centers = bins.map((_, i) => lo + (i+0.5)*bw);
+    new Chart(document.getElementById('gateHistoChart'), {
+      type: 'bar',
+      data: { labels: centers.map(c => c.toFixed(1)), datasets: [{
+        data: bins,
+        backgroundColor: centers.map(c => c <= cutoff ? 'rgba(239,68,68,0.55)' : 'rgba(59,130,246,0.45)'),
+        borderWidth: 0, barPercentage: 1, categoryPercentage: 0.92,
+      }]},
+      options: { responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false },
+          tooltip: { callbacks: { title: it => '$' + it[0].label + 'B', label: it => it.parsed.y + ' days' } },
+          annotation: { annotations: {
+            marker: { type: 'line', xMin: (latB-lo)/bw - 0.5, xMax: (latB-lo)/bw - 0.5,
+              borderColor: '#f59e0b', borderWidth: 2,
+              label: { display: true, content: 'latest ' + latB.toFixed(1) + 'B', position: 'start',
+                       backgroundColor: 'rgba(245,158,11,0.85)', color: '#000', font: { size: 10 } } },
+          }}},
+        scales: { x: { title: { display: true, text: 'total 0DTE GEX ($B) — trailing 120 sessions' },
+                       ticks: { maxTicksLimit: 9 }, grid: { display: false } },
+                  y: { ticks: { precision: 0 }, grid: { color: 'rgba(148,163,184,0.12)' } } } }
+    });
+    document.getElementById('gateStripSection').style.display = 'block';
+  }
+
+  // ── Intraday cone ──
+  if (panels && panels.cone && panels.cone.times.length) {
+    const c = panels.cone;
+    const path = JSON.parse(localStorage.getItem(conePathKey()) || '{}');
+    // anchor today's 10:30 from the series if it's today's reading
+    if (hist && hist.tail && hist.tail.length && hist.tail[hist.tail.length-1][0] === etISODate()) {
+      path['10:30'] = Math.round(hist.tail[hist.tail.length-1][1]/1e8)/10;
+      localStorage.setItem(conePathKey(), JSON.stringify(path));
+    }
+    coneChartRef = new Chart(document.getElementById('gexConeChart'), {
+      type: 'line',
+      data: { labels: c.times, datasets: [
+        { label: 'p80', data: c.p80, borderColor: 'rgba(59,130,246,0.0)', pointRadius: 0,
+          fill: '+1', backgroundColor: 'rgba(59,130,246,0.16)', tension: 0.35 },
+        { label: 'p20', data: c.p20, borderColor: 'rgba(59,130,246,0.0)', pointRadius: 0, fill: false, tension: 0.35 },
+        { label: 'median', data: c.p50, borderColor: 'rgba(59,130,246,0.85)', borderWidth: 2,
+          pointRadius: 0, fill: false, tension: 0.35 },
+        { label: 'today', data: c.times.map(s => path[s] ?? null), borderColor: '#f59e0b',
+          backgroundColor: '#f59e0b', borderWidth: 2, pointRadius: 4, spanGaps: true },
+      ]},
+      options: { responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: true, labels: { filter: i => i.text !== 'p20' && i.text !== 'p80', boxWidth: 14, font: { size: 10 } } },
+          tooltip: { callbacks: { label: it => it.dataset.label + ': $' + (it.parsed.y ?? 0).toFixed(1) + 'B' } } },
+        scales: { x: { grid: { display: false } },
+                  y: { title: { display: true, text: 'total 0DTE GEX ($B)' }, grid: { color: 'rgba(148,163,184,0.12)' } } } }
+    });
+    document.getElementById('gexConeBanner').textContent =
+      `band from last ${panels.coneWindowDays} banked sessions · built ${panels.built}`;
+    document.getElementById('gexConeSection').style.display = 'block';
+  }
+
+  // ── Regime pays ──
+  if (panels && Array.isArray(panels.regimePays) && panels.regimePays.length) {
+    const r = panels.regimePays;
+    new Chart(document.getElementById('regimePaysChart'), {
+      type: 'bar',
+      data: { labels: r.map(x => 'p' + x.bucket), datasets: [{
+        data: r.map(x => x.avg),
+        backgroundColor: r.map(x => {
+          const gated = x.bucket === '0-10' || x.bucket === '10-20';
+          return gated ? 'rgba(239,68,68,0.6)' : (x.avg >= 0 ? 'rgba(34,197,94,0.55)' : 'rgba(239,68,68,0.6)');
+        }),
+        borderWidth: 0,
+      }]},
+      options: { responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false },
+          tooltip: { callbacks: { label: it => {
+            const row = r[it.dataIndex];
+            return `$${row.avg}/day · WR ${row.wr}% · n=${row.n}` + ((row.bucket==='0-10'||row.bucket==='10-20') ? ' · GATED NOW' : '');
+          } } } },
+        scales: { x: { title: { display: true, text: 'prev-day 10:30 GEX percentile (trailing 120d)' }, grid: { display: false } },
+                  y: { title: { display: true, text: 'M8BF avg $/traded day' }, grid: { color: 'rgba(148,163,184,0.12)' } } } }
+    });
+    document.getElementById('regimePaysBanner').textContent =
+      'red zone = what the gate skips · Aug 2024 – Jul 2026';
+    document.getElementById('regimePaysSection').style.display = 'block';
+  }
+}
+
 // ── Try loading cached data (last session) ──
 async function tryLoadCached() {
   try {
@@ -1684,6 +1925,7 @@ async function tryLoadCached() {
     renderTable(data);
     renderEvents(data);
     document.getElementById('mainContent').style.display = 'block';
+    initGatePanels();
     document.getElementById('loadingOverlay').classList.add('hidden');
     // Force stale appearance
     document.getElementById('statusDot').className = 'status-dot stale';
@@ -1725,6 +1967,7 @@ async function fetchAndRender() {
                   renderGammaLevelMap(data);
                   renderTable(data); renderEvents(data);
                   document.getElementById('mainContent').style.display = 'block';
+    initGatePanels();
                   document.getElementById('loadingOverlay').classList.add('hidden');
                   document.getElementById('statusDot').className = 'status-dot live';
                   return;
@@ -1785,6 +2028,7 @@ async function fetchAndRender() {
     renderEvents(data);
 
     document.getElementById('mainContent').style.display = 'block';
+    initGatePanels();
     document.getElementById('loadingOverlay').classList.add('hidden');
 
     document.getElementById('statusDot').className = 'status-dot ' + (isMarketOpen() ? 'live' : 'stale');

@@ -13228,6 +13228,19 @@ export default {
           rank: rank != null ? Math.round(rank * 100) : null, liveFrom: GEXGATE_LIVE_FROM }, 200, pub);
       } catch (e) { return jsonResp({ error: e.message }, 500, {}); }
     }
+    // ── GEX gate: public series tail for gex.html panels (gate strip histogram,
+    // persistence stats). Read-only market data — same public posture as
+    // /gexgate-today. Page computes ranks/streaks client-side from the tail.
+    if (url.pathname === '/gexgate-hist' && request.method === 'GET') {
+      const pub = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, OPTIONS' };
+      try {
+        const serRaw = await env.SIGNAL_KV.get('gex1030_series_v1');
+        const ser = serRaw ? JSON.parse(serRaw) : {};
+        const keys = Object.keys(ser).sort();
+        const tail = keys.slice(-400).map(k => [k, ser[k]]);
+        return jsonResp({ tail, liveFrom: GEXGATE_LIVE_FROM, updated: keys[keys.length - 1] ?? null }, 200, pub);
+      } catch (e) { return jsonResp({ error: e.message }, 500, {}); }
+    }
     // ── GEX gate: status probe (seam check + live verdict preview) ──
     if (url.pathname === '/gexgate-status' && request.method === 'GET') {
       const sec = url.searchParams.get('secret');
