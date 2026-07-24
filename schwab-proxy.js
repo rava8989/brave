@@ -11727,6 +11727,16 @@ export default {
       const dcRaw = await env.SIGNAL_KV.get('discord_config');
       const dc = dcRaw ? JSON.parse(dcRaw) : null;
       if (!dc?.channelId) return jsonResp({ error: 'no owner DM channel' }, 500);
+      // ?card=1 — DM the morning-card PNG with the FAT GAMMA row instead of the text relay.
+      if (url.searchParams.get('card') === '1') {
+        const cardData = JSON.parse(JSON.stringify(SAMPLE_MORNING_CARD));
+        const m8 = (cardData.rows || []).find(r => r.n === 'M8BF');
+        if (m8) { m8.det = `watching 13:30–14:00 · FAT GAMMA p68`; m8.yes = true; m8.state = undefined; }
+        const png = await renderMorningCardPng(cardData);
+        const r = await sendDiscordImage(env, dc.channelId, png, dc.proxyUrl, 'morning-fatgamma-example.png',
+          'EXAMPLE — morning card on a fat-gamma tier day (test, DM-only)');
+        return jsonResp({ ok: r.ok, dmOnly: true, kind: 'card' });
+      }
       const msg =
         `**M8BF — EXAMPLE of a fat-gamma tier day** (test, DM-only — the real thing rides the normal M8BF relay)\n\n` +
         `**M8BF**\n` +
