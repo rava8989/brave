@@ -11716,6 +11716,28 @@ export default {
       return jsonResp({ ok: true, posted });
     }
 
+    // ── GET /fatgamma-test?secret=… — OWNER DM ONLY example of the M8BF trade
+    // relay on a fat-gamma tier day. Never the channel, never subscribers —
+    // same dmOnly discipline as magnetfly-test?dm=1.
+    if (url.pathname === '/fatgamma-test' && request.method === 'GET') {
+      const secret = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
+      if (!secret || (secret !== env.SYNC_SECRET && secret !== env.GEXM_TRIGGER_TOKEN)) {
+        return jsonResp({ error: 'unauthorized' }, 401);
+      }
+      const dcRaw = await env.SIGNAL_KV.get('discord_config');
+      const dc = dcRaw ? JSON.parse(dcRaw) : null;
+      if (!dc?.channelId) return jsonResp({ error: 'no owner DM channel' }, 500);
+      const msg =
+        `**M8BF — EXAMPLE of a fat-gamma tier day** (test, DM-only — the real thing rides the normal M8BF relay)\n\n` +
+        `**M8BF**\n` +
+        `BUY +10 BUTTERFLY SPX 100 (Weeklys) 28 JUL 26 7380/7405/7430 CALL @24.50 LMT\n` +
+        `\n-# 🟢 Fat-gamma tier (p68): prev-session dealer gamma in its upper range — historically 72% M8BF win rate in this tier vs 66% on other days. Info only, not sizing advice.` +
+        FANOUT_DISCLAIMER +
+        `\n\n-# Morning card that day: the M8BF row reads "watching 13:30–14:00 · FAT GAMMA p68". Normal days carry no extra line.`;
+      const r = await sendDiscordDM(env, dc.channelId, msg, dc.proxyUrl);
+      return jsonResp({ ok: r.ok, dmOnly: true });
+    }
+
     if (url.pathname === '/gxbf-today' && request.method === 'GET') {
       const publicCors = {
         'Access-Control-Allow-Origin': '*',
