@@ -2663,7 +2663,7 @@ function buildSigma3Embed(signal, vixValues, vixSource) {
     const sc = signal.m8bfStrikeInfo;
     // Fat-gamma tier note (info only): tells the regime story, no sizing advice.
     const fat = signal.gexFatP != null
-      ? ` · 🟢 fat-gamma tier p${signal.gexFatP} — historically 72% M8BF win rate in this tier vs 66% otherwise (info only)` : '';
+      ? ` · 🟢 fat-gamma tier p${signal.gexFatP} — historically 72% M8BF win rate in this tier vs 66% otherwise` : '';
     fires.push(`• **M8BF** — window ${sc?.window || signal.entryT || ''}${fat}`);
   } else if (signal.m8bfText) {
     blocked.push(`• **M8BF** — ${stripPrefix(signal.m8bfText, 'No M8BF')}`);
@@ -10911,7 +10911,7 @@ export default {
                   const g = await gexGateEval(env, isoDateET(toET(new Date())));
                   const p = gexFatTierP(g.rank);
                   if (p != null && !g.skip) {
-                    msgOut += `\n-# 🟢 Fat-gamma tier (p${p}): prev-session dealer gamma in its upper range — historically 72% M8BF win rate in this tier vs 66% on other days. Info only, not sizing advice.`;
+                    msgOut += `\n-# 🟢 Fat-gamma tier (p${p}): prev-session dealer gamma in its upper range — historically 72% M8BF win rate in this tier vs 66% on other days.`;
                   }
                 }
               } catch (_) {}
@@ -11741,7 +11741,7 @@ export default {
         `**M8BF — EXAMPLE of a fat-gamma tier day** (test, DM-only — the real thing rides the normal M8BF relay)\n\n` +
         `**M8BF**\n` +
         `BUY +10 BUTTERFLY SPX 100 (Weeklys) 28 JUL 26 7380/7405/7430 CALL @24.50 LMT\n` +
-        `\n-# 🟢 Fat-gamma tier (p68): prev-session dealer gamma in its upper range — historically 72% M8BF win rate in this tier vs 66% on other days. Info only, not sizing advice.` +
+        `\n-# 🟢 Fat-gamma tier (p68): prev-session dealer gamma in its upper range — historically 72% M8BF win rate in this tier vs 66% on other days.` +
         FANOUT_DISCLAIMER +
         `\n\n-# Morning card that day: the M8BF row reads "watching 13:30–14:00 · FAT GAMMA p68". Normal days carry no extra line.`;
       const r = await sendDiscordDM(env, dc.channelId, msg, dc.proxyUrl);

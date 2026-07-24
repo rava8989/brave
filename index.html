@@ -1993,7 +1993,7 @@
         } else if (g && g.rank != null && g.rank >= 60 && g.rank < 90) {
           // Fat-gamma tier (info only): prev-day rank in [60, 90) — historically
           // M8BF's strongest regime (72% WR vs 66% otherwise). Story, not advice.
-          m8bfReason.innerHTML += `${m8bfReason.innerHTML ? '<br>' : ''}<span style="color:#22c55e;font-size:11px;">🟢 Fat-gamma tier p${g.rank} — historically 72% M8BF win rate in this tier vs 66% otherwise. Info only.</span>`;
+          m8bfReason.innerHTML += `${m8bfReason.innerHTML ? '<br>' : ''}<span style="color:#22c55e;font-size:11px;">🟢 Fat-gamma tier p${g.rank} — historically 72% M8BF win rate in this tier vs 66% otherwise.</span>`;
         }
       } catch (_) { /* gate overlay is best-effort; card falls back to engine view */ }
     })();
