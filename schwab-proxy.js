@@ -6553,22 +6553,35 @@ async function handleScheduled(env) {
     // GEX gate (2026-07-23, owner-approved): persist the 10:30 0DTE total GEX
     // into a durable series (mf_magnet_* keys expire after 30d; the gate needs a
     // 120-day trailing window). Seeded from the 2023-06→2026-07 research bank.
+    // SELF-HEALING (2026-07-24, item D): besides today's append, sweep the last
+    // 28 days for holes (a capture outage left a Jul 3–18 gap once already) and
+    // backfill from mf_magnet_* snapshots while their 30-day TTL still holds.
+    // Every day the series changes it is also mirrored to GitHub
+    // (gex1030_series.json), so a KV loss can never orphan the gate's window.
     try {
       const hG = etNow.getHours(), mG = etNow.getMinutes();
       if (hG === 10 && mG >= 26 && mG < 50) {
         const dG = isoDateET(etNow);
-        const snapG = await env.SIGNAL_KV.get(`mf_magnet_${dG}`);
-        const gexG = snapG ? JSON.parse(snapG).totalGex0dte : null;
-        if (gexG != null) {
-          const serRaw = await env.SIGNAL_KV.get('gex1030_series_v1');
-          const ser = serRaw ? JSON.parse(serRaw) : {};
-          if (ser[dG] == null) {
-            ser[dG] = gexG;
-            const keys = Object.keys(ser).sort();
-            const trimmed = {};
-            for (const k of keys.slice(-1000)) trimmed[k] = ser[k];
-            await env.SIGNAL_KV.put('gex1030_series_v1', JSON.stringify(trimmed));
-          }
+        const serRaw = await env.SIGNAL_KV.get('gex1030_series_v1');
+        const ser = serRaw ? JSON.parse(serRaw) : {};
+        let filled = 0;
+        for (let back = 0; back <= 28; back++) {
+          const pd = new Date(new Date(dG + 'T12:00:00Z').getTime() - back * 86400000);
+          if (pd.getUTCDay() === 0 || pd.getUTCDay() === 6) continue;
+          if (isHol(toET(new Date(pd.getTime() + 64800000)))) continue;
+          const iso = pd.toISOString().slice(0, 10);
+          if (ser[iso] != null) continue;
+          const snapB = await env.SIGNAL_KV.get(`mf_magnet_${iso}`);
+          const gexB = snapB ? JSON.parse(snapB).totalGex0dte : null;
+          if (gexB != null) { ser[iso] = gexB; filled++; }
+        }
+        if (filled > 0) {
+          const keys = Object.keys(ser).sort();
+          const trimmed = {};
+          for (const k of keys.slice(-1000)) trimmed[k] = ser[k];
+          await env.SIGNAL_KV.put('gex1030_series_v1', JSON.stringify(trimmed));
+          if (filled > 1) { try { await logEvent(env, 'info', 'gexgate', `series self-heal: backfilled ${filled - 1} hole(s) beyond today`, {}); } catch (_) {} }
+          try { await mirrorGexSeriesToGitHub(env, trimmed); } catch (e) { console.warn('[gexgate-mirror]', e.message); }
         }
       }
     } catch (e) { console.warn('[gexgate-series]', e.message); }
@@ -8613,6 +8626,34 @@ async function handleMcpMessage(env, msg) {
     }
   }
   return { jsonrpc: '2.0', id: msg.id ?? null, error: { code: -32601, message: `unknown method ${msg.method}` } };
+}
+
+// Durable mirror of the gate's 10:30 GEX series (item D, 2026-07-24). KV is
+// the live truth; this file is the disaster-recovery copy — if KV is ever
+// lost, re-seed via POST /gexgate-seed from this file's contents.
+async function mirrorGexSeriesToGitHub(env, series) {
+  const ghToken = env.GITHUB_TOKEN;
+  if (!ghToken) return;
+  const apiUrl = 'https://api.github.com/repos/rava8989/brave/contents/gex1030_series.json';
+  const headers = {
+    'Authorization': `Bearer ${ghToken}`,
+    'Accept': 'application/vnd.github+json',
+    'User-Agent': 'schwab-proxy-worker/1.0',
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
+  let sha = null;
+  try {
+    const getResp = await fetch(apiUrl, { headers });
+    if (getResp.ok) sha = (await getResp.json()).sha;
+  } catch (_) { /* first write */ }
+  const keys = Object.keys(series);
+  const body = {
+    message: `auto: gate series ${keys[keys.length - 1] || '?'} (${keys.length} entries)`,
+    content: btoa(unescape(encodeURIComponent(JSON.stringify(series)))),
+  };
+  if (sha) body.sha = sha;
+  const putResp = await fetch(apiUrl, { method: 'PUT', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!putResp.ok) throw new Error(`GitHub PUT gex1030_series.json: ${putResp.status}`);
 }
 
 async function commitGexToGitHub(env, gexData) {
