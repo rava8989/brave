@@ -2276,7 +2276,16 @@ async function gexGateSkipFor(env, dateISO) {
     const ser = JSON.parse(serRaw);
     const prior = Object.keys(ser).filter(d => d < dateISO).sort();
     if (prior.length < 21) return false;
-    const ref = ser[prior[prior.length - 1]];
+    // Staleness bound (audit [0]): the rule is PREV-SESSION GEX. If the last
+    // series entry is older than the previous trading day (capture failed),
+    // FAIL OPEN to GO — matches the 17:05 warning DM's promise.
+    const refDate = prior[prior.length - 1];
+    let pd = new Date(dateISO + 'T12:00:00Z');
+    do { pd = new Date(pd.getTime() - 86400000); }
+    while (pd.getUTCDay() === 0 || pd.getUTCDay() === 6 || isHol(toET(new Date(pd.getTime() + 64800000))));
+    const prevTradeISO = pd.toISOString().slice(0, 10);
+    if (refDate !== prevTradeISO) { console.warn('[gexgate] stale ref', refDate, 'for', dateISO, '— fail open'); return false; }
+    const ref = ser[refDate];
     const base = prior.slice(0, -1).slice(-120).map(d => ser[d]);
     const rank = base.filter(x => x <= ref).length / base.length;
     return rank < 0.20;
@@ -3494,6 +3503,12 @@ async function handleEOD(env, etNow) {
     } catch (e) { console.warn('[eod] live signal check:', e.message); }
   }
 
+  // GEX gate — unconditional (audit [9]): the nested STEP-2 check is skipped
+  // when vixOpen is missing; this one cannot be.
+  if (!m8bfBlockedByLive && await gexGateSkipFor(env, todayISO)) {
+    m8bfBlockedByLive = true;
+    console.log('[eod] M8BF blocked by GEX gate (unconditional)');
+  }
   // Compute m8bfPL from first qualifying signal in window (same logic as backfillMissingPL)
   if (m8bfBlockedByLive) {
     m8bfPL = 0;
@@ -6242,6 +6257,45 @@ async function handleScheduled(env) {
     discordResult = await pollDiscordSignals(env);
   }
 
+  // ── 17:05–17:25 ET: M8BF GEX-gate verdict for the NEXT session (owner DM).
+  // Rule (audited 2026-07-23): today's 10:30 0DTE total GEX ranked against the
+  // trailing 120 series entries strictly before today; bottom 20% → SKIP.
+  // Owner-only DM (decision support, not a subscriber signal). P27: terminal
+  // marker written BEFORE the post; claim gate around the whole handler.
+  if (etHour === 17 && etMin >= 5 && etMin < 25 && etNow.getDay() >= 1 && etNow.getDay() <= 5) {
+    const gateKey = `gexgate_dm_${todayISO}`;
+    const doneG = await env.SIGNAL_KV.get(gateKey);
+    if (!doneG || doneG.startsWith('claim:')) {
+      if (await claimSendSlot(env, gateKey)) {
+        try {
+          const v = await computeGexGateVerdict(env);
+          await env.SIGNAL_KV.put(gateKey, 'sent', { expirationTtl: 86400 });  // marker BEFORE post (P27)
+          if (!v || !v.verdict) {
+            // Fail LOUD: a gate that silently can't compute looks identical to GO.
+            const dcRaw0 = await env.SIGNAL_KV.get('discord_config');
+            const dc0 = dcRaw0 ? JSON.parse(dcRaw0) : null;
+            if (dc0?.channelId) {
+              await sendDiscordDM(env, dc0.channelId,
+                `⚠️ **M8BF GEX gate — no verdict for next session** (${v?.reason || 'series unavailable'}). ` +
+                `10:30 GEX capture may have failed — check /gexgate-status. Card will treat the day as GO.`,
+                dc0.proxyUrl);
+            }
+          } else if (v && v.verdict) {
+            const dcRaw = await env.SIGNAL_KV.get('discord_config');
+            const dc = dcRaw ? JSON.parse(dcRaw) : null;
+            if (dc?.channelId) {
+              const bn = (x) => `${(x / 1e9).toFixed(2)}B`;
+              const msg = v.verdict === 'SKIP'
+                ? `🚪 **M8BF GEX gate — next session: SKIP** 🚫\nToday's 10:30 0DTE GEX ${bn(v.gex)} = p${Math.round(v.rank * 100)} of trailing ${v.n} — bottom 20% = thin gamma, wild-day risk.`
+                : `🚪 **M8BF GEX gate — next session: GO** ✅\nToday's 10:30 0DTE GEX ${bn(v.gex)} = p${Math.round(v.rank * 100)} of trailing ${v.n} (skip only < p20).`;
+              await sendDiscordDM(env, dc.channelId, msg, dc.proxyUrl);
+            }
+          }
+        } catch (e) { console.warn('[gexgate-dm]', e.message); }
+      }
+    }
+  }
+
   // EOD cron: capture vixClose + spxClose + m8bfPL + backfill any missing m8bfWR
   if (isEOD) {
     const eodResult = await handleEOD(env, etNow);
@@ -6302,44 +6356,6 @@ async function handleScheduled(env) {
     }
   }
 
-  // ── 17:05–17:25 ET: M8BF GEX-gate verdict for the NEXT session (owner DM).
-  // Rule (audited 2026-07-23): today's 10:30 0DTE total GEX ranked against the
-  // trailing 120 series entries strictly before today; bottom 20% → SKIP.
-  // Owner-only DM (decision support, not a subscriber signal). P27: terminal
-  // marker written BEFORE the post; claim gate around the whole handler.
-  if (etHour === 17 && etMin >= 5 && etMin < 25 && etNow.getDay() >= 1 && etNow.getDay() <= 5) {
-    const gateKey = `gexgate_dm_${todayISO}`;
-    const doneG = await env.SIGNAL_KV.get(gateKey);
-    if (!doneG || doneG.startsWith('claim:')) {
-      if (await claimSendSlot(env, gateKey)) {
-        try {
-          const v = await computeGexGateVerdict(env);
-          await env.SIGNAL_KV.put(gateKey, 'sent', { expirationTtl: 86400 });  // marker BEFORE post (P27)
-          if (!v || !v.verdict) {
-            // Fail LOUD: a gate that silently can't compute looks identical to GO.
-            const dcRaw0 = await env.SIGNAL_KV.get('discord_config');
-            const dc0 = dcRaw0 ? JSON.parse(dcRaw0) : null;
-            if (dc0?.channelId) {
-              await sendDiscordDM(env, dc0.channelId,
-                `⚠️ **M8BF GEX gate — no verdict for next session** (${v?.reason || 'series unavailable'}). ` +
-                `10:30 GEX capture may have failed — check /gexgate-status. Card will treat the day as GO.`,
-                dc0.proxyUrl);
-            }
-          } else if (v && v.verdict) {
-            const dcRaw = await env.SIGNAL_KV.get('discord_config');
-            const dc = dcRaw ? JSON.parse(dcRaw) : null;
-            if (dc?.channelId) {
-              const bn = (x) => `${(x / 1e9).toFixed(2)}B`;
-              const msg = v.verdict === 'SKIP'
-                ? `🚪 **M8BF GEX gate — next session: SKIP** 🚫\nToday's 10:30 0DTE GEX ${bn(v.gex)} = p${Math.round(v.rank * 100)} of trailing ${v.n} — bottom 20% = thin gamma, wild-day risk.`
-                : `🚪 **M8BF GEX gate — next session: GO** ✅\nToday's 10:30 0DTE GEX ${bn(v.gex)} = p${Math.round(v.rank * 100)} of trailing ${v.n} (skip only < p20).`;
-              await sendDiscordDM(env, dc.channelId, msg, dc.proxyUrl);
-            }
-          }
-        } catch (e) { console.warn('[gexgate-dm]', e.message); }
-      }
-    }
-  }
 
   // ── Master SPX chain fetch — ONE call per market tick, shared across all
   //    chain-consuming handlers (GEX, diagonal, straddle, BOBF). Cuts Schwab
@@ -6499,7 +6515,8 @@ async function handleScheduled(env) {
         if (!(await env.SIGNAL_KV.get(kM))) {
           const cur = await env.SIGNAL_KV.get('gex_current');
           const g = cur ? JSON.parse(cur) : null;
-          if (g?.maxPosStrike != null) {
+          const freshG = sn => sn && (Date.now() / 1000 - (sn.timestamp || 0)) < 900;
+          if (g?.maxPosStrike != null && freshG(g)) {
             // Store BOTH magnets for the live 0DTE-vs-all-expiry comparison
             // (2026-07-20): magnet = all-expiry (what PNBF uses today);
             // magnet0dte = 0DTE-only (the basis the backtest was validated on).
@@ -6507,7 +6524,8 @@ async function handleScheduled(env) {
             const g0 = cur0 ? JSON.parse(cur0) : null;
             await env.SIGNAL_KV.put(kM, JSON.stringify({ magnet: g.maxPosStrike, t: g.timestamp,
               totalGex: g.totalGex ?? null,
-              magnet0dte: g0?.maxPosStrike ?? null, totalGex0dte: g0?.totalGex ?? null }),
+              magnet0dte: freshG(g0) ? g0?.maxPosStrike ?? null : null,
+              totalGex0dte: freshG(g0) ? g0?.totalGex ?? null : null }),
               { expirationTtl: 30 * 86400 });
           }
         }
@@ -9256,6 +9274,9 @@ function getM8BFWindow(dow, dateISO) {
 // 2026-05-28: bug bit when EOM-1 + prevWR=99% — /trade said banned, Discord
 // said fire. Both now agree via the same override path.
 async function m8bfBannedReason(env, etNow) {
+  // GEX gate first — absolute, never overridden (audit 2026-07-24 [37]):
+  // this single chokepoint gates /trade, refreshM8bfLiveQuotes and the bot relay.
+  if (await gexGateSkipFor(env, isoDateET(etNow))) return 'GEX gate — thin dealer gamma';
   const eomDay = isLastTradeMo(etNow);
   const eom1   = isEomN(1, etNow);
   const opex1  = opexSch.some(ds => isTodayBefore(ds, etNow));
@@ -9395,6 +9416,11 @@ async function backfillMissingPL(env, targetDates = null) {
       const vixExpAfterOpex = isVixAfterOpexDay(etDate);
       const nonAmznTslaEarn = isNonAmznTslaEarningsDay(etDate);
       const cpiDay = cpiSch.includes(todayLong(etDate));
+      if (await gexGateSkipFor(env, row.date)) {
+        row.m8bfPL = 0;
+        filled.push({ date: row.date, pl: 0, gexGate: true });
+        continue;
+      }
       const calendarBlocked = eomDay || eom1 || opex1 || vixExpAfterOpex || nonAmznTslaEarn || cpiDay;
       if (calendarBlocked) {
         // Check 90% override: look for the most recent prior m8bfWR in the
@@ -13187,9 +13213,15 @@ export default {
           const ser = JSON.parse(serRaw);
           const prior = Object.keys(ser).filter(d => d < forDate).sort();
           if (prior.length >= 21) {
-            const ref = ser[prior[prior.length - 1]];
-            const base = prior.slice(0, -1).slice(-120).map(d => ser[d]);
-            rank = base.filter(x => x <= ref).length / base.length;
+            const refDate = prior[prior.length - 1];
+            let pd = new Date(forDate + 'T12:00:00Z');
+            do { pd = new Date(pd.getTime() - 86400000); }
+            while (pd.getUTCDay() === 0 || pd.getUTCDay() === 6 || isHol(toET(new Date(pd.getTime() + 64800000))));
+            if (refDate === pd.toISOString().slice(0, 10)) {
+              const ref = ser[refDate];
+              const base = prior.slice(0, -1).slice(-120).map(d => ser[d]);
+              rank = base.filter(x => x <= ref).length / base.length;
+            }
           }
         }
         return jsonResp({ forDate, skip: rank != null && rank < 0.20,
@@ -14045,13 +14077,14 @@ export default {
     } catch (e) { console.warn('[evening-preview]', e.message); }
 
     // ── Nightly data watchdog: own 18:35-18:50 window (lessons P17) ──
-    if (etP.getDay() >= 1 && etP.getDay() <= 5 && etP.getHours() === 18
-        && etP.getMinutes() >= 35 && etP.getMinutes() < 50 && !isHol(etP)) {
-      const wdKey = `watchdog_${todayP}`;
+    const etW = toET(new Date());
+    if (etW.getDay() >= 1 && etW.getDay() <= 5 && etW.getHours() === 18
+        && etW.getMinutes() >= 35 && etW.getMinutes() < 50 && !isHol(etW)) {
+      const wdKey = `watchdog_${isoDateET(etW)}`;
       if (!(await env.SIGNAL_KV.get(wdKey))) {
         await env.SIGNAL_KV.put(wdKey, 'running', { expirationTtl: 86400 });
         try {
-          const wd = await dataCompletenessCheck(env, etP);
+          const wd = await dataCompletenessCheck(env, etW);
           if (!wd.failed.length) await env.SIGNAL_KV.put(wdKey, 'done', { expirationTtl: 86400 });
           else await env.SIGNAL_KV.delete(wdKey);   // retry within window
         } catch (e) { await env.SIGNAL_KV.delete(wdKey); console.warn('[watchdog]', e.message); }
