@@ -559,8 +559,12 @@ tfoot td {
   <div style="display:flex;gap:8px;align-items:center">
     <button class="run-btn" id="runBtn">▶ RUN</button>
     <button class="run-btn" id="m8bfModelBtn" style="background:linear-gradient(135deg,#6366f1,#818cf8);flex-shrink:0">⚡ CURRENT M8BF MODEL</button>
+    <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text2);cursor:pointer;user-select:none;margin-left:4px;" title="Skip the day when the previous session's 10:30 ET 0DTE total GEX ranks in the bottom 20% of the trailing 120 days. Part of the live model since Jul 24, 2026 — toggle off to compare the ungated record.">
+      <input type="checkbox" id="btGexGate" checked style="margin:0;cursor:pointer;">
+      GEX gate <span id="gexGateCount" style="color:var(--text3)"></span>
+    </label>
   </div>
-  <div style="width:100%;font-size:11px;color:#94a3b8;margin-top:6px">This dataset does not simulate the <b>GEX gate</b> (skip on thin-gamma days — see the strategy overview). The dashboard history is the canonical gated record.</div>
+  <div style="width:100%;font-size:11px;color:#94a3b8;margin-top:6px"><b>GEX gate</b> — when the previous session's 10:30 ET 0DTE total GEX ranks in the bottom 20% of the trailing 120 days, the day is skipped. Part of the model; the toggle above lets you test with and without it.</div>
 </div>
 
 <!-- Content -->
@@ -613,6 +617,26 @@ const M8BF_SKIP = new Set([
   "2026-02-09","2026-02-19","2026-02-26","2026-02-27","2026-03-19","2026-03-25","2026-03-30","2026-03-31",
   "2026-04-09"
 ]);
+// ── GEX gate (live since 2026-07-24) — skip the day when the previous session's
+// 10:30 ET 0DTE total GEX ranks in the bottom 20% of the trailing 120 days.
+// Historical set computed with the exact production semantics (prev-trading-day
+// ref, rank among <=120 predecessors, fail OPEN on stale/missing ref).
+// Source: gexgate_skip_days.json (balance-fly) — regenerate there if extended.
+const GEXGATE_SKIP = new Set([
+  "2024-09-04","2024-09-05","2024-09-09","2024-09-12","2024-10-02","2024-10-04","2024-10-23","2024-10-24",
+  "2024-10-25","2024-10-30","2024-11-01","2024-11-04","2024-11-05","2024-11-14","2024-11-15","2024-11-18",
+  "2024-11-20","2024-11-21","2024-12-10","2024-12-11","2024-12-13","2024-12-18","2024-12-20","2024-12-23",
+  "2024-12-24","2024-12-30","2024-12-31","2025-01-08","2025-01-10","2025-01-13","2025-01-14","2025-01-24",
+  "2025-01-28","2025-02-04","2025-02-13","2025-02-24","2025-02-25","2025-03-24","2025-03-31","2025-04-01",
+  "2025-05-27","2025-06-16","2025-07-02","2025-07-17","2025-07-23","2025-08-04","2025-08-20","2025-08-21",
+  "2025-09-03","2025-09-08","2025-09-25","2025-09-26","2025-10-10","2025-10-14","2025-10-15","2025-10-23",
+  "2025-10-31","2025-11-04","2025-11-05","2025-11-07","2025-11-10","2025-11-14","2025-11-17","2025-11-18",
+  "2025-11-19","2025-11-24","2025-12-02","2025-12-09","2025-12-15","2025-12-16","2025-12-17","2025-12-30",
+  "2026-01-05","2026-01-15","2026-01-21","2026-01-30","2026-02-02","2026-02-06","2026-02-12","2026-02-17",
+  "2026-02-18","2026-02-27","2026-03-02","2026-03-04","2026-03-09","2026-03-10","2026-03-13","2026-03-16",
+  "2026-03-19","2026-03-20","2026-03-23","2026-03-30","2026-04-06","2026-05-13","2026-05-20","2026-06-05",
+  "2026-06-08","2026-06-09","2026-06-12","2026-06-24","2026-06-29"
+]);
 const M8BF_BLOCKED = new Set([10,25,35,40,65,80]);
 const M8BF_COMBO_BANS = {0:95,20:15,55:50,65:60,85:90};
 // dow 0=Mon..4=Fri → [windowStart, windowEnd]
@@ -661,6 +685,7 @@ function buildM8BFTrades() {
 // ── State ─────────────────────────────────────────────────────────────────────
 let activeDays = new Set([0,1,2,3,4]);
 let useM8BFModel    = false;
+let lastResult      = null;
 
 // ── Special day state ─────────────────────────────────────────────────────────
 let specialMode   = null;          // null | 'exclude' | 'only'
@@ -940,6 +965,7 @@ function filterTrades(forceFull) {
   const to   = document.getElementById('dateTo').value;
 
   const source = useM8BFModel ? buildM8BFTrades() : TRADES;
+  const gateOn = document.getElementById('btGexGate')?.checked === true;
 
   // Build unified special-day set if filter is active
   let specialSet = null;
@@ -953,6 +979,7 @@ function filterTrades(forceFull) {
   return source.filter(t => {
     if (from && t[D] < from) return false;
     if (to   && t[D] > to)   return false;
+    if (gateOn && GEXGATE_SKIP.has(t[D])) return false;
     if (!activeDays.has(t[DAY])) return false;
     const bt = bucketTime(t[TIME]);
     if (!bt || !activeTimes.has(bt)) return false;
@@ -1003,6 +1030,12 @@ async function runPipeline(btn) {
   await yield$();
   try {
     const filtered = filterTrades();
+    { // gate label: how many days the gate removes inside the active date range
+      const gFrom = document.getElementById('dateFrom').value, gTo = document.getElementById('dateTo').value;
+      const nGate = [...GEXGATE_SKIP].filter(d => (!gFrom || d >= gFrom) && (!gTo || d <= gTo)).length;
+      document.getElementById('gexGateCount').textContent =
+        document.getElementById('btGexGate').checked ? `(−${nGate} days)` : '(off)';
+    }
     if (!filtered.length) {
       document.getElementById('statsGrid').innerHTML =
         '<div class="empty" style="grid-column:1/-1">No trades match the current filters.</div>';
@@ -1032,6 +1065,12 @@ document.getElementById('runBtn').onclick = () => {
   mb.textContent = '⚡ CURRENT M8BF MODEL';
   runPipeline(document.getElementById('runBtn'));
 };
+
+// Toggling the gate re-runs the last simulation in place (keeps whichever mode
+// — custom RUN or CURRENT M8BF MODEL — was active), so A/B comparison is one click.
+document.getElementById('btGexGate').addEventListener('change', () => {
+  if (lastResult) runPipeline(document.getElementById('runBtn'));
+});
 
 document.getElementById('m8bfModelBtn').onclick = () => {
   useM8BFModel = true;
