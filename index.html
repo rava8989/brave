@@ -745,6 +745,7 @@
       <li><strong>Banned center strikes (FULL):</strong> centers ending in 10, 25, 35, 40, 65, 80 — banned regardless of Target 1. <strong>Combo bans</strong> (keyed by <strong>T1 % 100</strong> → banned center ending): T1 ends :00 → center :95 · T1 ends :20 → center :15 · T1 ends :55 → center :50 · T1 ends :65 → center :60 · T1 ends :85 → center :90.</li>
       <li><strong>Not traded on:</strong> EOM · EOM-1 · day before OPEX · VIX exp day (when VIX exp falls after OPEX) · all earnings days except AMZN and TSLA · NVDA earnings days. On EOM/EOM-1/day before OPEX/VIX exp day, M8BF is <strong>only</strong> allowed if previous day WR ≥ 90%. <strong>Use discretion on:</strong> first trading day of month · Fed decision day.</li>
       <li><strong>GEX gate:</strong> not traded when the previous session's <strong>10:30 ET 0DTE total gamma exposure</strong> ranks in the <strong>bottom 20% of the trailing 120 days</strong>. Thin dealer gamma means hedging flows amplify moves instead of pinning them — the conditions butterflies need are absent. The GO / SKIP verdict is set the evening before, so it is known before the market opens.</li>
+      <li><strong>Fat-gamma tier (informational):</strong> when the same prev-session reading ranks in the <strong>upper tier (p60–90)</strong>, the card and signal carry a 🟢 note — historically M8BF's strongest regime (72% win rate vs 66% on other traded days; the 90+ extreme is excluded as it has not been stronger). This is context only — the signal itself never changes.</li>
       <li><strong>2nd trading Thursday override:</strong> window shifts to <strong>13:30–14:00</strong> (instead of 11:00–11:30). All other rules (banned strikes, skip dates) remain the same.</li>
       <li>No stop-loss — hold to expiration.</li>
     </ul>
@@ -1989,6 +1990,10 @@
           m8bfBadge.textContent = 'BLOCKED';
           m8bfRec.innerHTML     = `<span class="crossed">No M8BF (GEX gate)</span>`;
           m8bfReason.innerHTML  = `<span class="block-hard">⛔ GEX gate — prev-day 10:30 0DTE GEX p${g.rank} (bottom 20% of 120d) — thin gamma, skip</span>`;
+        } else if (g && g.rank != null && g.rank >= 60 && g.rank < 90) {
+          // Fat-gamma tier (info only): prev-day rank in [60, 90) — historically
+          // M8BF's strongest regime (72% WR vs 66% otherwise). Story, not advice.
+          m8bfReason.innerHTML += `${m8bfReason.innerHTML ? '<br>' : ''}<span style="color:#22c55e;font-size:11px;">🟢 Fat-gamma tier p${g.rank} — historically 72% M8BF win rate in this tier vs 66% otherwise. Info only.</span>`;
         }
       } catch (_) { /* gate overlay is best-effort; card falls back to engine view */ }
     })();

@@ -2268,14 +2268,17 @@ async function computeGexGateVerdict(env) {
 // guarded to the go-live date so recovery/backfill paths can never retro-gate
 // history recorded under the old rules.
 const GEXGATE_LIVE_FROM = '2026-07-24';
-async function gexGateSkipFor(env, dateISO) {
+// Full gate evaluation for a session date: {skip, rank}. rank is the prev-day
+// reading's percentile (0..1) of its trailing 120 — null when the guard/staleness
+// rules fail open. skip = rank < 0.20 (never true when rank is null).
+async function gexGateEval(env, dateISO) {
   try {
-    if (!dateISO || dateISO < GEXGATE_LIVE_FROM) return false;
+    if (!dateISO || dateISO < GEXGATE_LIVE_FROM) return { skip: false, rank: null };
     const serRaw = await env.SIGNAL_KV.get('gex1030_series_v1');
-    if (!serRaw) return false;
+    if (!serRaw) return { skip: false, rank: null };
     const ser = JSON.parse(serRaw);
     const prior = Object.keys(ser).filter(d => d < dateISO).sort();
-    if (prior.length < 21) return false;
+    if (prior.length < 21) return { skip: false, rank: null };
     // Staleness bound (audit [0]): the rule is PREV-SESSION GEX. If the last
     // series entry is older than the previous trading day (capture failed),
     // FAIL OPEN to GO — matches the 17:05 warning DM's promise.
@@ -2284,18 +2287,31 @@ async function gexGateSkipFor(env, dateISO) {
     do { pd = new Date(pd.getTime() - 86400000); }
     while (pd.getUTCDay() === 0 || pd.getUTCDay() === 6 || isHol(toET(new Date(pd.getTime() + 64800000))));
     const prevTradeISO = pd.toISOString().slice(0, 10);
-    if (refDate !== prevTradeISO) { console.warn('[gexgate] stale ref', refDate, 'for', dateISO, '— fail open'); return false; }
+    if (refDate !== prevTradeISO) { console.warn('[gexgate] stale ref', refDate, 'for', dateISO, '— fail open'); return { skip: false, rank: null }; }
     const ref = ser[refDate];
     const base = prior.slice(0, -1).slice(-120).map(d => ser[d]);
     const rank = base.filter(x => x <= ref).length / base.length;
-    return rank < 0.20;
-  } catch (e) { console.warn('[gexgate-skipFor]', e.message); return false; }
+    return { skip: rank < 0.20, rank };
+  } catch (e) { console.warn('[gexgate-eval]', e.message); return { skip: false, rank: null }; }
+}
+async function gexGateSkipFor(env, dateISO) { return (await gexGateEval(env, dateISO)).skip; }
+// Fat-gamma tier (info-only indication, owner 2026-07-24): prev-day rank in
+// [60, 90) — M8BF's historically strongest regime on the gated stream (72% WR
+// vs 66% on other traded days; the 90+ extreme is deliberately excluded — it is
+// the weakest positive bucket). Returns the integer percentile or null.
+// DISPLAY ONLY: never changes trading behavior, sizing, or the bot.
+function gexFatTierP(rank) {
+  return (rank != null && rank >= 0.60 && rank < 0.90) ? Math.round(rank * 100) : null;
 }
 // Post-process a calculateSignal() result: on gate-skip days M8BF reads NO and,
 // when M8BF held the primary rec, the whole trade path is neutralized so the
 // window sender / bot / card all see a no-trade day. Other strategies untouched.
-function applyGexGateToSignal(signal, skip) {
-  if (!skip || !signal) return signal;
+function applyGexGateToSignal(signal, skip, rank) {
+  if (!signal) return signal;
+  // Fat-gamma tier flag (info only) — set on GO days when the prev-day rank
+  // lands in [60, 90). Consumed by the morning card, the signal embed, and the
+  // /link-notify M8BF relay footer. Never touches theme/rec/trading.
+  if (!skip) { const p = gexFatTierP(rank); if (p != null) signal.gexFatP = p; return signal; }
   signal.gexGateSkip = true;                 // explicit flag: EOD/no-trade accounting
   const GATE_TXT = 'No M8BF (GEX gate — thin dealer gamma)';
   if (!/^No\s/i.test(String(signal.m8bfText || '').trim())) signal.m8bfText = GATE_TXT;
@@ -2645,7 +2661,10 @@ function buildSigma3Embed(signal, vixValues, vixSource) {
   const m8bfActive = signal.m8bfText && signal.m8bfText.startsWith('M8BF');
   if (m8bfActive) {
     const sc = signal.m8bfStrikeInfo;
-    fires.push(`• **M8BF** — window ${sc?.window || signal.entryT || ''}`);
+    // Fat-gamma tier note (info only): tells the regime story, no sizing advice.
+    const fat = signal.gexFatP != null
+      ? ` · 🟢 fat-gamma tier p${signal.gexFatP} — historically 72% M8BF win rate in this tier vs 66% otherwise (info only)` : '';
+    fires.push(`• **M8BF** — window ${sc?.window || signal.entryT || ''}${fat}`);
   } else if (signal.m8bfText) {
     blocked.push(`• **M8BF** — ${stripPrefix(signal.m8bfText, 'No M8BF')}`);
   }
@@ -3476,7 +3495,7 @@ async function handleEOD(env, etNow) {
             etDate: etNow,
             prevWR: prevWR_s2,
           });
-          applyGexGateToSignal(sig, await gexGateSkipFor(env, isoDateET(etNow)));
+          { const _g = await gexGateEval(env, isoDateET(etNow)); applyGexGateToSignal(sig, _g.skip, _g.rank); }
           // FIX (2026-06-09 audit P0 #3): m8bfBanned alone misses the 90%-WR
           // override. The override applies when prevWR >= 90, not CPI, and
           // GXBF didn't take precedence (sig.theme !== 'gxbf' — equivalent to
@@ -6857,7 +6876,7 @@ async function handleScheduled(env) {
               vixToday: vixT, vixYOpen: vixYO, vixYClose: vixYC,
               spxGapPct: spxGap, etDate: etNow,
             });
-            applyGexGateToSignal(recoverySig, await gexGateSkipFor(env, isoDateET(etNow)));
+            { const _g = await gexGateEval(env, isoDateET(etNow)); applyGexGateToSignal(recoverySig, _g.skip, _g.rank); }
             if (recoverySig.theme !== 'strad') {
               await env.SIGNAL_KV.put(stradSkipKey, JSON.stringify({
                 theme: recoverySig.theme,
@@ -7387,7 +7406,7 @@ async function handleScheduled(env) {
     rsi14,
     cor1m: cor1mOpenToday,
   });
-  applyGexGateToSignal(signal, await gexGateSkipFor(env, isoDateET(etNow)));
+  { const _g = await gexGateEval(env, isoDateET(etNow)); applyGexGateToSignal(signal, _g.skip, _g.rank); }
 
   // 5a. Persist the morning signal so /straddle-today and other endpoints
   // can read EXACTLY what the morning cron computed (including the live
@@ -7626,7 +7645,7 @@ async function handleScheduled(env) {
         etDate: etNow, prevWR, vixPct20d, rsi14,
         cor1m: cor1mOpenToday,
       });
-      applyGexGateToSignal(signalOther, await gexGateSkipFor(env, isoDateET(etNow)));
+      { const _g = await gexGateEval(env, isoDateET(etNow)); applyGexGateToSignal(signalOther, _g.skip, _g.rank); }
       signalOther._tiltLine = signal._tiltLine;   // same advisory on the 2nd copy
       signalOther._gexLine = signal._gexLine;
       signalOther._cycleLine = signal._cycleLine;
@@ -7697,7 +7716,7 @@ async function handleScheduled(env) {
               vixToday: freshVix, vixYOpen, vixYClose, spxGapPct,
               etDate: etNow, prevWR, vixPct20d, rsi14,
             });
-            applyGexGateToSignal(freshSig, await gexGateSkipFor(env, isoDateET(etNow)));
+            { const _g = await gexGateEval(env, isoDateET(etNow)); applyGexGateToSignal(freshSig, _g.skip, _g.rank); }
             if (freshSig.theme !== 'strad') {
               validatorAborted = true;
               console.warn(`[strad-validate] ABORT: theme flipped (morning vix ${vixToday} → fresh ${freshVix.toFixed(2)}, theme=${freshSig.theme})`);
@@ -10029,6 +10048,8 @@ function buildMorningCardData(signal, vixValues, tailLine, pnbf) {
     if (m8Active) {
       const win = (String(signal.m8bfText).match(/(\d{1,2}:\d{2}\s*[–-]\s*\d{1,2}:\d{2})/) || [])[1];
       det = win ? `watching ${win} · on flow signal` : 'watching · on flow signal';
+      // Fat-gamma tier (info only, owner 2026-07-24): story on the card, no advice.
+      if (signal.gexFatP != null) det += ` · fat gamma p${signal.gexFatP}`;
     } else { det = strip(signal.m8bfText, 'M8BF') || '—'; }
     rows.push({ n: 'M8BF', det, yes: m8Active });
   }
@@ -10871,7 +10892,20 @@ export default {
             console.warn('[link-notify/fanout] duplicate suppressed');
           } else {
             try {
-              const o = await fanoutSubscribers(env, String(fanoutText).slice(0, 1800));
+              let msgOut = String(fanoutText);
+              // Fat-gamma tier footer on M8BF trade relays (info only, owner
+              // 2026-07-24): story, not sizing advice. \bM8BF\b cannot match
+              // BOBF/PNBF/GXBF, so only the M8BF relay gets the line.
+              try {
+                if (/\bM8BF\b/.test(msgOut) && !/fat-gamma/i.test(msgOut)) {
+                  const g = await gexGateEval(env, isoDateET(toET(new Date())));
+                  const p = gexFatTierP(g.rank);
+                  if (p != null && !g.skip) {
+                    msgOut += `\n-# 🟢 Fat-gamma tier (p${p}): prev-session dealer gamma in its upper range — historically 72% M8BF win rate in this tier vs 66% on other days. Info only, not sizing advice.`;
+                  }
+                }
+              } catch (_) {}
+              const o = await fanoutSubscribers(env, msgOut.slice(0, 1800));
               fanned = o.filter(x => x.ok).length;
             } catch (e) { console.warn('[link-notify/fanout]', e.message); }
           }
@@ -11363,7 +11397,7 @@ export default {
           vixToday: vT, vixYOpen: vYO, vixYClose: vYC,
           spxGapPct: gap, etDate: etNowDT,
         });
-        applyGexGateToSignal(sig, await gexGateSkipFor(env, isoDateET(etNowDT)));
+        { const _g = await gexGateEval(env, isoDateET(etNowDT)); applyGexGateToSignal(sig, _g.skip, _g.rank); }
         if (sig.theme !== 'strad') {
           return jsonResp({ ok: false, reason: 'signal-not-strad', theme: sig.theme, rec: sig.rec }, 200, { 'Access-Control-Allow-Origin': '*' });
         }
@@ -13674,7 +13708,7 @@ export default {
             spxGapPct,
             etDate,
           });
-          applyGexGateToSignal(signal, await gexGateSkipFor(env, dateKey));
+          { const _g = await gexGateEval(env, dateKey); applyGexGateToSignal(signal, _g.skip, _g.rank); }
 
           rows.push({
             date: dateKey,
