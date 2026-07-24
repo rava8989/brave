@@ -1160,6 +1160,36 @@ fetch('cor1m_contango_bundle.json', { cache: 'no-store' })
   .then(r => r.json())
   .then(b => {
     bundle = b; window._bundle = b;
+    // Recompute every preset through the in-page engine so results always
+    // reflect the bundle's LATEST daily/per_day data. The baked preset_results
+    // date from build time and go stale as the sandbox data extends (the
+    // 2026-07-20 live win was invisible until this).
+    for (const p of b.presets) {
+      try {
+        const r = runSandbox({
+          threshold: p.threshold,
+          delta_target: _nearestDelta(p.delta, b.sandbox.delta_grid),
+          vvix_max: p.vvix_max ?? null,
+          regimes_allowed: (p.regimes && p.regimes.length) ? new Set(p.regimes) : null,
+        });
+        if (r && r.trades) {
+          const pls = r.trades.map(t => t.pnl);
+          const w = pls.filter(x => x > 0).length;
+          const totalPL = pls.reduce((s, x) => s + x, 0);
+          b.preset_results[p.id] = {
+            ...b.preset_results[p.id],
+            summary: { ...(b.preset_results[p.id]?.summary || {}),
+              n: r.trades.length,
+              wr: r.trades.length ? +(w / r.trades.length * 100).toFixed(1) : 0,
+              avg: r.trades.length ? +(totalPL / r.trades.length).toFixed(2) : 0,
+              total: +totalPL.toFixed(2),
+              best: pls.length ? Math.max(...pls) : 0,
+              worst: pls.length ? Math.min(...pls) : 0 },
+            triggers: r.triggers, trades: r.trades, skipped: r.skipped,
+          };
+        }
+      } catch (e) { console.warn('preset recompute failed', p.id, e); }
+    }
     activePresetId = b.default_preset || (b.presets && b.presets[0]?.id) || 'champion';
     buildPresetCards();
     renderSignalStrip();
