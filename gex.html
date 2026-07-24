@@ -222,38 +222,6 @@
     </div>
   </div>
 
-  <!-- GEX Gate — live skip-rule strip + trailing distribution + persistence -->
-  <div class="chart-section" id="gateStripSection" style="display:none;">
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
-      <h2 style="margin-bottom:0;"><span>GEX</span> Gate — M8BF thin-gamma skip rule</h2>
-      <span id="gateStripBanner" style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--text2);"></span>
-    </div>
-    <div class="cards-row" style="margin-bottom:12px;">
-      <div class="level-card" id="gateTodayCard">
-        <div class="lc-title">Today's session</div>
-        <div class="lc-strike" id="gateTodayVerdict">--</div>
-        <div class="lc-desc" id="gateTodayDesc">verdict locked yesterday 5:05 PM ET</div>
-      </div>
-      <div class="level-card" id="gateTomorrowCard">
-        <div class="lc-title">Next session preview</div>
-        <div class="lc-strike" id="gateTomorrowVerdict">--</div>
-        <div class="lc-desc" id="gateTomorrowDesc">from today's 10:30 reading</div>
-      </div>
-      <div class="level-card">
-        <div class="lc-title">Regime persistence</div>
-        <div class="lc-strike" id="gateStreak">--</div>
-        <div class="lc-value" id="gatePersist">--</div>
-        <div class="lc-desc">thin days cluster — why yesterday's reading gates today</div>
-      </div>
-    </div>
-    <div class="chart-wrap" style="height:240px;">
-      <canvas id="gateHistoChart"></canvas>
-    </div>
-    <div class="bottom-info" style="text-align:left;padding:8px 0 0;">
-      The rule: when the previous session's 10:30 ET 0DTE total GEX ranks in the bottom 20% of the trailing 120 days, M8BF skips the day — the fly is not posted and the day books as a no-trade. Applies to M8BF only; Straddle, GXBF, BOBF and the Tail hedge are unaffected. Histogram = the current 120-day window; the marker is the latest 10:30 reading, the shaded zone is skip territory.
-    </div>
-  </div>
-
   <!-- Gamma Level Map (vertical price ladder — summarizes GEX profile + gamma curve) -->
   <div class="chart-section" id="gammaLevelMapSection" style="display:none;">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
@@ -364,6 +332,38 @@
     <div id="charmTimeNote" style="display:none;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text2);padding:24px 0;text-align:center;">capturing… (fills in through the session)</div>
     <div class="bottom-info" style="text-align:left;padding:8px 0 0;">
       0DTE charm per tick — $-delta drift per day (time factored out): green = positive (pin firms), red = negative (decay feeds the move). Reflects real hedging pressure, not units shrinking into the close.
+    </div>
+  </div>
+
+  <!-- GEX Gate — live skip-rule strip + trailing distribution + persistence -->
+  <div class="chart-section" id="gateStripSection" style="display:none;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
+      <h2 style="margin-bottom:0;"><span>GEX</span> Gate — M8BF thin-gamma skip rule</h2>
+      <span id="gateStripBanner" style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--text2);"></span>
+    </div>
+    <div class="cards-row" style="margin-bottom:12px;">
+      <div class="level-card" id="gateTodayCard">
+        <div class="lc-title">Today's session</div>
+        <div class="lc-strike" id="gateTodayVerdict">--</div>
+        <div class="lc-desc" id="gateTodayDesc">verdict locked yesterday 5:05 PM ET</div>
+      </div>
+      <div class="level-card" id="gateTomorrowCard">
+        <div class="lc-title">Next session preview</div>
+        <div class="lc-strike" id="gateTomorrowVerdict">--</div>
+        <div class="lc-desc" id="gateTomorrowDesc">from today's 10:30 reading</div>
+      </div>
+      <div class="level-card">
+        <div class="lc-title">Regime persistence</div>
+        <div class="lc-strike" id="gateStreak">--</div>
+        <div class="lc-value" id="gatePersist">--</div>
+        <div class="lc-desc">thin days cluster — why yesterday's reading gates today</div>
+      </div>
+    </div>
+    <div class="chart-wrap" style="height:240px;">
+      <canvas id="gateHistoChart"></canvas>
+    </div>
+    <div class="bottom-info" style="text-align:left;padding:8px 0 0;">
+      The rule: when the previous session's 10:30 ET 0DTE total GEX ranks in the bottom 20% of the trailing 120 days, M8BF skips the day — the fly is not posted and the day books as a no-trade. Applies to M8BF only; Straddle, GXBF, BOBF and the Tail hedge are unaffected. Histogram = the current 120-day window; the marker is the latest 10:30 reading, the shaded zone is skip territory.
     </div>
   </div>
 
