@@ -225,7 +225,7 @@
   <!-- GEX Gate — live skip-rule strip + trailing distribution + persistence -->
   <div class="chart-section" id="gateStripSection" style="display:none;">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
-      <h2 style="margin-bottom:0;"><span>GEX</span> Gate — thin-gamma skip rule</h2>
+      <h2 style="margin-bottom:0;"><span>GEX</span> Gate — M8BF thin-gamma skip rule</h2>
       <span id="gateStripBanner" style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--text2);"></span>
     </div>
     <div class="cards-row" style="margin-bottom:12px;">
@@ -250,7 +250,7 @@
       <canvas id="gateHistoChart"></canvas>
     </div>
     <div class="bottom-info" style="text-align:left;padding:8px 0 0;">
-      The rule: when the previous session's 10:30 ET 0DTE total GEX ranks in the bottom 20% of the trailing 120 days, M8BF skips the day. Histogram = the current 120-day window; the marker is the latest 10:30 reading, the shaded zone is skip territory.
+      The rule: when the previous session's 10:30 ET 0DTE total GEX ranks in the bottom 20% of the trailing 120 days, M8BF skips the day — the fly is not posted and the day books as a no-trade. Applies to M8BF only; Straddle, GXBF, BOBF and the Tail hedge are unaffected. Histogram = the current 120-day window; the marker is the latest 10:30 reading, the shaded zone is skip territory.
     </div>
   </div>
 
@@ -1801,17 +1801,18 @@ async function initGatePanels() {
     // today's official verdict
     const tEl = document.getElementById('gateTodayVerdict');
     if (today && today.skip != null) {
-      tEl.textContent = today.skip ? 'SKIP 🚫' : 'GO ✅';
+      tEl.textContent = today.skip ? 'NO M8BF 🚫' : 'M8BF GO ✅';
       tEl.style.color = today.skip ? '#ef4444' : '#22c55e';
-      document.getElementById('gateTodayDesc').textContent = today.rank != null
-        ? `prev-day reading at p${today.rank} of trailing 120d` : `gate live from ${today.liveFrom}`;
+      document.getElementById('gateTodayDesc').textContent = (today.rank != null
+        ? `prev-day reading at p${today.rank} of trailing 120d` : `gate live from ${today.liveFrom}`)
+        + (today.skip ? ' — fly not posted, day books as no-trade' : '');
     }
     // next-session preview from the latest reading
     const latest = vals[n-1], latestDate = tail[n-1][0];
     const win = vals.slice(n-121, n-1);
     const rank = Math.round(win.filter(x => x <= latest).length / win.length * 100);
     const nEl = document.getElementById('gateTomorrowVerdict');
-    nEl.textContent = rank < 20 ? 'SKIP 🚫' : 'GO ✅';
+    nEl.textContent = rank < 20 ? 'NO M8BF 🚫' : 'M8BF GO ✅';
     nEl.style.color = rank < 20 ? '#ef4444' : '#22c55e';
     document.getElementById('gateTomorrowDesc').textContent =
       `${latestDate} 10:30 = ${fmtGex(latest)} → p${rank} of trailing 120d (locked 5:05 PM ET)`;
