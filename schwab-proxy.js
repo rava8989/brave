@@ -10047,9 +10047,11 @@ function buildMorningCardData(signal, vixValues, tailLine, pnbf) {
     let det;
     if (m8Active) {
       const win = (String(signal.m8bfText).match(/(\d{1,2}:\d{2}\s*[–-]\s*\d{1,2}:\d{2})/) || [])[1];
-      det = win ? `watching ${win} · on flow signal` : 'watching · on flow signal';
-      // Fat-gamma tier (info only, owner 2026-07-24): story on the card, no advice.
-      if (signal.gexFatP != null) det += ` · fat gamma p${signal.gexFatP}`;
+      // Fat-gamma tier (info only, owner 2026-07-24): story on the card, no
+      // advice. Replaces the "on flow signal" filler so the row can't overflow.
+      // No emoji — the card font has no color glyphs (renders as a broken box).
+      const tail = signal.gexFatP != null ? `FAT GAMMA p${signal.gexFatP}` : 'on flow signal';
+      det = win ? `watching ${win} · ${tail}` : `watching · ${tail}`;
     } else { det = strip(signal.m8bfText, 'M8BF') || '—'; }
     rows.push({ n: 'M8BF', det, yes: m8Active });
   }
@@ -10356,7 +10358,15 @@ export default {
     // ── GET /raw-discord?date=YYYY-MM-DD ── Show raw Discord messages for debugging
     if (url.pathname === '/test-card' && request.method === 'GET') {
       try {
-        const png = await renderMorningCardPng(SAMPLE_MORNING_CARD);
+        let cardData = SAMPLE_MORNING_CARD;
+        // ?fatp=NN — preview the fat-gamma tier M8BF row (render-only, no send).
+        const fatp = parseInt(url.searchParams.get('fatp') || '', 10);
+        if (Number.isFinite(fatp)) {
+          cardData = JSON.parse(JSON.stringify(SAMPLE_MORNING_CARD));
+          const m8 = (cardData.rows || []).find(r => r.n === 'M8BF');
+          if (m8) { m8.det = `watching 13:30–14:00 · FAT GAMMA p${fatp}`; m8.yes = true; m8.state = undefined; }
+        }
+        const png = await renderMorningCardPng(cardData);
         return new Response(png, { headers: { 'content-type': 'image/png', 'cache-control': 'no-store' } });
       } catch (e) {
         return new Response('card render failed: ' + (e && (e.stack || e.message) || e), { status: 500 });
