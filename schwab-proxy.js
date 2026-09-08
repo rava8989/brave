@@ -3599,6 +3599,9 @@ import {
   classifyCyclePrediction, cycleAdvisoryLine, regimeGroup, dayTypeAdvisoryLine,
   volFlowAdvisoryLine, m8bfWrAdvisoryLine, computeSkewReading,
 } from './signal-engine.js';
+// A history row counts as a prior session only if its date is a trading day —
+// holiday placeholder rows can carry phantom quote values (2026-09-07 Labor Day).
+function isTradeISO(iso) { const p = String(iso || '').split('-'); return p.length === 3 && isTrade(new Date(+p[0], +p[1] - 1, +p[2], 12)); }
 import { Resvg, initWasm } from '@resvg/resvg-wasm';
 import resvgWasm from '@resvg/resvg-wasm/index_bg.wasm';
 
@@ -4521,6 +4524,10 @@ async function tastyFetchSpxChain(env, opts = {}) {
 // ════════════════════════════════════════════════════════════════════
 
 async function handleEOD(env, etNow) {
+  // Holiday guard (2026-09-08): the Labor Day cron stamped a phantom vixClose/spxClose
+  // (Schwab quote fields) onto the 2026-09-07 placeholder row; the next morning's
+  // prior-VIX lookup then read 15.30 instead of Friday's 14.53 → BOBF typed "flat".
+  if (!isTrade(etNow)) return { status: 'skipped', reason: 'holiday/weekend — no EOD stamp' };
   const todayISO = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
   let token = null;
   try { token = await getAccessToken(env); } catch(e) { console.warn('[proxy]', e.message || e); }
@@ -6021,7 +6028,7 @@ async function prefilterBobf(env, etNow, vixToday, vixYClose) {
       const todayRow = histData.find(r => r.date === todayISO);
       spxOpen = todayRow?.spxOpen != null ? parseFloat(todayRow.spxOpen) : null;
       const sortedPrior = histData
-        .filter(r => r.date < todayISO && r.spxClose != null)
+        .filter(r => r.date < todayISO && r.spxClose != null && isTradeISO(r.date))   // trading days only (2026-09-08 phantom-holiday fix)
         .sort((a, b) => a.date.localeCompare(b.date));
       const closes30 = sortedPrior.slice(-30).map(r => parseFloat(r.spxClose));
       rsi14 = computeRSI14(closes30);
@@ -6139,7 +6146,7 @@ async function handleBobfEntry(env, etNow, preChain = null) {
     spxOpen  = todayRow?.spxOpen != null ? parseFloat(todayRow.spxOpen) : null;
 
     const sortedPrior = histData
-      .filter(r => r.date < todayISO && r.spxClose != null)
+      .filter(r => r.date < todayISO && r.spxClose != null && isTradeISO(r.date))   // trading days only (2026-09-08 phantom-holiday fix)
       .sort((a, b) => a.date.localeCompare(b.date));
     if (sortedPrior.length === 0) return { ...out, status: 'error', error: 'no prior history' };
 
@@ -9028,7 +9035,7 @@ async function handleScheduledInner(env) {
     const _hist = await getHistory(env);
     const _todayISO = isoDateET(etNow);
     const _prior = (_hist || [])
-      .filter(r => r && r.date && r.date < _todayISO && r.vixClose != null)
+      .filter(r => r && r.date && r.date < _todayISO && r.vixClose != null && isTradeISO(r.date))   // trading days only (2026-09-08 phantom-holiday fix)
       .sort((a, b) => (a.date < b.date ? -1 : 1));
     if (_prior.length) {
       const _last = _prior[_prior.length - 1];
