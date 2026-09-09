@@ -3560,13 +3560,18 @@ async function postChannelPng(env, png, content, filename = 'sigma3-card.png') {
   if (!dc || !dc.channelId) return { ok: false, error: 'no channel' };
   return sendDiscordImage(env, dc.channelId, png, dc.proxyUrl, filename, content);
 }
-// channel only — skipper cards (via /link-notify) and GXBF / straddle channel posts
+// owner DM only — skipper cards (via /link-notify) and GXBF / gated-straddle owner posts
 async function channelCard(env, card, fallbackText) {
   try {
     const png = await renderTicketPng(card);
-    const r = await postChannelPng(env, png, cardContent(card));
+    // OWNER DM ONLY — exactly where the old sendDiscordDM(dc.channelId) text went (dc.channelId is
+    // the owner's user id; the public channel is the webhook, used only by fanoutCard).
+    const dcRaw0 = await env.SIGNAL_KV.get('discord_config');
+    const dc0 = dcRaw0 ? JSON.parse(dcRaw0) : null;
+    if (!dc0 || !dc0.channelId) throw new Error('no discord_config');
+    const r = await sendDiscordImage(env, dc0.channelId, png, dc0.proxyUrl, 'sigma3-card.png', cardContent(card));
     if (r && r.ok) return { ok: true, source: 'card' };
-    throw new Error((r && r.error) || 'channel image failed');
+    throw new Error((r && r.error) || 'owner image failed');
   } catch (e) {
     console.warn('[card] channel fallback → text:', e.message);
     if (!fallbackText) return { ok: false, error: e.message };
@@ -16934,6 +16939,12 @@ export default {
         no: grayCard('GXBF', '⚠️ **GXBF** — no trade. Center 7700 (vol grid); no wing 5–100 had netDebit>0 with risk ≤ reward.'),
         fill: { c: 'blue', strat: 'Skipper · filled', verdict: 'FILLED', big: '7685 / 7695', sub: 'call spread ×1 · filled 4.45', title: 'Condor + CCS · signal to fill 61 s', lines: [], k: [['fill', '4.45 cr'], ['slip', '−0.05'], ['signal → fill', '61 s'], ['risk', '$555']], draw: 'none', order: 'SELL -1 VERTICAL SPX 100 (Weeklys) 9 SEP 26 7685/7695 CALL @4.45 LMT' },
       };
+      if (url.searchParams.get('send') === '1') {   // owner-requested live test: cards to the OWNER DM only
+        const kinds = (url.searchParams.get('kinds') || 'hu,go,fill').split(',').filter(k => samples[k]);
+        const res = [];
+        for (const k of kinds) { try { res.push({ kind: k, ...(await channelCard(env, { ...samples[k], title: `${samples[k].title} · TEST` }, `test card ${k}`)) }); } catch (e) { res.push({ kind: k, ok: false, error: e.message }); } }
+        return jsonResp({ ok: res.every(r => r.ok), sent: res }, 200, {});
+      }
       try {
         const png = await renderTicketPng(samples[kind] || samples.go);
         return new Response(png, { headers: { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' } });
