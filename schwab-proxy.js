@@ -3539,7 +3539,7 @@ const cardDate = (iso) => { const d = new Date(String(iso) + 'T12:00:00Z'); retu
 const stripMd = (t) => String(t || '').replace(/\*\*/g, '').replace(/^-# /gm, '').replace(/^[^\w$+−-]+/, '').replace(/\s+/g, ' ').trim();
 // gray "no trade" card from an existing alert text (GXBF stand-downs etc.)
 function grayCard(strat, text, verdict = 'NO TRADE') {
-  const body = stripMd(text).replace(/^GXBF\s*[—-]\s*/, '');
+  const body = stripMd(text).replace(/^GXBF\s*[—-]\s*/, '').replace(/^no trade\.?\s*/i, '').replace(/^\w/, (ch) => ch.toUpperCase());
   return { c: 'gray', strat: `${strat} · no trade`, verdict, big: 'NO TRADE', sub: '', lines: [body], k: null, title: `${cardDate(isoDateET(toET(new Date())))} · ${strat}`, draw: 'none' };
 }
 // channel leg: the same webhook the text fan-out posts through; bot/proxy fallback
