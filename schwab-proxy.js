@@ -706,6 +706,11 @@ async function spreadsRouterSettle(env, etNow) {
         row2.spreadsPL = Math.round(pl * 2 * 10) / 10;
         await env.SIGNAL_KV.put('history_data', JSON.stringify(hd));
         console.log(`[spreads] history_data.spreadsPL = ${row2.spreadsPL} (2 contracts)`);
+        // 2026-09-09: mirror NOW. The dashboard reads the GitHub copy; without this
+        // the day's spreads P&L only reached the site with the next morning's stamp
+        // (owner: "it's 7 PM and history has nothing for today"). Mirror re-reads
+        // fresh KV and retries sha races, so racing the EOD mirror is safe.
+        await mirrorHistoryToGitHub(env, hd, `auto: spreadsPL ${t.date}`);
       }
     }
   } catch (e) { console.warn('[spreads-hist]', e.message); }
@@ -3072,15 +3077,25 @@ async function dataCompletenessCheck(env, etNow) {
       if (!t) return true;
       const hd = JSON.parse((await env.SIGNAL_KV.get('history_data')) || '[]');
       const row = hd.find(r => r.date === todayISO);
-      return !!(row && row.spreadsPL != null);
+      if (!(row && row.spreadsPL != null)) return false;
+      // 2026-09-09: KV was fine but the GitHub copy (what the dashboard reads) had
+      // no spreadsPL all evening — the settle never mirrored. Check the mirror too.
+      try {
+        const gh = await fetch(`https://raw.githubusercontent.com/rava8989/brave/main/history_data.json?t=${Date.now()}`,
+          { headers: { 'User-Agent': 'schwab-proxy-worker/1.0' }, cf: { cacheTtl: 0 } });
+        if (gh.ok) { const ghRow = (await gh.json()).find(r => r.date === todayISO); return !!(ghRow && ghRow.spreadsPL != null); }
+      } catch (_) { /* raw fetch flake — never heal-loop on the checker's own failure */ }
+      return true;
     }, async () => {
       const log = JSON.parse((await env.SIGNAL_KV.get('spreads_paper_log')) || '[]');
       const t = log.find(x => x.date === todayISO && x.status === 'settled');
       const hd = JSON.parse((await env.SIGNAL_KV.get('history_data')) || '[]');
       const row = hd.find(r => r.date === todayISO);
-      if (!t || !row || row.spreadsPL != null) return;
-      row.spreadsPL = Math.round(t.pl * 2 * 10) / 10;   // default size = 2 contracts, log is per-lot
-      await env.SIGNAL_KV.put('history_data', JSON.stringify(hd));
+      if (!t || !row) return;
+      if (row.spreadsPL == null) {
+        row.spreadsPL = Math.round(t.pl * 2 * 10) / 10;   // default size = 2 contracts, log is per-lot
+        await env.SIGNAL_KV.put('history_data', JSON.stringify(hd));
+      }
       await mirrorHistoryToGitHub(env, hd, `auto: spreadsPL ${todayISO} (watchdog heal)`);
     }],
     ['vix decomposition', async () => {
