@@ -3573,33 +3573,44 @@ async function channelCard(env, card, fallbackText) {
     if (r && r.ok) return { ok: true, source: 'card' };
     throw new Error((r && r.error) || 'owner image failed');
   } catch (e) {
-    console.warn('[card] channel fallback → text:', e.message);
+    console.warn('[card] owner-DM fallback → text:', e.message); await cardErr(env, 'owner', e);
     if (!fallbackText) return { ok: false, error: e.message };
     const dcRaw = await env.SIGNAL_KV.get('discord_config');
     const dc = dcRaw ? JSON.parse(dcRaw) : null;
     return (dc && dc.channelId) ? sendDiscordDM(env, dc.channelId, fallbackText, dc.proxyUrl) : { ok: false, error: 'no channel' };
   }
 }
-// channel + every subscriber — what postMagnetFly / fanoutSubscribers reach today
+// channel + every subscriber — what postMagnetFly / fanoutSubscribers reach today.
+// Bullet-proof: any stage that fails logs `card:<stage>` and falls back to the TEXT
+// fan-out, so a card problem can never lose a signal (2026-09-09 11:30 lesson).
+async function cardErr(env, stage, e) { try { await logEvent(env, 'warn', 'card', `${stage}: ${(e && e.message) || e}`, {}); } catch (_) {} }
 async function fanoutCard(env, card, fallbackText) {
-  let png = null;
-  try { png = await renderTicketPng(card); } catch (e) { console.warn('[card] render failed → text fan-out:', e.message); }
-  if (!png) return fanoutSubscribers(env, fallbackText);
-  const content = cardContent(card);
-  let chOk = false;
-  try { const r = await postChannelPng(env, png, content); chOk = !!(r && r.ok); } catch (_) {}
-  if (!chOk) { try { await postSignalsChannel(env, String(fallbackText || '').includes('Not financial advice') ? fallbackText : fallbackText + FANOUT_DISCLAIMER); } catch (_) {} }
-  const subs = (await getSubscribers(env)).filter(s => s && s.id && !s.paused);
-  const out = [];
-  for (const s of subs) {
-    try {
-      let r = await sendDiscordImage(env, s.id, png, null, 'sigma3-card.png', content);
-      if (!r || !r.ok) r = await sendDiscordDM(env, s.id, fallbackText);   // per-subscriber text fallback
-      out.push({ id: s.id, ok: !!(r && r.ok), status: r && r.status, error: r && r.error });
-    } catch (e) { out.push({ id: s.id, ok: false, error: e.message }); }
+  try {
+    let png = null;
+    try { png = await renderTicketPng(card); } catch (e) { await cardErr(env, 'render', e); }
+    if (!png) return await fanoutSubscribers(env, fallbackText);
+    const content = cardContent(card);
+    let chOk = false;
+    try { const r = await postChannelPng(env, png, content); chOk = !!(r && r.ok); if (!chOk) await cardErr(env, 'channel', new Error((r && r.error) || 'not ok')); }
+    catch (e) { await cardErr(env, 'channel', e); }
+    if (!chOk) { try { await postSignalsChannel(env, String(fallbackText || '').includes('Not financial advice') ? fallbackText : fallbackText + FANOUT_DISCLAIMER); } catch (_) {} }
+    let subs = [];
+    try { subs = (await getSubscribers(env)).filter(s => s && s.id && !s.paused); }
+    catch (e) { await cardErr(env, 'subscribers', e); return await fanoutSubscribers(env, fallbackText); }
+    const out = [];
+    for (const s of subs) {
+      try {
+        let r = await sendDiscordImage(env, s.id, png, null, 'sigma3-card.png', content);
+        if (!r || !r.ok) r = await sendDiscordDM(env, s.id, fallbackText);   // per-subscriber text fallback
+        out.push({ id: s.id, ok: !!(r && r.ok), status: r && r.status, error: r && r.error });
+      } catch (e) { out.push({ id: s.id, ok: false, error: e.message }); }
+    }
+    try { await logEvent(env, 'info', 'fanout', `card → ${out.filter(x => x.ok).length}/${out.length} subscribers${chOk ? '' : ' (channel: text fallback)'}`, {}); } catch {}
+    return out;
+  } catch (e) {
+    await cardErr(env, 'fatal', e);
+    try { return await fanoutSubscribers(env, fallbackText); } catch (_) { return []; }
   }
-  if (out.length) { try { await logEvent(env, 'info', 'fanout', `card → ${out.filter(x => x.ok).length}/${out.length} subscribers`, {}); } catch {} }
-  return out;
 }
 
 async function fanoutSubscribers(env, message) {
@@ -16927,6 +16938,42 @@ export default {
     // re-posts the card from LIVE state (used 2026-07-27 after a mid-session
     // tail-arming fix made the posted card stale). The claim gate still guards
     // against duplicates of the resend itself.
+    if (url.pathname === '/discord-recent' && request.method === 'GET') {
+      // Read-only diagnostic: the last few messages in the owner DM and the signals channel (what actually went out).
+      const sec = url.searchParams.get('secret');
+      if (!sec || (sec !== env.SYNC_SECRET && sec !== env.GEXM_TRIGGER_TOKEN)) return jsonResp({ error: 'Unauthorized' }, 401, {});
+      const n = Math.min(12, +(url.searchParams.get('n') || 6));
+      const T = env.DISCORD_TOKEN || env.DISCORD_BOT_TOKEN;   // Signals bot if present, else the Σ3 Utility bot (reads the guild channel)
+      const H = { 'Authorization': `Bot ${T}`, 'Content-Type': 'application/json' };
+      const trim = (arr) => (Array.isArray(arr) ? arr : []).map(m => ({ t: m.timestamp, author: m.author && (m.author.username || m.author.id), content: String(m.content || '').replace(/\n/g, ' ').slice(0, 110), files: (m.attachments || []).map(a => `${a.filename} ${a.width || '?'}x${a.height || '?'}`) }));
+      const out = {};
+      try {
+        const dcRaw = await env.SIGNAL_KV.get('discord_config'); const dc = dcRaw ? JSON.parse(dcRaw) : null;
+        if (dc && dc.channelId && env.DISCORD_TOKEN) {
+          const dm = await (await fetch('https://discord.com/api/v10/users/@me/channels', { method: 'POST', headers: H, body: JSON.stringify({ recipient_id: dc.channelId }) })).json();
+          if (dm && dm.id) out.ownerDM = trim(await (await fetch(`https://discord.com/api/v10/channels/${dm.id}/messages?limit=${n}`, { headers: H })).json());
+          else out.ownerDM = dm;
+        }
+      } catch (e) { out.ownerDMError = e.message; }
+      try {
+        const wh = await env.SIGNAL_KV.get('signals_webhook_url');
+        if (wh && T) {
+          const info = await (await fetch(wh)).json();
+          if (info && info.channel_id) {
+            const r = await fetch(`https://discord.com/api/v10/channels/${info.channel_id}/messages?limit=${n}`, { headers: H }); out.channelStatus = r.status;
+            const raw = await r.json(); out.channel = trim(raw);
+            // the reading bot lacks the message-content intent → re-read each webhook message via the webhook itself (full form)
+            out.webhookView = [];
+            for (const m of (Array.isArray(raw) ? raw : []).slice(0, n)) {
+              try { const w = await fetch(`${wh}/messages/${m.id}`); if (w.ok) { const f = await w.json(); out.webhookView.push({ t: f.timestamp, content: String(f.content || '').replace(/\n/g, ' ').slice(0, 110), files: (f.attachments || []).map(a => `${a.filename} ${a.width}x${a.height}`) }); } else out.webhookView.push({ t: m.timestamp, status: w.status }); }
+              catch (e) { out.webhookView.push({ t: m.timestamp, error: e.message }); }
+            }
+          }
+          else out.channelInfo = info && (info.message || info.code);
+        }
+      } catch (e) { out.channelError = e.message; }
+      return jsonResp(out, 200, {});
+    }
     if (url.pathname === '/test-ticket' && request.method === 'GET') {
       // Dry render of a sample card through the live pipeline (owner verification). Never posts.
       const sec = url.searchParams.get('secret');
