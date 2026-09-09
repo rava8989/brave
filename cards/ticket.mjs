@@ -116,7 +116,10 @@ export function ticketSvg(m) {
   y += 2;
   s += `<line x1="${PL}" y1="${y}" x2="${W - PR}" y2="${y}" stroke="${C.line}"/>`;
   s += `<text x="${PL}" y="${y + 20}" font-family="${F}" font-size="11" fill="${C.mute}">${esc(m.title || '')}</text>`;
-  s += `<text x="${W - PR}" y="${y + 20}" text-anchor="end" font-family="${F}" font-size="11" fill="${C.mute}">not financial advice</text>`;
+  // disclaimer as a bold warning pill (owner 2026-09-09: "bolder, yellow, a little aggressive")
+  const nfa = 'NOT FINANCIAL ADVICE', nfaW = Math.round(wI(nfa, 10.5) * 1.15 + 20), nfaH = 20;
+  s += `<rect x="${W - PR - nfaW}" y="${y + 7}" width="${nfaW}" height="${nfaH}" rx="5" fill="${C.amber}"/>`;
+  s += `<text x="${W - PR - nfaW / 2}" y="${y + 21}" text-anchor="middle" font-family="${F}" font-size="10.5" font-weight="600" letter-spacing="0.8" fill="#412402">${nfa}</text>`;
   const H = y + 34;
   return { height: H, svg: `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">` +
     `<defs><clipPath id="card"><rect x="0" y="0" width="${W}" height="${H}" rx="16"/></clipPath></defs>` +
