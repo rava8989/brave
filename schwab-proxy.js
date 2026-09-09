@@ -482,6 +482,15 @@ async function spreadsRouterJob(env, etNow, masterChain) {
   if (e12 && e12.startsWith('cs')) return;
   if (gexB <= 0) {
     await env.SIGNAL_KV.put(`spreads_done_${d}`, `no-trade:${gexB}`, { expirationTtl: 3 * 86400 });
+    try {   // close the loop on a heads-up day only (message minimalism); claimSendSlot = send once (P46)
+      const huSent = (await env.SIGNAL_KV.get(`spreads_hu12_${d}`)) === 'sent' || (await env.SIGNAL_KV.get(`spreads_hu13_${d}`)) === 'sent';
+      const ntKey = `spreads_notrade_msg_${d}`;
+      if (huSent && await claimSendSlot(env, ntKey)) {
+        await env.SIGNAL_KV.put(ntKey, 'sent', { expirationTtl: 86400 });
+        await fanoutCard(env, { c: 'gray', strat: 'Spreads Router · no trade', verdict: 'NO TRADE', big: `${gexB}B`, sub: 'book at the 13:00 check · dead middle', title: `${cardDate(d)} · 13:00 check`, lines: ['Condor needs a positive book; the call spread needed −10B at noon. Nothing today.'], k: [['book 13:00', `${gexB}B`], ['condor', '> 0'], ['call spread', '≤ −10B at noon'], ['result', 'no trade']], draw: 'gauge', gauge: gexB },
+          `🧭 **Σ3 Spreads Router** — no trade today (book ${gexB}B at 13:00, dead middle).`);
+      }
+    } catch (e) { console.warn('[spreads] no-trade card', e.message); }
     return;
   }
   if (!masterChain || !masterChain.putExpDateMap || !masterChain.spot) return;
@@ -581,7 +590,12 @@ async function spreadsRouterHeadsUp(env, etNow) {
   // MARKER BEFORE SEND (P27: lose-once > dupe). The fanout to N subscribers
   // can outlive a cron minute; marking after it is what let the twin through.
   await env.SIGNAL_KV.put(key, 'sent', { expirationTtl: 86400 });
-  try { await fanoutSubscribers(env, text); }
+  try {
+    const huCard = win12
+      ? { c: 'amber', strat: 'Spreads Router · heads-up', verdict: 'WATCH', big: `${gexB}B`, sub: 'book · inside the call-spread trigger', title: `${cardDate(d)} · 11:54 heads-up · decision at 12:00`, lines: ['Likely call credit spread at noon. If the book lifts, the 13:00 check decides the condor.'], k: [['book', `${gexB}B`], ['trigger', '≤ −10B'], ['decision', '12:00'], ['else', '13:00 check']], draw: 'gauge', gauge: gexB }
+      : { c: 'amber', strat: 'Spreads Router · heads-up', verdict: 'WATCH', big: `+${gexB}B`, sub: 'book · inside the condor trigger', title: `${cardDate(d)} · 12:54 heads-up · decision at 13:00`, lines: ['Likely iron condor at 13:00: put spread plus a far call spread. Settles at the close.'], k: [['book', `+${gexB}B`], ['trigger', '> 0'], ['decision', '13:00'], ['structure', 'lopsided IC']], draw: 'gauge', gauge: gexB };
+    await fanoutCard(env, huCard, text);
+  }
   catch (e) {
     console.warn('[spreads-hu]', e.message);
     try { await env.SIGNAL_KV.delete(key); } catch (_) {}   // confirmed nothing posted → allow retry
@@ -641,8 +655,11 @@ async function spreadsRouterDM(env, etNow) {
   }
   // MARKER BEFORE SEND (P27: lose-once > dupe) — the after-send marker is
   // exactly what allowed today's twin card.
+  const spCard = t.side === 'IC'
+    ? { c: 'green', strat: 'Spreads Router · condor', verdict: 'SELL', big: `${t.short}/${t.long}P + ${t.cShort}/${t.cLong}C`, sub: 'lopsided iron condor · 0DTE · 2 contracts', title: `${cardDate(d)} · 13:00 · book +${t.gexB}B · settles at the close`, lines: [`Put spread ${t.credit.toFixed(2)} plus far call spread ${t.cCredit.toFixed(2)}, credit ${(t.credit + t.cCredit).toFixed(2)}. Pinned book, betting the range holds.`], k: [['credit', `$${(t.credit + t.cCredit).toFixed(2)}`], ['max risk', `$${Math.round((10 - t.credit - t.cCredit) * 100)}`], ['book', `+${t.gexB}B`], ['contracts', '2']], draw: 'condor', strikes: [t.long, t.short, t.cShort, t.cLong], order: `SELL -2 IRON CONDOR SPX 100 (Weeklys) ${tosD} ${t.cShort}/${t.cLong}/${t.short}/${t.long} CALL/PUT @${nick5(t.credit + t.cCredit)} LMT` }
+    : { c: 'green', strat: `Spreads Router · ${t.side === 'CALL' ? 'call' : 'put'} spread`, verdict: 'SELL', big: `${t.short} / ${t.long}`, sub: `${t.side === 'CALL' ? 'call' : 'put'} credit spread · 0DTE · 10 wide`, title: `${cardDate(d)} · ${t.side === 'CALL' ? 'noon' : '13:00'} · book ${t.gexB > 0 ? '+' : ''}${t.gexB}B · settles at the close`, lines: [t.side === 'CALL' ? `2 contracts, credit about ${t.credit.toFixed(2)}. Deep negative book, betting no afternoon rally.` : `2 contracts, credit about ${t.credit.toFixed(2)}. Pinned book, betting no afternoon dump.`], k: [['credit', `$${t.credit.toFixed(2)}`], ['max risk', `$${Math.round((10 - t.credit) * 100)}`], ['book', `${t.gexB > 0 ? '+' : ''}${t.gexB}B`], ['contracts', '2']], draw: 'gauge', gauge: t.gexB, order: `SELL -2 VERTICAL SPX 100 (Weeklys) ${tosD} ${t.short}/${t.long} ${t.side} @${nick5(t.credit)} LMT` };
   await env.SIGNAL_KV.put(dmKey, 'sent', { expirationTtl: 86400 });
-  try { const out = await fanoutSubscribers(env, msg); console.log(`[spreads] card fanned out (${Array.isArray(out) ? out.length : 0} subs)`); }
+  try { const out = await fanoutCard(env, spCard, msg); console.log(`[spreads] card fanned out (${Array.isArray(out) ? out.length : 0} subs)`); }
   catch (e) {
     console.warn('[spreads-fanout]', e.message);
     try { await env.SIGNAL_KV.delete(dmKey); } catch (_) {}   // nothing posted → retry next tick
@@ -3506,6 +3523,80 @@ function applyGexGateToSignal(signal, skip, rank) {
   return signal;
 }
 
+// ── Σ3 picture cards (owner 2026-09-09, skin A "Ticket") ─────────────────────
+// One PNG per message. The order string rides in the message `content` as a code
+// block, so it copies with one tap and the picture never needs to be copyable.
+// Every converted sender keeps its old text as FALLBACK: if the render or the
+// upload fails, the text goes out instead. A message is never lost, never doubled.
+async function renderTicketPng(card) {
+  await ensureResvg();
+  const fonts = await getCardFonts();
+  const { svg } = ticketSvg(card);
+  return new Resvg(svg, { fitTo: { mode: 'width', value: 1040 }, font: { fontBuffers: fonts, defaultFontFamily: 'Inter', loadSystemFonts: false } }).render().asPng();
+}
+const cardContent = (card) => (card && card.order) ? '```\n' + String(card.order).slice(0, 1800) + '\n```' : '';
+const cardDate = (iso) => { const d = new Date(String(iso) + 'T12:00:00Z'); return `${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getUTCDay()]} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getUTCMonth()]} ${d.getUTCDate()}`; };
+const stripMd = (t) => String(t || '').replace(/\*\*/g, '').replace(/^-# /gm, '').replace(/^[^\w$+−-]+/, '').replace(/\s+/g, ' ').trim();
+// gray "no trade" card from an existing alert text (GXBF stand-downs etc.)
+function grayCard(strat, text, verdict = 'NO TRADE') {
+  const body = stripMd(text).replace(/^GXBF\s*[—-]\s*/, '');
+  return { c: 'gray', strat: `${strat} · no trade`, verdict, big: 'NO TRADE', sub: '', lines: [body], k: null, title: `${cardDate(isoDateET(toET(new Date())))} · ${strat}`, draw: 'none' };
+}
+// channel leg: the same webhook the text fan-out posts through; bot/proxy fallback
+async function postChannelPng(env, png, content, filename = 'sigma3-card.png') {
+  try {
+    const url = await env.SIGNAL_KV.get('signals_webhook_url');
+    if (url) {
+      const fd = new FormData();
+      fd.append('payload_json', JSON.stringify({ content, attachments: [{ id: 0, filename }], allowed_mentions: { parse: [] } }));
+      fd.append('files[0]', new Blob([png], { type: 'image/png' }), filename);
+      const r = await fetch(url, { method: 'POST', body: fd });
+      if (r.ok) return { ok: true, source: 'webhook' };
+      console.warn('[card] webhook', r.status);
+    }
+  } catch (e) { console.warn('[card] webhook', e.message); }
+  const dcRaw = await env.SIGNAL_KV.get('discord_config');
+  const dc = dcRaw ? JSON.parse(dcRaw) : null;
+  if (!dc || !dc.channelId) return { ok: false, error: 'no channel' };
+  return sendDiscordImage(env, dc.channelId, png, dc.proxyUrl, filename, content);
+}
+// channel only — skipper cards (via /link-notify) and GXBF / straddle channel posts
+async function channelCard(env, card, fallbackText) {
+  try {
+    const png = await renderTicketPng(card);
+    const r = await postChannelPng(env, png, cardContent(card));
+    if (r && r.ok) return { ok: true, source: 'card' };
+    throw new Error((r && r.error) || 'channel image failed');
+  } catch (e) {
+    console.warn('[card] channel fallback → text:', e.message);
+    if (!fallbackText) return { ok: false, error: e.message };
+    const dcRaw = await env.SIGNAL_KV.get('discord_config');
+    const dc = dcRaw ? JSON.parse(dcRaw) : null;
+    return (dc && dc.channelId) ? sendDiscordDM(env, dc.channelId, fallbackText, dc.proxyUrl) : { ok: false, error: 'no channel' };
+  }
+}
+// channel + every subscriber — what postMagnetFly / fanoutSubscribers reach today
+async function fanoutCard(env, card, fallbackText) {
+  let png = null;
+  try { png = await renderTicketPng(card); } catch (e) { console.warn('[card] render failed → text fan-out:', e.message); }
+  if (!png) return fanoutSubscribers(env, fallbackText);
+  const content = cardContent(card);
+  let chOk = false;
+  try { const r = await postChannelPng(env, png, content); chOk = !!(r && r.ok); } catch (_) {}
+  if (!chOk) { try { await postSignalsChannel(env, String(fallbackText || '').includes('Not financial advice') ? fallbackText : fallbackText + FANOUT_DISCLAIMER); } catch (_) {} }
+  const subs = (await getSubscribers(env)).filter(s => s && s.id && !s.paused);
+  const out = [];
+  for (const s of subs) {
+    try {
+      let r = await sendDiscordImage(env, s.id, png, null, 'sigma3-card.png', content);
+      if (!r || !r.ok) r = await sendDiscordDM(env, s.id, fallbackText);   // per-subscriber text fallback
+      out.push({ id: s.id, ok: !!(r && r.ok), status: r && r.status, error: r && r.error });
+    } catch (e) { out.push({ id: s.id, ok: false, error: e.message }); }
+  }
+  if (out.length) { try { await logEvent(env, 'info', 'fanout', `card → ${out.filter(x => x.ok).length}/${out.length} subscribers`, {}); } catch {} }
+  return out;
+}
+
 async function fanoutSubscribers(env, message) {
   // Single chokepoint: append the disclaimer here so NO trade path (tail, skipper
   // trades, any future caller) can reach the broadcast channel OR a subscriber DM
@@ -3604,6 +3695,7 @@ import {
 function isTradeISO(iso) { const p = String(iso || '').split('-'); return p.length === 3 && isTrade(new Date(+p[0], +p[1] - 1, +p[2], 12)); }
 import { Resvg, initWasm } from '@resvg/resvg-wasm';
 import resvgWasm from '@resvg/resvg-wasm/index_bg.wasm';
+import { ticketSvg } from './cards/ticket.mjs';   // Σ3 picture cards, skin A (owner 2026-09-09)
 
 
 // ════════════════════════════════════════════════════════════════════
@@ -6649,8 +6741,7 @@ async function handleGxbfEntry(env, etNow, signal, preChain = null) {
         try {
           const dcRaw = await env.SIGNAL_KV.get('discord_config');
           const dc = dcRaw ? JSON.parse(dcRaw) : null;
-          if (dc && dc.channelId) await sendDiscordDM(env, dc.channelId,
-            `⚪ **GXBF** — gamma-gated (${bn}B) on a Friday. No straddle conversion (Friday straddle rule, owner 2026-08-14). No trade today.`, dc.proxyUrl);
+          if (dc && dc.channelId) await channelCard(env, grayCard('GXBF', `⚪ **GXBF** — gamma-gated (${bn}B) on a Friday. No straddle conversion (Friday straddle rule, owner 2026-08-14). No trade today.`), `⚪ **GXBF** — gamma-gated (${bn}B) on a Friday. No straddle conversion (Friday straddle rule, owner 2026-08-14). No trade today.`);
         } catch (_) {}
         await env.SIGNAL_KV.put(doneKey, `gamma-gate:${bn}B:fri`, { expirationTtl: 86400 });
         return { ...out, status: 'gamma-gate', totalGex: g0.totalGex, gatedStraddle: 'no-conversion:friday' };
@@ -6668,8 +6759,7 @@ async function handleGxbfEntry(env, etNow, signal, preChain = null) {
         try {
           const dcRaw = await env.SIGNAL_KV.get('discord_config');
           const dc = dcRaw ? JSON.parse(dcRaw) : null;
-          if (dc && dc.channelId) await sendDiscordDM(env, dc.channelId,
-            `⚪ **GXBF** — gamma-gated (${bn}B) on a ${why} morning. No straddle conversion (regular logic: overnight VIX must be down). No trade today.`, dc.proxyUrl);
+          if (dc && dc.channelId) await channelCard(env, grayCard('GXBF', `⚪ **GXBF** — gamma-gated (${bn}B) on a ${why} morning. No straddle conversion (regular logic: overnight VIX must be down). No trade today.`), `⚪ **GXBF** — gamma-gated (${bn}B) on a ${why} morning. No straddle conversion (regular logic: overnight VIX must be down). No trade today.`);
         } catch (_) {}
         await env.SIGNAL_KV.put(doneKey, `gamma-gate:${bn}B:no-conv`, { expirationTtl: 86400 });
         return { ...out, status: 'gamma-gate', totalGex: g0.totalGex, gatedStraddle: `no-conversion:${why}` };
@@ -6703,12 +6793,7 @@ async function handleGxbfEntry(env, etNow, signal, preChain = null) {
               : `Working limit $${gs.maxDebit.toFixed(2)} — cancel 13:30 ET if unfilled.`) +
             ` Hold to settlement — no TP/SL.\n` +
             `-# GXBF stood down: 9:35 0DTE gamma ${bn}B (negative book) — gated days trade the straddle instead.`;
-          try {
-            const dcRaw = await env.SIGNAL_KV.get('discord_config');
-            const dc = dcRaw ? JSON.parse(dcRaw) : null;
-            if (dc && dc.channelId) await sendDiscordDM(env, dc.channelId, msg, dc.proxyUrl);
-          } catch (_) {}
-          try { await fanoutSubscribers(env, msg); } catch (_) {}
+          try { await fanoutCard(env, { c: gs.status === 'filled' ? 'green' : 'amber', strat: 'Gated Straddle', verdict: gs.status === 'filled' ? 'BUY' : 'WORKING', big: `${gs.strike}`, sub: `straddle · ${gs.status === 'filled' ? 'fillable now' : 'limit resting'} · cancel 13:30 if unfilled`, title: `${cardDate(todayISO)} · GXBF stood down (9:35 book ${bn}B) · gated days trade the straddle`, lines: ['Hold to settlement, no take-profit and no stop.'], k: [['limit', `$${lmt}`], ['mid', `$${gs.entryDebit.toFixed(2)}`], ['cap', `$${gs.maxDebit.toFixed(2)}`], ['works until', '13:30']], draw: 'straddle', strikes: [gs.strike], order: `BUY +1 STRADDLE SPX 100 (Weeklys) ${tosD} ${gs.strike} CALL/PUT @${lmt} LMT` }, msg); } catch (_) {}
           gatedStraddle = `${gs.status}:K${gs.strike}@${gs.entryDebit}`;
         }
       } catch (se) {
@@ -6738,8 +6823,7 @@ async function handleGxbfEntry(env, etNow, signal, preChain = null) {
       try {
         const dcRaw = await env.SIGNAL_KV.get('discord_config');
         const dc = dcRaw ? JSON.parse(dcRaw) : null;
-        if (dc && dc.channelId) await sendDiscordDM(env, dc.channelId,
-          `⚠️ **GXBF** — no trade. Entry window passed without a computable center (live SPX chain unavailable — the fallback chain lacks volume/OI). No order placed.`, dc.proxyUrl);
+        if (dc && dc.channelId) await channelCard(env, grayCard('GXBF', `⚠️ **GXBF** — no trade. Entry window passed without a computable center (live SPX chain unavailable — the fallback chain lacks volume/OI). No order placed.`), `⚠️ **GXBF** — no trade. Entry window passed without a computable center (live SPX chain unavailable — the fallback chain lacks volume/OI). No order placed.`);
       } catch (_) {}
     } else if (await env.SIGNAL_KV.get(`gxbf_stub_seen_${todayISO}`)) {
       // Stub-quote guard rejected legs every tick and no clean wing ever
@@ -6747,8 +6831,7 @@ async function handleGxbfEntry(env, etNow, signal, preChain = null) {
       try {
         const dcRaw = await env.SIGNAL_KV.get('discord_config');
         const dc = dcRaw ? JSON.parse(dcRaw) : null;
-        if (dc && dc.channelId) await sendDiscordDM(env, dc.channelId,
-          `⚠️ **GXBF** — no trade. Chain quotes never passed parity sanity all window (stub deep-ITM marks) — no rule-valid wing could be priced. No order placed.`, dc.proxyUrl);
+        if (dc && dc.channelId) await channelCard(env, grayCard('GXBF', `⚠️ **GXBF** — no trade. Chain quotes never passed parity sanity all window (stub deep-ITM marks) — no rule-valid wing could be priced. No order placed.`), `⚠️ **GXBF** — no trade. Chain quotes never passed parity sanity all window (stub deep-ITM marks) — no rule-valid wing could be priced. No order placed.`);
       } catch (_) {}
     }
     await env.SIGNAL_KV.put(doneKey, 'window-passed', { expirationTtl: 86400 });
@@ -6845,9 +6928,7 @@ async function handleGxbfEntry(env, etNow, signal, preChain = null) {
       const dcRaw = await env.SIGNAL_KV.get('discord_config');
       if (dcRaw) {
         const dc = JSON.parse(dcRaw);
-        if (dc.channelId) await sendDiscordDM(env, dc.channelId,
-          `⚠️ **GXBF** — no trade. Center ${K} (${centerSource} grid); no wing 5–100 had netDebit>0 with risk ≤ reward.`,
-          dc.proxyUrl);
+        if (dc.channelId) await channelCard(env, grayCard('GXBF', `⚠️ **GXBF** — no trade. Center ${K} (${centerSource} grid); no wing 5–100 had netDebit>0 with risk ≤ reward.`), `⚠️ **GXBF** — no trade. Center ${K} (${centerSource} grid); no wing 5–100 had netDebit>0 with risk ≤ reward.`);
       }
     } catch (_) { /* non-critical */ }
     return { ...out, status: 'no-wing', center: K, centerSource };
@@ -6936,11 +7017,11 @@ async function handleGxbfEntry(env, etNow, signal, preChain = null) {
       const dc = JSON.parse(dcRaw);
       const sourceLabel = centerSource === 'oi' ? 'OI-weighted' : centerSource === 'vol-fallback' ? 'Volume (OI fallback)' : 'Volume-weighted';
       const altLabel = centerSource === 'oi' ? `Volume ${computed.center}` : (computed.centerOI != null ? `OI ${computed.centerOI}` : null);
-      if (dc.channelId) await sendDiscordDM(env, dc.channelId,
-        `🦋 **GXBF opened** — SPX ${kLower}/${K}/${kUpper} CALL fly (wing ${W})\n` +
+      const gxText = `🦋 **GXBF opened** — SPX ${kLower}/${K}/${kUpper} CALL fly (wing ${W})\n` +
         `Net debit $${netDebit.toFixed(2)} · max risk $${(maxRisk*100).toFixed(0)} · max reward $${(maxReward*100).toFixed(0)} · 0DTE\n` +
-        `Center ${K} (${sourceLabel} · live gamma calc)${altLabel ? ` · alt ${altLabel}` : ''} · spot ${spot.toFixed(2)}`,
-        dc.proxyUrl);
+        `Center ${K} (${sourceLabel} · live gamma calc)${altLabel ? ` · alt ${altLabel}` : ''} · spot ${spot.toFixed(2)}`;
+      const gxISO = isoDateET(etNow); const gxD = `${+gxISO.slice(8, 10)} ${['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][+gxISO.slice(5, 7) - 1]} ${gxISO.slice(2, 4)}`;
+      if (dc.channelId) await channelCard(env, { c: 'green', strat: 'GXBF · open', verdict: 'BUY', big: `${kLower} / ${K} / ${kUpper}`, sub: `call fly · wings ${W} · 0DTE`, title: `${cardDate(gxISO)} · 9:36 · center ${K} (${sourceLabel})${altLabel ? ` · alt ${altLabel}` : ''} · spot ${spot.toFixed(2)}`, lines: ['Hold to settlement. Max loss is the debit.'], k: [['debit', `$${netDebit.toFixed(2)}`], ['max risk', `$${(maxRisk * 100).toFixed(0)}`], ['max reward', `$${(maxReward * 100).toFixed(0)}`], ['wings', `${W}`]], draw: 'fly', strikes: [kLower, K, kUpper], order: `BUY +1 BUTTERFLY SPX 100 (Weeklys) ${gxD} ${kLower}/${K}/${kUpper} CALL @${netDebit.toFixed(2)} LMT` }, gxText);
     }
   } catch (_) { /* non-critical */ }
 
@@ -7612,8 +7693,12 @@ async function handleMagnetFlyPreAlert(env, token, etNow, preChain) {
     detail: `11:30 heads-up · noon check is final · ~88% of early calls hold`,
     kpis: [['magnet', magnet], ['M8BF center', center], ['distance', dist + ' pts'],
            ['30w debit', entry != null ? '$' + entry.toFixed(2) : 'n/a']] });
-  await postMagnetFly(env, `🧲 **PNBF** ${todayISO} — **${emoji} 11:30 heads-up: ${lean}**\n` +
-    `${headline}\n_magnet ${magnet} · center ${center} · noon check is final (~88% of early calls hold)_`);
+  {
+    const huText = `🧲 **PNBF** ${todayISO} — **${emoji} 11:30 heads-up: ${lean}**\n${headline}\n_magnet ${magnet} · center ${center} · noon check is final (~88% of early calls hold)_`;
+    const verdictWord = lean.startsWith('LIKELY GO') ? 'LIKELY GO' : lean.startsWith('LEANING NO') ? 'LEANING NO' : lean === 'ON THE FENCE' ? 'WATCH' : 'LIKELY NO';
+    const huLine = dist === 0 ? 'Center sits on the magnet. The rule fires at 5 off; it could step there by noon.' : dist === 5 ? `Aligned: T1 on the magnet. 30-wide fly costs about $${entry != null ? entry.toFixed(2) : '?'} against the $17 cap. Noon check is final.` : `Center is ${dist} points off the magnet. The rule fires at 5 off. Noon check is final.`;
+    await fanoutCard(env, { c: 'amber', strat: 'PNBF · heads-up', verdict: verdictWord, big: `${magnet}`, sub: `magnet · center ${center} · ${dist} off`, title: `${cardDate(todayISO)} · 11:30 heads-up · noon check is final`, lines: [huLine], k: [['distance', `${dist} pts`], ['rule needs', '5 pts'], ['30w debit', entry != null ? `$${entry.toFixed(2)}` : 'n/a'], ['cap', '$17.00']], draw: 'track', track: { lo: Math.min(magnet, center) - 15, hi: Math.max(magnet, center) + 15, magnet, center, t1: null } }, huText);
+  }
   return { pre: lean, dist, entry };
 }
 
@@ -7646,7 +7731,8 @@ async function handleMagnetFlyNoon(env, token, etNow, preChain) {
       headline: `No PNBF — T1 ≠ magnet (center ${center} vs magnet ${magnet}, dist ${dist})`,
       detail: `magnet ${magnetSrc} · M8BF signal @${sigTime}`,
       kpis: [['magnet', magnet], ['M8BF center', center], ['distance', dist + ' pts']] });
-    await postMagnetFly(env, `🧲 **PNBF** ${todayISO} — **NO TRADE** · T1≠magnet (center ${center}, magnet ${magnet}, dist ${dist})`);
+    await fanoutCard(env, { c: 'gray', strat: 'PNBF · no trade', verdict: 'NO TRADE', big: `center ${center}`, sub: `magnet ${magnet} · ${dist} off · rule fires at 5`, title: `${cardDate(todayISO)} · noon check`, lines: [dist === 0 ? 'Center sits on the magnet with T1 five above it. Not the shape the rule fires on.' : `Center is ${dist} points off the magnet; the rule needs exactly 5.`], k: [['magnet', `${magnet}`], ['center', `${center}`], ['distance', `${dist} pts`], ['needs', '5 pts']], draw: 'track', track: { lo: Math.min(magnet, center) - 15, hi: Math.max(magnet, center) + 15, magnet, center, t1: null } },
+      `🧲 **PNBF** ${todayISO} — **NO TRADE** · T1≠magnet (center ${center}, magnet ${magnet}, dist ${dist})`);
     return { skipped: 'no alignment', center, magnet };
   }
 
@@ -7657,7 +7743,8 @@ async function handleMagnetFlyNoon(env, token, etNow, preChain) {
       headline: `No PNBF — 30w costs $${entry.toFixed(2)} > $${MF_DEBIT_CAP} cap`,
       detail: `aligned (center ${center} == magnet±5) but too expensive`,
       kpis: [['magnet', magnet], ['M8BF center', center], ['fly debit', '$' + entry.toFixed(2)], ['cap', '$17.00']] });
-    await postMagnetFly(env, `🧲 **PNBF** ${todayISO} — **NO TRADE** · aligned but 30w costs $${entry.toFixed(2)} > $17 cap`);
+    await fanoutCard(env, { c: 'gray', strat: 'PNBF · no trade', verdict: 'TOO PRICEY', big: `$${entry.toFixed(2)}`, sub: '30-wide fly at the magnet · over the $17 cap', title: `${cardDate(todayISO)} · noon check`, lines: ['Aligned, T1 on the magnet, but the fly costs more than the cap allows.'], k: [['debit', `$${entry.toFixed(2)}`], ['cap', '$17.00'], ['magnet', `${magnet}`], ['center', `${center}`]], draw: 'none' },
+      `🧲 **PNBF** ${todayISO} — **NO TRADE** · aligned but 30w costs $${entry.toFixed(2)} > $17 cap`);
     return { skipped: 'debit cap', entry };
   }
 
@@ -7680,7 +7767,7 @@ async function handleMagnetFlyNoon(env, token, etNow, preChain) {
   const _MON = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
   const tosD = `${+todayISO.slice(8,10)} ${_MON[+todayISO.slice(5,7)-1]} ${todayISO.slice(2,4)}`;
   const tos = `BUY +${MF_LOTS} BUTTERFLY SPX 100 (Weeklys) ${tosD} ${magnet - MF_WIDTH}/${magnet}/${magnet + MF_WIDTH} CALL @${entry.toFixed(2)} LMT`;
-  await postMagnetFly(env,
+  await fanoutCard(env, { c: 'green', strat: 'PNBF · GO', verdict: 'BUY', big: `${magnet - MF_WIDTH} / ${magnet} / ${magnet + MF_WIDTH}`, sub: `call fly at the magnet · ${MF_LOTS} lots`, title: `${cardDate(todayISO)} · noon GO · T1 on the magnet · M8BF @${sigTime}`, lines: [`Take profit ${trade.tp.toFixed(2)}, stop ${trade.sl.toFixed(2)}, watched every 5 seconds.`], k: [['debit', `$${entry.toFixed(2)}`], ['TP / SL', `${trade.tp.toFixed(2)} / ${trade.sl.toFixed(2)}`], ['magnet', `${magnet}`], ['lots', `${MF_LOTS}`]], draw: 'fly', strikes: [magnet - MF_WIDTH, magnet, magnet + MF_WIDTH], order: tos },
     `**PNBF**\n${tos}\nTP ${trade.tp.toFixed(2)} · SL ${trade.sl.toFixed(2)}`);
   return { opened: true, trade };
 }
@@ -7719,7 +7806,9 @@ async function refreshMagnetFlyLiveQuotes(env, token, etNow, preChain) {
     const msgKey = `mf_exit_msg_${todayISO}`;
     if (await claimSendSlot(env, msgKey)) {
       const dollars = tr.pnl * MF_LOTS;
-      const ok = await postMagnetFly(env, `🧲 **PNBF** ${todayISO} — **${exit === 'TP' ? '✅ TP hit' : '🛑 stopped'}** ${dollars >= 0 ? '+' : '−'}$${Math.abs(dollars).toLocaleString()} (${MF_LOTS} lots) @ ${tr.exitTime} ET (fly ${tr.lastMid.toFixed(2)})`);
+      const exitText = `🧲 **PNBF** ${todayISO} — **${exit === 'TP' ? '✅ TP hit' : '🛑 stopped'}** ${dollars >= 0 ? '+' : '−'}$${Math.abs(dollars).toLocaleString()} (${MF_LOTS} lots) @ ${tr.exitTime} ET (fly ${tr.lastMid.toFixed(2)})`;
+      const exitOut = await fanoutCard(env, { c: exit === 'TP' ? 'green' : 'red', strat: exit === 'TP' ? 'PNBF · take profit' : 'PNBF · stop', verdict: `${dollars >= 0 ? '+' : '−'}$${Math.abs(dollars).toLocaleString()}`, big: exit === 'TP' ? `+${MF_TP.toFixed(2)}` : `−${MF_SL.toFixed(2)}`, sub: `on ${MF_LOTS} lots · position flat`, title: `${cardDate(todayISO)} · ${exit === 'TP' ? 'take profit filled' : 'stop closed'} · ${tr.exitTime} ET`, lines: [`Fly marked ${tr.lastMid.toFixed(2)} against ${tr.entry.toFixed(2)} paid.`], k: [['exit mark', tr.lastMid.toFixed(2)], ['entry', tr.entry.toFixed(2)], ['time', `${tr.exitTime} ET`], ['lots', `${MF_LOTS}`]], draw: 'none' }, exitText);
+      const ok = Array.isArray(exitOut) ? true : !!(exitOut && exitOut.ok !== false);
       if (ok) await env.SIGNAL_KV.put(msgKey, 'sent', { expirationTtl: 86400 });
     }
     return;
@@ -7747,7 +7836,9 @@ async function settleMagnetFlyEod(env, etNow, preChain) {
   const msgKey = `mf_exit_msg_${dISO}`;
   if (await claimSendSlot(env, msgKey)) {
     const dollars = tr.pnl * MF_LOTS;
-    const ok = await postMagnetFly(env, `🧲 **PNBF** ${tr.openDate} — settled ${dollars >= 0 ? '+' : '−'}$${Math.abs(dollars).toLocaleString()} (${MF_LOTS} lots, rare: bracket never filled)`);
+    const setText = `🧲 **PNBF** ${tr.openDate} — settled ${dollars >= 0 ? '+' : '−'}$${Math.abs(dollars).toLocaleString()} (${MF_LOTS} lots, rare: bracket never filled)`;
+    const setOut = await fanoutCard(env, { c: dollars >= 0 ? 'green' : 'red', strat: 'PNBF · settled', verdict: `${dollars >= 0 ? '+' : '−'}$${Math.abs(dollars).toLocaleString()}`, big: `${dollars >= 0 ? '+' : '−'}$${Math.abs(dollars).toLocaleString()}`, sub: `${MF_LOTS} lots · settled at the close`, title: `${cardDate(tr.openDate)} · bracket never filled, settled`, lines: [`Fly worth ${(tr.pnl / 100 + tr.entry).toFixed(2)} at the close against ${tr.entry.toFixed(2)} paid.`], k: [['entry', tr.entry.toFixed(2)], ['settle', (tr.pnl / 100 + tr.entry).toFixed(2)], ['per lot', `${tr.pnl >= 0 ? '+' : '−'}$${Math.abs(tr.pnl)}`], ['lots', `${MF_LOTS}`]], draw: 'none' }, setText);
+    const ok = Array.isArray(setOut) ? true : !!(setOut && setOut.ok !== false);
     if (ok) await env.SIGNAL_KV.put(msgKey, 'sent', { expirationTtl: 86400 });
   }
 }
@@ -12436,7 +12527,8 @@ async function getCardFonts() {
   if (_cardFonts) return _cardFonts;
   const SETS = [
     ['https://cdn.jsdelivr.net/npm/@expo-google-fonts/inter/Inter_400Regular.ttf',
-     'https://cdn.jsdelivr.net/npm/@expo-google-fonts/inter/Inter_600SemiBold.ttf'],
+     'https://cdn.jsdelivr.net/npm/@expo-google-fonts/inter/Inter_600SemiBold.ttf',
+     'https://cdn.jsdelivr.net/npm/@expo-google-fonts/jetbrains-mono/JetBrainsMono_600SemiBold.ttf'],
     ['https://cdn.jsdelivr.net/npm/dejavu-fonts-ttf@2.37.3/ttf/DejaVuSans.ttf',
      'https://cdn.jsdelivr.net/npm/dejavu-fonts-ttf@2.37.3/ttf/DejaVuSans-Bold.ttf'],
   ];
@@ -13698,14 +13790,16 @@ export default {
         return jsonResp({ error: 'Unauthorized' }, 401, corsHeaders);
       }
       try {
-        const { text, fanoutText } = await request.json();
+        const { text, fanoutText, card, order } = await request.json();
         const dcRaw = await env.SIGNAL_KV.get('discord_config');
         if (!dcRaw) return jsonResp({ ok: false, error: 'no discord_config' }, 200, corsHeaders);
         const dc = JSON.parse(dcRaw);
         // Channel post is OPTIONAL — skip it when no text (fanout-only mode), so
         // paper trades can relay to subscribers WITHOUT cluttering the channel.
         let r = { ok: true };
-        if (text && String(text).trim()) {
+        if (card && typeof card === 'object') {
+          r = await channelCard(env, { ...card, order: order || card.order || null }, text ? String(text).slice(0, 1800) : null);
+        } else if (text && String(text).trim()) {
           r = await sendDiscordDM(env, dc.channelId, String(text).slice(0, 1800), dc.proxyUrl);
         }
         // fanoutText (optional) = subscriber-facing trade message, relayed to the
@@ -16828,6 +16922,23 @@ export default {
     // re-posts the card from LIVE state (used 2026-07-27 after a mid-session
     // tail-arming fix made the posted card stale). The claim gate still guards
     // against duplicates of the resend itself.
+    if (url.pathname === '/test-ticket' && request.method === 'GET') {
+      // Dry render of a sample card through the live pipeline (owner verification). Never posts.
+      const sec = url.searchParams.get('secret');
+      if (!sec || (sec !== env.SYNC_SECRET && sec !== env.GEXM_TRIGGER_TOKEN)) return jsonResp({ error: 'Unauthorized' }, 401, {});
+      const kind = url.searchParams.get('kind') || 'go';
+      const today = isoDateET(toET(new Date()));
+      const samples = {
+        go: { c: 'green', strat: 'PNBF · GO', verdict: 'BUY', big: '7665 / 7695 / 7725', sub: 'call fly at the magnet · 10 lots', title: `${cardDate(today)} · noon GO · T1 on the magnet`, lines: ['Take profit 19.20, stop 11.20, watched every 5 seconds.'], k: [['debit', '$16.20'], ['TP / SL', '19.20 / 11.20'], ['magnet', '7695'], ['lots', '10']], draw: 'fly', strikes: [7665, 7695, 7725], order: 'BUY +10 BUTTERFLY SPX 100 (Weeklys) 9 SEP 26 7665/7695/7725 CALL @16.20 LMT' },
+        hu: { c: 'amber', strat: 'Spreads Router · heads-up', verdict: 'WATCH', big: '−11.3B', sub: 'book · inside the call-spread trigger', title: `${cardDate(today)} · 11:54 heads-up · decision at 12:00`, lines: ['Likely call credit spread at noon.'], k: [['book', '−11.3B'], ['trigger', '≤ −10B'], ['decision', '12:00'], ['else', '13:00 check']], draw: 'gauge', gauge: -11.3 },
+        no: grayCard('GXBF', '⚠️ **GXBF** — no trade. Center 7700 (vol grid); no wing 5–100 had netDebit>0 with risk ≤ reward.'),
+        fill: { c: 'blue', strat: 'Skipper · filled', verdict: 'FILLED', big: '7685 / 7695', sub: 'call spread ×1 · filled 4.45', title: 'Condor + CCS · signal to fill 61 s', lines: [], k: [['fill', '4.45 cr'], ['slip', '−0.05'], ['signal → fill', '61 s'], ['risk', '$555']], draw: 'none', order: 'SELL -1 VERTICAL SPX 100 (Weeklys) 9 SEP 26 7685/7695 CALL @4.45 LMT' },
+      };
+      try {
+        const png = await renderTicketPng(samples[kind] || samples.go);
+        return new Response(png, { headers: { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' } });
+      } catch (e) { return jsonResp({ error: e.message }, 500, {}); }
+    }
     if (url.pathname === '/resend-morning' && request.method === 'GET') {
       const sec = url.searchParams.get('secret');
       if (!sec || (sec !== env.SYNC_SECRET && sec !== env.GEXM_TRIGGER_TOKEN)) {

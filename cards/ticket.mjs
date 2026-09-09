@@ -58,7 +58,7 @@ const DR = {
   },
   track(y, col, tr) {
     const x = xmap(tr.lo, tr.hi);
-    const dot = (v, fill, t, ty) => `<circle cx="${x(v)}" cy="${y + 30}" r="6" fill="${fill}"/>` + lbl(x(v), ty, t);
+    const dot = (v, fill, t, ty) => v == null ? '' : `<circle cx="${x(v)}" cy="${y + 30}" r="6" fill="${fill}"/>` + lbl(x(v), ty, t);
     return { h: 66, svg: `<line x1="${PL + 8}" y1="${y + 30}" x2="${PL + INNER - 8}" y2="${y + 30}" stroke="${C.line}" stroke-width="2"/>` +
       dot(tr.t1, C.mute, `T1 ${tr.t1}`, y + 14) + dot(tr.magnet, col, `magnet ${tr.magnet}`, y + 14) + dot(tr.center, C.text, `center ${tr.center}`, y + 56) };
   },
@@ -82,8 +82,9 @@ export function ticketSvg(m) {
   y = 62;
   // big line: monospaced strikes/verdict + muted sub
   const big = String(m.big ?? m.sub ?? ''), small = m.big != null ? String(m.sub ?? '') : '';
-  const bigW = wM(big, 24);
-  s += `<text x="${PL}" y="${y + 18}" font-family="${M}" font-size="24" font-weight="600" fill="${m.c === 'gray' ? C.sub : C.text}">${esc(big)}</text>`;
+  const bigPx = wM(big, 24) <= INNER ? 24 : wM(big, 19) <= INNER ? 19 : 15;   // long structures shrink instead of clipping
+  const bigW = wM(big, bigPx);
+  s += `<text x="${PL}" y="${y + 18}" font-family="${M}" font-size="${bigPx}" font-weight="600" fill="${m.c === 'gray' ? C.sub : C.text}">${esc(big)}</text>`;
   if (small) {
     if (bigW + 10 + wI(small, 14) <= INNER) s += `<text x="${PL + bigW + 10}" y="${y + 18}" font-family="${F}" font-size="14" fill="${C.mute}">${esc(small)}</text>`;
     else { y += 20; s += `<text x="${PL}" y="${y + 16}" font-family="${F}" font-size="13" fill="${C.mute}">${esc(small)}</text>`; }
