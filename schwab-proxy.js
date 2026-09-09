@@ -13806,7 +13806,7 @@ export default {
         return jsonResp({ error: 'Unauthorized' }, 401, corsHeaders);
       }
       try {
-        const { text, fanoutText, card, order } = await request.json();
+        const { text, fanoutText, card, order, fanoutCard: fanoutCardObj } = await request.json();
         const dcRaw = await env.SIGNAL_KV.get('discord_config');
         if (!dcRaw) return jsonResp({ ok: false, error: 'no discord_config' }, 200, corsHeaders);
         const dc = JSON.parse(dcRaw);
@@ -13839,7 +13839,7 @@ export default {
             console.warn('[link-notify/fanout] duplicate suppressed');
           } else {
             try {
-              let msgOut = String(fanoutText);
+              let msgOut = String(fanoutText), tierNote = null;
               // Fat-gamma tier footer on M8BF trade relays (info only, owner
               // 2026-07-24): story, not sizing advice. \bM8BF\b cannot match
               // BOBF/PNBF/GXBF, so only the M8BF relay gets the line.
@@ -13848,11 +13848,15 @@ export default {
                   const g = await gexGateEval(env, isoDateET(toET(new Date())));
                   const p = gexFatTierP(g.rank);
                   if (p != null && !g.skip) {
-                    msgOut += `\n-# 🟢 Fat-gamma tier (p${p}): prev-session dealer gamma in its upper range — historically 72% M8BF win rate in this tier vs 66% on other days.`;
+                    tierNote = `Fat-gamma tier (p${p}): prev-session dealer gamma in its upper range, historically 72% M8BF win rate in this tier vs 66% on other days.`;
+                    msgOut += `\n-# 🟢 ${tierNote}`;
                   }
                 }
               } catch (_) {}
-              const o = await fanoutSubscribers(env, msgOut.slice(0, 1800));
+              // subscriber relay as a picture card when the skipper sent one (text stays the fallback)
+              const o = (fanoutCardObj && typeof fanoutCardObj === 'object')
+                ? await fanoutCard(env, { ...fanoutCardObj, lines: tierNote ? [...(fanoutCardObj.lines || []), tierNote] : (fanoutCardObj.lines || []) }, msgOut.slice(0, 1800))
+                : await fanoutSubscribers(env, msgOut.slice(0, 1800));
               fanned = o.filter(x => x.ok).length;
             } catch (e) { console.warn('[link-notify/fanout]', e.message); }
           }
