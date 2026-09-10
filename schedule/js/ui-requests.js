@@ -117,20 +117,24 @@ Views.requests = (function () {
   }
 
   /* ------------------------------------------------------------------
-   * wizard
+   * wizard — an editable copy of the paper form
+   *   people : everyone on the form (first = the requester)
+   *   to     : { 'YYYY-MM-DD|employeeId': requestedCode } for tapped cells
+   * Any person, any day, any code: same-day trades, diagonal trades, and
+   * a person's own days moved around can all sit on one request.
    * ---------------------------------------------------------------- */
   function startNew(params) {
     params = params || {};
     const sess = Store.getSession();
     const today = Engine.todayISO();
-    const employeeId = params.employeeId || sess.employeeId || (Engine.activeRoster().filter(function (e) { return !e.vacant; })[0] || {}).id;
+    const employeeId = params.employeeId || sess.employeeId || (Engine.rosterSorted().filter(function (e) { return !e.vacant; })[0] || {}).id;
     const date = params.date && params.date >= today ? params.date : null;
+    const people = [employeeId];
+    if (params.partner && params.partner !== employeeId) people.push(params.partner);
     App.state.newReq = {
-      step: params.type ? (params.type === 'swap' && !params.partner ? 2 : 3) : 1,
-      type: params.type || null,
+      step: params.partner || date ? 3 : 1,
+      people: people,
       employeeId: employeeId,
-      partner: params.partner || null,
-      dates: date ? [date] : [],
       pick: date ? { y: Number(date.slice(0, 4)), m: Number(date.slice(5, 7)) } : { y: Number(today.slice(0, 4)), m: Number(today.slice(5, 7)) },
       to: {},
       reason: '',
@@ -138,23 +142,24 @@ Views.requests = (function () {
       fromPhoto: false,
       parseNotes: [],
       approveNow: false,
+      openDay: date || null,
     };
   }
 
   function key(date, id) { return date + '|' + id; }
+  function present(date, id) { return Engine.getScheduleForDate(date, { employeeId: id }).code; }
 
+  /* Only cells that were actually changed become part of the request. */
   function currentChanges(n) {
     const out = [];
-    n.dates.slice().sort().forEach(function (d) {
-      const mine = Engine.getScheduleForDate(d, { employeeId: n.employeeId }).code;
-      if (n.type === 'swap' && n.partner) {
-        const theirs = Engine.getScheduleForDate(d, { employeeId: n.partner }).code;
-        out.push({ employeeId: n.employeeId, date: d, from: mine, to: n.to[key(d, n.employeeId)] || theirs });
-        out.push({ employeeId: n.partner, date: d, from: theirs, to: n.to[key(d, n.partner)] || mine });
-      } else {
-        out.push({ employeeId: n.employeeId, date: d, from: mine, to: n.to[key(d, n.employeeId)] || (Engine.isWork(mine) ? 'VAC' : mine) });
-      }
+    Object.keys(n.to).forEach(function (k) {
+      const i = k.indexOf('|');
+      const date = k.slice(0, i), id = k.slice(i + 1);
+      if (!Engine.isValidISO(date) || !Engine.getEmployee(id)) return;
+      const from = present(date, id);
+      if (n.to[k] && n.to[k] !== from) out.push({ employeeId: id, date: date, from: from, to: n.to[k] });
     });
+    out.sort(function (x, y) { return x.date < y.date ? -1 : x.date > y.date ? 1 : n.people.indexOf(x.employeeId) - n.people.indexOf(y.employeeId); });
     return out;
   }
 
@@ -171,6 +176,19 @@ Views.requests = (function () {
   function photoInput(changeName) {
     return '<input type="file" accept="image/*" capture="environment" data-change="' + changeName + '" class="sr-only">';
   }
+  function changesListHTML(n) {
+    const ch = currentChanges(n);
+    if (!ch.length) return '<p class="muted" style="font-size:.85rem;margin-top:8px">No changes yet — tap a day.</p>';
+    let h = '<div class="list" style="margin-top:8px">';
+    let last = null;
+    ch.forEach(function (c) {
+      h += '<div class="item clickable" data-action="day" data-date="' + c.date + '" style="min-height:40px;padding:4px 10px">' +
+        '<div class="grow"><span class="name" style="font-size:.85rem">' + (c.date !== last ? esc(Engine.formatShort(c.date)) + ' · ' : '') + esc(UI.empShort(c.employeeId)) + '</span></div>' +
+        chip(c.from, 'sm') + '<span class="muted">→</span>' + chip(c.to, 'sm') + '</div>';
+      last = c.date;
+    });
+    return h + '</div>';
+  }
 
   function wizardView() {
     const n = App.state.newReq;
@@ -184,64 +202,57 @@ Views.requests = (function () {
       if (n.aiBusy) {
         h += '<p style="text-align:center;font-weight:700;margin:6px 0">Reading the sheet…</p><p class="muted" style="text-align:center;font-size:.85rem">This takes about 10–20 seconds.</p>';
       } else if (n.photo) {
-        h += '<img class="photo-thumb" src="' + n.photo.dataUrl + '" alt="Attached photo" style="max-height:160px"><p style="text-align:center;margin:6px 0 0;font-size:.85rem">✔ Photo attached — now pick the type below and tap the days.</p>' +
+        h += '<img class="photo-thumb" src="' + n.photo.dataUrl + '" alt="Attached photo" style="max-height:160px"><p style="text-align:center;margin:6px 0 0;font-size:.85rem">✔ Photo attached.</p>' +
           '<div class="row" style="justify-content:center;margin-top:6px"><button type="button" class="btn btn-sm" data-action="photo-remove">Remove photo</button></div>';
       } else {
-        h += '<label class="btn btn-block btn-primary" style="min-height:60px;cursor:pointer">📷 Upload the signed swap sheet<br><small style="font-weight:500">' + (Store.aiAvailable() ? 'the app fills everything in from the photo' : 'photo goes with the request; then tap the days') + '</small>' + photoInput('photo-first') + '</label>';
+        h += '<label class="btn btn-block btn-primary" style="min-height:60px;cursor:pointer">📷 Upload the signed swap sheet<br><small style="font-weight:500">' + (Store.aiAvailable() ? 'the app fills everything in from the photo' : 'photo goes with the request; then fill in the days') + '</small>' + photoInput('photo-first') + '</label>';
       }
-      h += '</div><div class="or-divider">— or fill it in by hand —</div>';
-      h += '<div class="stack">' +
-        '<button type="button" class="btn btn-block' + (n.type === 'swap' ? ' btn-primary' : '') + '" data-action="type" data-type="swap" style="min-height:56px">🔁 Swap shifts with a coworker</button>' +
-        '<button type="button" class="btn btn-block' + (n.type === 'timeoff' ? ' btn-primary' : '') + '" data-action="type" data-type="timeoff" style="min-height:56px">🏖 Time off / change my own shift</button></div>';
+      h += '</div>';
+      h += '<button type="button" class="btn btn-block" style="min-height:56px" data-action="by-hand">✎ Fill in the form' + (n.photo ? '' : ' (no photo yet)') + '</button>';
       h += navButtons(n, null);
     }
 
     if (n.step === 2) {
-      h += '<h2>Swap with whom?</h2><p class="muted" style="font-size:.85rem">Showing what each coworker works on ' + esc(n.dates[0] ? Engine.formatShort(n.dates[0]) : 'today') + '.</p><div class="list">';
-      const ref = n.dates[0] || Engine.todayISO();
-      Engine.rosterSorted().filter(function (e) { return e.id !== n.employeeId && !e.vacant; }).forEach(function (e) {
-        const c = Engine.getScheduleForDate(ref, { employeeId: e.id }).code;
-        h += '<div class="item clickable' + (n.partner === e.id ? ' selected' : '') + '" data-action="partner" data-id="' + esc(e.id) + '"><div class="grow"><div class="name">' + esc(e.name) + '</div><div class="sub">' + esc(Engine.shiftCode(e)) + '</div></div>' + chip(c, 'sm') + '</div>';
+      h += '<h2>Who is on this form?</h2><p class="muted" style="font-size:.85rem">Just you for time off or moving your own days. Add whoever you are trading with.</p><div class="list">';
+      Engine.rosterSorted().filter(function (e) { return !e.vacant; }).forEach(function (e) {
+        const on = n.people.indexOf(e.id) !== -1;
+        const me = e.id === n.employeeId;
+        h += '<div class="item' + (on ? ' selected' : '') + (me ? '' : ' clickable') + '"' + (me ? '' : ' data-action="person" data-id="' + esc(e.id) + '"') + '><div class="grow"><div class="name">' + esc(e.name) + (me ? ' <span class="pill pill-accent">me</span>' : '') + '</div><div class="sub">' + esc(Engine.shiftCode(e)) + '</div></div>' + (on ? '<span class="pill pill-accent">on form</span>' : '') + '</div>';
       });
-      h += '</div>' + navButtons(n, 'Next ›', !!n.partner);
+      h += '</div>' + navButtons(n, 'Next ›', true);
     }
 
     if (n.step === 3) {
       const p = n.pick;
       const weeks = Engine.getMonthMatrix(p.y, p.m);
       const today = Engine.todayISO();
-      h += '<h2>Which days?</h2><p class="muted" style="font-size:.85rem">Tap the days involved. Top chip = ' + esc(UI.firstName(UI.empName(n.employeeId))) +
-        (n.partner ? ', bottom chip = ' + esc(UI.firstName(UI.empName(n.partner))) : '') + '.</p>';
+      h += '<h2>Requested changes</h2><p class="muted" style="font-size:.85rem">Tap a day and set what each person should work. Rows: ' + esc(n.people.map(function (id) { return UI.firstName(UI.empName(id)) || UI.empShort(id); }).join(', ')) + '.</p>';
       h += '<div class="cal-nav" style="grid-template-columns:44px 1fr 44px"><button type="button" class="btn btn-icon" data-action="pprev">‹</button><span class="title">' + esc(Engine.monthLabel(p.y, p.m)) + '</span><button type="button" class="btn btn-icon" data-action="pnext">›</button></div>';
       h += '<div class="pick-grid">' + Engine.WEEKDAYS.map(function (d) { return '<div class="hd">' + d.toUpperCase().slice(0, 2) + '</div>'; }).join('');
       weeks.forEach(function (row) {
         row.forEach(function (c) {
-          const mine = Engine.getScheduleForDate(c.iso, { employeeId: n.employeeId }).code;
           const past = c.iso < today && !sup;
           const cls = ['pick-cell'];
           if (!c.inMonth) cls.push('out');
           if (past) cls.push('past');
-          if (n.dates.indexOf(c.iso) !== -1) cls.push('on');
-          h += '<button type="button" class="' + cls.join(' ') + '" data-action="pick" data-date="' + c.iso + '"' + (past ? ' disabled' : '') + '>' +
-            '<span class="num">' + Number(c.iso.slice(8, 10)) + '</span>' + chip(mine, 'sm') +
-            (n.partner ? chip(Engine.getScheduleForDate(c.iso, { employeeId: n.partner }).code, 'sm') : '') + '</button>';
+          const changed = n.people.some(function (id) { const v = n.to[key(c.iso, id)]; return v && v !== present(c.iso, id); });
+          if (changed) cls.push('on');
+          h += '<button type="button" class="' + cls.join(' ') + '" data-action="day" data-date="' + c.iso + '"' + (past ? ' disabled' : '') + '><span class="num">' + Number(c.iso.slice(8, 10)) + '</span>';
+          n.people.forEach(function (id) {
+            const cur = present(c.iso, id);
+            const req = n.to[key(c.iso, id)];
+            h += (req && req !== cur) ? chip(req, 'sm', 'req') : chip(cur, 'sm');
+          });
+          h += '</button>';
         });
       });
-      h += '</div>';
-      h += '<p style="font-size:.85rem;margin-top:8px">' + (n.dates.length ? '<b>' + n.dates.length + '</b> day(s): ' + esc(n.dates.slice().sort().map(Engine.formatDayMonth).join(', ')) : '<span class="muted">No days selected yet.</span>') + '</p>';
-      h += navButtons(n, 'Next ›', n.dates.length > 0);
+      h += '</div>' + changesListHTML(n);
+      h += navButtons(n, 'Next ›', currentChanges(n).length > 0);
     }
 
     if (n.step === 4) {
-      h += '<h2>Requested shifts</h2>';
-      const changes = currentChanges(n);
-      let last = null;
-      changes.forEach(function (c) {
-        if (c.date !== last) { h += '<div style="font-weight:700;font-size:.85rem;margin-top:10px">' + esc(Engine.formatLong(c.date)) + '</div>'; last = c.date; }
-        h += '<div class="change-row"><div class="who">' + esc(UI.empShort(c.employeeId)) + '<small>now ' + esc(c.from || '—') + '</small></div>' +
-          '<span class="muted">→</span><select class="select" data-change="to" data-key="' + esc(key(c.date, c.employeeId)) + '">' + UI.codeOptions(c.to) + '</select></div>';
-      });
-      h += '<label class="field" style="margin-top:14px">Reason (optional)<textarea class="textarea" data-input="reason" placeholder="e.g. doctor appointment, family event">' + esc(n.reason) + '</textarea></label>';
+      h += '<h2>Reason and photo</h2>';
+      h += '<label class="field">Reason (optional)<textarea class="textarea" data-input="reason" placeholder="e.g. doctor appointment, family event">' + esc(n.reason) + '</textarea></label>';
       h += '<div class="field">Photo of the signed request form</div>';
       if (n.photo) {
         h += '<img class="photo-thumb" src="' + n.photo.dataUrl + '" alt="Attached photo">' +
@@ -260,10 +271,10 @@ Views.requests = (function () {
       const notes = (n.parseNotes || []).slice();
       h += '<h2>Review</h2><p style="font-weight:700">' + esc(Swaps.describe(req)) + '</p>';
       if (n.fromPhoto) h += '<p class="muted" style="font-size:.85rem">Read from your photo — check every cell against the sheet before submitting.</p>';
-      h += '<p class="muted" style="font-size:.78rem;margin:6px 0 4px">Official form (scroll sideways) — before on top, requested below:</p>';
+      h += '<p class="muted" style="font-size:.78rem;margin:6px 0 4px">Official form (scroll sideways) — present on top, requested below:</p>';
       h += '<div class="osheet-scroll">' + Forms.swapSheetHTML(req) + '</div>';
       h += '<div class="row" style="margin-top:8px"><button type="button" class="btn btn-sm" data-action="form-draft">🖨 Print this form to sign</button>' +
-        '<button type="button" class="btn btn-sm" data-action="edit-cells">✎ Edit shifts</button></div>';
+        '<button type="button" class="btn btn-sm" data-action="edit-cells">✎ Edit days</button></div>';
       h += UI.diffTable(req);
       if (notes.length) h += '<div class="alerts">' + notes.map(function (x) { return '<div class="alert alert-warn">⚠ ' + esc(x) + '</div>'; }).join('') + '</div>';
       h += UI.validationHTML(v);
@@ -278,16 +289,56 @@ Views.requests = (function () {
     return h;
   }
 
+  /* Tap a day → set each person's requested code for that day. */
+  function openDayEditor(iso) {
+    const n = App.state.newReq;
+    let body = '<p class="muted" style="font-size:.82rem;margin:0 0 6px">Leave a row as it is if that person does not change that day.</p>';
+    n.people.forEach(function (id) {
+      const cur = present(iso, id);
+      body += '<div class="change-row"><div class="who">' + esc(UI.empShort(id)) + '<small>now ' + esc(cur || '—') + '</small></div><span class="muted">→</span>' +
+        '<select class="select" data-p="' + esc(id) + '">' + UI.codeOptions(n.to[key(iso, id)] || cur) + '</select></div>';
+    });
+    body += '<div class="row" style="margin-top:12px;justify-content:space-between"><div class="row">' +
+      (n.people.length === 2 ? '<button type="button" class="btn btn-sm" data-x="swap">⇄ Trade this day</button>' : '') +
+      '<button type="button" class="btn btn-sm btn-ghost" data-x="clear">Clear</button></div>' +
+      '<button type="button" class="btn btn-primary" data-x="done">Done</button></div>';
+    UI.openSheet({
+      title: Engine.formatLong(iso),
+      body: body,
+      onOpen: function (root) {
+        root.addEventListener('click', function (ev) {
+          const x = ev.target.closest('[data-x]');
+          if (!x) return;
+          const sels = UI.qsa(root, 'select[data-p]');
+          if (x.dataset.x === 'swap') {
+            const a = present(iso, n.people[0]), b = present(iso, n.people[1]);
+            sels[0].value = b; sels[1].value = a;
+            return;
+          }
+          if (x.dataset.x === 'clear') { sels.forEach(function (sel) { sel.value = present(iso, sel.dataset.p); }); }
+          sels.forEach(function (sel) {
+            const k = key(iso, sel.dataset.p);
+            if (sel.value && sel.value !== present(iso, sel.dataset.p)) n.to[k] = sel.value; else delete n.to[k];
+          });
+          UI.closeSheet(); App.render();
+        });
+      },
+    });
+  }
+
   function buildFromState(n) {
     const sess = Store.getSession();
+    const changes = currentChanges(n);
     const r = Swaps.buildRequest({
-      type: n.type || 'change',
+      type: n.people.length > 1 ? 'swap' : 'change',
       createdBy: sess.employeeId || 'supervisor',
       createdByName: sess.name || '',
-      changes: currentChanges(n).filter(function (c) { return c.to !== c.from; }),   // drop no-change rows
+      changes: changes,
       reason: n.reason,
       photoId: n.photo ? 'p-' + (n.photoIdSeed || 'draft') : null,
     });
+    /* keep everyone who was on the form, in form order, even with no change yet */
+    r.employees = n.people.filter(function (id) { return Engine.getEmployee(id); });
     r.fromPhoto = !!n.fromPhoto;
     return r;
   }
@@ -297,6 +348,7 @@ Views.requests = (function () {
     const sup = Store.isSupervisor();
     n.photoIdSeed = n.photoIdSeed || Swaps.uid();
     const req = buildFromState(n);
+    req.employees = req.employees.filter(function (id) { return req.changes.some(function (c) { return c.employeeId === id; }); });
     const v = Swaps.validate(req, { state: Store.get(), role: sup ? 'supervisor' : 'worker' });
     if (!v.ok) { UI.toast(v.errors[0], 'error'); return; }
     req.validation = { warnings: v.warnings, notes: v.notes.concat(n.parseNotes || []), checkedAt: new Date().toISOString() };
@@ -395,7 +447,6 @@ Views.requests = (function () {
     const n = App.state.newReq;
     const cfg = Engine.getConfig();
     const notes = [];
-    const ids = [];
     const items = [];
     (parsed.changes || []).forEach(function (c) {
       const id = c.employeeId && Engine.getEmployee(c.employeeId) ? c.employeeId : matchEmployee(c.name, n.employeeId);
@@ -403,41 +454,31 @@ Views.requests = (function () {
       if (!Engine.isValidISO(c.date)) { notes.push('Unreadable date for ' + UI.empShort(id) + ': “' + (c.date || '?') + '”.'); return; }
       const to = String(c.to || '').toUpperCase().replace(/\s+/g, '');
       if (!cfg.codes[to]) { notes.push('Unknown code “' + (c.to || '?') + '” for ' + UI.empShort(id) + ' on ' + Engine.formatShort(c.date) + '.'); return; }
-      if (ids.indexOf(id) === -1) ids.push(id);
       items.push({ id: id, date: c.date, to: to, present: c.present ? String(c.present).toUpperCase().replace(/\s+/g, '') : null });
     });
     if (!items.length) return 0;
-    /* who is this request for? */
-    if (ids.indexOf(n.employeeId) === -1) n.employeeId = ids[0];
-    const others = ids.filter(function (x) { return x !== n.employeeId; });
-    if (others.length > 1) notes.push('The sheet names more than two people; only ' + UI.empShort(n.employeeId) + ' and ' + UI.empShort(others[0]) + ' were used.');
-    n.partner = others[0] || null;
-    n.type = n.partner ? 'swap' : 'timeoff';
-    n.dates = [];
+    const ids = [];
+    items.forEach(function (it) { if (ids.indexOf(it.id) === -1) ids.push(it.id); });
+    if (ids.indexOf(n.employeeId) !== -1) { ids.splice(ids.indexOf(n.employeeId), 1); ids.unshift(n.employeeId); }
+    else n.employeeId = ids[0];
+    n.people = ids.slice(0, 4);
+    if (ids.length > 4) notes.push('The sheet names more than four people; only the first four were used.');
     n.to = {};
+    let count = 0;
     items.forEach(function (it) {
-      if (it.id !== n.employeeId && it.id !== n.partner) return;
-      if (n.dates.indexOf(it.date) === -1) n.dates.push(it.date);
+      if (n.people.indexOf(it.id) === -1) return;
+      const cur = present(it.date, it.id);
       n.to[key(it.date, it.id)] = it.to;
-      const cur = Engine.getScheduleForDate(it.date, { employeeId: it.id }).code;
+      count++;
       if (it.present && it.present !== cur) notes.push('Sheet shows ' + UI.empShort(it.id) + ' as ' + it.present + ' on ' + Engine.formatShort(it.date) + ' but the schedule says ' + cur + ' — check the day columns.');
-    });
-    /* A day the sheet lists for only one of the two people is not a swap on
-     * that day: the other person explicitly keeps their current shift.  */
-    n.dates.forEach(function (d) {
-      [n.employeeId, n.partner].forEach(function (id) {
-        if (!id) return;
-        const k = key(d, id);
-        if (!Object.prototype.hasOwnProperty.call(n.to, k)) n.to[k] = Engine.getScheduleForDate(d, { employeeId: id }).code;
-      });
     });
     if (parsed.reason && !n.reason) n.reason = String(parsed.reason);
     if (parsed.notes) notes.push('Reader notes: ' + String(parsed.notes));
     n.parseNotes = notes;
     n.fromPhoto = true;
-    const first = n.dates.slice().sort()[0];
+    const first = Object.keys(n.to).sort()[0];
     if (first) n.pick = { y: Number(first.slice(0, 4)), m: Number(first.slice(5, 7)) };
-    return n.dates.length;
+    return count;
   }
 
   function readPhoto(dataUrl) {
@@ -465,13 +506,15 @@ Views.requests = (function () {
     UI.toast('Processing photo…');
     UI.downscaleImage(file).then(function (dataUrl) {
       App.state.newReq.photo = { dataUrl: dataUrl };
-      if (thenRead) readPhoto(dataUrl); else { UI.toast('Photo attached'); App.render(); }
+      if (thenRead) readPhoto(dataUrl); else { UI.toast('Photo attached — now fill in the form'); if (App.state.newReq.step === 1) App.state.newReq.step = 2; App.render(); }
     }).catch(function (e) { UI.toast(e.message, 'error'); });
   }
 
   function render(root) {
     root.innerHTML = App.state.formView ? formPage() : (App.state.newReq ? wizardView() : listView());
     loadPhotos(root);
+    const n = App.state.newReq;
+    if (n && n.openDay && n.step === 3) { const d = n.openDay; n.openDay = null; setTimeout(function () { openDayEditor(d); }, 50); }
   }
 
   return {
@@ -505,31 +548,30 @@ Views.requests = (function () {
         });
       },
       /* wizard */
-      type: function (b) { const n = App.state.newReq; n.type = b.dataset.type; n.step = n.type === 'swap' ? 2 : 3; App.render(); },
-      partner: function (el) { const n = App.state.newReq; n.partner = el.dataset.id; n.to = {}; App.render(); },
-      'edit-cells': function () { App.state.newReq.step = 4; App.render(); },
+      'by-hand': function () { App.state.newReq.step = 2; App.render(); },
+      person: function (el) {
+        const n = App.state.newReq, id = el.dataset.id;
+        const i = n.people.indexOf(id);
+        if (i === -1) { if (n.people.length >= 4) return UI.toast('Up to four people on one form'); n.people.push(id); }
+        else { n.people.splice(i, 1); Object.keys(n.to).forEach(function (k) { if (k.slice(k.indexOf('|') + 1) === id) delete n.to[k]; }); }
+        App.render();
+      },
+      'edit-cells': function () { App.state.newReq.step = 3; App.render(); },
       back: function () {
         const n = App.state.newReq;
         if (n.step === 1) { App.state.newReq = null; }
-        else if (n.step === 5 && n.fromPhoto) n.step = 4;
-        else if (n.step === 3 && n.type !== 'swap') n.step = 1;
+        else if (n.step === 5 && n.fromPhoto) n.step = 3;
         else n.step -= 1;
         App.render();
       },
       next: function () {
         const n = App.state.newReq;
-        if (n.step === 2 && !n.partner) return UI.toast('Pick a coworker first');
-        if (n.step === 3 && !n.dates.length) return UI.toast('Pick at least one day');
+        if (n.step === 3 && !currentChanges(n).length) return UI.toast('Tap a day and set a change first');
         n.step += 1; App.render();
       },
       pprev: function () { const p = App.state.newReq.pick; p.m -= 1; if (p.m < 1) { p.m = 12; p.y -= 1; } App.render(); },
       pnext: function () { const p = App.state.newReq.pick; p.m += 1; if (p.m > 12) { p.m = 1; p.y += 1; } App.render(); },
-      pick: function (b) {
-        const n = App.state.newReq, d = b.dataset.date;
-        const i = n.dates.indexOf(d);
-        if (i === -1) n.dates.push(d); else n.dates.splice(i, 1);
-        App.render();
-      },
+      day: function (b) { openDayEditor(b.dataset.date); },
       'photo-remove': function () { App.state.newReq.photo = null; App.render(); },
       'photo-read': function () { readPhoto(App.state.newReq.photo.dataUrl); },
       submit: function () { submit(); },
@@ -539,7 +581,7 @@ Views.requests = (function () {
         const id = cb.dataset.id, val = cb.checked;
         Store.mutate(function (d) { const r = Swaps.findRequest(d, id); if (r) r.enteredInComputer = val; }, { reason: 'entered' }).catch(function (e) { UI.toast(e.message, 'error'); });
       },
-      emp: function (sel) { const n = App.state.newReq; n.employeeId = sel.value; n.partner = null; n.to = {}; },
+      emp: function (sel) { const n = App.state.newReq; n.employeeId = sel.value; n.people = [sel.value]; n.to = {}; },
       to: function (sel) { App.state.newReq.to[sel.dataset.key] = sel.value; },
       'approve-now': function (cb) { App.state.newReq.approveNow = cb.checked; App.render(); },
       photo: function (input) { attachPhoto(input, false); },

@@ -217,7 +217,7 @@ Views.team = (function () {
       cell: function (td) { editCell(td.dataset.date, td.dataset.id); },
       print: function () { window.print(); },
       'swap-with': function (b) {
-        App.go('requests', { newRequest: { type: 'swap', partner: b.dataset.id, date: App.state.teamDate, employeeId: Store.getSession().employeeId } });
+        App.go('requests', { newRequest: { partner: b.dataset.id, date: App.state.teamDate, employeeId: Store.getSession().employeeId } });
       },
     },
     changes: {
