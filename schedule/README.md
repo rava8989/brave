@@ -8,9 +8,12 @@ built-in swap / time-off request workflow:
 * **Team** – who is on A / B / C / R and who is off on any day, "who could
   cover for me" suggestions, and the full monthly labor grid in the same
   layout as the sheet on the wall.
-* **Requests** – workers build a swap or time-off request in the app (with a
-  photo of the signed paper form attached), the app checks it for conflicts,
-  the supervisor taps **Approve**, and the schedule updates itself.
+* **Requests** – a worker photographs the signed paper "TIME OFF OR SHIFT
+  CHANGE REQUEST" sheet, the app reads it and fills the request in (or the
+  worker taps it in by hand), shows it back as the official form with the
+  PRESENT and REQUESTED grids, checks it for conflicts, and the supervisor
+  taps **Approve**. The schedule updates itself. Every request can be
+  viewed and printed as the official form at any time.
 * **Rotation** – this week's lineup for all six slots and the 42-day pattern
   for each slot (editable by the supervisor).
 * **Info** – legend, printing, backup, and supervisor tools (roster,
@@ -109,30 +112,48 @@ Other things to confirm:
 
 ## 4. How the swap workflow runs
 
+The paper sheet stays the legal record: it is filled in and signed exactly
+as today. The app takes it from there.
+
 1. Worker signs in (picks their name), opens **Requests → New**.
-2. Chooses *Swap with a coworker* or *Time off / change my shift*, picks the
-   coworker, taps the days (the picker shows both people's shifts), adjusts
-   the requested codes if needed, adds a reason and a **photo of the signed
-   paper form** (camera opens directly on the phone).
-3. The app checks the request:
+2. **Upload the signed swap sheet** (camera opens on the phone). With the
+   sync server and an AI key set up, the app reads the handwritten grids,
+   matches the names to the roster, fills in the days and codes, and jumps
+   straight to the review screen. Anything it could not read, or any cell
+   where the sheet's "present" code disagrees with the schedule, is listed
+   in yellow so it can be checked. Without the AI key the same screen
+   offers the by-hand path: *Swap with a coworker* or *Time off / change my
+   shift*, pick the coworker, tap the days, adjust codes, attach the photo.
+3. **Review** shows the request as the official form – "MY PRESENT SCHEDULE
+   IS" on top, "TIME OFF OR CHANGE PERIOD REQUESTED" below, 1–31 columns,
+   one row per person, next-month days as extra "1st, 2nd…" columns – plus
+   the before/after table. **Print this form to sign** prints it pre-filled
+   if the paper has not been written yet.
+4. The app checks the request:
    * errors (blocked): past dates, unknown codes, duplicate days;
    * warnings (shown to the supervisor): coverage drops below the minimum on
      any affected day, back-to-back doubles, more than 7 work days in a row,
      the schedule changed since the form was written, another pending
      request touches the same day;
    * notes: uneven trades, no-op changes.
-4. The supervisor's **Requests** tab shows the queue with the before/after
-   table, the photo and the live conflict check. **Approve** writes the
+5. The supervisor's **Requests** tab shows the queue with the before/after
+   table, the photo and the live conflict check; **Official form** opens the
+   same request as the paper form (with APPROVED / REJECTED, supervisor and
+   date filled in once decided) and prints it. **Approve** writes the
    changes into the schedule immediately (as per-person exceptions on top of
    the rotation); **Reject** asks for a reason the worker sees. A checkbox
    records when it was entered into the official system.
-5. Approved changes show a ● on the calendar and a blue outline on the
-   month grid. The supervisor can also tap any grid cell to change it
-   directly.
+6. Approved changes show a ● on the calendar and a blue outline on the
+   month grid. **Team → Month grid → Official layout** shows the month in
+   the same layout as the posted MONTHLY LABOR SCHEDULE (NAME / SHIFT / SLOT
+   columns, gray RDO cells, red for holidays, leave and changes) and prints
+   that way. The supervisor can also tap any grid cell (colors layout) to
+   change it directly.
 
-Optional: with `ANTHROPIC_API_KEY` set on the sync worker, the wizard shows
-**Fill in from photo** – Claude reads the handwritten form and pre-fills the
-days and codes, which the worker then confirms before submitting.
+Reading the photo uses Claude (`claude-opus-5`) through the sync worker; the
+key never reaches the phones. It costs a few cents per sheet. The worker
+also sends Claude the schedule the app already has for that month, which is
+what lets it line up the handwritten cells with the right day columns.
 
 ---
 
@@ -156,14 +177,22 @@ KV namespace. About ten minutes:
 5. Copy the worker URL (`https://lga-schedule.<you>.workers.dev`) into
    `APP_CONFIG.syncUrl` in `js/config.js`, commit, push.
 
-**wrangler route**
+**One-command route** (needs Node.js; wrangler opens a browser to log in)
+
+```
+bash schedule/worker/deploy.sh
+```
+
+It creates the KV namespace, writes its id into `wrangler.toml`, asks for
+the two access codes and the optional Anthropic API key, and deploys. The
+same steps by hand:
 
 ```
 cd schedule/worker
 npx wrangler kv namespace create SCHEDULE_KV     # paste the id into wrangler.toml
 npx wrangler secret put SUPERVISOR_CODE
 npx wrangler secret put WORKER_CODE
-npx wrangler secret put ANTHROPIC_API_KEY        # optional
+npx wrangler secret put ANTHROPIC_API_KEY        # optional: photo reading
 npx wrangler deploy
 ```
 
@@ -188,6 +217,7 @@ Everything editable is in `js/config.js`:
 | `SCHEDULE_CONFIG.holidayRule` | which codes become HOL |
 | `SCHEDULE_CONFIG.coverage` | minimums used by the conflict check |
 | `SCHEDULE_CONFIG.codes` | every code, its meaning, which tours it covers |
+| `SCHEDULE_CONFIG.org` | agency name, group code (SHIFT column) and form revision printed on the paper-format views |
 | `SCHEDULE_CONFIG.exceptions` | per-date overrides shipped with the site (normally empty) |
 | `ROSTER` | employees and slots |
 
@@ -212,11 +242,14 @@ it as JSON.
 cd schedule
 npm test        # 89 engine + swap checks (dates, leap years, year change,
                 #  weekend boundaries, holidays, RDO/MDO, photo cells, coverage)
+                #  + 27 worker checks (access codes, worker write policy,
+                #  version conflicts, photos, /api/parse with a mocked model)
 npm run lint    # ESLint reference-error check for all scripts
 ```
 
-A Playwright smoke run (login → calendar → team → submit swap → approve →
-month grid edit → rotation → info → reload → print) was used during
+A Playwright smoke run (login → calendar → team → submit swap → official
+form → approve → official month layout → grid edit → rotation → info →
+reload → print → photo-first flow with a mocked reader) was used during
 development at 390×844 and 1280×900.
 
 ---
@@ -232,13 +265,16 @@ schedule/
   js/store.js         localStorage / IndexedDB / sync client, roles
   js/swaps.js         request model, conflict checks, approval
   js/ui-common.js     helpers (chips, sheets, toasts, photo downscale)
+  js/ui-forms.js      paper-accurate swap sheet + monthly labor schedule
   js/ui-calendar.js   today card + month calendar
   js/ui-team.js       day view + monthly labor grid
   js/ui-requests.js   request wizard, queue, decisions
   js/ui-rotation.js   week lineup + pattern editor
   js/ui-info.js       legend, account, print, supervisor tools
   js/app.js           bootstrap, login, tabs
-  worker/worker.js    optional Cloudflare sync backend
+  worker/worker.js    optional Cloudflare sync backend (+ photo reading)
   worker/wrangler.toml
+  worker/deploy.sh    one-command deploy
   tests/engine.test.js
+  tests/worker.test.mjs
 ```

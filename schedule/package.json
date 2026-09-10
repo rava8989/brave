@@ -5,7 +5,7 @@
   "description": "Rotating shift schedule + swap request workflow (static site, no build step).",
   "type": "commonjs",
   "scripts": {
-    "test": "node tests/engine.test.js",
+    "test": "node tests/engine.test.js && node tests/worker.test.mjs",
     "lint": "npx eslint --config eslint.config.mjs js worker tests",
     "serve": "npx http-server -p 8790 -c-1 ."
   }

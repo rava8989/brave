@@ -33,7 +33,7 @@ Views.info = (function () {
   function printHTML() {
     return '<div class="card no-print"><h2>Print</h2><div class="row">' +
       '<button type="button" class="btn btn-sm" data-action="print-cal">My month calendar</button>' +
-      '<button type="button" class="btn btn-sm" data-action="print-team">Team month grid</button>' +
+      '<button type="button" class="btn btn-sm" data-action="print-team">Monthly labor schedule (official layout)</button>' +
       '<button type="button" class="btn btn-sm" data-action="print-rot">Rotation</button></div></div>';
   }
 
@@ -140,7 +140,7 @@ Views.info = (function () {
       refresh: function () { Store.pull({ force: true }).then(function (ok) { UI.toast(ok ? 'Up to date' : 'Could not reach the sync server', ok ? '' : 'error'); App.render(); }); },
       signout: function () { App.logout(); },
       'print-cal': function () { printTab('calendar'); },
-      'print-team': function () { App.state.teamMode = 'month'; printTab('team'); },
+      'print-team': function () { App.state.teamMode = 'month'; App.state.teamLayout = 'official'; printTab('team'); },
       'print-rot': function () { printTab('rotation'); },
       'add-emp': function () {
         UI.promptDialog({ title: 'Add employee', label: 'Name (Last, First)', okLabel: 'Add' }).then(function (name) {

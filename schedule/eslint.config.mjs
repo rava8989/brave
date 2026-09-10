@@ -13,7 +13,7 @@ export default [
         console: 'readonly', module: 'readonly', require: 'readonly', Promise: 'readonly',
         // project globals (one per file, in load order)
         APP_CONFIG: 'readonly', SCHEDULE_CONFIG: 'readonly', ROSTER: 'readonly',
-        Engine: 'readonly', Store: 'readonly', Swaps: 'readonly', Views: 'readonly', UI: 'readonly', App: 'readonly',
+        Engine: 'readonly', Store: 'readonly', Swaps: 'readonly', Views: 'readonly', UI: 'readonly', Forms: 'readonly', App: 'readonly',
       },
     },
     rules: { 'no-undef': 'error', 'no-redeclare': 'off', 'block-scoped-var': 'error', 'no-unused-vars': ['warn', { args: 'none' }], eqeqeq: ['warn', 'smart'] },

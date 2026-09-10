@@ -13,6 +13,8 @@ const App = (function () {
     selectedDate: null,
     teamDate: null,
     teamMode: 'day',
+    teamLayout: 'colors',
+    formView: null,
     reqFilter: 'pending',
     rotSlot: 1,
     rotWeekStart: null,
@@ -40,6 +42,7 @@ const App = (function () {
   function setTab(tab) {
     if (TABS.indexOf(tab) === -1) tab = 'calendar';
     state.tab = tab; Store.setPref('tab', tab);
+    state.formView = null;
     UI.closeSheet();
     render();
     window.scrollTo(0, 0);
@@ -134,7 +137,7 @@ const App = (function () {
   function logout() {
     UI.closeSheet();
     Store.clearSession();
-    state.viewingId = null; state.newReq = null; state.rotEdit = null; state.login = { role: 'worker', employeeId: null };
+    state.viewingId = null; state.newReq = null; state.rotEdit = null; state.formView = null; state.login = { role: 'worker', employeeId: null };
     render();
   }
 
@@ -187,6 +190,7 @@ const App = (function () {
     else state.cal = { y: Number(today.slice(0, 4)), m: Number(today.slice(5, 7)) };
     state.teamDate = today;
     state.teamMode = Store.getPref('teamMode', 'day');
+    state.teamLayout = Store.getPref('teamLayout', 'colors');
     state.rotSlot = Store.getPref('rotSlot', 1);
     state.viewingId = Store.getPref('viewingId', null);
     const savedTab = Store.getPref('tab', 'calendar');

@@ -81,12 +81,22 @@ Views.team = (function () {
     const today = Engine.todayISO();
     const sup = Store.isSupervisor();
     const roster = Engine.activeRoster().slice().sort(function (a, b) { return a.slot - b.slot || a.name.localeCompare(b.name); });
+    const official = App.state.teamLayout === 'official';
     let h = '<div class="card"><div class="cal-nav no-print">' +
       '<button type="button" class="btn btn-sm" data-action="today">Today</button>' +
       '<button type="button" class="btn btn-icon" data-action="prev" aria-label="Previous month">‹</button>' +
       '<span class="title">' + esc(Engine.monthLabel(y, m)) + '</span>' +
       '<button type="button" class="btn btn-icon" data-action="next" aria-label="Next month">›</button></div>' +
-      '<h2 class="print-only">Monthly labor schedule — ' + esc(Engine.monthLabel(y, m)) + '</h2>' +
+      '<div class="seg grow no-print" style="margin-bottom:8px">' +
+      '<button type="button" class="' + (official ? '' : 'active') + '" data-action="layout" data-layout="colors">Colors</button>' +
+      '<button type="button" class="' + (official ? 'active' : '') + '" data-action="layout" data-layout="official">Official layout</button></div>';
+    if (official) {
+      h += '<p class="muted no-print" style="font-size:.78rem;margin:0 0 8px">Same layout as the posted sheet · red = holiday, leave or changed from rotation</p>' +
+        '<div class="olabor-scroll">' + Forms.laborScheduleHTML(y, m) + '</div>' +
+        '<div class="row no-print" style="margin-top:8px"><button type="button" class="btn btn-sm" data-action="print">Print</button></div></div>';
+      return h;
+    }
+    h += '<h2 class="print-only">Monthly labor schedule — ' + esc(Engine.monthLabel(y, m)) + '</h2>' +
       '<p class="muted no-print" style="font-size:.78rem;margin:0 0 8px">' + (sup ? 'Tap a cell to change it. ' : '') + 'Scroll sideways · blue outline = changed from rotation</p>' +
       '<div class="lgrid-wrap"><table class="lgrid"><thead><tr><th class="name">Name<small>slot</small></th>';
     const days = [];
@@ -165,6 +175,7 @@ Views.team = (function () {
     editCell: editCell,
     actions: {
       mode: function (b) { App.state.teamMode = b.dataset.mode; Store.setPref('teamMode', b.dataset.mode); App.render(); },
+      layout: function (b) { App.state.teamLayout = b.dataset.layout; Store.setPref('teamLayout', b.dataset.layout); App.render(); },
       tday: function () { App.state.teamDate = Engine.todayISO(); App.render(); },
       tprev: function () { App.state.teamDate = Engine.addDays(App.state.teamDate, -1); App.render(); },
       tnext: function () { App.state.teamDate = Engine.addDays(App.state.teamDate, 1); App.render(); },

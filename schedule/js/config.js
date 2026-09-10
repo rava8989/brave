@@ -224,6 +224,13 @@ const SCHEDULE_CONFIG = {
     '2.5CT':{ label: '2.5 hrs comp time',           kind: 'other', tours: [] },
   },
 
+  /* Printed on the paper-format views (swap sheet, monthly labor grid). */
+  org: {
+    name: 'THE PORT AUTHORITY OF NY & NJ',
+    groupCode: 'LGA_6RR9',          // SHIFT column reads LGA_6RR9.<slot>
+    formRevision: '8/12/2019',      // revision date printed on the request form
+  },
+
   /* Codes shown first in pickers and in the compact legend.            */
   primaryCodes: ['A', 'B', 'C', 'R', 'RDO', 'MDO', 'HOL', 'COMP', 'PE', 'SICK', 'IOD', 'DIF', 'VAC'],
 
