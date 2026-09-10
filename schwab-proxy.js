@@ -9091,16 +9091,18 @@ async function handleScheduledInner(env) {
   }
 
   // ── Stuck-claim self-heal + notify ──
-  // Claims carry a timestamp suffix (claim:<uuid>:<ms>). If we find one >40s
-  // old here (post-9:30 ET) it means the previous tick crashed between claim
-  // and 'sent'. The send path is now ≤~35s, so a claim older than 40s is
-  // genuinely dead — clear it immediately and let THIS tick retry. Combined
-  // with the 90s claim TTL, an orphaned claim can never block more than ~40s.
+  // Claims carry a timestamp suffix (claim:<uuid>:<ms>) that the OWNING run
+  // refreshes at every checkpoint (heartbeat, 2026-09-10). A live run therefore
+  // never shows an old claim; only a run that died between claim and 'sent'
+  // goes silent. 150s covers KV cross-colo lag (~60s) plus the longest step.
+  // 2026-09-10: the old 40s rule ("send path ≤35s") fired on a healthy 2-min
+  // run and the owner got the plan twice. Combined with the 300s claim TTL an
+  // orphaned claim can never block more than ~150s.
   if (morningDone && morningDone.startsWith('claim:')) {
     const parts = morningDone.split(':');
     const claimTsMs = parseInt(parts[2] || '0', 10);
     const ageMs = claimTsMs ? Date.now() - claimTsMs : 0;
-    if (claimTsMs && ageMs > 40_000) {
+    if (claimTsMs && ageMs > 150_000) {
       const ageS = Math.round(ageMs / 1000);
       console.warn(`[proxy] Stuck claim detected (age ${ageS}s) — clearing and notifying`);
       await env.SIGNAL_KV.delete(morningDoneKey);
@@ -9119,8 +9121,8 @@ async function handleScheduledInner(env) {
         console.warn('[proxy] stuck-claim notify failed:', notifyErr.message || notifyErr);
       }
       // Fall through: acquire a fresh claim below
-    } else if (claimTsMs && ageMs <= 40_000) {
-      // Another tick owns a fresh claim (<40s, still actively sending) —
+    } else if (claimTsMs && ageMs <= 150_000) {
+      // Another tick owns a fresh claim (<150s, still actively sending) —
       // don't stomp it. It will either finish ('sent') or self-release.
       return {
         status: 'claim_in_flight',
@@ -9138,20 +9140,23 @@ async function handleScheduledInner(env) {
   // because the slot claim used to live ~30s later (after VIX/SPX fetches).
   // We write a unique token, wait for KV to propagate, then verify our token won.
   //
-  // TTL is 90s (not 300s, not 86400s): the send path is now fast (≤~35s:
-  // 20s VIX race + 12s fallback + quick compute/post), so a healthy claim
-  // never lives long. If a tick is hard-killed mid-send, the claim
-  // self-expires within 90s and the next minute's cron re-fires — no
-  // 3-min stuck-claim window. 'sent' marker still uses 86400s.
+  // TTL 300s (2026-09-10; was 90s): the send path runs ~2 min (VIX race,
+  // SPX, advisory lines, card render, channel post) and refreshes its claim
+  // at every checkpoint (beat). A hard-killed tick's claim self-expires in
+  // 5 min and the next minute's cron re-fires. 'sent' marker uses 86400s.
   const claimToken = crypto.randomUUID();
   const claimValue = `claim:${claimToken}:${Date.now()}`;
-  await env.SIGNAL_KV.put(morningDoneKey, claimValue, { expirationTtl: 90 });
+  await env.SIGNAL_KV.put(morningDoneKey, claimValue, { expirationTtl: 300 });
   await new Promise(r => setTimeout(r, 1500)); // let concurrent ticks also write
   const claimCheck = await env.SIGNAL_KV.get(morningDoneKey, { cacheTtl: 30 });
   if (claimCheck !== claimValue) {
     console.log(`[proxy] Lost claim race (saw ${claimCheck}, mine was ${claimValue}) — skipping`);
     return { status: 'duplicate_skipped', claimWinner: claimCheck, time: `${etHour}:${String(etMin).padStart(2,'0')} ET` };
   }
+
+  // Heartbeat: refresh OUR claim's timestamp at each checkpoint so a slow but
+  // healthy run is never mistaken for a dead one by the next minute's tick.
+  const beat = async () => { try { await env.SIGNAL_KV.put(morningDoneKey, `claim:${claimToken}:${Date.now()}`, { expirationTtl: 300 }); } catch (_) {} };
 
   console.log('[proxy] Morning window — sending signal');
 
@@ -9164,6 +9169,7 @@ async function handleScheduledInner(env) {
   const vixHistUrl = `https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24VIX&periodType=day&period=5&frequencyType=minute&frequency=1&startDate=${start}&endDate=${end}&needExtendedHoursData=true`;
   const vixHist = await fetchSchwabJSON(vixHistUrl, token, env);
   if (!vixHist.candles || !vixHist.candles.length) throw new Error('No VIX history data');
+  await beat();
 
   const candles = vixHist.candles;
   const todayStr = etNow.toDateString();
@@ -9637,10 +9643,21 @@ async function handleScheduledInner(env) {
   signal._tailLine = tailLineCanon;  // for embed builder
   try { signal._tiltLine = await computeTiltLine(env, isoDateET(etNow)); } catch (_) { /* advisory only */ }
   try { signal._gexLine = await computeGexLine(env); } catch (_) { /* advisory only */ }
-  try { signal._cycleLine = await computeCycleLine(env, etNow); } catch (_) { /* advisory only */ }
-  try { signal._volFlowLine = await computeVolFlowLine(env, etNow); } catch (_) { /* advisory only */ }
-  try { signal._m8bfWrLine = await computeM8bfWrLine(env, etNow); } catch (_) { /* advisory only */ }
-  try { signal._skewLine = await computeSkewLine(); } catch (_) { /* advisory only */ }
+  await beat();
+  // Advisory lines in PARALLEL (2026-09-10; they ran in series and each is a
+  // network round-trip). A failure leaves its line undefined, as before.
+  {
+    const [_cyc, _vf, _wr, _sk] = await Promise.all([
+      computeCycleLine(env, etNow).catch(() => undefined),
+      computeVolFlowLine(env, etNow).catch(() => undefined),
+      computeM8bfWrLine(env, etNow).catch(() => undefined),
+      computeSkewLine().catch(() => undefined),
+    ]);
+    if (_cyc !== undefined) signal._cycleLine = _cyc;
+    if (_vf !== undefined) signal._volFlowLine = _vf;
+    if (_wr !== undefined) signal._m8bfWrLine = _wr;
+    if (_sk !== undefined) signal._skewLine = _sk;
+  }
   const message = canonBanner + buildDiscordMessage(signal, vixValues, tailLineCanon);
 
   // 7. Slot already claimed at the top of the morning block. Reuse the same key.
@@ -9658,7 +9675,7 @@ async function handleScheduledInner(env) {
   // seeing the other. By NOW the rival's claim/'sent' write has had those
   // ~30s to propagate — one fresh read here kills the duplicate pre-post.
   const lastCall = await env.SIGNAL_KV.get(msDoneKey);
-  if (lastCall === 'sent' || (lastCall && lastCall.startsWith('claim:') && lastCall !== claimValue)) {
+  if (lastCall === 'sent' || (lastCall && lastCall.startsWith('claim:') && !lastCall.startsWith(`claim:${claimToken}:`))) {
     console.log(`[proxy] Pre-send dupe gate: slot='${(lastCall || '').slice(0, 24)}…' not mine — aborting duplicate`);
     return { status: 'duplicate_avoided_presend', time: `${etHour}:${String(etMin).padStart(2, '0')} ET` };
   }
@@ -9667,6 +9684,14 @@ async function handleScheduledInner(env) {
   // it; the M8BF skip/combo "strikes" go as a small (-#) subtext BELOW the image.
   // ANY failure (render/font/upload) falls back to the original text message so
   // the morning signal can never go silent.
+  // Per-sink owner slot (P46, 2026-09-10): two overlapping runs must never both
+  // DM the plan. Claim → verify → post → 'sent', same as the channel below.
+  const ownerKey = `plan_owner_${todayISO}`;
+  if ((await env.SIGNAL_KV.get(ownerKey)) === 'sent' || !(await claimSendSlot(env, ownerKey)) || (await env.SIGNAL_KV.get(ownerKey)) === 'sent') {
+    console.log('[proxy] owner plan DM slot held/sent by another run — not posting twice');
+    return { status: 'duplicate_avoided_owner_slot', time: `${etHour}:${String(etMin).padStart(2, '0')} ET` };
+  }
+  await beat();
   let result = null;
   try {
     const cardData = buildMorningCardData(signal, vixValues, tailLineCanon,
@@ -9706,17 +9731,21 @@ async function handleScheduledInner(env) {
       const retry = await sendDiscordDM(env, dc.channelId, message.slice(0, 2000), dc.proxyUrl);
       if (!retry.ok) {
         await env.SIGNAL_KV.delete(msDoneKey);
+        await env.SIGNAL_KV.delete(ownerKey);
         throw new Error('Discord post failed after retry: ' + JSON.stringify(retry));
       }
+      await env.SIGNAL_KV.put(ownerKey, 'sent', { expirationTtl: 86400 });
       await env.SIGNAL_KV.put(msDoneKey, 'sent', { expirationTtl: 86400 });
       globalThis.__morningSentDay = todayISO;
       return retry.data || { ok: true };
     }
     await env.SIGNAL_KV.delete(msDoneKey);
+    await env.SIGNAL_KV.delete(ownerKey);
     throw new Error('Discord post failed: ' + (result.error || JSON.stringify(dcData)));
   }
 
-  // Mark morning signal as fully sent
+  // Mark morning signal as fully sent (owner sink first, then the day slot)
+  await env.SIGNAL_KV.put(ownerKey, 'sent', { expirationTtl: 86400 });
   await env.SIGNAL_KV.put(msDoneKey, 'sent', { expirationTtl: 86400 });
   globalThis.__morningSentDay = todayISO;   // isolate-local guard (KV-lag immune)
   // NOTE: subscriber fan-out was MOVED to live trade EXECUTIONS (2026-06-16,
