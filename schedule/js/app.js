@@ -6,8 +6,9 @@ const App = (function () {
   const esc = UI.esc;
   const TABS = ['calendar', 'team', 'requests', 'rotation', 'info'];
 
+  const UI_VERSION = 5;   // bump to reset saved tab/view once after a big change
   const state = {
-    tab: 'calendar',
+    tab: 'team',
     viewingId: null,
     cal: { y: 2026, m: 1 },
     selectedDate: null,
@@ -135,7 +136,7 @@ const App = (function () {
       }
       L.code = '';
       if (Store.isRemote()) Store.startPolling();
-      state.tab = Store.isSupervisor() && (Store.get().requests || []).some(function (r) { return r.status === 'pending'; }) ? 'requests' : 'calendar';
+      state.tab = Store.isSupervisor() && (Store.get().requests || []).some(function (r) { return r.status === 'pending'; }) ? 'requests' : 'team';
       render();
     } catch (e) { UI.toast(e.message, 'error'); }
   }
@@ -198,8 +199,13 @@ const App = (function () {
     state.teamLayout = Store.getPref('teamLayout', 'official');
     state.rotSlot = Store.getPref('rotSlot', 1);
     state.viewingId = Store.getPref('viewingId', null);
-    const savedTab = Store.getPref('tab', 'calendar');
-    state.tab = TABS.indexOf(savedTab) !== -1 ? savedTab : 'calendar';
+    state.sheetFit = Store.getPref('sheetFit', true);
+    if (Store.getPref('uiVersion', 0) !== UI_VERSION) {
+      Store.setPref('uiVersion', UI_VERSION); Store.setPref('tab', 'team'); Store.setPref('teamMode', 'month'); Store.setPref('teamLayout', 'official');
+      state.teamMode = 'month'; state.teamLayout = 'official';
+    }
+    const savedTab = Store.getPref('tab', 'team');
+    state.tab = TABS.indexOf(savedTab) !== -1 ? savedTab : 'team';
     const sess = Store.getSession();
     if (sess && !Store.isSupervisor() && sess.employeeId) { state.reqFilter = 'mine'; if (!state.viewingId) state.viewingId = sess.employeeId; }
     if (sess && sess.employeeId && !Engine.getEmployee(sess.employeeId)) Store.clearSession();
