@@ -54,8 +54,9 @@ Views.info = (function () {
     let h = '<div class="card"><h2>Roster <button type="button" class="btn btn-sm" data-action="add-emp">＋ Add</button></h2><div class="list">';
     st.roster.forEach(function (e) {
       if (e.active === false && !showInactive) return;
-      h += '<div class="item' + (e.active === false ? ' muted' : '') + '"><div class="grow"><div class="name">' + esc(e.name) + (e.vacant ? ' <span class="pill pill-muted">vacant</span>' : '') + (e.active === false ? ' <span class="pill pill-muted">inactive</span>' : '') + '</div></div>' +
-        '<select class="select" style="width:auto;min-height:38px" data-change="emp-slot" data-id="' + esc(e.id) + '" aria-label="Slot">' + Engine.slotNumbers().map(function (s) { return '<option value="' + s + '"' + (Number(e.slot) === s ? ' selected' : '') + '>Slot ' + s + '</option>'; }).join('') + '</select>' +
+      h += '<div class="item' + (e.active === false ? ' muted' : '') + '"><div class="grow"><div class="name">' + esc(e.name) + (e.vacant ? ' <span class="pill pill-muted">vacant</span>' : '') + (e.active === false ? ' <span class="pill pill-muted">inactive</span>' : '') + '</div><div class="sub">' + esc(e.group || '') + '</div></div>' +
+        '<select class="select" style="width:auto;min-height:38px" data-change="emp-group" data-id="' + esc(e.id) + '" aria-label="Group">' + Engine.groupOrder().map(function (g) { return '<option value="' + esc(g) + '"' + (Engine.groupCodeOf(e) === g ? ' selected' : '') + '>' + esc(g) + '</option>'; }).join('') + '</select>' +
+        (Engine.isRotating(e) ? '<select class="select" style="width:auto;min-height:38px" data-change="emp-slot" data-id="' + esc(e.id) + '" aria-label="Slot">' + Engine.slotNumbers().map(function (s) { return '<option value="' + s + '"' + (Number(e.slot) === s ? ' selected' : '') + '>Slot ' + s + '</option>'; }).join('') + '</select>' : '') +
         '<button type="button" class="btn btn-sm btn-icon" data-action="emp-menu" data-id="' + esc(e.id) + '" aria-label="More">⋯</button></div>';
     });
     h += '</div><label class="check" style="margin-top:6px"><input type="checkbox" data-change="show-inactive"' + (showInactive ? ' checked' : '') + '> Show inactive</label></div>';
@@ -146,7 +147,7 @@ Views.info = (function () {
         UI.promptDialog({ title: 'Add employee', label: 'Name (Last, First)', okLabel: 'Add' }).then(function (name) {
           if (!name || !name.trim()) return;
           const id = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '-' + Math.random().toString(36).slice(2, 6);
-          Store.mutate(function (d) { d.roster.push({ id: id, name: name.trim(), slot: 1, active: true }); }, { reason: 'roster' }).then(function () { UI.toast('Added — set the slot'); });
+          Store.mutate(function (d) { d.roster.push({ id: id, name: name.trim(), group: Engine.groupOrder()[0], slot: 1, active: true }); }, { reason: 'roster' }).then(function () { UI.toast('Added — set the group and slot'); });
         });
       },
       'emp-menu': function (b) {
@@ -209,6 +210,10 @@ Views.info = (function () {
       'emp-slot': function (sel) {
         const id = sel.dataset.id, slot = Number(sel.value);
         Store.mutate(function (d) { d.roster.forEach(function (r) { if (r.id === id) r.slot = slot; }); }, { reason: 'roster' }).catch(function (e) { UI.toast(e.message, 'error'); });
+      },
+      'emp-group': function (sel) {
+        const id = sel.dataset.id, g = sel.value;
+        Store.mutate(function (d) { d.roster.forEach(function (r) { if (r.id === id) { r.group = g; if (!Engine.groupInfo(g) || Engine.groupInfo(g).kind === 'static') r.slot = 1; } }); }, { reason: 'roster' }).catch(function (e) { UI.toast(e.message, 'error'); });
       },
       'show-inactive': function (cb) { App.state.showInactive = cb.checked; App.render(); },
       cov: function (input) { const t = input.dataset.t, v = Math.max(0, Number(input.value) || 0); mutateCoverage(function (c) { c[t] = Object.assign({ when: 'always' }, c[t] || {}, { min: v }); }); },

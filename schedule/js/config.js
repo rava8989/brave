@@ -224,11 +224,36 @@ const SCHEDULE_CONFIG = {
     '2.5CT':{ label: '2.5 hrs comp time',           kind: 'other', tours: [] },
   },
 
+  /* ---- 2f. Groups on the posted sheet, in print order ----------------
+   * kind 'rotating' uses the six slot patterns above (SHIFT = code.slot).
+   * kind 'static'   works the same week every week: weekly[0] = Sunday.
+   * holidayReplaces: which regular codes become HOL for that group.      */
+  groups: {
+    'LGA_BSS1.1': { label: 'B shift', kind: 'static', weekly: ['RDO', 'B', 'B', 'B', 'B', 'B', 'RDO'], holidayReplaces: ['B'] },
+    'LGA_6RR9':   { label: 'Rotating relief', kind: 'rotating', holidayReplaces: ['B', 'R'] },
+    'LGA_ASS1.1': { label: 'A shift', kind: 'static', weekly: ['RDO', 'A', 'A', 'A', 'A', 'A', 'RDO'], holidayReplaces: ['A'] },
+  },
+
   /* Printed on the paper-format views (swap sheet, monthly labor grid). */
   org: {
-    name: 'THE PORT AUTHORITY OF NY & NJ',
-    groupCode: 'LGA_6RR9',          // SHIFT column reads LGA_6RR9.<slot>
+    nameBold: 'THE PORT AUTHORITY',
+    nameRest: 'OF NY & NJ',
     formRevision: '8/12/2019',      // revision date printed on the request form
+  },
+
+  /* Legend exactly as printed at the foot of the posted sheet (7 columns,
+   * read down each column).                                              */
+  printLegend: {
+    columns: 7,
+    items: [
+      ['A', 'A Shift Hours'], ['JD', 'Jury Duty'], ['UB', 'Union Business'], ['A/B', 'Shift A/B MDW'], ['COMP', 'Comp Time'],
+      ['B', 'B Shift Hours'], ['MDO', 'Mutual Day Off'], ['VAC', 'Vacation'], ['A/C', 'Shift A/C MDW'], ['1.5CT', '1.5 Hrs Comp Time'],
+      ['C', 'C Shift Hours'], ['PE', 'Personal Excuse Day'], ['T', 'Training'], ['B/A', 'Shift B/A MDW'], ['2.5CT', '2.5 Hrs Comp Time'],
+      ['.5VAC', '1/2 Day Vacation'], ['DIF', 'Death In Family'], ['XRF', 'Transferred'], ['B/C', 'Shift B/C MDW'], null,
+      ['E', 'Excess (B Shift)'], ['R', 'Relief'], ['EX', 'Extra Time'], ['C/A', 'Shift C/A MDW'], null,
+      ['FMLA', 'Family Medical Leave Act'], ['RDO', 'Regular Day Off'], ['MED', 'Medical Appt. PA'], ['C/B', 'Shift C/B MDW'], null,
+      ['HOL', 'Holiday'], ['SICK', 'Sick Time'], ['MLT', 'Military Leave'], ['NA', 'Not Available'], null,
+    ],
   },
 
   /* Codes shown first in pickers and in the compact legend.            */
@@ -243,22 +268,45 @@ const SCHEDULE_CONFIG = {
 };
 
 /* ---------------------------------------------------------------------
- * 3. ROSTER — the rotating group as posted (LGA_6RR9.x)
+ * 3. ROSTER — everyone on the posted sheet, in sheet order
  *    id must be stable (it is used as the key for overrides/requests).
+ *    Static-group people all show slot 1, as printed.
  * ------------------------------------------------------------------- */
 const ROSTER = [
-  { id: 'kingston-j',   name: 'Kingston, Joseph C.',   slot: 1 },
-  { id: 'rodriguez-r',  name: 'Rodriguez, Roger',      slot: 1 },
-  { id: 'joseph-g',     name: 'Joseph, George R',      slot: 2 },
-  { id: 'vacant-2',     name: 'VACANT - Ashram',       slot: 2, vacant: true },
-  { id: 'rivers-n',     name: 'Rivers, Nigel',         slot: 3 },
-  { id: 'victoria-r',   name: 'Victoria, Robert',      slot: 3 },
-  { id: 'bouaziz-a',    name: 'Bouaziz, Abdelghani',   slot: 4 },
-  { id: 'gragossian-a', name: 'Gragossian, Alan',      slot: 4 },
-  { id: 'handel-j',     name: 'Handel, Joseph',        slot: 5 },
-  { id: 'rakhmanov-r',  name: 'Rakhmanov, Ravshan',    slot: 5 },
-  { id: 'huang-d',      name: 'Huang, Denny',          slot: 6 },
-  { id: 'svenjak-m',    name: 'Svenjak, Mark',         slot: 6 },
+  /* LGA_BSS1.1 — B shift, Mon–Fri */
+  { id: 'ahmed-n',        name: 'Ahmed, Naib',               group: 'LGA_BSS1.1', slot: 1 },
+  { id: 'atolagbe-a',     name: 'Atolagbe, Abiodun O.',      group: 'LGA_BSS1.1', slot: 1 },
+  { id: 'koronkiewicz-p', name: 'Koronkiewicz, Przemyslaw',  group: 'LGA_BSS1.1', slot: 1 },
+  { id: 'ling-r',         name: 'Ling, Raymond K',           group: 'LGA_BSS1.1', slot: 1 },
+  { id: 'marszalek-c',    name: 'Marszalek, Casimir D',      group: 'LGA_BSS1.1', slot: 1 },
+  { id: 'min-d',          name: 'Min, Dae K',                group: 'LGA_BSS1.1', slot: 1 },
+  { id: 'mitchell-d',     name: 'Mitchell II, Dale H.',      group: 'LGA_BSS1.1', slot: 1 },
+  { id: 'rickman-d',      name: "Rickman, Deu'Wayne E",      group: 'LGA_BSS1.1', slot: 1 },
+  { id: 'son-s',          name: 'Son, Seung Hyon',           group: 'LGA_BSS1.1', slot: 1 },
+  { id: 'thompson-t',     name: 'Thompson, Timothy J',       group: 'LGA_BSS1.1', slot: 1 },
+  { id: 'thorpe-o',       name: 'Thorpe, Oniel C.',          group: 'LGA_BSS1.1', slot: 1 },
+  /* LGA_6RR9 — six-slot rotation */
+  { id: 'kingston-j',     name: 'Kingston, Joseph C.',       group: 'LGA_6RR9', slot: 1 },
+  { id: 'rodriguez-r',    name: 'Rodriguez, Roger',          group: 'LGA_6RR9', slot: 1 },
+  { id: 'joseph-g',       name: 'Joseph, George R',          group: 'LGA_6RR9', slot: 2 },
+  { id: 'vacant-2',       name: 'VACANT - Ashram',           group: 'LGA_6RR9', slot: 2, vacant: true },
+  { id: 'rivers-n',       name: 'Rivers, Nigel',             group: 'LGA_6RR9', slot: 3 },
+  { id: 'victoria-r',     name: 'Victoria, Robert',          group: 'LGA_6RR9', slot: 3 },
+  { id: 'bouaziz-a',      name: 'Bouaziz, Abdelghani',       group: 'LGA_6RR9', slot: 4 },
+  { id: 'gragossian-a',   name: 'Gragossian, Alan',          group: 'LGA_6RR9', slot: 4 },
+  { id: 'handel-j',       name: 'Handel, Joseph',            group: 'LGA_6RR9', slot: 5 },
+  { id: 'rakhmanov-r',    name: 'Rakhmanov, Ravshan',        group: 'LGA_6RR9', slot: 5 },
+  { id: 'huang-d',        name: 'Huang, Denny',              group: 'LGA_6RR9', slot: 6 },
+  { id: 'svenjak-m',      name: 'Svenjak, Mark',             group: 'LGA_6RR9', slot: 6 },
+  /* LGA_ASS1.1 — A shift, Mon–Fri */
+  { id: 'adjepong-n',     name: 'Adjepong, Nicholas D',      group: 'LGA_ASS1.1', slot: 1 },
+  { id: 'duran-h',        name: 'Duran, Hugo A',             group: 'LGA_ASS1.1', slot: 1 },
+  { id: 'gapa-m',         name: 'Gapa, Marcel',              group: 'LGA_ASS1.1', slot: 1 },
+  { id: 'grassi-g',       name: 'Grassi Jr., Guiseppi',      group: 'LGA_ASS1.1', slot: 1 },
+  { id: 'rakhmanov-a',    name: 'Rakhmanov, Alisher',        group: 'LGA_ASS1.1', slot: 1 },
+  { id: 'ramnarine-a',    name: 'Ramnarine, Ashram',         group: 'LGA_ASS1.1', slot: 1 },
+  { id: 'rodriguez-a',    name: 'Rodriguez, Alexander',      group: 'LGA_ASS1.1', slot: 1 },
+  { id: 'segovia-e',      name: 'Segovia, Eduardo M',        group: 'LGA_ASS1.1', slot: 1 },
 ];
 
 /* Node test harness support (ignored by the browser). */

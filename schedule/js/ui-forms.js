@@ -90,43 +90,60 @@ const Forms = (function () {
       '</div>';
   }
 
-  /* The posted monthly grid: NAME | SHIFT | SLOT | 1..N, gray RDO cells,
-   * red for holidays and for anything changed from the rotation.       */
+  /* The posted monthly grid: one boxed block per group (B shift, rotating,
+   * A shift), NAME | SHIFT | SLOT | 1..N, dark RDO cells, black for the
+   * regular code and red for anything else, the printed legend, page no. */
   function laborScheduleHTML(y, m) {
     const dim = Engine.daysInMonth(y, m);
     const prefix = y + '-' + (m < 10 ? '0' : '') + m + '-';
     const o = org();
-    const roster = Engine.activeRoster().slice().sort(function (a, b) { return a.slot - b.slot || a.name.localeCompare(b.name); });
     const now = new Date();
-    let h = '<div class="olabor"><div class="ol-head"><div class="ol-brand">' + esc(o.name || '') + '</div>' +
-      '<div class="ol-title">MONTHLY LABOR SCHEDULE<span>Month of ' + esc(Engine.monthLabel(y, m)) + '</span></div>' +
-      '<div class="ol-print">Print Date ' + esc(now.toLocaleString([], { dateStyle: 'long', timeStyle: 'medium' })) + '</div></div>';
-    h += '<table class="ol-grid"><thead><tr><th class="nm">NAME</th><th>SHIFT</th><th>SLOT</th>';
     const days = [];
-    for (let d = 1; d <= dim; d++) {
-      const iso = prefix + (d < 10 ? '0' : '') + d;
-      days.push(iso);
-      h += '<th class="' + (Engine.isWeekend(iso) ? 'we' : '') + '">' + d + '<small>' + Engine.WEEKDAYS[Engine.weekday(iso)] + '</small></th>';
-    }
-    h += '</tr></thead><tbody>';
-    let last = null;
-    roster.forEach(function (e) {
-      h += '<tr class="' + (last !== null && e.slot !== last ? 'slot-start' : '') + '"><td class="nm">' + esc(e.name) + '</td>' +
-        '<td>' + esc((o.groupCode ? o.groupCode + '.' : '') + e.slot) + '</td><td>' + esc(e.slot) + '</td>';
-      last = e.slot;
-      days.forEach(function (iso) {
-        const s = Engine.getScheduleForDate(iso, { employeeId: e.id });
-        const cls = [];
-        if (Engine.isWeekend(iso)) cls.push('we');
-        if (s.code === 'RDO') cls.push('off');
-        if (s.source === 'exception' || ['A', 'B', 'C', 'R', 'RDO'].indexOf(s.code) === -1) cls.push('chg');
-        h += '<td class="' + cls.join(' ') + '">' + esc(s.code || '') + '</td>';
-      });
-      h += '</tr>';
+    for (let d = 1; d <= dim; d++) days.push(prefix + (d < 10 ? '0' : '') + d);
+    let h = '<div class="olabor"><div class="ol-head"><div class="ol-brand"><b>' + esc(o.nameBold || o.name || '') + '</b> ' + esc(o.nameRest || '') + '</div>' +
+      '<div class="ol-title">MONTHLY LABOR SCHEDULE<span>Month of ' + esc(Engine.monthLabel(y, m)) + '</span></div>' +
+      '<div class="ol-print">Print Date <u>' + esc(now.toLocaleString([], { dateStyle: 'long', timeStyle: 'medium' })) + '</u></div></div>';
+    h += '<table class="ol-grid"><thead><tr><th class="nm">NAME</th><th class="sh">SHIFT</th><th class="sl">SLOT</th>';
+    days.forEach(function (iso, i) {
+      h += '<th class="dy' + (Engine.isWeekend(iso) ? ' we' : '') + '">' + (i + 1) + '<small>' + Engine.WEEKDAYS[Engine.weekday(iso)] + '</small></th>';
     });
-    h += '</tbody></table>';
-    const codes = Engine.getConfig().codes;
-    h += '<div class="ol-legend"><b>LEGEND:</b>' + Object.keys(codes).map(function (c) { return '<span><b>' + esc(c) + '</b> - ' + esc(codes[c].label) + '</span>'; }).join('') + '</div></div>';
+    h += '</tr></thead>';
+    const roster = Engine.rosterSorted();
+    Engine.groupOrder().forEach(function (g, gi) {
+      const people = roster.filter(function (e) { return Engine.groupCodeOf(e) === g; });
+      if (!people.length) return;
+      if (gi > 0) h += '<tbody class="gap"><tr><td colspan="' + (days.length + 3) + '"></td></tr></tbody>';
+      h += '<tbody class="grp">';
+      people.forEach(function (e) {
+        h += '<tr><td class="nm">' + esc(e.name) + '</td><td class="sh">' + esc(Engine.shiftCode(e)) + '</td><td class="sl">' + esc(e.slot) + '</td>';
+        days.forEach(function (iso) {
+          const s = Engine.getScheduleForDate(iso, { employeeId: e.id });
+          const cls = [];
+          if (s.code === 'RDO') cls.push('off');
+          else if (s.source === 'exception' || ['A', 'B', 'C', 'R'].indexOf(s.code) === -1) cls.push('chg');
+          h += '<td class="' + cls.join(' ') + '">' + esc(s.code || '') + '</td>';
+        });
+        h += '</tr>';
+      });
+      h += '</tbody>';
+    });
+    h += '</table>';
+    const legend = SCHEDULE_CONFIG.printLegend;
+    if (legend && legend.items) {
+      const cols = legend.columns || 7;
+      const rows = Math.ceil(legend.items.length / cols);
+      h += '<div class="ol-legend"><b>LEGEND:</b><table class="ol-legend-t"><tbody>';
+      for (let r = 0; r < rows; r++) {
+        h += '<tr>';
+        for (let c = 0; c < cols; c++) {
+          const it = legend.items[c * rows + r];
+          h += '<td>' + (it ? esc(it[0]) + ' - ' + esc(it[1]) : '') + '</td>';
+        }
+        h += '</tr>';
+      }
+      h += '</tbody></table></div>';
+    }
+    h += '<div class="ol-foot">1 / 1</div></div>';
     return h;
   }
 

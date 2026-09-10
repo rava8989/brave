@@ -198,9 +198,9 @@ Views.requests = (function () {
     if (n.step === 2) {
       h += '<h2>Swap with whom?</h2><p class="muted" style="font-size:.85rem">Showing what each coworker works on ' + esc(n.dates[0] ? Engine.formatShort(n.dates[0]) : 'today') + '.</p><div class="list">';
       const ref = n.dates[0] || Engine.todayISO();
-      Engine.activeRoster().filter(function (e) { return e.id !== n.employeeId && !e.vacant; }).forEach(function (e) {
+      Engine.rosterSorted().filter(function (e) { return e.id !== n.employeeId && !e.vacant; }).forEach(function (e) {
         const c = Engine.getScheduleForDate(ref, { employeeId: e.id }).code;
-        h += '<div class="item clickable' + (n.partner === e.id ? ' selected' : '') + '" data-action="partner" data-id="' + esc(e.id) + '"><div class="grow"><div class="name">' + esc(e.name) + '</div><div class="sub">slot ' + e.slot + '</div></div>' + chip(c, 'sm') + '</div>';
+        h += '<div class="item clickable' + (n.partner === e.id ? ' selected' : '') + '" data-action="partner" data-id="' + esc(e.id) + '"><div class="grow"><div class="name">' + esc(e.name) + '</div><div class="sub">' + esc(Engine.shiftCode(e)) + '</div></div>' + chip(c, 'sm') + '</div>';
       });
       h += '</div>' + navButtons(n, 'Next ›', !!n.partner);
     }
@@ -356,18 +356,37 @@ Views.requests = (function () {
     return out;
   }
 
-  function matchEmployee(name) {
+  /* Handwritten names are usually "R. Rakhmanov" or just "Bouaziz". Match on
+   * the surname, use an initial / first name to tell namesakes apart, and
+   * when a bare surname is still ambiguous prefer the person whose sheet
+   * this is (preferId = the signed-in worker).                          */
+  function matchEmployee(name, preferId) {
     if (!name) return null;
-    const q = String(name).toLowerCase().replace(/[^a-z]/g, '');
-    if (!q) return null;
-    const roster = Engine.activeRoster();
-    const exact = roster.filter(function (e) { return e.name.toLowerCase().replace(/[^a-z]/g, '') === q; });
+    const clean = String(name).toLowerCase().replace(/[^a-z\s,.]/g, ' ');
+    const tokens = clean.split(/[\s,.]+/).filter(Boolean);
+    if (!tokens.length) return null;
+    const roster = Engine.activeRoster().filter(function (e) { return !e.vacant; });
+    function parts(e) {
+      const p = e.name.toLowerCase().split(',');
+      return { last: p[0].replace(/[^a-z]/g, ''), first: (p[1] || '').trim().replace(/[^a-z\s]/g, '').split(/\s+/).filter(Boolean) };
+    }
+    const joined = tokens.join('');
+    const exact = roster.filter(function (e) { return e.name.toLowerCase().replace(/[^a-z]/g, '') === joined; });
     if (exact.length === 1) return exact[0].id;
-    const hits = roster.filter(function (e) {
-      const last = e.name.split(',')[0].toLowerCase().replace(/[^a-z]/g, '');
-      const full = e.name.toLowerCase().replace(/[^a-z]/g, '');
-      return last && (q.indexOf(last) !== -1 || last.indexOf(q) !== -1 || full.indexOf(q) !== -1);
+    let hits = roster.filter(function (e) {
+      const last = parts(e).last;
+      return last && tokens.some(function (t) { return t.length >= 3 && (t === last || last.indexOf(t) === 0 || t.indexOf(last) === 0); });
     });
+    if (hits.length > 1) {
+      const rest = tokens.filter(function (t) { return !hits.some(function (e) { const l = parts(e).last; return t === l || l.indexOf(t) === 0 || t.indexOf(l) === 0; }); });
+      if (rest.length) {
+        const narrowed = hits.filter(function (e) {
+          return parts(e).first.some(function (f) { return rest.some(function (t) { return f.indexOf(t) === 0 || t.indexOf(f) === 0; }); });
+        });
+        if (narrowed.length) hits = narrowed;
+      }
+      if (hits.length > 1 && preferId && hits.some(function (e) { return e.id === preferId; })) hits = hits.filter(function (e) { return e.id === preferId; });
+    }
     return hits.length === 1 ? hits[0].id : null;
   }
 
@@ -378,7 +397,7 @@ Views.requests = (function () {
     const ids = [];
     const items = [];
     (parsed.changes || []).forEach(function (c) {
-      const id = c.employeeId && Engine.getEmployee(c.employeeId) ? c.employeeId : matchEmployee(c.name);
+      const id = c.employeeId && Engine.getEmployee(c.employeeId) ? c.employeeId : matchEmployee(c.name, n.employeeId);
       if (!id) { notes.push('Could not match the name “' + (c.name || '?') + '” to the roster (' + (c.date || '?') + ').'); return; }
       if (!Engine.isValidISO(c.date)) { notes.push('Unreadable date for ' + UI.empShort(id) + ': “' + (c.date || '?') + '”.'); return; }
       const to = String(c.to || '').toUpperCase().replace(/\s+/g, '');

@@ -198,8 +198,7 @@ const Swaps = (function () {
     if (decision.status === 'approved') {
       draft.exceptions = draft.exceptions || {};
       req.changes.forEach(function (c) {
-        const slot = E.getSlotForDate(c.date, c.employeeId);
-        const rotation = slot ? E.getRotationCode(c.date, slot) : null;
+        const rotation = E.getRegularCode(c.date, c.employeeId);
         const day = draft.exceptions[c.date] || (draft.exceptions[c.date] = {});
         if (c.to === rotation) {
           delete day[c.employeeId];                     // back to the rotation → no override needed
@@ -219,8 +218,7 @@ const Swaps = (function () {
   /* Supervisor manual override of one cell (not tied to a request). */
   function setOverride(draft, date, employeeId, code, meta) {
     draft.exceptions = draft.exceptions || {};
-    const slot = E.getSlotForDate(date, employeeId);
-    const rotation = slot ? E.getRotationCode(date, slot) : null;
+    const rotation = E.getRegularCode(date, employeeId);
     const day = draft.exceptions[date] || (draft.exceptions[date] = {});
     if (!code || code === rotation) {
       delete day[employeeId];

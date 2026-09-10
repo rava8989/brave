@@ -5,9 +5,11 @@ built-in swap / time-off request workflow:
 
 * **Calendar** – today's shift, tomorrow, next work day, next RDO, and a
   month calendar for any person, 12+ months forward and back.
-* **Team** – who is on A / B / C / R and who is off on any day, "who could
-  cover for me" suggestions, and the full monthly labor grid in the same
-  layout as the sheet on the wall.
+* **Schedule** – opens on the MONTHLY LABOR SCHEDULE exactly as posted: all
+  three groups (B shift, rotating, A shift) boxed in sheet order, dark RDO
+  cells, red for anything irregular, the printed legend, one landscape page
+  when printed. A colour view (supervisors tap any cell to change it) and a
+  day view with "who could cover for me" are one tap away.
 * **Requests** – a worker photographs the signed paper "TIME OFF OR SHIFT
   CHANGE REQUEST" sheet, the app reads it and fills the request in (or the
   worker taps it in by hand), shows it back as the official form with the
@@ -219,7 +221,9 @@ Everything editable is in `js/config.js`:
 | `SCHEDULE_CONFIG.codes` | every code, its meaning, which tours it covers |
 | `SCHEDULE_CONFIG.org` | agency name, group code (SHIFT column) and form revision printed on the paper-format views |
 | `SCHEDULE_CONFIG.exceptions` | per-date overrides shipped with the site (normally empty) |
-| `ROSTER` | employees and slots |
+| `SCHEDULE_CONFIG.groups` | the three blocks on the sheet: LGA_BSS1.1 (B shift Mon–Fri), LGA_6RR9 (rotating slots), LGA_ASS1.1 (A shift Mon–Fri), each with its own holiday rule |
+| `SCHEDULE_CONFIG.printLegend` | the legend exactly as printed on the sheet |
+| `ROSTER` | everyone on the sheet: id, name, group, slot |
 
 Formula used by the engine (`js/engine.js`):
 

@@ -89,14 +89,19 @@ const App = (function () {
     tabbar.hidden = true; chipEl.hidden = true; brandSub.textContent = 'Sign in';
     const L = state.login;
     const remote = Store.isRemote();
-    const people = Engine.activeRoster().filter(function (e) { return !e.vacant; });
+    const people = Engine.rosterSorted().filter(function (e) { return !e.vacant; });
     let h = '<div class="login"><div class="logo">📅</div><h1>' + esc(APP_CONFIG.appName) + '</h1><p class="sub">' + (remote ? 'Shared schedule — enter your access code' : 'Who is using this phone?') + '</p>';
     h += '<div class="seg grow" style="margin-bottom:12px"><button type="button" class="' + (L.role === 'worker' ? 'active' : '') + '" data-action="role" data-role="worker">I’m a worker</button>' +
       '<button type="button" class="' + (L.role === 'supervisor' ? 'active' : '') + '" data-action="role" data-role="supervisor">Supervisor</button></div>';
     if (L.role === 'worker') {
-      h += '<div class="who-list">' + people.map(function (e) {
-        return '<button type="button" class="' + (L.employeeId === e.id ? 'on' : '') + '" data-action="pick-me" data-id="' + esc(e.id) + '">' + esc(e.name) + '<small>slot ' + e.slot + '</small></button>';
-      }).join('') + '</div>';
+      h += '<div class="who-list">';
+      let lastGroup = null;
+      people.forEach(function (e) {
+        const g = Engine.groupCodeOf(e);
+        if (g !== lastGroup) { const gi = Engine.groupInfo(g); h += '<div class="who-group">' + esc(g) + (gi && gi.label ? ' · ' + esc(gi.label) : '') + '</div>'; lastGroup = g; }
+        h += '<button type="button" class="' + (L.employeeId === e.id ? 'on' : '') + '" data-action="pick-me" data-id="' + esc(e.id) + '">' + esc(e.name) + '<small>' + esc(Engine.shiftCode(e)) + '</small></button>';
+      });
+      h += '</div>';
       if (remote) h += '<label class="field" style="margin-top:12px">Worker access code<input class="input" type="password" data-input="code" autocomplete="off" value="' + esc(L.code || '') + '"></label>';
       h += '<button type="button" class="btn btn-primary btn-block" style="margin-top:12px" data-action="login"' + (L.employeeId ? '' : ' disabled') + '>Continue</button>';
     } else {

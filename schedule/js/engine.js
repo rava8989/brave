@@ -123,9 +123,12 @@ const Engine = (function () {
       primaryCodes: input.primaryCodes || Object.keys(input.codes || {}),
       exceptions: input.exceptions || {},
       roster: input.roster || [],
+      groups: input.groups && Object.keys(input.groups).length ? input.groups : { ROTATING: { label: 'Rotating', kind: 'rotating' } },
     };
     cfg.rosterIndex = {};
     cfg.roster.forEach(function (e) { cfg.rosterIndex[e.id] = e; });
+    cfg.groupOrder = Object.keys(cfg.groups);
+    cfg.defaultGroup = cfg.groupOrder.filter(function (g) { return cfg.groups[g].kind === 'rotating'; })[0] || cfg.groupOrder[0];
     return cfg;
   }
   function getConfig() { return cfg; }
@@ -155,8 +158,29 @@ const Engine = (function () {
     assertConfigured();
     return cfg.roster.filter(function (e) { return e.active !== false; });
   }
+  function groupOf(emp) {
+    if (!emp) return cfg.groups[cfg.defaultGroup];
+    return cfg.groups[emp.group] || cfg.groups[cfg.defaultGroup];
+  }
+  function groupCodeOf(emp) { return emp && cfg.groups[emp.group] ? emp.group : cfg.defaultGroup; }
+  function isRotating(emp) { return groupOf(emp).kind !== 'static'; }
+  function groupOrder() { assertConfigured(); return cfg.groupOrder.slice(); }
+  function groupInfo(code) { assertConfigured(); return cfg.groups[code] || null; }
+  /* SHIFT column as printed: LGA_6RR9.5 for a rotating slot, LGA_BSS1.1 for a static group. */
+  function shiftCode(emp) {
+    const g = groupCodeOf(emp);
+    return isRotating(emp) ? g + '.' + emp.slot : g;
+  }
+  /* Roster in sheet order: group order, then slot, then name. */
+  function rosterSorted() {
+    const order = cfg.groupOrder;
+    return activeRoster().slice().sort(function (a, b) {
+      const ga = order.indexOf(groupCodeOf(a)), gb = order.indexOf(groupCodeOf(b));
+      return (ga - gb) || (Number(a.slot) - Number(b.slot)) || a.name.localeCompare(b.name);
+    });
+  }
   function employeesInSlot(slot) {
-    return activeRoster().filter(function (e) { return Number(e.slot) === Number(slot); });
+    return activeRoster().filter(function (e) { return isRotating(e) && Number(e.slot) === Number(slot); });
   }
   function slotNumbers() {
     assertConfigured();
@@ -196,6 +220,20 @@ const Engine = (function () {
     if (holiday && base && cfg.holidayRule.replaces.indexOf(base) !== -1) return 'HOL';
     return base;
   }
+  /* A person's regular code before exceptions: static weekly pattern or
+   * rotation slot, then that group's holiday rule.                      */
+  function getRegularParts(iso, employeeId) {
+    const emp = getEmployee(employeeId);
+    const g = groupOf(emp);
+    let base = null;
+    if (g.kind === 'static' && Array.isArray(g.weekly)) base = g.weekly[weekday(iso)] || null;
+    else if (emp) base = getBaseCode(iso, Number(emp.slot));
+    const holiday = getHoliday(iso);
+    const replaces = g.holidayReplaces || cfg.holidayRule.replaces;
+    const code = holiday && base && replaces.indexOf(base) !== -1 ? 'HOL' : base;
+    return { base: base, code: code };
+  }
+  function getRegularCode(iso, employeeId) { return getRegularParts(iso, employeeId).code; }
 
   function resolveWho(who) {
     if (!who) return { employeeId: null, slot: null, employee: null };
@@ -210,9 +248,10 @@ const Engine = (function () {
   function getScheduleForDate(iso, who) {
     assertConfigured();
     const w = resolveWho(who);
-    const base = w.slot ? getBaseCode(iso, w.slot) : null;
+    let base, rotationCode;
+    if (w.employee) { const p = getRegularParts(iso, w.employeeId); base = p.base; rotationCode = p.code; }
+    else { base = w.slot ? getBaseCode(iso, w.slot) : null; rotationCode = w.slot ? getRotationCode(iso, w.slot) : null; }
     const holiday = getHoliday(iso);
-    const rotationCode = w.slot ? getRotationCode(iso, w.slot) : null;
     const exception = getExceptionForDate(iso, w.employeeId);
     let code = rotationCode;
     let source = 'rotation';
@@ -225,6 +264,7 @@ const Engine = (function () {
       weekdayName: WEEKDAYS[weekday(iso)],
       employeeId: w.employeeId,
       employee: w.employee,
+      group: w.employee ? groupCodeOf(w.employee) : null,
       slot: w.slot,
       cycleIndex: getCycleIndex(iso),
       base: base,
@@ -350,9 +390,10 @@ const Engine = (function () {
     formatLong: formatLong, formatShort: formatShort, formatDayMonth: formatDayMonth,
     getMonthMatrix: getMonthMatrix,
     codeMeta: codeMeta, tours: tours, isWork: isWork, isOff: isOff, isDouble: isDouble, allCodes: allCodes,
-    getEmployee: getEmployee, activeRoster: activeRoster, employeesInSlot: employeesInSlot, slotNumbers: slotNumbers,
+    getEmployee: getEmployee, activeRoster: activeRoster, rosterSorted: rosterSorted, employeesInSlot: employeesInSlot, slotNumbers: slotNumbers,
+    groupOf: groupOf, groupCodeOf: groupCodeOf, isRotating: isRotating, groupOrder: groupOrder, groupInfo: groupInfo, shiftCode: shiftCode,
     getCycleIndex: getCycleIndex, getSlotForDate: getSlotForDate, getBaseCode: getBaseCode,
-    getRotationCode: getRotationCode, getHoliday: getHoliday, getExceptionForDate: getExceptionForDate,
+    getRotationCode: getRotationCode, getRegularCode: getRegularCode, getHoliday: getHoliday, getExceptionForDate: getExceptionForDate,
     getScheduleForDate: getScheduleForDate, getShiftForDate: getShiftForDate,
     getRange: getRange, findNext: findNext,
     checkCoverage: checkCoverage, getDaySummary: getDaySummary, workStreakAround: workStreakAround,
