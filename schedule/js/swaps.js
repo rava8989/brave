@@ -81,7 +81,7 @@ const Swaps = (function () {
     const dates = affectedDates(req);
     const span = dates.length === 1 ? E.formatDayMonth(dates[0])
       : dates.length ? E.formatDayMonth(dates[0]) + ' – ' + E.formatDayMonth(dates[dates.length - 1]) + ' (' + dates.length + ' days)' : 'no dates';
-    const kind = req.type === 'swap' ? 'Swap' : req.type === 'timeoff' ? 'Time off' : 'Shift change';
+    const kind = req.type === 'swap' ? 'Swap' : req.type === 'timeoff' ? 'Time off' : 'Change';
     return kind + ': ' + who + ' · ' + span;
   }
 
