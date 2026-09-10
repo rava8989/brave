@@ -93,8 +93,9 @@ Other things to confirm:
 
 * **Holidays** (`SCHEDULE_CONFIG.holidays`): only Labor Day and Columbus
   Day 2026 were visible on the sheets (`verified: true`). The rest are the
-  standard observed dates – check Independence Day, Election Day and the
-  day after Thanksgiving against the agency calendar. Edit under
+  standard observed dates plus the day after Thanksgiving (crew-confirmed);
+  Election Day is not observed. Check Independence Day and Juneteenth
+  observance dates against the agency calendar. Edit under
   **Info → Holidays** or in the file.
 * **Holiday rule**: A and C keep working. R becomes HOL. For B it depends
   on which block you are in: on a Mon/Tue/Thu/Fri holiday the crew whose B
