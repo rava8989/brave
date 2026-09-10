@@ -2,19 +2,19 @@
 // Every page includes:  <script src="nav.js?v=..." defer></script>
 // Edit the PAGES list HERE only; never inline per-page copies (CLAUDE.md rule 2 spirit).
 (function () {
-  const PAGES = [
+  const PAGES = [   // owner 2026-09-10: live pages first, research + backtesters last
     ['index.html',                 '⌂ Dashboard'],
     ['live.html',                  '● Live'],
+    ['gex.html',                   'Γ GEX'],
     ['history.html',               '☰ History'],
+    ['spreads.html',               '⇄ Spreads'],
+    ['magnetfly.html',             '🧲 PNBF'],
+    ['earnings-play.html',         '🌙 Earnings'],
+    ['cyclicality.html',           '◐ CycleLab'],
     ['backtester.html',            'M8BF BT'],
     ['gxbf-backtester.html',       'GXBF BT'],
     ['diagonal.html',              '◢ Diagonal'],
     ['multi-strategy-tester.html', '⊞ Multi'],
-    ['cyclicality.html',           '◐ CycleLab'],
-    ['gex.html',                   'Γ GEX'],
-    ['earnings-play.html',         '🌙 Earnings'],
-    ['magnetfly.html',             '🧲 PNBF'],
-    ['spreads.html',               '⇄ Spreads'],
   ];
   function build() {
     const here = (location.pathname.split('/').pop() || 'index.html');
