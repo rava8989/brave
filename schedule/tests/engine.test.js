@@ -82,14 +82,13 @@ eq(code('2026-09-07', 'rakhmanov-r'), 'A',   'Rakhmanov Sep 7 (Labor Day) stays 
 eq(code('2026-09-08', 'rakhmanov-r'), 'A/C', 'Rakhmanov Sep 8 = A/C');
 eq(code('2026-09-09', 'rakhmanov-r'), 'A',   'Rakhmanov Sep 9 = A');
 eq(code('2026-09-10', 'rakhmanov-r'), 'MDO', 'Rakhmanov Sep 10 = MDO');
-eq(code('2026-09-25', 'rakhmanov-r'), 'B',   'Rakhmanov Sep 25 = B');
+eq(code('2026-09-25', 'rakhmanov-r'), 'R',   'Rakhmanov Sep 25 = R (R block is Mon–Fri)');
 eq(code('2026-09-28', 'rakhmanov-r'), 'RDO', 'Rakhmanov Sep 28 = RDO');
 eq(code('2026-09-29', 'rakhmanov-r'), 'MDO', 'Rakhmanov Sep 29 = MDO');
 eq(code('2026-09-30', 'rakhmanov-r'), 'C',   'Rakhmanov Sep 30 = C');
 eq(code('2026-10-01', 'rakhmanov-r'), 'C/A', 'Rakhmanov Oct 1 = C/A');
 eq(code('2026-10-05', 'rakhmanov-r'), 'C',   'Rakhmanov Oct 5 = C');
 eq(code('2026-10-06', 'rakhmanov-r'), 'RDO', 'Rakhmanov Oct 6 = RDO');
-eq(code('2026-10-12', 'rakhmanov-r'), 'HOL', 'Rakhmanov Columbus Day = HOL (B day)');
 // Bouaziz (slot 4) — September swap sheet
 eq(code('2026-09-02', 'bouaziz-a'), 'RDO', 'Bouaziz Sep 2 = RDO');
 eq(code('2026-09-04', 'bouaziz-a'), 'B',   'Bouaziz Sep 4 = B');
@@ -106,6 +105,15 @@ eq(code('2026-10-19', 'kingston-j'), 'R',   'Kingston Oct 19 = R');
 eq(code('2026-10-27', 'kingston-j'), 'MDO', 'Kingston Oct 27 = MDO');
 eq(code('2026-10-29', 'kingston-j'), 'C/A', 'Kingston Oct 29 = C/A');
 eq(code('2026-09-07', 'kingston-j'), 'HOL', 'Kingston Labor Day = HOL (R day)');
+// Holiday on a B tour: the crew whose B block runs through the weekend works Mon/Tue/Thu/Fri holidays
+eq(code('2026-09-07', 'bouaziz-a'), 'B',    'Bouaziz (Fri–Tue B block) works Labor Day');
+eq(code('2026-10-12', 'rakhmanov-r'), 'B',  'Rakhmanov (Fri–Tue B block) works Columbus Day');
+eq(code('2026-10-12', 'kingston-j'), 'HOL', 'Kingston (Mon–Fri B block) gets Columbus Day off');
+// Wednesday holiday: the Mon–Fri crew works it (slot 1 is on its Mon–Fri B block on Wed Feb 4 2026)
+Engine.configure(freshConfig({ holidays: [{ date: '2026-02-04', name: 'Test Wednesday' }] }));
+eq(code('2026-02-04', 'kingston-j'), 'B',   'Mon–Fri B crew works a Wednesday holiday');
+eq(code('2026-02-04', 'ahmed-n'), 'HOL',    'static B crew still gets a Wednesday holiday off');
+Engine.configure(freshConfig());
 // Joseph (slot 2) — October posted schedule starts MDO RDO RDO RDO B ...
 eq(code('2026-10-01', 'joseph-g'), 'MDO', 'Joseph Oct 1 = MDO');
 eq(code('2026-10-05', 'joseph-g'), 'B',   'Joseph Oct 5 = B');
@@ -142,12 +150,14 @@ eq([vac.coverage.counts.A, vac.coverage.counts.C, vac.coverage.issues.length], [
 /* ---------- holidays / exceptions / source ---------- */
 let s = Engine.getScheduleForDate('2026-10-12', { employeeId: 'kingston-j' });
 eq([s.base, s.code, s.source, !!s.holiday], ['B', 'HOL', 'holiday', true], 'holiday replaces B and is flagged');
+s = Engine.getScheduleForDate('2026-10-12', { employeeId: 'rakhmanov-r' });
+eq([s.base, s.code, s.source], ['B', 'B', 'rotation'], 'weekend B crew keeps working on the holiday');
 s = Engine.getScheduleForDate('2026-10-12', { employeeId: 'huang-d' });
 eq([s.base, s.code, s.source], ['A', 'A', 'rotation'], 'A tour works on the holiday');
 Engine.configure(freshConfig({ exceptions: { '2026-09-25': { 'rakhmanov-r': { code: 'HOL', note: 'swap' } } } }));
 s = Engine.getScheduleForDate('2026-09-25', { employeeId: 'rakhmanov-r' });
-eq([s.base, s.code, s.source], ['B', 'HOL', 'exception'], 'exception overrides rotation');
-eq(code('2026-09-25', 'handel-j'), 'B', 'exception is per employee, not per slot');
+eq([s.base, s.code, s.source], ['R', 'HOL', 'exception'], 'exception overrides rotation');
+eq(code('2026-09-25', 'handel-j'), 'R', 'exception is per employee, not per slot');
 Engine.configure(freshConfig());
 
 /* ---------- findNext ---------- */

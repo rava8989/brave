@@ -222,6 +222,18 @@ const Engine = (function () {
   }
   /* A person's regular code before exceptions: static weekly pattern or
    * rotation slot, then that group's holiday rule.                      */
+  /* Does the run of identical codes around cycle index idx include a
+   * Saturday or Sunday? (Weekday of index i is fixed by the reference date.) */
+  function blockTouchesWeekend(pattern, idx) {
+    const n = pattern.length;
+    const code = pattern[idx];
+    const refWd = weekday(cfg.rotation.referenceDate);
+    function wdAt(i) { return (refWd + ((i % n) + n) % n) % 7; }
+    if (wdAt(idx) === 0 || wdAt(idx) === 6) return true;
+    for (let d = 1; d < n; d++) { const i = (idx + d) % n; if (pattern[i] !== code) break; if (wdAt(i) === 0 || wdAt(i) === 6) return true; }
+    for (let d = 1; d < n; d++) { const i = ((idx - d) % n + n) % n; if (pattern[i] !== code) break; if (wdAt(i) === 0 || wdAt(i) === 6) return true; }
+    return false;
+  }
   function getRegularParts(iso, employeeId) {
     const emp = getEmployee(employeeId);
     const g = groupOf(emp);
@@ -230,7 +242,14 @@ const Engine = (function () {
     else if (emp) base = getBaseCode(iso, Number(emp.slot));
     const holiday = getHoliday(iso);
     const replaces = g.holidayReplaces || cfg.holidayRule.replaces;
-    const code = holiday && base && replaces.indexOf(base) !== -1 ? 'HOL' : base;
+    let code = holiday && base && replaces.indexOf(base) !== -1 ? 'HOL' : base;
+    if (holiday && base === 'B' && g.kind !== 'static' && g.holidayB === 'weekend-block' && emp) {
+      const pattern = cfg.rotation.slots[Number(emp.slot)] || [];
+      const wd = weekday(iso);
+      const weekendCrew = pattern.length ? blockTouchesWeekend(pattern, getCycleIndex(iso)) : false;
+      /* Wednesday: the Mon–Fri crew works it. Any other day: the weekend crew works, the Mon–Fri crew is off. */
+      code = wd === 3 ? 'B' : (weekendCrew ? 'B' : 'HOL');
+    }
     return { base: base, code: code };
   }
   function getRegularCode(iso, employeeId) { return getRegularParts(iso, employeeId).code; }

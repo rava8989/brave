@@ -120,7 +120,7 @@ const Forms = (function () {
           const cls = [];
           if (Engine.isWeekend(iso)) cls.push('we');          // dark band = weekend columns, always
           if (s.code === 'RDO') cls.push('rdo');
-          else if (s.source === 'exception' || ['A', 'B', 'C', 'R'].indexOf(s.code) === -1) cls.push('chg');
+          else if (s.source === 'exception' || s.code === 'HOL') cls.push('chg');
           h += '<td class="' + cls.join(' ') + '">' + esc(s.code || '') + '</td>';
         });
         h += '</tr>';

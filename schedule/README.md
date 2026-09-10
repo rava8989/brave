@@ -80,16 +80,11 @@ September and October 2026 labor schedules and the September swap sheet.
 It also proves the pattern keeps 2 people on A and 2 on C every day and 2 on
 B every weekend, exactly as the posted sheets do.
 
-**Verify these rotation cells** – they could not be read with certainty and
-were filled in from the structure of the pattern:
+Two cells that could not be read from the photos were settled by the crew:
+the relief block runs **Monday to Friday** (R on the Friday), and the
+Fri–Tue B block is followed by RDO on Wednesday and Thursday.
 
-| Slot 1 cycle day | Date example (slot 1) | Chosen | Alternative |
-|---|---|---|---|
-| Friday after the Mon–Thu R block | Fri Oct 23 2026 | `B` (the Sep swap sheet shows Rakhmanov = B on the matching Fri Sep 25) | `R` or `RDO` |
-| Friday of the Mon–Fri B block | Fri Oct 16 2026 | `B` | `RDO` |
-| Wednesday after the Fri–Tue B block | Wed Oct 7 2026 for slot 6 | `RDO` (Bouaziz's sheet shows RDO on the matching Wed Sep 9) | `B` |
-
-To check: open **Team → Month grid** for October 2026 and compare with the
+To check the rest: open **Schedule** for October 2026 and compare with the
 sheet on the wall. Fix a wrong cell either in `js/config.js` (the six
 `slots` arrays; each row is Thu Fri Sat Sun Mon Tue Wed) or in the app as
 supervisor: **Rotation → Edit pattern → Save & apply to all slots**.
@@ -101,8 +96,12 @@ Other things to confirm:
   standard observed dates – check Independence Day, Election Day and the
   day after Thanksgiving against the agency calendar. Edit under
   **Info → Holidays** or in the file.
-* **Holiday rule**: on a holiday, B and R become HOL; A and C keep working
-  (matches the sheets). Change under **Info → Rules**.
+* **Holiday rule**: A and C keep working. R becomes HOL. For B it depends
+  on which block you are in: on a Mon/Tue/Thu/Fri holiday the crew whose B
+  block runs through the weekend works it and the Mon–Fri B crew gets HOL;
+  on a Wednesday holiday the Mon–Fri crew works it. The static B and A
+  crews get HOL. (Matches the sheets: Bouaziz worked Labor Day, Kingston
+  had HOL on Columbus Day.)
 * **Coverage rule**: 2 on A and 2 on C every day, 2 on B at weekends. The
   posted schedules show no B coverage from this group on holidays, so the
   holiday B requirement is off by default – switch it on under **Info →
