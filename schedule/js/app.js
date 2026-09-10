@@ -12,8 +12,8 @@ const App = (function () {
     cal: { y: 2026, m: 1 },
     selectedDate: null,
     teamDate: null,
-    teamMode: 'day',
-    teamLayout: 'colors',
+    teamMode: 'month',
+    teamLayout: 'official',
     formView: null,
     reqFilter: 'pending',
     rotSlot: 1,
@@ -189,8 +189,8 @@ const App = (function () {
     if (savedMonth && /^\d{4}-\d{2}$/.test(savedMonth)) state.cal = { y: Number(savedMonth.slice(0, 4)), m: Number(savedMonth.slice(5, 7)) };
     else state.cal = { y: Number(today.slice(0, 4)), m: Number(today.slice(5, 7)) };
     state.teamDate = today;
-    state.teamMode = Store.getPref('teamMode', 'day');
-    state.teamLayout = Store.getPref('teamLayout', 'colors');
+    state.teamMode = Store.getPref('teamMode', 'month');
+    state.teamLayout = Store.getPref('teamLayout', 'official');
     state.rotSlot = Store.getPref('rotSlot', 1);
     state.viewingId = Store.getPref('viewingId', null);
     const savedTab = Store.getPref('tab', 'calendar');

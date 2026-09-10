@@ -10,9 +10,11 @@ Views.team = (function () {
 
   function modeSeg() {
     const mode = App.state.teamMode;
+    const official = App.state.teamLayout === 'official';
     return '<div class="seg grow no-print" style="margin-bottom:10px">' +
-      '<button type="button" class="' + (mode === 'day' ? 'active' : '') + '" data-action="mode" data-mode="day">Day</button>' +
-      '<button type="button" class="' + (mode === 'month' ? 'active' : '') + '" data-action="mode" data-mode="month">Month grid</button></div>';
+      '<button type="button" class="' + (mode === 'month' && official ? 'active' : '') + '" data-action="mode" data-mode="month" data-layout="official">Posted sheet</button>' +
+      '<button type="button" class="' + (mode === 'month' && !official ? 'active' : '') + '" data-action="mode" data-mode="month" data-layout="colors">Colors</button>' +
+      '<button type="button" class="' + (mode === 'day' ? 'active' : '') + '" data-action="mode" data-mode="day">Day</button></div>';
   }
 
   /* ---------------- day view ---------------- */
@@ -86,14 +88,11 @@ Views.team = (function () {
       '<button type="button" class="btn btn-sm" data-action="today">Today</button>' +
       '<button type="button" class="btn btn-icon" data-action="prev" aria-label="Previous month">‹</button>' +
       '<span class="title">' + esc(Engine.monthLabel(y, m)) + '</span>' +
-      '<button type="button" class="btn btn-icon" data-action="next" aria-label="Next month">›</button></div>' +
-      '<div class="seg grow no-print" style="margin-bottom:8px">' +
-      '<button type="button" class="' + (official ? '' : 'active') + '" data-action="layout" data-layout="colors">Colors</button>' +
-      '<button type="button" class="' + (official ? 'active' : '') + '" data-action="layout" data-layout="official">Official layout</button></div>';
+      '<button type="button" class="btn btn-icon" data-action="next" aria-label="Next month">›</button></div>';
     if (official) {
-      h += '<p class="muted no-print" style="font-size:.78rem;margin:0 0 8px">Same layout as the posted sheet · red = holiday, leave or changed from rotation</p>' +
-        '<div class="olabor-scroll">' + Forms.laborScheduleHTML(y, m) + '</div>' +
-        '<div class="row no-print" style="margin-top:8px"><button type="button" class="btn btn-sm" data-action="print">Print</button></div></div>';
+      h += '<div class="row between no-print" style="margin:0 0 8px"><span class="muted" style="font-size:.78rem">Scroll sideways · ' + (sup ? 'to change a cell use Colors · ' : '') + 'red = not the regular rotation</span>' +
+        '<button type="button" class="btn btn-sm btn-primary" data-action="print">🖨 Print (landscape)</button></div>' +
+        '<div class="olabor-scroll">' + Forms.laborScheduleHTML(y, m) + '</div></div>';
       return h;
     }
     h += '<h2 class="print-only">Monthly labor schedule — ' + esc(Engine.monthLabel(y, m)) + '</h2>' +
@@ -174,7 +173,11 @@ Views.team = (function () {
     render: render,
     editCell: editCell,
     actions: {
-      mode: function (b) { App.state.teamMode = b.dataset.mode; Store.setPref('teamMode', b.dataset.mode); App.render(); },
+      mode: function (b) {
+        App.state.teamMode = b.dataset.mode; Store.setPref('teamMode', b.dataset.mode);
+        if (b.dataset.layout) { App.state.teamLayout = b.dataset.layout; Store.setPref('teamLayout', b.dataset.layout); }
+        App.render();
+      },
       layout: function (b) { App.state.teamLayout = b.dataset.layout; Store.setPref('teamLayout', b.dataset.layout); App.render(); },
       tday: function () { App.state.teamDate = Engine.todayISO(); App.render(); },
       tprev: function () { App.state.teamDate = Engine.addDays(App.state.teamDate, -1); App.render(); },

@@ -119,7 +119,7 @@ const Forms = (function () {
         const cls = [];
         if (Engine.isWeekend(iso)) cls.push('we');
         if (s.code === 'RDO') cls.push('off');
-        if (s.source === 'exception' || s.code === 'HOL' || (s.meta.kind === 'leave')) cls.push('chg');
+        if (s.source === 'exception' || ['A', 'B', 'C', 'R', 'RDO'].indexOf(s.code) === -1) cls.push('chg');
         h += '<td class="' + cls.join(' ') + '">' + esc(s.code || '') + '</td>';
       });
       h += '</tr>';
