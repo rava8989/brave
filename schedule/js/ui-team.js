@@ -90,9 +90,12 @@ Views.team = (function () {
       '<span class="title">' + esc(Engine.monthLabel(y, m)) + '</span>' +
       '<button type="button" class="btn btn-icon" data-action="next" aria-label="Next month">›</button></div>';
     if (official) {
-      h += '<div class="row between no-print" style="margin:0 0 8px"><span class="muted" style="font-size:.78rem">Scroll sideways · ' + (sup ? 'to change a cell use Colors · ' : '') + 'red = not the regular rotation</span>' +
-        '<button type="button" class="btn btn-sm btn-primary" data-action="print">🖨 Print (landscape)</button></div>' +
-        '<div class="olabor-scroll">' + Forms.laborScheduleHTML(y, m) + '</div></div>';
+      const fit = App.state.sheetFit !== false;
+      h += '<div class="row between no-print" style="margin:0 0 8px;gap:6px">' +
+        '<div class="seg"><button type="button" class="' + (fit ? 'active' : '') + '" data-action="fit" data-fit="1">Whole sheet</button><button type="button" class="' + (fit ? '' : 'active') + '" data-action="fit" data-fit="0">Actual size</button></div>' +
+        '<button type="button" class="btn btn-sm btn-primary" data-action="print">🖨 Print</button></div>' +
+        '<p class="muted no-print" style="font-size:.76rem;margin:0 0 6px">' + (fit ? 'Pinch to zoom in · ' : 'Scroll sideways · ') + (sup ? 'to change a cell use Colors · ' : '') + 'red = not the regular rotation</p>' +
+        '<div class="' + (fit ? 'olabor-fit' : 'olabor-scroll') + '" data-sheet>' + Forms.laborScheduleHTML(y, m) + '</div></div>';
       return h;
     }
     h += '<h2 class="print-only">Monthly labor schedule — ' + esc(Engine.monthLabel(y, m)) + '</h2>' +
@@ -127,8 +130,25 @@ Views.team = (function () {
     return h;
   }
 
+  /* Scale the sheet down so the whole page fits the screen width. */
+  function fitSheet() {
+    const wrap = document.querySelector('.olabor-fit[data-sheet]');
+    if (!wrap) return;
+    const inner = wrap.querySelector('.olabor');
+    if (!inner) return;
+    inner.style.transform = 'none';
+    wrap.style.height = '';
+    const natural = inner.scrollWidth || inner.offsetWidth;
+    const avail = wrap.clientWidth;
+    const s = natural > 0 ? Math.min(1, avail / natural) : 1;
+    inner.style.transform = 'scale(' + s + ')';
+    wrap.style.height = Math.ceil(inner.offsetHeight * s) + 'px';
+  }
+  let resizeBound = false;
   function render(root) {
     root.innerHTML = modeSeg() + (App.state.teamMode === 'month' ? monthGrid() : dayView());
+    fitSheet();
+    if (!resizeBound) { resizeBound = true; window.addEventListener('resize', function () { fitSheet(); }); }
   }
 
   /* ---------------- supervisor: edit one cell ---------------- */
@@ -180,6 +200,7 @@ Views.team = (function () {
         App.render();
       },
       layout: function (b) { App.state.teamLayout = b.dataset.layout; Store.setPref('teamLayout', b.dataset.layout); App.render(); },
+      fit: function (b) { App.state.sheetFit = b.dataset.fit === '1'; Store.setPref('sheetFit', App.state.sheetFit); App.render(); },
       tday: function () { App.state.teamDate = Engine.todayISO(); App.render(); },
       tprev: function () { App.state.teamDate = Engine.addDays(App.state.teamDate, -1); App.render(); },
       tnext: function () { App.state.teamDate = Engine.addDays(App.state.teamDate, 1); App.render(); },
