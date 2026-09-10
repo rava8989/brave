@@ -97,12 +97,11 @@ const Forms = (function () {
     const dim = Engine.daysInMonth(y, m);
     const prefix = y + '-' + (m < 10 ? '0' : '') + m + '-';
     const o = org();
-    const now = new Date();
     const days = [];
     for (let d = 1; d <= dim; d++) days.push(prefix + (d < 10 ? '0' : '') + d);
     let h = '<div class="olabor"><div class="ol-head"><div class="ol-brand"><b>' + esc(o.nameBold || o.name || '') + '</b> ' + esc(o.nameRest || '') + '</div>' +
       '<div class="ol-title">MONTHLY LABOR SCHEDULE<span>Month of ' + esc(Engine.monthLabel(y, m)) + '</span></div>' +
-      '<div class="ol-print">Print Date <u>' + esc(now.toLocaleString([], { dateStyle: 'long', timeStyle: 'medium' })) + '</u></div></div>';
+      '<div></div></div>';
     h += '<table class="ol-grid"><thead><tr><th class="nm">NAME</th><th class="sh">SHIFT</th><th class="sl">SLOT</th>';
     days.forEach(function (iso, i) {
       h += '<th class="dy' + (Engine.isWeekend(iso) ? ' we' : '') + '">' + (i + 1) + '<small>' + Engine.WEEKDAYS[Engine.weekday(iso)] + '</small></th>';
