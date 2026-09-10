@@ -183,10 +183,11 @@ Views.requests = (function () {
       h += '<div class="wizard-photo-first">';
       if (n.aiBusy) {
         h += '<p style="text-align:center;font-weight:700;margin:6px 0">Reading the sheet…</p><p class="muted" style="text-align:center;font-size:.85rem">This takes about 10–20 seconds.</p>';
-      } else if (Store.aiAvailable()) {
-        h += '<label class="btn btn-block btn-primary" style="min-height:60px;cursor:pointer">📷 Upload the signed swap sheet<br><small style="font-weight:500">the app fills everything in from the photo</small>' + photoInput('photo-first') + '</label>';
+      } else if (n.photo) {
+        h += '<img class="photo-thumb" src="' + n.photo.dataUrl + '" alt="Attached photo" style="max-height:160px"><p style="text-align:center;margin:6px 0 0;font-size:.85rem">✔ Photo attached — now pick the type below and tap the days.</p>' +
+          '<div class="row" style="justify-content:center;margin-top:6px"><button type="button" class="btn btn-sm" data-action="photo-remove">Remove photo</button></div>';
       } else {
-        h += '<button type="button" class="btn btn-block" style="min-height:60px" data-action="ai-info">📷 Upload the signed swap sheet 🔒<br><small style="font-weight:500">automatic reading needs the sync server</small></button>';
+        h += '<label class="btn btn-block btn-primary" style="min-height:60px;cursor:pointer">📷 Upload the signed swap sheet<br><small style="font-weight:500">' + (Store.aiAvailable() ? 'the app fills everything in from the photo' : 'photo goes with the request; then tap the days') + '</small>' + photoInput('photo-first') + '</label>';
       }
       h += '</div><div class="or-divider">— or fill it in by hand —</div>';
       h += '<div class="stack">' +
@@ -464,7 +465,7 @@ Views.requests = (function () {
     UI.toast('Processing photo…');
     UI.downscaleImage(file).then(function (dataUrl) {
       App.state.newReq.photo = { dataUrl: dataUrl };
-      if (thenRead) readPhoto(dataUrl); else App.render();
+      if (thenRead) readPhoto(dataUrl); else { UI.toast('Photo attached'); App.render(); }
     }).catch(function (e) { UI.toast(e.message, 'error'); });
   }
 
@@ -542,7 +543,7 @@ Views.requests = (function () {
       to: function (sel) { App.state.newReq.to[sel.dataset.key] = sel.value; },
       'approve-now': function (cb) { App.state.newReq.approveNow = cb.checked; App.render(); },
       photo: function (input) { attachPhoto(input, false); },
-      'photo-first': function (input) { attachPhoto(input, true); },
+      'photo-first': function (input) { attachPhoto(input, Store.aiAvailable()); },
     },
     inputs: {
       reason: function (ta) { App.state.newReq.reason = ta.value; },
