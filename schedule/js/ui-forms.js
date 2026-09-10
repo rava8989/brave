@@ -118,7 +118,8 @@ const Forms = (function () {
         days.forEach(function (iso) {
           const s = Engine.getScheduleForDate(iso, { employeeId: e.id });
           const cls = [];
-          if (s.code === 'RDO') cls.push('off');
+          if (Engine.isWeekend(iso)) cls.push('we');          // dark band = weekend columns, always
+          if (s.code === 'RDO') cls.push('rdo');
           else if (s.source === 'exception' || ['A', 'B', 'C', 'R'].indexOf(s.code) === -1) cls.push('chg');
           h += '<td class="' + cls.join(' ') + '">' + esc(s.code || '') + '</td>';
         });
