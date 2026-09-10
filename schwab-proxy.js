@@ -3069,6 +3069,17 @@ async function dataCompletenessCheck(env, etNow) {
       const j = await J('https://raw.githubusercontent.com/rava8989/brave/main/cyclicality_ndx.json');
       return !!(j && j.days.some(d => d.d === todayISO));
     }, () => appendCyclicalityDays(env, { symbol: '%24NDX', file: 'cyclicality_ndx.json' })],
+    ['official close', async () => {
+      // owner 2026-09-09: history.spxClose must equal Schwab's daily candle close
+      const row = ((await getHistory(env)) || []).find(r => r.date === todayISO);
+      if (!row || row.spxClose == null) return true;                 // no EOD row yet — not this check's business
+      const oc = await fetchOfficialSpxClose(env, todayISO);
+      if (oc == null) return true;                                   // Schwab flake — never alert on the checker's own failure
+      return Math.abs(oc - row.spxClose) < 0.005;
+    }, async () => {
+      const oc = await fetchOfficialSpxClose(env, todayISO);
+      if (oc != null) await restateDayClose(env, todayISO, oc);
+    }],
     ['spreads history', async () => {
       // 2026-09-03: the router settled the IC but history_data.spreadsPL stayed
       // empty (the settle wrote before the EOD row existed and never retried).
@@ -4702,9 +4713,28 @@ async function handleEOD(env, etNow) {
     } catch (e) { console.warn('[proxy] schwab vixClose err:', e.message || e); }
   }
 
-  // Fetch SPX close
-  let spxClose = null;
-  try {
+  // Fetch SPX close — OFFICIAL daily candle first (owner 2026-09-09; see
+  // fetchOfficialSpxCloses). Provenance lands in history as spxCloseSrc.
+  let spxClose = null, spxCloseSrc = null;
+  const todayOff = isoDateET(etNow);
+  if (afterOfficialClose(etNow)) {
+    try {
+      const oc = await fetchOfficialSpxClose(env, todayOff, token);
+      if (oc != null) { spxClose = oc; spxCloseSrc = 'daily'; }
+    } catch (e) { console.warn('[proxy] official close err:', e.message || e); }
+    // Fallback 1: the quote's LAST print — static after ~16:25, i.e. the official
+    // close. Never closePrice: that field is the PRIOR session's close.
+    if (spxClose === null) {
+      try {
+        const q = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24SPX&fields=quote`, token);
+        const lp = q?.['$SPX']?.quote?.lastPrice, tt = q?.['$SPX']?.quote?.tradeTime;
+        if (lp > 0 && tt && isoDateET(toET(new Date(tt))) === todayOff) { spxClose = parseFloat(Number(lp).toFixed(2)); spxCloseSrc = 'quote-last'; }
+      } catch (e) { console.warn('[proxy] spx quote-last fallback:', e.message || e); }
+    }
+  }
+  // Fallback 2 (legacy basis, flagged 'm1-1615'): last 1-min candle ≤16:15 — a
+  // preliminary print; the 17:0x verify pass re-settles the day if it differs.
+  if (spxClose === null) try {
     const spxHist = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24SPX&periodType=day&period=3&frequencyType=minute&frequency=1&startDate=${start}&endDate=${end}&needExtendedHoursData=true`, token);
     if (spxHist.candles) {
       const todayCandles = spxHist.candles.filter(c => toET(new Date(c.datetime)).toDateString() === todayStr);
@@ -4713,26 +4743,16 @@ async function handleEOD(env, etNow) {
         const d = toET(new Date(c.datetime));
         return d.getHours() * 60 + d.getMinutes() <= 16 * 60 + 15;
       });
-      if (closeCandle) spxClose = parseFloat(closeCandle.close.toFixed(2));
+      if (closeCandle) { spxClose = parseFloat(closeCandle.close.toFixed(2)); spxCloseSrc = 'm1-1615'; }
     }
   } catch (e) { console.warn('[proxy]', e.message || e); }
-  // Quote-endpoint fallback in its OWN try (2026-07-10): it used to share the
-  // candle fetch's try block, so a thrown candle call skipped it entirely —
-  // that cascade (candles threw → quote skipped → Stooq too early at 16:17)
-  // left 2026-07-09 with spxClose null and every strategy settle silently dropped.
-  if (spxClose === null) {
-    try {
-      const q = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/quotes?symbols=%24SPX&fields=quote`, token);
-      const cp = q?.['$SPX']?.quote?.closePrice;
-      if (cp) spxClose = parseFloat(cp.toFixed(2));
-    } catch (e) { console.warn('[proxy] spx quote fallback:', e.message || e); }
-  }
 
   // Stooq fallback for SPX close when Schwab tokens are expired
   if (spxClose === null) {
     try {
       const todayISO2 = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
       spxClose = await getSpxCloseForDate(todayISO2, env);
+      if (spxClose != null) spxCloseSrc = 'fallback';
     } catch (e) { console.warn('[proxy]', e.message || e); }
   }
 
@@ -4978,7 +4998,7 @@ async function handleEOD(env, etNow) {
 
   const fields = {};
   if (vixClose != null) fields.vixClose = vixClose;
-  if (spxClose != null) fields.spxClose = spxClose;
+  if (spxClose != null) { fields.spxClose = spxClose; if (spxCloseSrc) fields.spxCloseSrc = spxCloseSrc; }
   if (m8bfPL != null) fields.m8bfPL = m8bfPL;
   if (m8bfWR != null) fields.m8bfWR = m8bfWR;
   if (vixOpen != null) fields.vixOpen = vixOpen;
@@ -7947,7 +7967,7 @@ async function handleScheduledInner(env) {
   // silence), EOD stayed missing until something external hit /gex. With this
   // widening, the dedicated 17:17 ET cron (and any `*/2` afternoon tick that
   // makes it through) rescues the EOD write without needing a browser hit.
-  const afterEOD = (etHour === 16 && etMin >= 16) || etHour >= 17;
+  const afterEOD = (etHour === 16 && etMin >= 31) || etHour >= 17;   // 16:31: the official daily close is final (owner 2026-09-09)
   const eodKey = `eod_done_${todayISO}`;
   // P37 (2026-08-05): the old `!eodAlreadyDone` check-then-act let the 16:16
   // minute tick and the 16:17 dedicated cron BOTH run handleEOD — 'done' is
@@ -8023,6 +8043,36 @@ async function handleScheduledInner(env) {
   // trailing 120 series entries strictly before today; bottom 20% → SKIP.
   // Owner-only DM (decision support, not a subscriber signal). P27: terminal
   // marker written BEFORE the post; claim gate around the whole handler.
+  // Official-close verify (owner 2026-09-09): the 16:31 EOD read Schwab's daily
+  // candle; if the final print moved after that, re-settle the day on it.
+  if (etHour === 17 && etMin >= 3 && etMin < 15 && etNow.getDay() >= 1 && etNow.getDay() <= 5) {
+    const cvKey = `close_verify_${todayISO}`;
+    if (!(await env.SIGNAL_KV.get(cvKey)) && await claimSendSlot(env, cvKey)) {
+      let settled = false;
+      try {
+        const rowsV = await getHistory(env);
+        const rowV = (rowsV || []).find(r => r.date === todayISO);
+        if (rowV && rowV.spxClose != null && (await env.SIGNAL_KV.get(`eod_done_${todayISO}`)) === 'done') {
+          const oc = await fetchOfficialSpxClose(env, todayISO);
+          if (oc != null) {
+            if (Math.abs(oc - rowV.spxClose) >= 0.005) {
+              const r = await restateDayClose(env, todayISO, oc);
+              const ch = Object.entries(r.set || {}).filter(([k]) => k !== 'spxCloseSrc').map(([k, v]) => `${k} ${r.before[k]} → ${v}`).join(', ');
+              try {
+                const _dcRaw = await env.SIGNAL_KV.get('discord_config');
+                const _dc = _dcRaw ? JSON.parse(_dcRaw) : null;
+                if (_dc && _dc.channelId) await sendDiscordDM(env, _dc.channelId, `♻️ **Official close** ${todayISO}: ${rowV.spxClose} → ${oc}. ${ch || 'no P&L change'}${r.notes && r.notes.length ? ` · ${r.notes.join('; ')}` : ''}`, _dc.proxyUrl);
+              } catch (_) {}
+            }
+            settled = true;
+          }
+        }
+      } catch (e) { console.warn('[close-verify]', e.message); }
+      if (settled) await env.SIGNAL_KV.put(cvKey, 'done', { expirationTtl: 3 * 86400 });
+      else { try { await env.SIGNAL_KV.delete(cvKey); } catch (_) {} }   // retry next minute in the window
+    }
+  }
+
   if (etHour === 17 && etMin >= 5 && etMin < 25 && etNow.getDay() >= 1 && etNow.getDay() <= 5) {
     const gateKey = `gexgate_dm_${todayISO}`;
     const doneG = await env.SIGNAL_KV.get(gateKey);
@@ -9418,6 +9468,19 @@ async function handleScheduledInner(env) {
       }) || (spxYCandles.length ? spxYCandles[spxYCandles.length - 1] : null);
       if (spxCloseCandle) spxYClose = spxCloseCandle.close;
     }
+    // AUTHORITATIVE (owner 2026-09-09): the SETTLED prior-session close in history is
+    // the OFFICIAL close (Schwab daily candle). The minute candle above is a
+    // preliminary print — kept only as the fallback. Same pattern as VIX.
+    try {
+      const _hS = await getHistory(env);
+      const _tS = isoDateET(toET(new Date()));
+      const _pS = (_hS || []).filter(r => r && r.date && r.date < _tS && r.spxClose != null && isTradeISO(r.date)).sort((a, b) => (a.date < b.date ? -1 : 1));
+      if (_pS.length) {
+        const _lastS = _pS[_pS.length - 1];
+        if (spxYClose != null && Math.abs(spxYClose - _lastS.spxClose) > 3) console.warn(`[proxy] prior SPX close: history ${_lastS.spxClose} vs minute-candle ${spxYClose} — using history`);
+        spxYClose = parseFloat(_lastS.spxClose);
+      }
+    } catch (e) { console.warn('[proxy] history prior-SPX lookup failed, using candle:', e.message); }
 
     // Get SPX today open — Schwab 9:30-candle PRIMARY (owner 2026-08-31).
     // House definition of "open" = first print at/after 9:30 = the 9:30
@@ -11437,7 +11500,7 @@ async function upsertHistoryGitHub(env, dateStr, fields, _retries = 3) {
   const idx = content.findIndex(r => r.date === dateStr);
   if (idx >= 0) {
     for (const [k, v] of Object.entries(fields)) {
-      const alwaysOverwrite = ['vixClose', 'spxClose', 'm8bfWR'].includes(k);
+      const alwaysOverwrite = ['vixClose', 'spxClose', 'spxCloseSrc', 'm8bfWR'].includes(k);
       if (alwaysOverwrite || content[idx][k] == null) content[idx][k] = v;
     }
   } else {
@@ -11911,6 +11974,133 @@ function computeWinRateFromSignals(signals, spxClose) {
   return Math.round(wins / signals.length * 100);
 }
 
+// ── OFFICIAL SPX CLOSE (owner order 2026-09-09) ──────────────────────
+// Schwab's DAILY candle close for $SPX = Cboe's official close = the SPXW
+// settlement basis (matched Cboe on 528/528 history days). Final by ~16:30 ET.
+// Replaces the ≤16:15 1-min candle, a preliminary print that missed the
+// official close on 89/528 days (16.21 pts on the 2026-06-26 Russell rebalance).
+async function fetchOfficialSpxCloses(env, fromISO, toISO, token = null) {
+  const tk = token || await getAccessToken(env);
+  if (!tk) return {};
+  const [y0, m0, d0] = fromISO.split('-').map(Number), [y1, m1, d1] = toISO.split('-').map(Number);
+  const start = Date.UTC(y0, m0 - 1, d0) - 3 * 86400000, end = Date.UTC(y1, m1 - 1, d1) + 2 * 86400000;
+  const ph = await fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=%24SPX&periodType=year&frequencyType=daily&frequency=1&startDate=${start}&endDate=${end}`, tk);
+  const out = {};
+  for (const c of (ph.candles || [])) if (c && c.close > 0) out[isoDateET(toET(new Date(c.datetime)))] = parseFloat(Number(c.close).toFixed(2));
+  return out;
+}
+async function fetchOfficialSpxClose(env, iso, token = null) {
+  try { const m = await fetchOfficialSpxCloses(env, iso, iso, token); return m[iso] ?? null; } catch (_) { return null; }
+}
+const afterOfficialClose = (et) => et.getHours() > 16 || (et.getHours() === 16 && et.getMinutes() >= 30);
+
+// Re-settle ONE day on `official`: every close-dependent field is recomputed
+// from its stored trade parameters (closed logs / spreads paper log; M8BF via
+// the engines in dry mode). m8bfWR always (pure stat); m8bfPL only when a trade
+// is on record (m8bfPL ≠ 0) — as-lived no-trade decisions stand. Used by the
+// 17:0x verify pass, the 18:35 watchdog and GET /restate-close.
+async function restateDayClose(env, iso, official, opts = {}) {
+  const dry = !!opts.dry, r2 = (v) => Math.round(v * 100) / 100, S = official;
+  const rows = await getHistory(env);
+  const row = rows.find(r => r.date === iso);
+  if (!row) return { date: iso, skipped: 'no row' };
+  const before = { ...row }, set = {}, notes = [], logUpdates = [], validation = {};
+  const validate = !!opts.validate;
+  if (row.spxClose == null || Math.abs(row.spxClose - S) >= 0.005) { set.spxClose = S; set.spxCloseSrc = 'daily'; }
+  const specs = [
+    ['straddle_closed_log', 'stradPL', (t) => Math.abs(S - t.strike), (t) => t.entryDebit, (v) => ({ closeValue: r2(v) })],
+    ['bobf_closed_log', 'bobfPL', (t) => Math.max(S - t.lowerStrike, 0) - 2 * Math.max(S - t.bodyStrike, 0) + Math.max(S - t.upperStrike, 0), (t) => t.entryDebit, (v) => ({ closeIntrinsic: r2(v) })],
+    ['gxbf_closed_log', 'gxbfPL', (t) => Math.min(Math.max(Math.max(S - t.lowerStrike, 0) - 2 * Math.max(S - t.centerStrike, 0) + Math.max(S - t.upperStrike, 0), 0), t.wing), (t) => t.netDebit, (v) => ({ closeIntrinsic: r2(v) })],
+    ['tail_closed_log', 'tailPL', (t) => Math.max(0, t.strike - S), (t) => t.entryMid ?? ((t.entryBid != null && t.entryAsk != null) ? (t.entryBid + t.entryAsk) / 2 : (t.entryAsk ?? t.entryBid)), (v) => ({ closeIntrinsic: r2(v) })],
+  ];
+  for (const [key, field, valueFn, costFn, extra] of specs) {
+    if (row[field] == null) continue;
+    let log; try { log = JSON.parse((await env.SIGNAL_KV.get(key)) || '[]'); } catch (_) { log = []; }
+    const i = log.findIndex(t => t && t.openDate === iso && t.status === 'closed');
+    if (i < 0) { notes.push(`${field}: no closed-log entry for ${iso}`); continue; }
+    const t = log[i], v = valueFn(t), cost = costFn(t);
+    if (cost == null) { notes.push(`${field}: no entry cost on log entry`); continue; }
+    // History may carry a size multiplier the log does not (tail 2x on overnight-VIX-down
+    // days, restated 2026-07-07): keep the as-lived multiple when stored = k x log pnl.
+    const k = (t.pnl && row[field] != null && t.pnl !== row[field] && Number.isInteger(row[field] / t.pnl) && Math.abs(row[field] / t.pnl) <= 3) ? Math.round(row[field] / t.pnl) : 1;
+    const pnl = Math.round((v - cost) * 100 * (t.contracts || 1) * k);
+    // reproduction gate: the same formula at the log's own close must give the stored value
+    const S0 = t.spxClose ?? row.spxClose;
+    const v0 = S0 == null ? null : (field === 'stradPL' ? Math.abs(S0 - t.strike)
+      : field === 'bobfPL' ? Math.max(S0 - t.lowerStrike, 0) - 2 * Math.max(S0 - t.bodyStrike, 0) + Math.max(S0 - t.upperStrike, 0)
+      : field === 'gxbfPL' ? Math.min(Math.max(Math.max(S0 - t.lowerStrike, 0) - 2 * Math.max(S0 - t.centerStrike, 0) + Math.max(S0 - t.upperStrike, 0), 0), t.wing)
+      : Math.max(0, t.strike - S0));
+    const pnl0 = v0 == null ? null : Math.round((v0 - cost) * 100 * (t.contracts || 1) * k);
+    const reproduced = pnl0 != null && pnl0 === row[field];
+    if (validate) validation[field] = { stored: row[field], logPnl: t.pnl ?? null, logClose: t.spxClose ?? null, sizeMult: k, oldCloseRecompute: pnl0, reproduced };
+    if (!reproduced) { notes.push(`${field}: old-close recompute ${pnl0} ≠ stored ${row[field]} — kept as-lived`); continue; }
+    if (pnl !== row[field]) set[field] = pnl;
+    if (t.spxClose == null || Math.abs(t.spxClose - S) >= 0.005 || Math.round(pnl / k) !== t.pnl) {
+      log[i] = { ...t, spxClose: S, pnl: Math.round(pnl / k), ...extra(v), restated: { at: new Date().toISOString(), from: t.spxClose ?? null, prevPnl: t.pnl ?? null } };
+      logUpdates.push([key, log]);
+    }
+  }
+  if (row.spreadsPL != null) {
+    let log; try { log = JSON.parse((await env.SIGNAL_KV.get('spreads_paper_log')) || '[]'); } catch (_) { log = []; }
+    const i = log.findIndex(t => t && t.date === iso && t.status === 'settled');
+    if (i < 0) notes.push(`spreadsPL: no paper-log entry for ${iso} (backtest row)`);
+    else {
+      const t = log[i]; let pl;
+      if (t.side === 'IC') pl = Math.round(((t.credit + t.cCredit) - Math.max(0, Math.min(t.short - S, 10)) - Math.max(0, Math.min(S - t.cShort, 10))) * 100 * 10) / 10;
+      else pl = Math.round((t.credit - (t.side === 'CALL' ? Math.max(0, Math.min(S - t.short, 10)) : Math.max(0, Math.min(t.short - S, 10)))) * 100 * 10) / 10;
+      const hist2 = Math.round(pl * 2 * 10) / 10;
+      const repS = (t.pl != null && Math.round(t.pl * 2 * 10) / 10 === row.spreadsPL && t.settle != null && Math.abs(t.settle - (row.spxClose ?? -1)) < 0.005);
+      if (validate) validation.spreadsPL = { stored: row.spreadsPL, logPl: t.pl ?? null, logSettle: t.settle ?? null, reproduced: repS };
+      if (!repS) { notes.push(`spreadsPL: log (${t.pl} @ ${t.settle}) does not reproduce stored ${row.spreadsPL} — kept as-lived`); }
+      else if (hist2 !== row.spreadsPL) set.spreadsPL = hist2;
+      if (repS && (t.settle == null || Math.abs(t.settle - S) >= 0.005 || pl !== t.pl)) { log[i] = { ...t, settle: S, pl, restated: { at: new Date().toISOString(), from: t.settle ?? null, prevPl: t.pl ?? null } }; logUpdates.push(['spreads_paper_log', log]); }
+    }
+  }
+  if (opts.m8bf !== false && (row.m8bfWR != null || (row.m8bfPL != null && row.m8bfPL !== 0))) {
+    try {
+      let wrOK = row.m8bfWR == null, plOK = false;
+      if (row.spxClose != null) {
+        const wr0 = await backfillMissingWR(env, false, [iso], { dry: true, closeOf: { [iso]: row.spxClose } });
+        const f0 = (wr0.filled || []).find(x => x.date === iso);
+        // WR is a set statistic: the re-scraped set may drift by a point or two from the
+        // EOD set — accept within ±2 (the /check-wr tolerance), else keep as-lived.
+        wrOK = !!(f0 && f0.m8bfWR != null && (row.m8bfWR == null || Math.abs(f0.m8bfWR - row.m8bfWR) <= 2));
+        if (validate) validation.m8bfWR = { stored: row.m8bfWR, oldCloseRecompute: f0 ? f0.m8bfWR : null, signals: f0 ? f0.signals : null, reproduced: !!(f0 && f0.m8bfWR === row.m8bfWR) };
+        if (!wrOK) notes.push(`m8bfWR: old-close recompute ${f0 ? f0.m8bfWR : null} vs stored ${row.m8bfWR} — kept as-lived`);
+        if (row.m8bfPL != null && row.m8bfPL !== 0) {
+          const pl0 = await backfillMissingPL(env, [iso], { dry: true, closeOf: { [iso]: row.spxClose } });
+          const g0 = (pl0.filled || []).find(x => x.date === iso);
+          plOK = !!(g0 && g0.pl === row.m8bfPL);
+          if (validate) validation.m8bfPL = { stored: row.m8bfPL, oldCloseRecompute: g0 ? g0.pl : null, trade: g0 ? { center: g0.center, lower: g0.lower, upper: g0.upper, premium: g0.premium } : null, reproduced: plOK };
+          if (!plOK) notes.push(`m8bfPL: old-close recompute ${g0 ? g0.pl : null} ≠ stored ${row.m8bfPL} — kept as-lived`);
+        }
+      }
+      if (wrOK) {
+        const wr = await backfillMissingWR(env, false, [iso], { dry: true, closeOf: { [iso]: S } });
+        const f = (wr.filled || []).find(x => x.date === iso);
+        if (f && f.m8bfWR != null) { if (f.m8bfWR !== row.m8bfWR) set.m8bfWR = f.m8bfWR; }
+        else notes.push(`m8bfWR: ${((wr.failed || [])[0] || {}).reason || 'engine returned nothing'}`);
+      }
+      if (plOK) {
+        const pl = await backfillMissingPL(env, [iso], { dry: true, closeOf: { [iso]: S } });
+        const g = (pl.filled || []).find(x => x.date === iso);
+        if (g && g.pl != null && g.pl !== 0) { if (g.pl !== row.m8bfPL) set.m8bfPL = g.pl; }
+        else notes.push(`m8bfPL: engine found no trade for ${iso} at the official close — stored ${row.m8bfPL} kept`);
+      }
+    } catch (e) { notes.push(`m8bf: ${e.message}`); }
+  }
+  const changed = Object.keys(set);
+  if (!dry && changed.length) {
+    const fresh = await getHistory(env);
+    const fr = fresh.find(r => r.date === iso);
+    if (fr) Object.assign(fr, set);
+    await setHistory(env, fresh, { dateStr: `restate-close ${iso}`, skipBackup: !!opts.skipBackup });
+    for (const [key, log] of logUpdates) await env.SIGNAL_KV.put(key, JSON.stringify(log));
+    if (opts.mirror !== false) await mirrorHistoryToGitHub(env, fresh, `auto: official close restate ${iso} (${changed.join(', ')})`);
+  }
+  return { date: iso, official: S, prev: before.spxClose ?? null, set, before: Object.fromEntries(changed.map(k => [k, before[k] ?? null])), notes, dry, ...(validate ? { validation } : {}) };
+}
+
 async function getSpxCloseForDate(dateISO, env = null) {
   // Schwab daily candle first when env is available — canonical, and Stooq now
   // sits behind a JS bot-challenge that returns HTML instead of CSV (2026-07-10,
@@ -11920,7 +12110,7 @@ async function getSpxCloseForDate(dateISO, env = null) {
   if (env) {
     try {
       const etNowC = toET(new Date());
-      if (dateISO < isoDateET(etNowC)) {
+      if (dateISO < isoDateET(etNowC) || (dateISO === isoDateET(etNowC) && afterOfficialClose(etNowC))) {   // same day only after ~16:30 (official close final)
         const tkC = await getAccessToken(env);
         if (tkC) {
           const [yC, mC, dC] = dateISO.split('-').map(Number);
@@ -12030,7 +12220,7 @@ async function discordMemberDiffJob(env, notify = true) {
   return { joined: joined.length, left: left.length, total: nCount };
 }
 
-async function backfillMissingWR(env, force = false, targetDates = null) {
+async function backfillMissingWR(env, force = false, targetDates = null, opts = {}) {
   const token = env.DISCORD_USER_TOKEN;
   const channelId = '1048242197029458040';
   if (!token) throw new Error('DISCORD_USER_TOKEN not set');
@@ -12056,7 +12246,8 @@ async function backfillMissingWR(env, force = false, targetDates = null) {
     try {
       // Get SPX close
       // Row's own canonical close first — Stooq is unreliable (bot challenge)
-      const spxClose = entry.spxClose ?? await getSpxCloseForDate(entry.date, env);
+      const spxClose = (opts.closeOf && opts.closeOf[entry.date] != null) ? opts.closeOf[entry.date]
+        : (entry.spxClose ?? await getSpxCloseForDate(entry.date, env));
       if (spxClose == null) { failed.push({ date: entry.date, reason: 'no SPX close' }); continue; }
 
       // Fetch ALL butterfly signals for that day from Discord
@@ -12086,7 +12277,7 @@ async function backfillMissingWR(env, force = false, targetDates = null) {
   // 3. Persist — RE-READ current history and apply ONLY the fields we computed, so a
   //    concurrent EOD settle during our slow Discord loop isn't clobbered by a stale
   //    full-array overwrite (audit P1-h 2026-07-06). content was read minutes ago.
-  if (filled.length > 0) {
+  if (filled.length > 0 && !opts.dry) {
     const fresh = await getHistory(env);
     for (const f of filled) {
       let row = fresh.find(r => r.date === f.date);
@@ -12248,7 +12439,7 @@ async function selectM8bfQualifying(env, etNow) {
   return { status: 'open', qualifying, todayT };
 }
 
-async function backfillMissingPL(env, targetDates = null) {
+async function backfillMissingPL(env, targetDates = null, opts = {}) {
   const token = env.DISCORD_USER_TOKEN;
   const channelId = '1048242197029458040';
   if (!token) throw new Error('DISCORD_USER_TOKEN not set');
@@ -12344,18 +12535,19 @@ async function backfillMissingPL(env, targetDates = null) {
       const lo = qualifying.lower;
       const hi = qualifying.upper;
       const wing = (hi - lo) / 2;
-      const intrinsic = Math.max(0, Math.min(row.spxClose - lo, hi - row.spxClose));
+      const S_ = (opts.closeOf && opts.closeOf[row.date] != null) ? opts.closeOf[row.date] : row.spxClose;
+      const intrinsic = Math.max(0, Math.min(S_ - lo, hi - S_));
       const clipped = Math.min(intrinsic, wing);
       const pl = Math.round((clipped - qualifying.premium) * 100);
 
       row.m8bfPL = pl;
-      filled.push({ date: row.date, pl, center: qualifying.center, lower: lo, upper: hi, premium: qualifying.premium, spxClose: row.spxClose });
+      filled.push({ date: row.date, pl, center: qualifying.center, lower: lo, upper: hi, premium: qualifying.premium, spxClose: S_ });
     } catch (e) {
       failed.push({ date: row.date, error: e.message });
     }
   }
 
-  if (filled.length > 0) {
+  if (filled.length > 0 && !opts.dry) {
     // RE-READ fresh + apply ONLY m8bfPL for the dates we filled, so a concurrent EOD
     // settle isn't clobbered by a stale full-array overwrite (audit P1-h 2026-07-06).
     const fresh = await getHistory(env);
@@ -15668,7 +15860,7 @@ export default {
     if (request.method !== 'OPTIONS' &&
         ['/cyclicality-append-now', '/score-advisories-now', '/research-persist-now',
          '/cot-refresh-now', '/watchdog-now', '/weekly-digest-now', '/vix-decomp-now',
-         '/remirror-history', '/history-patch'].includes(url.pathname)) {
+         '/remirror-history', '/history-patch', '/restate-close'].includes(url.pathname)) {
       const s = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
       if (!s || (s !== env.SYNC_SECRET && s !== env.GEXM_TRIGGER_TOKEN)) return jsonResp({ error: 'Unauthorized' }, 401, corsHeaders);
     }
@@ -15784,9 +15976,9 @@ export default {
       const qpS = url.searchParams.get('spxClose');
       if (qpS && !isNaN(parseFloat(qpS))) spxCloseS = parseFloat(qpS);
       if (spxCloseS == null) {
-        // Use the CANONICAL EOD close already in history (1-min candle ≤16:15,
-        // the exact value the other strategies settled against) so tail P&L is
-        // consistent — NOT quote.closePrice (that's a prior/quote field).
+        // Use the CANONICAL EOD close already in history (the official Schwab daily
+        // close since 2026-09-09; the ≤16:15 1-min candle before that) so tail P&L
+        // is consistent — NOT quote.closePrice (that's a prior/quote field).
         try {
           const histS = await getHistory(env);
           const rowS = (histS || []).find(r => r.date === targetISO);
@@ -16068,6 +16260,33 @@ export default {
         const body = await r.json().catch(() => ({}));
         return jsonResp({ status: r.status, body }, 200, {});
       } catch (e) { return jsonResp({ error: e.message }, 500, {}); }
+    }
+
+    // GET /restate-close?from=&to=[&dry=1][&all=1][&m8bf=0] — owner tool (2026-09-09):
+    // re-settle every day in the range whose history spxClose differs from the
+    // official daily close (all days with &all=1). dry=1 reports without writing.
+    // One mirror at the end; one pre-restate KV snapshot.
+    if (url.pathname === '/restate-close' && request.method === 'GET') {
+      let result;
+      try {
+        const from = url.searchParams.get('from') || url.searchParams.get('date'), to = url.searchParams.get('to') || from;
+        const dry = url.searchParams.get('dry') === '1', all = url.searchParams.get('all') === '1', m8bf = url.searchParams.get('m8bf') !== '0', validate = url.searchParams.get('validate') === '1';
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(from || '') || !/^\d{4}-\d{2}-\d{2}$/.test(to || '')) throw new Error('from/to must be YYYY-MM-DD');
+        const offs = await fetchOfficialSpxCloses(env, from, to);
+        const rows = await getHistory(env);
+        const dates = rows.map(r => r.date).filter(d => d >= from && d <= to && offs[d] != null);
+        if (!dry) await backupHistorySnapshot(env, rows, 'pre-restate-close', {});
+        const out = [];
+        for (const d of dates) {
+          const row = rows.find(r => r.date === d);
+          if (!all && row.spxClose != null && Math.abs(row.spxClose - offs[d]) < 0.005) continue;
+          out.push(await restateDayClose(env, d, offs[d], { dry, m8bf, mirror: false, skipBackup: true, validate }));
+        }
+        let mirror = null;
+        if (!dry && out.some(o => o.set && Object.keys(o.set).length)) mirror = await mirrorHistoryToGitHub(env, await getHistory(env), `manual: official-close restatement ${from}→${to}`);
+        result = { ok: true, dry, from, to, official: Object.keys(offs).length, checked: dates.length, restated: out, mirror };
+      } catch (e) { result = { ok: false, error: e.message }; }
+      return new Response(JSON.stringify(result, null, 2), { status: result.ok ? 200 : 400, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
     }
 
     if (url.pathname === '/remirror-history' && request.method === 'GET') {
@@ -16503,7 +16722,7 @@ export default {
         const todayISO = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
         const isWeekday = dow >= 1 && dow <= 5;
         const postOpen = etH > 9 || (etH === 9 && etM >= 32);  // +2 min grace
-        const postClose = etH > 16 || (etH === 16 && etM >= 16);
+        const postClose = etH > 16 || (etH === 16 && etM >= 31);
         const inMarketHours = isWeekday && ((etH === 9 && etM >= 30) || (etH >= 10 && etH < 16));
 
         // Fetch all KV keys in parallel
@@ -17311,7 +17530,7 @@ export default {
         // handleScheduled for cases where every afternoon cron missed (rare but
         // observed 2026-04-17 — 4+ hours of Cloudflare cron silence). Any browser
         // hit on /gex resurrects the EOD write.
-        const afterEOD = (etH === 16 && etM >= 16) || (etH >= 17 && etH < 24);
+        const afterEOD = (etH === 16 && etM >= 31) || (etH >= 17 && etH < 24);   // in lockstep with the scheduled gate (official close)
         const isEODWindow = dow >= 1 && dow <= 5 && afterEOD;
         if (isEODWindow) {
           const todayCheck = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;

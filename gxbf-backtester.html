@@ -621,8 +621,8 @@ body {
     Take the <strong>widest</strong> valid <code>W</code>; if none qualify, no trade.
     Per-contract risk is the debit paid (capped near $5,000 via the <code>W ≤ 100</code> + <code>risk ≤ reward</code> constraint).
     <br>
-    <strong>Holding / closing</strong> — 0DTE SPXW, held to the SPX <strong>cash close</strong>
-    (16:00 ET; 13:00 ET on half-days). Settled to exact intrinsic
+    <strong>Holding / closing</strong> — 0DTE SPXW, held to the <strong>official SPX close</strong>
+    (Cboe closing value = Schwab daily candle, the SPXW settlement basis; 13:00 ET on half-days). Settled to exact intrinsic
     <code>clamp(max(0,S−(K−W)) − 2·max(0,S−K) + max(0,S−(K+W)), 0, W)</code>;
     <code>pnl = (intrinsic − nd) × 100 × contracts</code>.
     <br><br>

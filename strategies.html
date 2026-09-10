@@ -83,7 +83,7 @@
       </ul></div>
     </div>
     <div class="bet"><h3>THE BET</h3><p>SPX drifts toward the center strike by the 4 PM close → max payoff. Runs past either wing or sits too far → you lose only the small debit. Risk capped at premium, reward capped at wing width − premium.</p></div>
-    <details class="params"><summary>Key parameters</summary><p>Per-DOW windows are load-bearing (OOS-validated 2026-06-10). One trade/day = first non-banned signal. Strikes/center come from the flow post (not computed in-house). 0DTE SPX, settled at the 4:15 close intrinsic − premium. WR overrides exclude CPI and can't cancel a firing GXBF.</p></details>
+    <details class="params"><summary>Key parameters</summary><p>Per-DOW windows are load-bearing (OOS-validated 2026-06-10). One trade/day = first non-banned signal. Strikes/center come from the flow post (not computed in-house). 0DTE SPX, settled at the official SPX close (Cboe closing value) — intrinsic − premium. WR overrides exclude CPI and can't cancel a firing GXBF.</p></details>
   </section>
 
   <!-- Straddle -->
@@ -119,7 +119,7 @@
       </ul></div>
     </div>
     <div class="bet"><h3>THE BET</h3><p>SPX travels far from the strike by 4 PM in <b>either</b> direction → the in-the-money leg beats the combined premium. A quiet day that closes near the strike → both legs decay and you lose the debit (capped ~$3,200, or ~$3,500 on EOM).</p></div>
-    <details class="params"><summary>Key parameters</summary><p>Debit caps: regular/NM $32, EOM $35. If entry mid ≤ cap → fill now; else rest a working limit at the cap until the 13:30 ET cutoff, then expire (no trade). Held to the 4 PM cash close; P/L = (|SPX close − strike| − debit) × 100.</p></details>
+    <details class="params"><summary>Key parameters</summary><p>Debit caps: regular/NM $32, EOM $35. If entry mid ≤ cap → fill now; else rest a working limit at the cap until the 13:30 ET cutoff, then expire (no trade). Held to the official SPX close; P/L = (|official close − strike| − debit) × 100.</p></details>
   </section>
 
   <!-- GXBF -->
@@ -156,7 +156,7 @@
       </ul></div>
     </div>
     <div class="bet"><h3>THE BET</h3><p>SPX drifts toward and pins the dealer-gamma strike K by the close → max payoff at exactly K. A clean trend day away from the pin (closes outside K ± W) → you lose the net debit. Risk capped at ≤ W/2 per contract (~$5,000 max).</p></div>
-    <details class="params"><summary>Key parameters</summary><p>Center = argmax(γ × volume × S² × 100 × 0.01) over strikes ±5% of spot, snapped to 5 (always volume-weighted since 2026-06-10). BS gamma R=0.043, Q=0.013. Wing ∈ {5..100} step 5, widest with debit ≤ W/2. Hold to 4 PM cash close (1 PM half-days). Block: VIX_MAX_GXBF = 25.</p></details>
+    <details class="params"><summary>Key parameters</summary><p>Center = argmax(γ × volume × S² × 100 × 0.01) over strikes ±5% of spot, snapped to 5 (always volume-weighted since 2026-06-10). BS gamma R=0.043, Q=0.013. Wing ∈ {5..100} step 5, widest with debit ≤ W/2. Hold to the official SPX close (1 PM half-days). Block: VIX_MAX_GXBF = 25.</p></details>
   </section>
 
   <!-- BOBF -->
@@ -190,7 +190,7 @@
       </ul></div>
     </div>
     <div class="bet"><h3>THE BET</h3><p>SPX grinds higher into the profit zone (body ≈ spot +15–25) by the close → the structure outvalues the small debit. Stalls/drops below the lower wing, or rips far past the upper → you lose the debit. Broken-wing keeps max loss = the net debit.</p></div>
-    <details class="params"><summary>Key parameters</summary><p>Body = round-to-5 of spot +15 (Friday) / +25 (VIX types); wings symmetric ±30 from body. Move-from-open: Fri ≥0.10%, VIX-up ≥0.20%, VIX-down 0.20–0.70%. VIX cap 23 (rechecked live). Friday-only premium cap $12. Held to the 4 PM SPX close.</p></details>
+    <details class="params"><summary>Key parameters</summary><p>Body = round-to-5 of spot +15 (Friday) / +25 (VIX types); wings symmetric ±30 from body. Move-from-open: Fri ≥0.10%, VIX-up ≥0.20%, VIX-down 0.20–0.70%. VIX cap 23 (rechecked live). Friday-only premium cap $12. Held to the official SPX close.</p></details>
   </section>
 
   <!-- Diagonal -->
@@ -291,8 +291,8 @@
         <li>Post-OPEX VIX expiration (normal VIX-exp Wednesdays trade)</li>
       </ul></div>
     </div>
-    <div class="bet"><h3>THE BET</h3><p>The gamma book&rsquo;s sign at midday predicts which side of the market is dead for the afternoon — sell that side, collect the credit at the close. Backtest (condor basis) Jun 2022 &rarr; Aug 2026 &mdash; including the 2022 bear: 542 trades, 70.3% win rate, +$98/contract average, t 5.75, PF 1.70, worst day &minus;$709/contract, every year green (2022 bear: +$78/lot at 69%); the far call leg pays exactly on the put side&rsquo;s loss days. Default size 2 contracts. Full record and live log: <a href="spreads.html">spreads.html</a>.</p></div>
-    <details class="params"><summary>Key parameters</summary><p>10-wide verticals only. Credit targets: $4.00 &plusmn;$1.00 (call side), $2.50 &plusmn;$0.63 (put side) — strike auto-scanned to hit the target. Fills modeled at mid &minus; $0.20. One decision per window (12:00&ndash;12:20 / 13:00&ndash;13:20 eval-once). Signals fan out to the channel + subscriber DMs; settles automatically vs the SPX close; live results merge into the site record.</p></details>
+    <div class="bet"><h3>THE BET</h3><p>The gamma book&rsquo;s sign at midday predicts which side of the market is dead for the afternoon — sell that side, collect the credit at the close. Backtest (condor basis) Jun 2022 &rarr; Aug 2026 &mdash; including the 2022 bear: 545 trades, 69.9% win rate, +$96/contract average, t 5.62, PF 1.67 (official-close basis, restated 2026-09-09), worst day &minus;$709/contract, every year green (2022 bear: +$78/lot at 69%); the far call leg pays exactly on the put side&rsquo;s loss days. Default size 2 contracts. Full record and live log: <a href="spreads.html">spreads.html</a>.</p></div>
+    <details class="params"><summary>Key parameters</summary><p>10-wide verticals only. Credit targets: $4.00 &plusmn;$1.00 (call side), $2.50 &plusmn;$0.63 (put side) — strike auto-scanned to hit the target. Fills modeled at mid &minus; $0.20. One decision per window (12:00&ndash;12:20 / 13:00&ndash;13:20 eval-once). Signals fan out to the channel + subscriber DMs; settles automatically vs the official SPX close; live results merge into the site record.</p></details>
   </section>
 
   <p style="color:var(--mute);font-size:12px;text-align:center;margin-top:8px;">Payoff diagrams are illustrative shapes, not to scale. Informational only — not financial advice.</p>

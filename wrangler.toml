@@ -10,7 +10,7 @@ compatibility_date = "2026-03-17"
 #   UTC), silently killing the daily scraped-signals/cyclicality/research writes all
 #   winter. `13-21` now covers 16:xx ET in EST too (2026-06-30 fix). Extra post-close
 #   ticks in EDT (17:xx ET) are ET-gated no-ops.
-# EOD: ~16:17 ET (EDT + EST)
+# EOD: ~16:31 ET (EDT + EST) — official daily close is final by ~16:30 (owner 2026-09-09)
 # Evening jobs (preview + Schwab token-expiry warning, nightly data watchdog, tail-
 # bundle check) are gated on 18:xx ET = 22:xx UTC (EDT) / 23:xx UTC (EST). The old
 # `13-21` topped out at 17:xx ET, so those NEVER fired on a weekday in either DST
@@ -20,8 +20,8 @@ crons = [
   "30 13 * * 1-5",
   "30 14 * * 1-5",
   "* 13-23 * * 1-5",
-  "17 20 * * 1-5",
-  "17 21 * * 1-5",
+  "31 20 * * 1-5",
+  "31 21 * * 1-5",
   "0 22 * * SUN",
   "7 15,19 * * SAT,SUN"
 ]

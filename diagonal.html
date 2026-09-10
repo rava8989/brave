@@ -619,7 +619,7 @@ body {
       <br>
       <strong>Does</strong>: open a fresh diagonal at the selected entry time (default <code>12:30 ET</code>, any time in the 12:30–15:00 ET window is valid), close it at the same clock time the next trading day (Entry Time === Exit Time), price both legs from real Polygon NBBO bid/ask snapshots.
       Data coverage: <strong>2023‑01‑03 → 2026‑04‑22</strong>, 820 trading days, 20 selectable intraday buckets (<code>09:45</code> → <code>15:45</code>), SPX puts ±300 pts around spot, <strong>DTE 0–35 continuous</strong> (100% real quote coverage on the default config, 0% Black‑Scholes fallback).
-      Expired short legs settle to exact intrinsic (SPX is PM‑settled at SPX close), not Black‑Scholes.
+      Expired short legs settle to exact intrinsic at the last pre‑close snapshot in the dataset (15:45 ET, a proxy for the SPX PM settlement), not Black‑Scholes.
       <br>
       <strong>Does NOT</strong>: no rolling, no strike adjustments, no mid‑trade management, no theta/delta hedging, no slippage past mid, no commissions — every day opens a brand‑new position and closes it flat.
       Sizing is fixed at 1 contract by default; equity compounding is only engaged if you flip off <em>Ignore margin</em> in the sidebar.
