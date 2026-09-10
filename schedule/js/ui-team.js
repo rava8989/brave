@@ -10,9 +10,11 @@ Views.team = (function () {
 
   function modeSeg() {
     const mode = App.state.teamMode;
+    const official = App.state.teamLayout === 'official';
     return '<div class="seg grow no-print" style="margin-bottom:10px">' +
-      '<button type="button" class="' + (mode === 'day' ? 'active' : '') + '" data-action="mode" data-mode="day">Day</button>' +
-      '<button type="button" class="' + (mode === 'month' ? 'active' : '') + '" data-action="mode" data-mode="month">Month grid</button></div>';
+      '<button type="button" class="' + (mode === 'month' && official ? 'active' : '') + '" data-action="mode" data-mode="month" data-layout="official">Posted sheet</button>' +
+      '<button type="button" class="' + (mode === 'month' && !official ? 'active' : '') + '" data-action="mode" data-mode="month" data-layout="colors">Colors</button>' +
+      '<button type="button" class="' + (mode === 'day' ? 'active' : '') + '" data-action="mode" data-mode="day">Day</button></div>';
   }
 
   /* ---------------- day view ---------------- */
@@ -38,7 +40,7 @@ Views.team = (function () {
         '<span class="count' + (req && real < req ? ' short' : '') + '">' + real + (req ? ' / ' + req + ' needed' : '') + '</span></div><div class="body">';
       if (!people.length) h += '<div class="person muted">nobody scheduled</div>';
       people.forEach(function (p) {
-        h += '<div class="person"><span class="' + (p.vacant ? 'muted' : '') + '">' + esc(p.name) + (p.vacant ? ' <span class="pill pill-muted">vacant</span>' : '') + (p.employeeId === me ? ' <span class="pill pill-accent">me</span>' : '') + ' <span class="sub">slot ' + p.slot + '</span></span>' + chip(p.code, 'sm') + '</div>';
+        h += '<div class="person"><span class="' + (p.vacant ? 'muted' : '') + '">' + esc(p.name) + (p.vacant ? ' <span class="pill pill-muted">vacant</span>' : '') + (p.employeeId === me ? ' <span class="pill pill-accent">me</span>' : '') + ' <span class="sub">' + esc(Engine.shiftCode(Engine.getEmployee(p.employeeId))) + '</span></span>' + chip(p.code, 'sm') + '</div>';
       });
       h += '</div></div>';
     });
@@ -46,7 +48,7 @@ Views.team = (function () {
     h += '<div class="tour-block"><div class="th"><span>Off / leave</span><span class="count">' + offs.length + '</span></div><div class="body">';
     if (!offs.length) h += '<div class="person muted">nobody off</div>';
     offs.forEach(function (p) {
-      h += '<div class="person"><span>' + esc(p.name) + (p.employeeId === me ? ' <span class="pill pill-accent">me</span>' : '') + ' <span class="sub">slot ' + p.slot + '</span></span>' + chip(p.code, 'sm') + '</div>';
+      h += '<div class="person"><span>' + esc(p.name) + (p.employeeId === me ? ' <span class="pill pill-accent">me</span>' : '') + ' <span class="sub">' + esc(Engine.shiftCode(Engine.getEmployee(p.employeeId))) + '</span></span>' + chip(p.code, 'sm') + '</div>';
     });
     h += '</div></div>';
     if (sum.coverage.issues.length) h += '<div class="alerts">' + sum.coverage.issues.map(function (i) { return '<div class="alert alert-warn">⚠ ' + esc(i) + '</div>'; }).join('') + '</div>';
@@ -65,7 +67,7 @@ Views.team = (function () {
       if (!candidates.length) h += '<p class="muted">Nobody available by the rotation on this day.</p>';
       h += '<div class="list">';
       candidates.forEach(function (c) {
-        h += '<div class="item"><div class="grow"><div class="name">' + esc(c.name) + '</div><div class="sub">slot ' + c.slot + ' · ' + esc(c.meta.label) + '</div></div>' + chip(c.code, 'sm') +
+        h += '<div class="item"><div class="grow"><div class="name">' + esc(c.name) + '</div><div class="sub">' + esc(Engine.shiftCode(Engine.getEmployee(c.employeeId))) + ' · ' + esc(c.meta.label) + '</div></div>' + chip(c.code, 'sm') +
           '<button type="button" class="btn btn-sm btn-primary" data-action="swap-with" data-id="' + esc(c.employeeId) + '">Swap</button></div>';
       });
       h += '</div></div>';
@@ -80,13 +82,20 @@ Views.team = (function () {
     const dim = Engine.daysInMonth(y, m);
     const today = Engine.todayISO();
     const sup = Store.isSupervisor();
-    const roster = Engine.activeRoster().slice().sort(function (a, b) { return a.slot - b.slot || a.name.localeCompare(b.name); });
+    const roster = Engine.rosterSorted();
+    const official = App.state.teamLayout === 'official';
     let h = '<div class="card"><div class="cal-nav no-print">' +
       '<button type="button" class="btn btn-sm" data-action="today">Today</button>' +
       '<button type="button" class="btn btn-icon" data-action="prev" aria-label="Previous month">‹</button>' +
       '<span class="title">' + esc(Engine.monthLabel(y, m)) + '</span>' +
-      '<button type="button" class="btn btn-icon" data-action="next" aria-label="Next month">›</button></div>' +
-      '<h2 class="print-only">Monthly labor schedule — ' + esc(Engine.monthLabel(y, m)) + '</h2>' +
+      '<button type="button" class="btn btn-icon" data-action="next" aria-label="Next month">›</button></div>';
+    if (official) {
+      h += '<div class="row between no-print" style="margin:0 0 8px"><span class="muted" style="font-size:.78rem">Scroll sideways · ' + (sup ? 'to change a cell use Colors · ' : '') + 'red = not the regular rotation</span>' +
+        '<button type="button" class="btn btn-sm btn-primary" data-action="print">🖨 Print (landscape)</button></div>' +
+        '<div class="olabor-scroll">' + Forms.laborScheduleHTML(y, m) + '</div></div>';
+      return h;
+    }
+    h += '<h2 class="print-only">Monthly labor schedule — ' + esc(Engine.monthLabel(y, m)) + '</h2>' +
       '<p class="muted no-print" style="font-size:.78rem;margin:0 0 8px">' + (sup ? 'Tap a cell to change it. ' : '') + 'Scroll sideways · blue outline = changed from rotation</p>' +
       '<div class="lgrid-wrap"><table class="lgrid"><thead><tr><th class="name">Name<small>slot</small></th>';
     const days = [];
@@ -97,10 +106,11 @@ Views.team = (function () {
       h += '<th class="' + (Engine.isWeekend(iso) ? 'we ' : '') + (hol ? 'hol' : '') + '" title="' + esc(hol ? hol.name : '') + '">' + d + '<small>' + Engine.WEEKDAYS[Engine.weekday(iso)] + '</small></th>';
     }
     h += '</tr></thead><tbody>';
-    let lastSlot = null;
+    let lastKey = null;
     roster.forEach(function (e) {
-      h += '<tr class="' + (lastSlot !== null && e.slot !== lastSlot ? 'slot-start' : '') + '"><td class="name" title="' + esc(e.name) + '">' + esc(e.name) + '<small>slot ' + e.slot + '</small></td>';
-      lastSlot = e.slot;
+      const k = Engine.shiftCode(e);
+      h += '<tr class="' + (lastKey !== null && k !== lastKey ? 'slot-start' : '') + '"><td class="name" title="' + esc(e.name) + '">' + esc(e.name) + '<small>' + esc(k) + '</small></td>';
+      lastKey = k;
       days.forEach(function (iso) {
         const s = Engine.getScheduleForDate(iso, { employeeId: e.id });
         const cls = [];
@@ -164,7 +174,12 @@ Views.team = (function () {
     render: render,
     editCell: editCell,
     actions: {
-      mode: function (b) { App.state.teamMode = b.dataset.mode; Store.setPref('teamMode', b.dataset.mode); App.render(); },
+      mode: function (b) {
+        App.state.teamMode = b.dataset.mode; Store.setPref('teamMode', b.dataset.mode);
+        if (b.dataset.layout) { App.state.teamLayout = b.dataset.layout; Store.setPref('teamLayout', b.dataset.layout); }
+        App.render();
+      },
+      layout: function (b) { App.state.teamLayout = b.dataset.layout; Store.setPref('teamLayout', b.dataset.layout); App.render(); },
       tday: function () { App.state.teamDate = Engine.todayISO(); App.render(); },
       tprev: function () { App.state.teamDate = Engine.addDays(App.state.teamDate, -1); App.render(); },
       tnext: function () { App.state.teamDate = Engine.addDays(App.state.teamDate, 1); App.render(); },

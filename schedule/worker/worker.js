@@ -197,6 +197,17 @@ async function parseSwapSheet(dataUrl, hints, env) {
     'Dates must be YYYY-MM-DD. If you cannot read a cell confidently, leave it out and mention it in notes.';
   const year = Number(hints.year) || new Date().getFullYear();
   const month = Number(hints.month) || new Date().getMonth() + 1;
+  /* The app's own computed schedule for the month, so the model can line up
+   * handwritten cells with the right day columns and names. */
+  let presentText = '';
+  if (hints.present && typeof hints.present === 'object') {
+    const byId = new Map(employees.map((e) => [e.id, e.name]));
+    presentText = Object.keys(hints.present).slice(0, 40).map((id) => {
+      const row = hints.present[id] || {};
+      const cells = Object.keys(row).sort().map((iso) => Number(iso.slice(8, 10)) + '=' + row[iso]).join(' ');
+      return (byId.get(id) || id) + ' (id ' + id + '): ' + cells;
+    }).join('\n');
+  }
   const schema = {
     type: 'object',
     properties: {
@@ -235,7 +246,8 @@ async function parseSwapSheet(dataUrl, hints, env) {
         role: 'user',
         content: [
           { type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } },
-          { type: 'text', text: 'The app is currently showing ' + year + '-' + String(month).padStart(2, '0') + '. Extract the requested changes from this form.' },
+          { type: 'text', text: 'The app is currently showing ' + year + '-' + String(month).padStart(2, '0') + '. Extract the requested changes from this form.' +
+            (presentText ? '\n\nFor reference, the schedule the app currently has for that month (day=code), which should agree with the PRESENT grid where it is filled in:\n' + presentText : '') },
         ],
       }],
     }),

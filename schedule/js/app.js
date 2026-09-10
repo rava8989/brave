@@ -12,7 +12,9 @@ const App = (function () {
     cal: { y: 2026, m: 1 },
     selectedDate: null,
     teamDate: null,
-    teamMode: 'day',
+    teamMode: 'month',
+    teamLayout: 'official',
+    formView: null,
     reqFilter: 'pending',
     rotSlot: 1,
     rotWeekStart: null,
@@ -40,6 +42,7 @@ const App = (function () {
   function setTab(tab) {
     if (TABS.indexOf(tab) === -1) tab = 'calendar';
     state.tab = tab; Store.setPref('tab', tab);
+    state.formView = null;
     UI.closeSheet();
     render();
     window.scrollTo(0, 0);
@@ -86,14 +89,19 @@ const App = (function () {
     tabbar.hidden = true; chipEl.hidden = true; brandSub.textContent = 'Sign in';
     const L = state.login;
     const remote = Store.isRemote();
-    const people = Engine.activeRoster().filter(function (e) { return !e.vacant; });
+    const people = Engine.rosterSorted().filter(function (e) { return !e.vacant; });
     let h = '<div class="login"><div class="logo">📅</div><h1>' + esc(APP_CONFIG.appName) + '</h1><p class="sub">' + (remote ? 'Shared schedule — enter your access code' : 'Who is using this phone?') + '</p>';
     h += '<div class="seg grow" style="margin-bottom:12px"><button type="button" class="' + (L.role === 'worker' ? 'active' : '') + '" data-action="role" data-role="worker">I’m a worker</button>' +
       '<button type="button" class="' + (L.role === 'supervisor' ? 'active' : '') + '" data-action="role" data-role="supervisor">Supervisor</button></div>';
     if (L.role === 'worker') {
-      h += '<div class="who-list">' + people.map(function (e) {
-        return '<button type="button" class="' + (L.employeeId === e.id ? 'on' : '') + '" data-action="pick-me" data-id="' + esc(e.id) + '">' + esc(e.name) + '<small>slot ' + e.slot + '</small></button>';
-      }).join('') + '</div>';
+      h += '<div class="who-list">';
+      let lastGroup = null;
+      people.forEach(function (e) {
+        const g = Engine.groupCodeOf(e);
+        if (g !== lastGroup) { const gi = Engine.groupInfo(g); h += '<div class="who-group">' + esc(g) + (gi && gi.label ? ' · ' + esc(gi.label) : '') + '</div>'; lastGroup = g; }
+        h += '<button type="button" class="' + (L.employeeId === e.id ? 'on' : '') + '" data-action="pick-me" data-id="' + esc(e.id) + '">' + esc(e.name) + '<small>' + esc(Engine.shiftCode(e)) + '</small></button>';
+      });
+      h += '</div>';
       if (remote) h += '<label class="field" style="margin-top:12px">Worker access code<input class="input" type="password" data-input="code" autocomplete="off" value="' + esc(L.code || '') + '"></label>';
       h += '<button type="button" class="btn btn-primary btn-block" style="margin-top:12px" data-action="login"' + (L.employeeId ? '' : ' disabled') + '>Continue</button>';
     } else {
@@ -134,7 +142,7 @@ const App = (function () {
   function logout() {
     UI.closeSheet();
     Store.clearSession();
-    state.viewingId = null; state.newReq = null; state.rotEdit = null; state.login = { role: 'worker', employeeId: null };
+    state.viewingId = null; state.newReq = null; state.rotEdit = null; state.formView = null; state.login = { role: 'worker', employeeId: null };
     render();
   }
 
@@ -186,7 +194,8 @@ const App = (function () {
     if (savedMonth && /^\d{4}-\d{2}$/.test(savedMonth)) state.cal = { y: Number(savedMonth.slice(0, 4)), m: Number(savedMonth.slice(5, 7)) };
     else state.cal = { y: Number(today.slice(0, 4)), m: Number(today.slice(5, 7)) };
     state.teamDate = today;
-    state.teamMode = Store.getPref('teamMode', 'day');
+    state.teamMode = Store.getPref('teamMode', 'month');
+    state.teamLayout = Store.getPref('teamLayout', 'official');
     state.rotSlot = Store.getPref('rotSlot', 1);
     state.viewingId = Store.getPref('viewingId', null);
     const savedTab = Store.getPref('tab', 'calendar');

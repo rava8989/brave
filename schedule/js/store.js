@@ -89,6 +89,7 @@ const Store = (function () {
       primaryCodes: SCHEDULE_CONFIG.primaryCodes,
       exceptions: s.exceptions || {},
       roster: s.roster,
+      groups: SCHEDULE_CONFIG.groups,
     };
   }
 

@@ -54,12 +54,12 @@ const UI = (function () {
   }
   function empOptions(selected, opts) {
     opts = opts || {};
-    return Engine.activeRoster().filter(function (e) {
+    return Engine.rosterSorted().filter(function (e) {
       if (opts.excludeId && e.id === opts.excludeId) return false;
       if (!opts.includeVacant && e.vacant) return false;
       return true;
     }).map(function (e) {
-      return '<option value="' + esc(e.id) + '"' + (e.id === selected ? ' selected' : '') + '>' + esc(e.name) + ' (slot ' + e.slot + ')</option>';
+      return '<option value="' + esc(e.id) + '"' + (e.id === selected ? ' selected' : '') + '>' + esc(e.name) + ' (' + esc(Engine.shiftCode(e)) + ')</option>';
     }).join('');
   }
   function empName(id) { const e = Engine.getEmployee(id); return e ? e.name : (id || '—'); }

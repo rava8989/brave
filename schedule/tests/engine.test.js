@@ -25,6 +25,7 @@ function freshConfig(overrides) {
     primaryCodes: SCHEDULE_CONFIG.primaryCodes,
     exceptions: {},
     roster: ROSTER,
+    groups: SCHEDULE_CONFIG.groups,
   }, overrides || {});
 }
 Engine.configure(freshConfig());
@@ -111,6 +112,18 @@ eq(code('2026-10-05', 'joseph-g'), 'B',   'Joseph Oct 5 = B');
 eq(code('2026-10-22', 'joseph-g'), 'C/A', 'Joseph Oct 22 = C/A');
 // Same-slot partners are identical by rotation
 eq(code('2026-10-01', 'handel-j'), code('2026-10-01', 'rakhmanov-r'), 'Handel = Rakhmanov (slot 5)');
+// Static groups (posted sheet): B shift Mon–Fri, A shift Mon–Fri, RDO weekends, HOL on Labor Day
+eq(code('2026-09-01', 'ahmed-n'), 'B',   'Ahmed (B shift) Tue Sep 1 = B');
+eq(code('2026-09-05', 'ahmed-n'), 'RDO', 'Ahmed Sat Sep 5 = RDO');
+eq(code('2026-09-07', 'ahmed-n'), 'HOL', 'Ahmed Labor Day = HOL');
+eq(code('2026-09-01', 'adjepong-n'), 'A',   'Adjepong (A shift) Tue Sep 1 = A');
+eq(code('2026-09-06', 'adjepong-n'), 'RDO', 'Adjepong Sun Sep 6 = RDO');
+eq(code('2026-09-07', 'adjepong-n'), 'HOL', 'Adjepong Labor Day = HOL');
+eq(Engine.shiftCode(Engine.getEmployee('rakhmanov-r')), 'LGA_6RR9.5', 'shift code for a rotating slot');
+eq(Engine.shiftCode(Engine.getEmployee('ahmed-n')), 'LGA_BSS1.1', 'shift code for a static group');
+eq(Engine.rosterSorted().map(function (e) { return e.id; }).slice(0, 2), ['ahmed-n', 'atolagbe-a'], 'sheet order starts with the B shift group');
+eq(Engine.rosterSorted().map(function (e) { return e.id; }).slice(-1), ['segovia-e'], 'sheet order ends with the A shift group');
+eq(Engine.employeesInSlot(1).map(function (e) { return e.id; }), ['kingston-j', 'rodriguez-r'], 'employeesInSlot ignores static groups');
 
 /* ---------- 24/7 coverage holds on every day of the cycle (all 12 positions filled) ---------- */
 Engine.configure(freshConfig({ roster: ROSTER.map(function (e) { return Object.assign({}, e, { vacant: false }); }) }));
@@ -124,7 +137,7 @@ ok(covOk, 'rotation keeps 2 on A, 2 on C every day and 2 on B every weekend');
 Engine.configure(freshConfig());
 // The vacant slot-2 position must not count: on 2026-09-10 slot 2 is C/A, so A and C are really 1 of 2
 const vac = Engine.getDaySummary('2026-09-10');
-eq([vac.coverage.counts.A, vac.coverage.counts.C, vac.coverage.issues.length], [1, 1, 2], 'vacant position is not counted toward coverage');
+eq([vac.coverage.counts.A, vac.coverage.counts.C, vac.coverage.issues.length], [9, 1, 1], 'vacant position is not counted toward coverage (A = 8 static + Joseph)');
 
 /* ---------- holidays / exceptions / source ---------- */
 let s = Engine.getScheduleForDate('2026-10-12', { employeeId: 'kingston-j' });
@@ -207,6 +220,11 @@ const back = Swaps.buildRequest({
 draft.requests.push(Object.assign({}, back, { status: 'pending' }));
 Swaps.applyDecision(draft, back.id, { status: 'approved', by: 'Supervisor', at: 'now' });
 eq(draft.exceptions['2026-09-18'], undefined, 'swapping back removes the exception entirely');
+// Static-group override: back to the weekly pattern removes the exception too
+Swaps.setOverride(draft, '2026-09-15', 'ahmed-n', 'VAC');
+eq(draft.exceptions['2026-09-15']['ahmed-n'].code, 'VAC', 'static-group override stored');
+Swaps.setOverride(draft, '2026-09-15', 'ahmed-n', 'B');
+eq(draft.exceptions['2026-09-15'], undefined, 'static-group override back to regular B is removed');
 Engine.configure(freshConfig());
 
 console.log((failed ? 'FAILED ' + failed + ' / ' : 'PASSED ') + (passed + failed) + ' checks');

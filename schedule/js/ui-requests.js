@@ -1,7 +1,9 @@
 /* =====================================================================
  *  ui-requests.js — swap / time-off requests
- *    workers    : new-request wizard, their requests, cancel
+ *    workers    : new-request wizard (photo of the signed sheet first),
+ *                 their requests, cancel
  *    supervisor : queue with live conflict check, approve / reject
+ *  Every request can be shown / printed as the official paper form.
  * ===================================================================== */
 Views.requests = (function () {
   'use strict';
@@ -37,14 +39,27 @@ Views.requests = (function () {
     }).join('') + '</div>';
   }
 
-  function requestCard(r) {
+  function decisionButtons(r) {
     const sup = Store.isSupervisor();
     const sess = Store.getSession();
     const me = sess && sess.employeeId;
+    let h = '';
+    if (r.status === 'pending' && sup) {
+      h += '<button type="button" class="btn btn-success" data-action="approve" data-id="' + esc(r.id) + '">✔ Approve</button>' +
+        '<button type="button" class="btn btn-danger" data-action="reject" data-id="' + esc(r.id) + '">✖ Reject</button>';
+    }
+    if (r.status === 'pending' && (sup || r.createdBy === me || (r.employees || []).indexOf(me) !== -1)) {
+      h += '<button type="button" class="btn btn-ghost" data-action="cancel" data-id="' + esc(r.id) + '">Cancel request</button>';
+    }
+    return h;
+  }
+
+  function requestCard(r) {
+    const sup = Store.isSupervisor();
     const live = r.status === 'pending' ? Swaps.validate(r, { state: Store.get(), role: 'supervisor' }) : null;
     let h = '<div class="req-card" id="req-' + esc(r.id) + '">';
     h += '<div class="head"><div><div class="title">' + esc(Swaps.describe(r)) + '</div>' +
-      '<div class="meta">Submitted ' + esc(UI.fmtDateTime(r.createdAt)) + (r.createdByName ? ' by ' + esc(r.createdByName) : '') + '</div>' +
+      '<div class="meta">Submitted ' + esc(UI.fmtDateTime(r.createdAt)) + (r.createdByName ? ' by ' + esc(r.createdByName) : '') + (r.fromPhoto ? ' · read from photo' : '') + '</div>' +
       (r.decidedAt ? '<div class="meta">' + esc(r.status === 'approved' ? 'Approved' : r.status === 'rejected' ? 'Rejected' : 'Cancelled') + ' ' + esc(UI.fmtDateTime(r.decidedAt)) + (r.decidedBy ? ' by ' + esc(r.decidedBy) : '') + (r.decisionNote ? ' — “' + esc(r.decisionNote) + '”' : '') + '</div>' : '') +
       '</div>' + UI.statusPill(r.status) + '</div>';
     if (r.reason) h += '<p style="font-size:.9rem;margin:6px 0 0"><span class="muted">Reason:</span> ' + esc(r.reason) + '</p>';
@@ -54,14 +69,8 @@ Views.requests = (function () {
       h += '<p class="muted" style="font-size:.78rem;margin-top:6px">Had ' + r.validation.warnings.length + ' warning(s) when submitted.</p>';
     }
     if (r.photoId) h += '<img class="photo-thumb" data-photo="' + esc(r.photoId) + '" alt="Photo of the signed request form" data-action="zoom">';
-    h += '<div class="row no-print" style="margin-top:10px">';
-    if (r.status === 'pending' && sup) {
-      h += '<button type="button" class="btn btn-success" data-action="approve" data-id="' + esc(r.id) + '">✔ Approve</button>' +
-        '<button type="button" class="btn btn-danger" data-action="reject" data-id="' + esc(r.id) + '">✖ Reject</button>';
-    }
-    if (r.status === 'pending' && (sup || r.createdBy === me || (r.employees || []).indexOf(me) !== -1)) {
-      h += '<button type="button" class="btn btn-ghost" data-action="cancel" data-id="' + esc(r.id) + '">Cancel request</button>';
-    }
+    h += '<div class="row no-print" style="margin-top:10px">' +
+      '<button type="button" class="btn" data-action="form" data-id="' + esc(r.id) + '">📄 Official form</button>' + decisionButtons(r);
     if (r.status === 'approved' && sup) {
       h += '<label class="check" style="margin-left:auto"><input type="checkbox" data-change="entered" data-id="' + esc(r.id) + '"' + (r.enteredInComputer ? ' checked' : '') + '> Entered into computer</label>';
     } else if (r.status === 'approved' && r.enteredInComputer) {
@@ -91,6 +100,23 @@ Views.requests = (function () {
   }
 
   /* ------------------------------------------------------------------
+   * official form page (view / print one request)
+   * ---------------------------------------------------------------- */
+  function formPage() {
+    const fv = App.state.formView;
+    const draft = fv === '__draft__';
+    const req = draft ? buildFromState(App.state.newReq) : Swaps.findRequest(Store.get(), fv);
+    if (!req) { App.state.formView = null; return listView(); }
+    let h = '<div class="form-page"><div class="row toolbar no-print">' +
+      '<button type="button" class="btn" data-action="form-back">‹ Back</button>' +
+      '<button type="button" class="btn btn-primary" data-action="print">🖨 Print</button>' +
+      (draft ? '' : decisionButtons(req)) + '</div>';
+    if (draft) h += '<p class="muted no-print" style="font-size:.85rem">Print this, get the signatures, then photograph it and attach it before submitting.</p>';
+    h += '<div class="osheet-scroll">' + Forms.swapSheetHTML(req) + '</div></div>';
+    return h;
+  }
+
+  /* ------------------------------------------------------------------
    * wizard
    * ---------------------------------------------------------------- */
   function startNew(params) {
@@ -109,6 +135,8 @@ Views.requests = (function () {
       to: {},
       reason: '',
       photo: null,
+      fromPhoto: false,
+      parseNotes: [],
       approveNow: false,
     };
   }
@@ -140,6 +168,9 @@ Views.requests = (function () {
       '<button type="button" class="btn" data-action="back">' + (n.step === 1 ? 'Cancel' : '‹ Back') + '</button>' +
       (nextLabel ? '<button type="button" class="btn btn-primary" data-action="next"' + (nextEnabled === false ? ' disabled' : '') + '>' + esc(nextLabel) + '</button>' : '') + '</div>';
   }
+  function photoInput(changeName) {
+    return '<input type="file" accept="image/*" capture="environment" data-change="' + changeName + '" class="sr-only">';
+  }
 
   function wizardView() {
     const n = App.state.newReq;
@@ -147,9 +178,18 @@ Views.requests = (function () {
     let h = '<div class="card">' + stepsBar(n.step);
 
     if (n.step === 1) {
-      h += '<h2>What do you need?</h2>';
+      h += '<h2>New request</h2>';
       if (sup) h += '<label class="field">Request for<select class="select" data-change="emp">' + UI.empOptions(n.employeeId) + '</select></label>';
-      h += '<div class="stack" style="margin-top:8px">' +
+      h += '<div class="wizard-photo-first">';
+      if (n.aiBusy) {
+        h += '<p style="text-align:center;font-weight:700;margin:6px 0">Reading the sheet…</p><p class="muted" style="text-align:center;font-size:.85rem">This takes about 10–20 seconds.</p>';
+      } else if (Store.aiAvailable()) {
+        h += '<label class="btn btn-block btn-primary" style="min-height:60px;cursor:pointer">📷 Upload the signed swap sheet<br><small style="font-weight:500">the app fills everything in from the photo</small>' + photoInput('photo-first') + '</label>';
+      } else {
+        h += '<button type="button" class="btn btn-block" style="min-height:60px" data-action="ai-info">📷 Upload the signed swap sheet 🔒<br><small style="font-weight:500">automatic reading needs the sync server</small></button>';
+      }
+      h += '</div><div class="or-divider">— or fill it in by hand —</div>';
+      h += '<div class="stack">' +
         '<button type="button" class="btn btn-block' + (n.type === 'swap' ? ' btn-primary' : '') + '" data-action="type" data-type="swap" style="min-height:56px">🔁 Swap shifts with a coworker</button>' +
         '<button type="button" class="btn btn-block' + (n.type === 'timeoff' ? ' btn-primary' : '') + '" data-action="type" data-type="timeoff" style="min-height:56px">🏖 Time off / change my own shift</button></div>';
       h += navButtons(n, null);
@@ -158,9 +198,9 @@ Views.requests = (function () {
     if (n.step === 2) {
       h += '<h2>Swap with whom?</h2><p class="muted" style="font-size:.85rem">Showing what each coworker works on ' + esc(n.dates[0] ? Engine.formatShort(n.dates[0]) : 'today') + '.</p><div class="list">';
       const ref = n.dates[0] || Engine.todayISO();
-      Engine.activeRoster().filter(function (e) { return e.id !== n.employeeId && !e.vacant; }).forEach(function (e) {
+      Engine.rosterSorted().filter(function (e) { return e.id !== n.employeeId && !e.vacant; }).forEach(function (e) {
         const c = Engine.getScheduleForDate(ref, { employeeId: e.id }).code;
-        h += '<div class="item clickable' + (n.partner === e.id ? ' selected' : '') + '" data-action="partner" data-id="' + esc(e.id) + '"><div class="grow"><div class="name">' + esc(e.name) + '</div><div class="sub">slot ' + e.slot + '</div></div>' + chip(c, 'sm') + '</div>';
+        h += '<div class="item clickable' + (n.partner === e.id ? ' selected' : '') + '" data-action="partner" data-id="' + esc(e.id) + '"><div class="grow"><div class="name">' + esc(e.name) + '</div><div class="sub">' + esc(Engine.shiftCode(e)) + '</div></div>' + chip(c, 'sm') + '</div>';
       });
       h += '</div>' + navButtons(n, 'Next ›', !!n.partner);
     }
@@ -201,13 +241,14 @@ Views.requests = (function () {
           '<span class="muted">→</span><select class="select" data-change="to" data-key="' + esc(key(c.date, c.employeeId)) + '">' + UI.codeOptions(c.to) + '</select></div>';
       });
       h += '<label class="field" style="margin-top:14px">Reason (optional)<textarea class="textarea" data-input="reason" placeholder="e.g. doctor appointment, family event">' + esc(n.reason) + '</textarea></label>';
-      h += '<div class="field">Photo of the signed request form (optional)</div>';
+      h += '<div class="field">Photo of the signed request form</div>';
       if (n.photo) {
         h += '<img class="photo-thumb" src="' + n.photo.dataUrl + '" alt="Attached photo">' +
           '<div class="row" style="margin-top:6px"><button type="button" class="btn btn-sm" data-action="photo-remove">Remove photo</button>' +
           (Store.aiAvailable() ? '<button type="button" class="btn btn-sm btn-primary" data-action="photo-read"' + (n.aiBusy ? ' disabled' : '') + '>' + (n.aiBusy ? 'Reading…' : '✨ Fill in from photo') + '</button>' : '') + '</div>';
       } else {
-        h += '<label class="btn btn-block" style="cursor:pointer">📷 Take / choose photo<input type="file" accept="image/*" capture="environment" data-change="photo" class="sr-only"></label>';
+        h += '<label class="btn btn-block" style="cursor:pointer">📷 Take / choose photo' + photoInput('photo') + '</label>' +
+          '<p class="muted" style="font-size:.78rem">No signed sheet yet? Continue to Review and print the pre-filled form from there.</p>';
       }
       h += navButtons(n, 'Review ›', true);
     }
@@ -215,10 +256,18 @@ Views.requests = (function () {
     if (n.step === 5) {
       const req = buildFromState(n);
       const v = Swaps.validate(req, { state: Store.get(), role: sup ? 'supervisor' : 'worker' });
+      const notes = (n.parseNotes || []).slice();
       h += '<h2>Review</h2><p style="font-weight:700">' + esc(Swaps.describe(req)) + '</p>';
-      if (n.reason) h += '<p style="font-size:.9rem"><span class="muted">Reason:</span> ' + esc(n.reason) + '</p>';
-      h += UI.diffTable(req) + UI.validationHTML(v);
-      if (n.photo) h += '<img class="photo-thumb" src="' + n.photo.dataUrl + '" alt="Attached photo">';
+      if (n.fromPhoto) h += '<p class="muted" style="font-size:.85rem">Read from your photo — check every cell against the sheet before submitting.</p>';
+      h += '<p class="muted" style="font-size:.78rem;margin:6px 0 4px">Official form (scroll sideways) — before on top, requested below:</p>';
+      h += '<div class="osheet-scroll">' + Forms.swapSheetHTML(req) + '</div>';
+      h += '<div class="row" style="margin-top:8px"><button type="button" class="btn btn-sm" data-action="form-draft">🖨 Print this form to sign</button>' +
+        '<button type="button" class="btn btn-sm" data-action="edit-cells">✎ Edit shifts</button></div>';
+      h += UI.diffTable(req);
+      if (notes.length) h += '<div class="alerts">' + notes.map(function (x) { return '<div class="alert alert-warn">⚠ ' + esc(x) + '</div>'; }).join('') + '</div>';
+      h += UI.validationHTML(v);
+      if (n.photo) h += '<img class="photo-thumb" src="' + n.photo.dataUrl + '" alt="Attached photo"><div class="row" style="margin-top:6px"><button type="button" class="btn btn-sm" data-action="photo-remove">Remove photo</button></div>';
+      else h += '<label class="btn btn-block" style="cursor:pointer;margin-top:8px">📷 Attach photo of the signed sheet' + photoInput('photo') + '</label>';
       if (sup) h += '<label class="check" style="margin-top:8px"><input type="checkbox" data-change="approve-now"' + (n.approveNow ? ' checked' : '') + '> Approve and apply to the schedule now</label>';
       else if (v.warnings.length) h += '<p class="muted" style="font-size:.8rem">The warnings above will be shown to the supervisor; you can still submit.</p>';
       h += '<div class="row" style="margin-top:14px;justify-content:space-between"><button type="button" class="btn" data-action="back">‹ Back</button>' +
@@ -230,14 +279,16 @@ Views.requests = (function () {
 
   function buildFromState(n) {
     const sess = Store.getSession();
-    return Swaps.buildRequest({
-      type: n.type,
+    const r = Swaps.buildRequest({
+      type: n.type || 'change',
       createdBy: sess.employeeId || 'supervisor',
       createdByName: sess.name || '',
-      changes: currentChanges(n),
+      changes: currentChanges(n).filter(function (c) { return c.to !== c.from; }),   // drop no-change rows
       reason: n.reason,
-      photoId: n.photo ? 'p-' + n.photoIdSeed : null,
+      photoId: n.photo ? 'p-' + (n.photoIdSeed || 'draft') : null,
     });
+    r.fromPhoto = !!n.fromPhoto;
+    return r;
   }
 
   async function submit() {
@@ -247,7 +298,7 @@ Views.requests = (function () {
     const req = buildFromState(n);
     const v = Swaps.validate(req, { state: Store.get(), role: sup ? 'supervisor' : 'worker' });
     if (!v.ok) { UI.toast(v.errors[0], 'error'); return; }
-    req.validation = { warnings: v.warnings, notes: v.notes, checkedAt: new Date().toISOString() };
+    req.validation = { warnings: v.warnings, notes: v.notes.concat(n.parseNotes || []), checkedAt: new Date().toISOString() };
     try {
       if (n.photo) await Store.savePhoto(req.photoId, n.photo.dataUrl);
       const approveNow = sup && n.approveNow;
@@ -284,38 +335,141 @@ Views.requests = (function () {
     try {
       await Store.mutate(function (d) { Swaps.applyDecision(d, id, { status: status, by: Store.getSession().name || 'Supervisor', note: note }); }, { reason: 'decision' });
       UI.toast(status === 'approved' ? 'Approved — schedule updated' : 'Rejected');
+      if (App.state.formView === id) App.state.formView = null;
     } catch (e) { UI.toast(e.message, 'error'); }
+  }
+
+  /* ------------------------------------------------------------------
+   * photo → request (AI on the sync server)
+   * ---------------------------------------------------------------- */
+  function presentScheduleHint(y, m) {
+    const dim = Engine.daysInMonth(y, m);
+    const out = {};
+    Engine.activeRoster().forEach(function (e) {
+      const row = {};
+      for (let d = 1; d <= dim; d++) {
+        const iso = y + '-' + (m < 10 ? '0' : '') + m + '-' + (d < 10 ? '0' : '') + d;
+        row[iso] = Engine.getScheduleForDate(iso, { employeeId: e.id }).code;
+      }
+      out[e.id] = row;
+    });
+    return out;
+  }
+
+  /* Handwritten names are usually "R. Rakhmanov" or just "Bouaziz". Match on
+   * the surname, use an initial / first name to tell namesakes apart, and
+   * when a bare surname is still ambiguous prefer the person whose sheet
+   * this is (preferId = the signed-in worker).                          */
+  function matchEmployee(name, preferId) {
+    if (!name) return null;
+    const clean = String(name).toLowerCase().replace(/[^a-z\s,.]/g, ' ');
+    const tokens = clean.split(/[\s,.]+/).filter(Boolean);
+    if (!tokens.length) return null;
+    const roster = Engine.activeRoster().filter(function (e) { return !e.vacant; });
+    function parts(e) {
+      const p = e.name.toLowerCase().split(',');
+      return { last: p[0].replace(/[^a-z]/g, ''), first: (p[1] || '').trim().replace(/[^a-z\s]/g, '').split(/\s+/).filter(Boolean) };
+    }
+    const joined = tokens.join('');
+    const exact = roster.filter(function (e) { return e.name.toLowerCase().replace(/[^a-z]/g, '') === joined; });
+    if (exact.length === 1) return exact[0].id;
+    let hits = roster.filter(function (e) {
+      const last = parts(e).last;
+      return last && tokens.some(function (t) { return t.length >= 3 && (t === last || last.indexOf(t) === 0 || t.indexOf(last) === 0); });
+    });
+    if (hits.length > 1) {
+      const rest = tokens.filter(function (t) { return !hits.some(function (e) { const l = parts(e).last; return t === l || l.indexOf(t) === 0 || t.indexOf(l) === 0; }); });
+      if (rest.length) {
+        const narrowed = hits.filter(function (e) {
+          return parts(e).first.some(function (f) { return rest.some(function (t) { return f.indexOf(t) === 0 || t.indexOf(f) === 0; }); });
+        });
+        if (narrowed.length) hits = narrowed;
+      }
+      if (hits.length > 1 && preferId && hits.some(function (e) { return e.id === preferId; })) hits = hits.filter(function (e) { return e.id === preferId; });
+    }
+    return hits.length === 1 ? hits[0].id : null;
   }
 
   function applyParsed(parsed) {
     const n = App.state.newReq;
-    const roster = Engine.activeRoster();
-    function matchEmp(name) {
-      if (!name) return null;
-      const q = String(name).toLowerCase().replace(/[^a-z]/g, '');
-      const hit = roster.filter(function (e) {
-        const full = e.name.toLowerCase().replace(/[^a-z]/g, '');
-        const last = e.name.split(',')[0].toLowerCase().replace(/[^a-z]/g, '');
-        return q && (full.indexOf(q) !== -1 || q.indexOf(last) !== -1 || last.indexOf(q) !== -1);
-      });
-      return hit.length === 1 ? hit[0].id : null;
-    }
-    let applied = 0;
+    const cfg = Engine.getConfig();
+    const notes = [];
+    const ids = [];
+    const items = [];
     (parsed.changes || []).forEach(function (c) {
-      const id = c.employeeId && Engine.getEmployee(c.employeeId) ? c.employeeId : matchEmp(c.name);
-      if (!id || !Engine.isValidISO(c.date) || !c.to || !Engine.getConfig().codes[c.to]) return;
-      if (n.type === 'swap' && id !== n.employeeId && !n.partner) n.partner = id;
-      if (id !== n.employeeId && id !== n.partner) return;
-      if (n.dates.indexOf(c.date) === -1) n.dates.push(c.date);
-      n.to[key(c.date, id)] = c.to;
-      applied++;
+      const id = c.employeeId && Engine.getEmployee(c.employeeId) ? c.employeeId : matchEmployee(c.name, n.employeeId);
+      if (!id) { notes.push('Could not match the name “' + (c.name || '?') + '” to the roster (' + (c.date || '?') + ').'); return; }
+      if (!Engine.isValidISO(c.date)) { notes.push('Unreadable date for ' + UI.empShort(id) + ': “' + (c.date || '?') + '”.'); return; }
+      const to = String(c.to || '').toUpperCase().replace(/\s+/g, '');
+      if (!cfg.codes[to]) { notes.push('Unknown code “' + (c.to || '?') + '” for ' + UI.empShort(id) + ' on ' + Engine.formatShort(c.date) + '.'); return; }
+      if (ids.indexOf(id) === -1) ids.push(id);
+      items.push({ id: id, date: c.date, to: to, present: c.present ? String(c.present).toUpperCase().replace(/\s+/g, '') : null });
     });
-    if (parsed.reason && !n.reason) n.reason = parsed.reason;
-    return applied;
+    if (!items.length) return 0;
+    /* who is this request for? */
+    if (ids.indexOf(n.employeeId) === -1) n.employeeId = ids[0];
+    const others = ids.filter(function (x) { return x !== n.employeeId; });
+    if (others.length > 1) notes.push('The sheet names more than two people; only ' + UI.empShort(n.employeeId) + ' and ' + UI.empShort(others[0]) + ' were used.');
+    n.partner = others[0] || null;
+    n.type = n.partner ? 'swap' : 'timeoff';
+    n.dates = [];
+    n.to = {};
+    items.forEach(function (it) {
+      if (it.id !== n.employeeId && it.id !== n.partner) return;
+      if (n.dates.indexOf(it.date) === -1) n.dates.push(it.date);
+      n.to[key(it.date, it.id)] = it.to;
+      const cur = Engine.getScheduleForDate(it.date, { employeeId: it.id }).code;
+      if (it.present && it.present !== cur) notes.push('Sheet shows ' + UI.empShort(it.id) + ' as ' + it.present + ' on ' + Engine.formatShort(it.date) + ' but the schedule says ' + cur + ' — check the day columns.');
+    });
+    /* A day the sheet lists for only one of the two people is not a swap on
+     * that day: the other person explicitly keeps their current shift.  */
+    n.dates.forEach(function (d) {
+      [n.employeeId, n.partner].forEach(function (id) {
+        if (!id) return;
+        const k = key(d, id);
+        if (!Object.prototype.hasOwnProperty.call(n.to, k)) n.to[k] = Engine.getScheduleForDate(d, { employeeId: id }).code;
+      });
+    });
+    if (parsed.reason && !n.reason) n.reason = String(parsed.reason);
+    if (parsed.notes) notes.push('Reader notes: ' + String(parsed.notes));
+    n.parseNotes = notes;
+    n.fromPhoto = true;
+    const first = n.dates.slice().sort()[0];
+    if (first) n.pick = { y: Number(first.slice(0, 4)), m: Number(first.slice(5, 7)) };
+    return n.dates.length;
+  }
+
+  function readPhoto(dataUrl) {
+    const n = App.state.newReq;
+    n.aiBusy = true; App.render();
+    const p = n.pick;
+    Store.parsePhoto(dataUrl, {
+      year: p.y, month: p.m,
+      employees: Engine.activeRoster().map(function (e) { return { id: e.id, name: e.name, slot: e.slot }; }),
+      requester: n.employeeId,
+      present: presentScheduleHint(p.y, p.m),
+    }).then(function (res) {
+      n.aiBusy = false;
+      if (res && res.error) throw new Error(res.error);
+      const k = applyParsed(res || {});
+      if (k) { n.step = 5; UI.toast('Filled in ' + k + ' day(s) from the photo — check them'); }
+      else UI.toast('Could not find any changes in the photo — fill it in by hand', 'error');
+      App.render();
+    }).catch(function (e) { n.aiBusy = false; UI.toast(e.message, 'error'); App.render(); });
+  }
+
+  function attachPhoto(input, thenRead) {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    UI.toast('Processing photo…');
+    UI.downscaleImage(file).then(function (dataUrl) {
+      App.state.newReq.photo = { dataUrl: dataUrl };
+      if (thenRead) readPhoto(dataUrl); else App.render();
+    }).catch(function (e) { UI.toast(e.message, 'error'); });
   }
 
   function render(root) {
-    root.innerHTML = App.state.newReq ? wizardView() : listView();
+    root.innerHTML = App.state.formView ? formPage() : (App.state.newReq ? wizardView() : listView());
     loadPhotos(root);
   }
 
@@ -329,21 +483,34 @@ Views.requests = (function () {
         if (!img.src) return;
         UI.openSheet({ title: 'Signed form', body: '<img class="photo-full" src="' + img.src + '" alt="Photo of the signed request form">' });
       },
+      form: function (b) { App.state.formView = b.dataset.id; App.render(); window.scrollTo(0, 0); },
+      'form-draft': function () { App.state.formView = '__draft__'; App.render(); window.scrollTo(0, 0); },
+      'form-back': function () { App.state.formView = null; App.render(); },
+      print: function () { window.print(); },
       approve: function (b) { decide(b.dataset.id, 'approved'); },
       reject: function (b) { decide(b.dataset.id, 'rejected'); },
       cancel: function (b) {
         UI.confirmDialog({ title: 'Cancel this request?', message: 'It will be marked cancelled.', okLabel: 'Cancel request', danger: true }).then(function (ok) {
           if (!ok) return;
           Store.mutate(function (d) { Swaps.applyDecision(d, b.dataset.id, { status: 'cancelled', by: Store.getSession().name || '' }); }, { reason: 'decision' })
-            .then(function () { UI.toast('Request cancelled'); }).catch(function (e) { UI.toast(e.message, 'error'); });
+            .then(function () { App.state.formView = null; UI.toast('Request cancelled'); }).catch(function (e) { UI.toast(e.message, 'error'); });
+        });
+      },
+      'ai-info': function () {
+        UI.openSheet({
+          title: 'Reading the sheet automatically',
+          body: '<p>Reading handwriting needs the shared sync server with an AI key. Until it is set up (see README, “Sharing between phones”), fill the request in by hand — it takes about five taps — and attach the photo of the signed sheet at the end.</p>' +
+            '<div class="row" style="justify-content:flex-end;margin-top:10px"><button type="button" class="btn btn-primary" data-close>OK</button></div>',
         });
       },
       /* wizard */
       type: function (b) { const n = App.state.newReq; n.type = b.dataset.type; n.step = n.type === 'swap' ? 2 : 3; App.render(); },
       partner: function (el) { const n = App.state.newReq; n.partner = el.dataset.id; n.to = {}; App.render(); },
+      'edit-cells': function () { App.state.newReq.step = 4; App.render(); },
       back: function () {
         const n = App.state.newReq;
         if (n.step === 1) { App.state.newReq = null; }
+        else if (n.step === 5 && n.fromPhoto) n.step = 4;
         else if (n.step === 3 && n.type !== 'swap') n.step = 1;
         else n.step -= 1;
         App.render();
@@ -363,21 +530,7 @@ Views.requests = (function () {
         App.render();
       },
       'photo-remove': function () { App.state.newReq.photo = null; App.render(); },
-      'photo-read': function () {
-        const n = App.state.newReq;
-        n.aiBusy = true; App.render();
-        const p = n.pick;
-        Store.parsePhoto(n.photo.dataUrl, {
-          year: p.y, month: p.m,
-          employees: Engine.activeRoster().map(function (e) { return { id: e.id, name: e.name }; }),
-          requester: n.employeeId,
-        }).then(function (res) {
-          const k = applyParsed(res || {});
-          n.aiBusy = false;
-          UI.toast(k ? 'Filled in ' + k + ' change(s) from the photo — please check them' : 'Could not find changes in the photo');
-          App.render();
-        }).catch(function (e) { n.aiBusy = false; UI.toast(e.message, 'error'); App.render(); });
-      },
+      'photo-read': function () { readPhoto(App.state.newReq.photo.dataUrl); },
       submit: function () { submit(); },
     },
     changes: {
@@ -388,13 +541,8 @@ Views.requests = (function () {
       emp: function (sel) { const n = App.state.newReq; n.employeeId = sel.value; n.partner = null; n.to = {}; },
       to: function (sel) { App.state.newReq.to[sel.dataset.key] = sel.value; },
       'approve-now': function (cb) { App.state.newReq.approveNow = cb.checked; App.render(); },
-      photo: function (input) {
-        const file = input.files && input.files[0];
-        if (!file) return;
-        UI.toast('Processing photo…');
-        UI.downscaleImage(file).then(function (dataUrl) { App.state.newReq.photo = { dataUrl: dataUrl }; App.render(); })
-          .catch(function (e) { UI.toast(e.message, 'error'); });
-      },
+      photo: function (input) { attachPhoto(input, false); },
+      'photo-first': function (input) { attachPhoto(input, true); },
     },
     inputs: {
       reason: function (ta) { App.state.newReq.reason = ta.value; },
