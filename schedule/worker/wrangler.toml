@@ -1,0 +1,17 @@
+# Cloudflare Worker config for the schedule sync backend.
+#   npx wrangler kv namespace create SCHEDULE_KV      → paste the id below
+#   npx wrangler secret put SUPERVISOR_CODE
+#   npx wrangler secret put WORKER_CODE
+#   npx wrangler secret put ANTHROPIC_API_KEY         (optional: photo reading)
+#   npx wrangler deploy
+name = "lga-schedule"
+main = "worker.js"
+compatibility_date = "2026-03-17"
+
+[[kv_namespaces]]
+binding = "SCHEDULE_KV"
+id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+
+[vars]
+# ALLOWED_ORIGIN = "https://rava8989.github.io"
+# CLAUDE_MODEL = "claude-opus-5"

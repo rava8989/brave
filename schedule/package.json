@@ -1,0 +1,12 @@
+{
+  "name": "lga-schedule",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Rotating shift schedule + swap request workflow (static site, no build step).",
+  "type": "commonjs",
+  "scripts": {
+    "test": "node tests/engine.test.js",
+    "lint": "npx eslint --config eslint.config.mjs js worker tests",
+    "serve": "npx http-server -p 8790 -c-1 ."
+  }
+}
