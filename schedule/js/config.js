@@ -24,15 +24,13 @@
  *      Thu  Fri  Sat  Sun  Mon  Tue  Wed
  *
  *  The pattern was transcribed from the posted Sept/Oct 2026 labor
- *  schedules and the Sept swap sheet. It reproduces every cell that was
- *  legible in the photos (see tests/engine.test.js for the exact cells
- *  checked). Cells that could NOT be read with certainty are listed in
- *  README.md under "Verify these rotation cells" — please compare them
- *  against the printed schedule and fix them here or in the app
- *  (Supervisor → Rotation → Edit).
+ *  schedules and the Sept swap sheet, then corrected by the crew (the R
+ *  block is Mon–Fri). tests/engine.test.js pins the cells that were
+ *  legible in the photos. Anything else that looks off can be fixed here
+ *  or in the app (Supervisor → Rotation → Edit).
  *
  *  Structure of one cycle (slot 1, starting Thu 2026-01-01):
- *    R  block ..... Mon–Thu relief, Fri = B          (4 R + 1 B)
+ *    R  block ..... Mon–Fri relief                    (5 days)
  *    off ........... Sat, Sun, Mon RDO, Tue MDO
  *    C  block ..... Wed–Mon evening, Thu = C/A double (6 days)
  *    off ........... Tue, Wed, Thu RDO
@@ -88,7 +86,7 @@ const SCHEDULE_CONFIG = {
     /* Rows read:  Thu   Fri   Sat   Sun   Mon   Tue   Wed              */
     slots: {
       1: [
-        'R',   'B',   'RDO', 'RDO', 'RDO', 'MDO', 'C',
+        'R',   'R',   'RDO', 'RDO', 'RDO', 'MDO', 'C',
         'C/A', 'C',   'C',   'C',   'C',   'RDO', 'RDO',
         'RDO', 'B',   'B',   'B',   'B',   'B',   'RDO',
         'RDO', 'A',   'A',   'A',   'A',   'A/C', 'A',
@@ -101,35 +99,35 @@ const SCHEDULE_CONFIG = {
         'RDO', 'A',   'A',   'A',   'A',   'A/C', 'A',
         'MDO', 'RDO', 'RDO', 'RDO', 'B',   'B',   'B',
         'B',   'B',   'RDO', 'RDO', 'R',   'R',   'R',
-        'R',   'B',   'RDO', 'RDO', 'RDO', 'MDO', 'C',
+        'R',   'R',   'RDO', 'RDO', 'RDO', 'MDO', 'C',
       ],
       3: [
         'RDO', 'B',   'B',   'B',   'B',   'B',   'RDO',
         'RDO', 'A',   'A',   'A',   'A',   'A/C', 'A',
         'MDO', 'RDO', 'RDO', 'RDO', 'B',   'B',   'B',
         'B',   'B',   'RDO', 'RDO', 'R',   'R',   'R',
-        'R',   'B',   'RDO', 'RDO', 'RDO', 'MDO', 'C',
+        'R',   'R',   'RDO', 'RDO', 'RDO', 'MDO', 'C',
         'C/A', 'C',   'C',   'C',   'C',   'RDO', 'RDO',
       ],
       4: [
         'RDO', 'A',   'A',   'A',   'A',   'A/C', 'A',
         'MDO', 'RDO', 'RDO', 'RDO', 'B',   'B',   'B',
         'B',   'B',   'RDO', 'RDO', 'R',   'R',   'R',
-        'R',   'B',   'RDO', 'RDO', 'RDO', 'MDO', 'C',
+        'R',   'R',   'RDO', 'RDO', 'RDO', 'MDO', 'C',
         'C/A', 'C',   'C',   'C',   'C',   'RDO', 'RDO',
         'RDO', 'B',   'B',   'B',   'B',   'B',   'RDO',
       ],
       5: [
         'MDO', 'RDO', 'RDO', 'RDO', 'B',   'B',   'B',
         'B',   'B',   'RDO', 'RDO', 'R',   'R',   'R',
-        'R',   'B',   'RDO', 'RDO', 'RDO', 'MDO', 'C',
+        'R',   'R',   'RDO', 'RDO', 'RDO', 'MDO', 'C',
         'C/A', 'C',   'C',   'C',   'C',   'RDO', 'RDO',
         'RDO', 'B',   'B',   'B',   'B',   'B',   'RDO',
         'RDO', 'A',   'A',   'A',   'A',   'A/C', 'A',
       ],
       6: [
         'B',   'B',   'RDO', 'RDO', 'R',   'R',   'R',
-        'R',   'B',   'RDO', 'RDO', 'RDO', 'MDO', 'C',
+        'R',   'R',   'RDO', 'RDO', 'RDO', 'MDO', 'C',
         'C/A', 'C',   'C',   'C',   'C',   'RDO', 'RDO',
         'RDO', 'B',   'B',   'B',   'B',   'B',   'RDO',
         'RDO', 'A',   'A',   'A',   'A',   'A/C', 'A',
@@ -230,7 +228,11 @@ const SCHEDULE_CONFIG = {
    * holidayReplaces: which regular codes become HOL for that group.      */
   groups: {
     'LGA_BSS1.1': { label: 'B shift', kind: 'static', weekly: ['RDO', 'B', 'B', 'B', 'B', 'B', 'RDO'], holidayReplaces: ['B'] },
-    'LGA_6RR9':   { label: 'Rotating relief', kind: 'rotating', holidayReplaces: ['B', 'R'] },
+    /* holidayB: which B crew works a holiday. 'weekend-block' = on a Mon/Tue/
+     * Thu/Fri holiday the crew whose B block runs through the weekend works
+     * (stays B) and the Mon–Fri B crew gets HOL; on a Wednesday holiday the
+     * Mon–Fri crew works. R on a holiday is HOL.                          */
+    'LGA_6RR9':   { label: 'Rotating relief', kind: 'rotating', holidayReplaces: ['B', 'R'], holidayB: 'weekend-block' },
     'LGA_ASS1.1': { label: 'A shift', kind: 'static', weekly: ['RDO', 'A', 'A', 'A', 'A', 'A', 'RDO'], holidayReplaces: ['A'] },
   },
 
