@@ -3610,19 +3610,19 @@ async function channelCard(env, card, fallbackText) {
 // Bullet-proof: any stage that fails logs `card:<stage>` and falls back to the TEXT
 // fan-out, so a card problem can never lose a signal (2026-09-09 11:30 lesson).
 async function cardErr(env, stage, e) { try { await logEvent(env, 'warn', 'card', `${stage}: ${(e && e.message) || e}`, {}); } catch (_) {} }
-async function fanoutCard(env, card, fallbackText) {
+async function fanoutCard(env, card, fallbackText, opts = {}) {
   try {
     let png = null;
     try { png = await renderTicketPng(card); } catch (e) { await cardErr(env, 'render', e); }
-    if (!png) return await fanoutSubscribers(env, fallbackText);
+    if (!png) return await fanoutSubscribers(env, fallbackText, opts);
     const content = cardContent(card);
     let chOk = false;
     try { const r = await postChannelPng(env, png, content); chOk = !!(r && r.ok); if (!chOk) await cardErr(env, 'channel', new Error((r && r.error) || 'not ok')); }
     catch (e) { await cardErr(env, 'channel', e); }
     if (!chOk) { try { await postSignalsChannel(env, String(fallbackText || '').includes('Not financial advice') ? fallbackText : fallbackText + FANOUT_DISCLAIMER); } catch (_) {} }
     let subs = [];
-    try { subs = (await getSubscribers(env)).filter(s => s && s.id && !s.paused); }
-    catch (e) { await cardErr(env, 'subscribers', e); return await fanoutSubscribers(env, fallbackText); }
+    try { subs = (await getSubscribers(env)).filter(s => s && s.id && !s.paused && !(opts.skipIds || []).includes(String(s.id))); }
+    catch (e) { await cardErr(env, 'subscribers', e); return await fanoutSubscribers(env, fallbackText, opts); }
     const out = [];
     for (const s of subs) {
       try {
@@ -3635,11 +3635,11 @@ async function fanoutCard(env, card, fallbackText) {
     return out;
   } catch (e) {
     await cardErr(env, 'fatal', e);
-    try { return await fanoutSubscribers(env, fallbackText); } catch (_) { return []; }
+    try { return await fanoutSubscribers(env, fallbackText, opts); } catch (_) { return []; }
   }
 }
 
-async function fanoutSubscribers(env, message) {
+async function fanoutSubscribers(env, message, opts = {}) {
   // Single chokepoint: append the disclaimer here so NO trade path (tail, skipper
   // trades, any future caller) can reach the broadcast channel OR a subscriber DM
   // without it. Idempotent — won't double-add if a caller already included it.
@@ -3647,7 +3647,7 @@ async function fanoutSubscribers(env, message) {
   const msg = base.includes('Not financial advice') ? base : base + FANOUT_DISCLAIMER;
   // Broadcast channel first (one post, no DM caps), then the per-user DM list.
   try { await postSignalsChannel(env, msg); } catch (_) {}
-  const subs = (await getSubscribers(env)).filter(s => s && s.id && !s.paused);
+  const subs = (await getSubscribers(env)).filter(s => s && s.id && !s.paused && !(opts.skipIds || []).includes(String(s.id)));
   const out = [];
   for (const s of subs) {
     try {
@@ -14089,10 +14089,19 @@ export default {
                   }
                 }
               } catch (_) {}
+              // Owner is also subscriber #2. When the relay is the SAME card (or same text) that
+              // was just posted to the owner DM (diagonal paper close: one closeCard for both),
+              // skip the owner's subscriber copy — one DM per event (owner 2026-09-10, identical
+              // CLOSE cards at 12:30). A different relay card (fill card vs signal card) still posts.
+              const pickC = (c) => (c && typeof c === 'object') ? JSON.stringify([c.strat, c.verdict, c.big, c.sub, c.lines || [], c.k || null, c.order || null]) : null;
+              const ownerDup = (card && fanoutCardObj && pickC({ ...card, order: order || card.order || null }) === pickC({ ...fanoutCardObj, order: fanoutCardObj.order || order || null }))
+                || (!card && text && String(text).trim() === String(fanoutText).trim());
+              const ownerDupSkip = (ownerDup && dc && dc.channelId) ? [String(dc.channelId)] : [];
+              if (ownerDup) console.log('[link-notify] relay identical to the owner card — owner subscriber copy skipped');
               // subscriber relay as a picture card when the skipper sent one (text stays the fallback)
               const o = (fanoutCardObj && typeof fanoutCardObj === 'object')
-                ? await fanoutCard(env, { ...fanoutCardObj, lines: tierNote ? [...(fanoutCardObj.lines || []), tierNote] : (fanoutCardObj.lines || []) }, msgOut.slice(0, 1800))
-                : await fanoutSubscribers(env, msgOut.slice(0, 1800));
+                ? await fanoutCard(env, { ...fanoutCardObj, lines: tierNote ? [...(fanoutCardObj.lines || []), tierNote] : (fanoutCardObj.lines || []) }, msgOut.slice(0, 1800), { skipIds: ownerDupSkip })
+                : await fanoutSubscribers(env, msgOut.slice(0, 1800), { skipIds: ownerDupSkip });
               fanned = o.filter(x => x.ok).length;
             } catch (e) { console.warn('[link-notify/fanout]', e.message); }
           }
