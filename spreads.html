@@ -92,9 +92,9 @@ ul{padding-left:18px}
 <div class="panel" id="livePanel">
   <div id="gexGauge" style="margin:0 0 16px">
     <div style="display:flex;justify-content:space-between;align-items:baseline;font-size:12px;color:var(--muted);margin-bottom:4px">
-      <span>live 0DTE book</span><span><span id="ggVal" style="font-weight:700;font-size:16px;color:var(--text)">&mdash;</span> <span id="ggAge" style="font-size:11px"></span></span>
+      <span>live 0DTE book</span><span id="ggAge" style="font-size:11px"></span>
     </div>
-    <div style="position:relative;height:26px">
+    <div style="position:relative;height:26px;margin-top:24px">
       <div style="display:flex;height:14px;border-radius:7px;overflow:hidden;margin-top:6px">
         <div style="flex:3;background:rgba(224,166,60,.32)"></div>
         <div style="flex:1;background:#242a34"></div>
@@ -102,7 +102,7 @@ ul{padding-left:18px}
       </div>
       <div style="position:absolute;top:4px;left:37.5%;width:1.5px;height:18px;background:var(--amber)"></div>
       <div style="position:absolute;top:4px;left:50%;width:1.5px;height:18px;background:var(--win)"></div>
-      <div id="ggNeedle" style="position:absolute;top:-6px;left:50%;width:7px;height:38px;background:#e7eaf0;border-radius:3px;box-shadow:0 0 14px 3px rgba(231,234,240,.85);transition:left .6s;transform:translateX(-50%)"><div id="ggTip" style="position:absolute;top:-7px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:8px solid transparent;border-right:8px solid transparent;border-top:9px solid #e7eaf0"></div></div>
+      <div id="ggNeedle" style="position:absolute;top:-6px;left:50%;width:7px;height:38px;background:#e7eaf0;border-radius:3px;box-shadow:0 0 14px 3px rgba(231,234,240,.85);transition:left .6s;transform:translateX(-50%)"><div id="ggTip" style="position:absolute;top:-7px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:8px solid transparent;border-right:8px solid transparent;border-top:9px solid #e7eaf0"></div><div id="ggVal" style="position:absolute;top:-28px;left:50%;transform:translateX(-50%);font-weight:700;font-size:16px;line-height:1;color:#e7eaf0;white-space:nowrap;text-shadow:0 0 8px rgba(0,0,0,.7)">&mdash;</div></div>
     </div>
     <div style="position:relative;height:15px;font-size:10.5px;color:var(--muted);margin-top:2px">
       <span style="position:absolute;left:0">&minus;40B</span>
@@ -247,6 +247,7 @@ async function gexGauge(){
     v.textContent=(b>0?'+':'')+b+'B';
     const col=b<=-10?'#e0a63c':(b>0?'#4caf7d':'#e7eaf0');
     v.style.color=col;
+    v.style.transform = pct < 7 ? 'translateX(-15%)' : (pct > 93 ? 'translateX(-85%)' : 'translateX(-50%)');
     const nd=document.getElementById('ggNeedle');
     nd.style.background=col; nd.style.boxShadow='0 0 16px 4px '+col+'99';
     const tip=document.getElementById('ggTip'); if(tip)tip.style.borderTopColor=col;
