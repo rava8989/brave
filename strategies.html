@@ -156,7 +156,7 @@
       </ul></div>
     </div>
     <div class="bet"><h3>THE BET</h3><p>SPX drifts toward and pins the dealer-gamma strike K by the close → max payoff at exactly K. A clean trend day away from the pin (closes outside K ± W) → you lose the net debit. Risk capped at ≤ W/2 per contract (~$5,000 max).</p></div>
-    <details class="params"><summary>Key parameters</summary><p>Center = argmax(γ × volume × S² × 100 × 0.01) over strikes ±5% of spot, snapped to 5 (always volume-weighted since 2026-06-10). BS gamma R=0.043, Q=0.013. Wing ∈ {5..100} step 5, widest with debit ≤ W/2. Hold to the official SPX close (1 PM half-days). Block: VIX_MAX_GXBF = 25.</p></details>
+    <details class="params"><summary>Key parameters</summary><p>Center = argmax(γ × volume × S² × 100 × 0.01) over strikes ±5% of spot, snapped to 5 (always volume-weighted since 2026-06-10). BS gamma R=0.043, Q=0.013. Wing ∈ {5..100} step 5, widest with debit ≤ W/2. Hold to the official SPX close (1 PM half-days), with one exit rule since 2026-09-11: at 10:00 the gamma × volume center is recomputed and, if it is 20+ points below the 9:35 center, the fly is sold at the mid (stranded-center exit). Block: VIX_MAX_GXBF = 25.</p></details>
   </section>
 
   <!-- BOBF -->

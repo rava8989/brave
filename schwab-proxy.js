@@ -6909,6 +6909,8 @@ async function handleGxbfEntry(env, etNow, signal, preChain = null) {
     return { ...out, status: 'no-center', reason: 'live-gamma compute returned null' };
   }
   await env.SIGNAL_KV.put(`gxbf_center_seen_${todayISO}`, '1', { expirationTtl: 86400 });
+  // The 10:00 stranded-center check (owner rule 2026-09-11) compares against this.
+  try { await env.SIGNAL_KV.put(`gxbf_center935_${todayISO}`, JSON.stringify({ center: computed.center, centerOI: computed.centerOI, spot: Math.round(spot * 100) / 100, at: `${String(etNow.getHours()).padStart(2, '0')}:${String(etNow.getMinutes()).padStart(2, '0')}` }), { expirationTtl: 60 * 86400 }); } catch (_) {}
 
   // 2a. Pick the per-day center via signal.centerSource (hybrid routing).
   //     'oi'  → OPEX-1 / VIX-expiry / FED days (per signal-engine.js)
@@ -7170,6 +7172,95 @@ async function refreshGxbfLiveQuotes(env, token, etNow, preChain = null) {
 // at 11:05). Mirrors refreshBobf/GxbfLiveQuotes. M8BF is stateless (no
 // m8bf_open_trade KV), so the trade is re-derived via the SHARED
 // selectM8bfQualifying — guaranteeing the quoted legs == the /trade legs.
+// ── GXBF 10:00 STRANDED-CENTER EXIT (owner rule 2026-09-11) ─────────────
+// Recompute the 9:35 formula (gamma × volume, calls, ±5% of spot — the ONLY
+// "max gamma" GXBF speaks) on a fresh 10:00 chain. If the open fly's center
+// is ≥ GXBF_STRAND_DROP points above the 10:00 center, the morning flow has
+// abandoned the strike: sell the fly at the mid, right away. Study (485 d,
+// Sep 2024–Aug 2026): such days pin the 9:35 center 16% vs 45%; held −$517/d,
+// sold at 10:00 −$236/d; +$19k over 448 days, 2026 +$15k. The 10:00 center is
+// logged EVERY day (gxbf_center10_<date>, gxbf_center_log) so "when did it
+// move" has an answer from now on.
+const GXBF_STRAND_DROP = 20;
+async function gxbfCenterNow(env, todayISO, preChain = null) {
+  const token = preChain ? null : await getAccessToken(env);
+  const chain = preChain || await fetchSpxFullChain(token, todayISO, env);
+  if (!chain || !chain.spot) return null;
+  const computed = computeGxbfCenterLive(chain.callExpDateMap, todayISO, chain.spot);
+  return computed ? { ...computed, spot: Math.round(chain.spot * 100) / 100, token } : null;
+}
+async function gxbfStrandedCheck(env, etNow, preChain = null, opts = {}) {
+  const todayISO = isoDateET(etNow);
+  const h = etNow.getHours(), m = etNow.getMinutes();
+  const at = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  if (!opts.dry && !(h === 10 && m < 10)) return { status: 'outside-window', at };
+  const key = `gxbf_c10_${todayISO}`;
+  if (!opts.dry) {
+    const done = await env.SIGNAL_KV.get(key);
+    if (done && !done.startsWith('claim:')) return { status: 'already-done', why: done };
+    if (!(await claimSendSlot(env, key))) return { status: 'claim-lost' };
+  }
+  const release = async () => { if (!opts.dry) { try { await env.SIGNAL_KV.delete(key); } catch (_) {} } };
+  try {
+    let now;
+    try { now = await gxbfCenterNow(env, todayISO, preChain); } catch (e) { await release(); return { status: 'error', error: 'chain: ' + e.message }; }
+    if (!now) { await release(); return { status: 'no-center', at }; }   // later ticks in the window retry
+    const c935Raw = await env.SIGNAL_KV.get(`gxbf_center935_${todayISO}`);
+    const c935 = c935Raw ? JSON.parse(c935Raw) : null;
+    const tradeRaw = await env.SIGNAL_KV.get('gxbf_open_trade');
+    const trade = (tradeRaw && JSON.parse(tradeRaw)) || null;
+    const todays = trade && trade.openDate === todayISO ? trade : null;
+    const entryCenter = (todays && todays.center) ? todays.center : (c935 ? c935.center : null);
+    const drift = entryCenter != null ? now.center - entryCenter : null;
+    const rec = { date: todayISO, at, c935: entryCenter, c10: now.center, c10OI: now.centerOI, drift, spot935: c935 ? c935.spot : null, spot10: now.spot, decision: 'no-trade' };
+    const live = !!(todays && todays.status === 'filled' && !todays.gated);
+    if (live && drift != null && drift <= -GXBF_STRAND_DROP) {
+      if (opts.dry) { rec.decision = 'exit (dry)'; return { status: rec.decision, ...rec }; }
+      let t2 = todays;
+      try { const tk = now.token || await getAccessToken(env); t2 = (await refreshGxbfLiveQuotes(env, tk, etNow, preChain)) || todays; } catch (_) {}
+      if (t2.currentValue == null) { await release(); return { status: 'no-mid', ...rec }; }
+      const closeValue = parseFloat(Number(t2.currentValue).toFixed(2));
+      const pnl = Math.round((closeValue - t2.netDebit) * 100 * (t2.contracts || 1));
+      // history first, then the record (idempotent: a re-run sees status 'closed')
+      await upsertHistoryGitHub(env, t2.openDate, { gxbfPL: pnl });
+      t2.status = 'closed'; t2.closeDate = todayISO; t2.closeReason = 'stranded-center'; t2.closeTimeET = at;
+      t2.closeValue = closeValue; t2.pnl = pnl; t2.center10 = now.center; t2.centerDrift = drift;
+      await env.SIGNAL_KV.put('gxbf_open_trade', JSON.stringify(t2));
+      const logRaw = await env.SIGNAL_KV.get('gxbf_closed_log');
+      const log = logRaw ? JSON.parse(logRaw) : [];
+      log.unshift(t2);
+      await env.SIGNAL_KV.put('gxbf_closed_log', JSON.stringify(log.slice(0, 30)));
+      rec.decision = 'exit'; rec.closeValue = closeValue; rec.pnl = pnl;
+      const tosD = `${+todayISO.slice(8, 10)} ${_MON[+todayISO.slice(5, 7) - 1]} ${todayISO.slice(2, 4)}`;
+      const n = t2.contracts || 1;
+      const order = `SELL -${n} BUTTERFLY SPX 100 (Weeklys) ${tosD} ${t2.lowerStrike}/${t2.centerStrike}/${t2.upperStrike} CALL @${closeValue.toFixed(2)} LMT`;
+      const money = `${pnl >= 0 ? '+' : '−'}$${Math.abs(pnl).toLocaleString()}`;
+      const msg = `🔵 **GXBF — CLOSE** (10:00 stranded-center rule): center ${entryCenter} → ${now.center} (${drift}). Sell the fly ${t2.lowerStrike}/${t2.centerStrike}/${t2.upperStrike} @ ${closeValue.toFixed(2)} (paid ${t2.netDebit.toFixed(2)}, ${money}).\n\`\`\`\n${order}\n\`\`\``;
+      try {
+        await fanoutCard(env, { c: 'blue', strat: 'Σ3 signal · GXBF · CLOSING', verdict: 'CLOSE', big: `${t2.lowerStrike} / ${t2.centerStrike} / ${t2.upperStrike}`, sub: `stranded center · sell the fly · ${n} lot${n === 1 ? '' : 's'}`, title: `${cardDate(todayISO)} · GXBF 10:00 rule · center ${entryCenter} → ${now.center}`, lines: [`The 10:00 volume center is ${Math.abs(drift)} points below the 9:35 center. Rule since 2026-09-11: sell at the mid now, do not hold to settlement.`], k: [['sell at', closeValue.toFixed(2)], ['paid', t2.netDebit.toFixed(2)], ['P&L', money], ['center', `${entryCenter} → ${now.center}`]], draw: 'fly', strikes: [t2.lowerStrike, t2.centerStrike, t2.upperStrike], order }, msg);
+      } catch (e) { console.warn('[gxbf-strand] card:', e.message); }
+      try { await logEvent(env, 'info', 'gxbf', `10:00 stranded-center EXIT: center ${entryCenter} → ${now.center} (${drift}), sold @${closeValue}, P&L ${pnl}`, {}); } catch (_) {}
+    } else {
+      rec.decision = live ? 'hold' : (todays ? `no-fly:${todays.status}${todays.gated ? ':gated' : ''}` : 'no-trade');
+      if (opts.dry) return { status: rec.decision + ' (dry)', ...rec };
+      try { await logEvent(env, 'info', 'gxbf', `10:00 center ${now.center} vs 9:35 ${entryCenter == null ? 'n/a' : entryCenter} (${drift == null ? 'n/a' : (drift > 0 ? '+' : '') + drift}) → ${rec.decision}`, {}); } catch (_) {}
+    }
+    await env.SIGNAL_KV.put(`gxbf_center10_${todayISO}`, JSON.stringify(rec), { expirationTtl: 60 * 86400 });
+    try {   // permanent research series, capped
+      const sRaw = await env.SIGNAL_KV.get('gxbf_center_log');
+      const ser = sRaw ? JSON.parse(sRaw) : [];
+      if (!ser.some(x => x.date === todayISO)) ser.push(rec);
+      await env.SIGNAL_KV.put('gxbf_center_log', JSON.stringify(ser.slice(-500)));
+    } catch (_) {}
+    await env.SIGNAL_KV.put(key, `done:${rec.decision}`, { expirationTtl: 86400 });
+    return { status: rec.decision, ...rec };
+  } catch (e) {
+    await release();
+    console.warn('[gxbf-strand]', e.message);
+    return { status: 'error', error: e.message };
+  }
+}
+
 async function refreshM8bfLiveQuotes(env, token, etNow, preChain = null) {
   try {
     if (await m8bfBannedReason(env, etNow)) return;
@@ -8941,6 +9032,13 @@ async function handleScheduledInner(env) {
   // completes or the window passes. STRATEGY INDEPENDENCE:
   // gated solely on GXBF's OWN theme, read from the persisted morning signal
   // (morning_signal_data_<date>). Never consults M8BF/Straddle/BOBF state.
+  // GXBF 10:00 stranded-center check (owner rule 2026-09-11): recompute the 9:35
+  // center on the 10:00 chain; a ≥20-pt lower center closes the fly at the mid.
+  let gxbfStrand = null;
+  if (isMarket && etHour === 10 && etMin < 10) {
+    try { gxbfStrand = await gxbfStrandedCheck(env, etNow, masterChain); } catch (e) { console.warn('[gxbf-strand]', e.message); }
+  }
+
   let gxbfResult = {};
   if (isMarket && gxbfInWindow(etNow)) {
     // claim-token gate (P22). The handler writes its own terminal markers
@@ -13175,8 +13273,8 @@ function buildMorningCardData(signal, vixValues, tailLine, pnbf) {
     const gxYes = !isNo(signal.gxbfText);
     const gxDet = strip(signal.gxbfText, 'GXBF') || '—';
     const _oN = (typeof signal.oNight === 'number' && isFinite(signal.oNight)) ? signal.oNight : null;
-    const gateTail = _oN == null ? 'gate: pos fly / neg strad·VIX↓'
-      : (_oN > 0 ? 'gate: pos fly / neg strad' : 'gate: pos fly / neg no-trade');
+    const gateTail = (_oN == null ? 'gate: pos fly / neg strad·VIX↓'
+      : (_oN > 0 ? 'gate: pos fly / neg strad' : 'gate: pos fly / neg no-trade')) + ' · 10:00 strand exit';
     rows.push(gxYes
       ? { n: 'GXBF', det: `${gxDet} · ${gateTail}`, yes: true, state: 'possible' }
       : { n: 'GXBF', det: gxDet, yes: false });
@@ -13467,7 +13565,7 @@ function computeM8bfContextNotes(history, etNow, todayVixOpen) {
 const SAMPLE_MORNING_CARD = {
   title: 'Σ3 — Today’s Plan', date: 'Mon · Jun 22 2026 · OPEX+1', vix: '16.67', vixSub: 'VIX up 0.27', vixSubUp: true, vixPrior: 'prev 16.40 cls · 16.32 opn',
   rows: [
-    { n: 'GXBF', det: 'fires 9:36 AM · gate: pos fly / neg strad', yes: true, state: 'possible' }, { n: 'M8BF', det: 'window 11:00–11:30', yes: true },
+    { n: 'GXBF', det: 'fires 9:36 AM · gate: pos fly / neg strad · 10:00 strand exit', yes: true, state: 'possible' }, { n: 'M8BF', det: 'window 11:00–11:30', yes: true },
     { n: 'Straddle', det: 'if GXBF gamma-gates at 9:35', yes: true, state: 'possible' }, { n: 'BOBF', det: 'OPEX', yes: false },
     { n: 'Diagonal', det: 'COR1M 6.79 < 10', yes: false },
     // Tail Hedge row removed 2026-08-03 — strategy retired; the live builder
@@ -15216,6 +15314,7 @@ export default {
 
         const doneKey = `gxbf_done_${todayG}`;
         const doneState = await env.SIGNAL_KV.get(doneKey);
+        let center10 = null; try { const c10Raw = await env.SIGNAL_KV.get(`gxbf_center10_${todayG}`); center10 = c10Raw ? JSON.parse(c10Raw) : null; } catch (_) {}
 
         // Skip reason recorded at 9:30 if signal.theme !== 'gxbf' that day.
         let skip = null;
@@ -15246,6 +15345,7 @@ export default {
           isHoliday: isHolidayG,
           open,
           lastClosed,
+          center10,
           doneState,
           skip,                 // {theme, rec} when signal said no-GXBF today
           serverTimeET: `${String(etNowG.getHours()).padStart(2,'0')}:${String(etNowG.getMinutes()).padStart(2,'0')}`,
@@ -15911,7 +16011,7 @@ export default {
     if (request.method !== 'OPTIONS' &&
         ['/cyclicality-append-now', '/score-advisories-now', '/research-persist-now',
          '/cot-refresh-now', '/watchdog-now', '/weekly-digest-now', '/vix-decomp-now',
-         '/remirror-history', '/history-patch', '/restate-close'].includes(url.pathname)) {
+         '/remirror-history', '/history-patch', '/restate-close', '/gxbf-center-now'].includes(url.pathname)) {
       const s = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
       if (!s || (s !== env.SYNC_SECRET && s !== env.GEXM_TRIGGER_TOKEN)) return jsonResp({ error: 'Unauthorized' }, 401, corsHeaders);
     }
@@ -16317,6 +16417,15 @@ export default {
     // re-settle every day in the range whose history spxClose differs from the
     // official daily close (all days with &all=1). dry=1 reports without writing.
     // One mirror at the end; one pre-restate KV snapshot.
+    // GET /gxbf-center-now?secret= — owner diagnostic (2026-09-11): the 9:35 formula
+    // on a fresh chain right now + what the 10:00 rule would decide. Never writes.
+    if (url.pathname === '/gxbf-center-now' && request.method === 'GET') {
+      let result;
+      try { result = await gxbfStrandedCheck(env, toET(new Date()), null, { dry: true }); }
+      catch (e) { result = { status: 'error', error: e.message }; }
+      return new Response(JSON.stringify(result, null, 2), { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
+    }
+
     if (url.pathname === '/restate-close' && request.method === 'GET') {
       let result;
       try {

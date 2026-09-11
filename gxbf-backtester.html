@@ -622,12 +622,14 @@ body {
     Per-contract risk is the debit paid (capped near $5,000 via the <code>W ≤ 100</code> + <code>risk ≤ reward</code> constraint).
     <br>
     <strong>Holding / closing</strong> — 0DTE SPXW, held to the <strong>official SPX close</strong>
-    (Cboe closing value = Schwab daily candle, the SPXW settlement basis; 13:00 ET on half-days). Settled to exact intrinsic
+    (Cboe closing value = Schwab daily candle, the SPXW settlement basis; 13:00 ET on half-days), with ONE exit rule since 2026-09-11:
+    at 10:00 the gamma×volume center is recomputed and, if it sits 20+ points below the 9:35 center, the fly is sold at the 10:00 mids
+    (the "stranded-center exit"; toggle below). Otherwise settled to exact intrinsic
     <code>clamp(max(0,S−(K−W)) − 2·max(0,S−K) + max(0,S−(K+W)), 0, W)</code>;
     <code>pnl = (intrinsic − nd) × 100 × contracts</code>.
     <br><br>
     <span style="color:var(--accent);font-size:11px;font-weight:600">
-      ★ Default config: <code>entry 09:35 ET (configurable 09:35–14:00 in 5-min steps), exit SPX close (0DTE), wing 5 → 100 (step 5),
+      ★ Default config: <code>entry 09:35 ET (configurable 09:35–14:00 in 5-min steps), exit SPX close (0DTE) or the 10:00 stranded-center exit (center −20, ON), wing 5 → 100 (step 5),
       widest risk ≤ reward wing, volume-weighted center (live default), real GXBF gating ON</code>. The Entry Time dropdown studies what-if the bot fired
       later in the morning / midday. The other toggles can force vol-only, OI-only, or replace the live gating with the legacy
       manual overnight VIX-drop filter for what-if studies.
@@ -720,6 +722,17 @@ body {
         <input type="checkbox" id="ovDropOn" checked style="cursor:pointer">
         <input type="number" class="num-input" id="ovDropThr" value="0.65" min="0" step="0.05" style="width:62px" title="GXBF trigger threshold: overnight VIX drop must exceed this (prev VIX close − today VIX open).">
         <span style="white-space:nowrap">&gt; pts drop = GXBF trigger (also the manual filter when gating OFF)</span>
+      </label>
+    </div>
+  </div>
+
+  <div class="fg">
+    <div class="fg-label">10:00 stranded-center exit</div>
+    <div class="fg-row">
+      <label style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--text2);cursor:pointer">
+        <input type="checkbox" id="strandExit" checked style="cursor:pointer">
+        <input type="number" class="num-input" id="strandThr" value="20" min="5" step="5" style="width:62px" title="Rule since 2026-09-11: at 10:00 the gamma×volume center is recomputed; if it is this many points BELOW the 9:35 center the fly is sold at the 10:00 mids instead of held to settlement.">
+        <span style="white-space:nowrap">pts lower at 10:00 &rarr; sell the fly at 10:00 mids (rule since 2026-09-11; 9:35 entries only)</span>
       </label>
     </div>
   </div>
@@ -1259,6 +1272,8 @@ function getParams() {
     wingMin,
     wingMax,
     contracts:     parseInt(document.getElementById('contracts').value, 10) || 1,
+    strandExit:    !!(document.getElementById('strandExit') || {}).checked,
+    strandThr:     (() => { const v = parseFloat((document.getElementById('strandThr') || {}).value); return Number.isFinite(v) ? v : 20; })(),
     ovDropOn:      document.getElementById('ovDropOn').checked,
     ovDropThr:     (() => { const v = parseFloat(document.getElementById('ovDropThr').value); return Number.isFinite(v) ? v : 0.65; })(),
     centerSrc:     (document.querySelector('input[name="centerSrc"]:checked') || {}).value || 'vol',
@@ -1848,10 +1863,24 @@ function runBacktestBS(data, params) {
     const nd = bestND;
     const K  = Kc;
 
-    // ── Settlement to exact SPX-close intrinsic ──
+    // ── 10:00 stranded-center exit (owner rule 2026-09-11) ──
+    // The 9:35 gamma×volume center is recomputed at 10:00; if it sits ≥ strandThr
+    // points below the entry center, the fly is sold at the 10:00 mids.
+    let strand = null;
+    if (params.strandExit && (params.entryTime || '09:35') === '09:35' && rec.by_time && rec.by_time['10:00'] && rec.by_time['10:00'].center != null) {
+      const s10 = rec.by_time['10:00'];
+      if (s10.center - K <= -(params.strandThr || 20)) {
+        const m10 = (useOI ? s10.midsOI : s10.mids) || {};
+        const mAt = (strike) => { const off = strike - s10.center; const v = m10[String(off)]; return (typeof v === 'number') ? v : null; };
+        const lo = mAt(K - W), c = mAt(K), hi = mAt(K + W);
+        if (lo != null && c != null && hi != null) strand = { value: lo - 2 * c + hi, center10: s10.center };
+      }
+    }
+
+    // ── Settlement to exact SPX-close intrinsic (or the 10:00 exit value) ──
     const Sc  = rec.spxClose;
     const raw = Math.max(0, Sc - (K - W)) - 2 * Math.max(0, Sc - K) + Math.max(0, Sc - (K + W));
-    const intr = Math.min(Math.max(raw, 0), W);
+    const intr = strand ? strand.value : Math.min(Math.max(raw, 0), W);
 
     // ── Sizing: max risk / contract = the debit paid ──
     const marginPerContract = nd * 100;
@@ -1889,6 +1918,8 @@ function runBacktestBS(data, params) {
       premium,
       priceSource: 'thetadata',
       centerSource: useOI ? 'oi' : 'vol',              // which grid sourced K (hybrid resolves to one per-day)
+      exit: strand ? 'strand-10:00' : 'settle',          // 10:00 stranded-center exit (rule since 2026-09-11) or held to the close
+      center10: strand ? strand.center10 : null,
       entryTime:   params.entryTime,                   // chosen entry HH:MM ET
       minutesInTrade: (function(){
         // entry HH:MM ET → SPX cash close (16:00 regular, 13:00 half-days)
