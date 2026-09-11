@@ -16011,7 +16011,7 @@ export default {
     if (request.method !== 'OPTIONS' &&
         ['/cyclicality-append-now', '/score-advisories-now', '/research-persist-now',
          '/cot-refresh-now', '/watchdog-now', '/weekly-digest-now', '/vix-decomp-now',
-         '/remirror-history', '/history-patch', '/restate-close', '/gxbf-center-now'].includes(url.pathname)) {
+         '/remirror-history', '/history-patch', '/restate-close', '/gxbf-center-now', '/gxbf-strand-restate'].includes(url.pathname)) {
       const s = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
       if (!s || (s !== env.SYNC_SECRET && s !== env.GEXM_TRIGGER_TOKEN)) return jsonResp({ error: 'Unauthorized' }, 401, corsHeaders);
     }
@@ -16417,6 +16417,55 @@ export default {
     // re-settle every day in the range whose history spxClose differs from the
     // official daily close (all days with &all=1). dry=1 reports without writing.
     // One mirror at the end; one pre-restate KV snapshot.
+    // GET /gxbf-strand-restate?date=YYYY-MM-DD&mid=31.47&c10=7680[&c935=][&at=10:00][&dry=1]&secret=
+    // Owner tool (2026-09-11): record a GXBF day on the 10:00 stranded-center exit
+    // basis after the fact (the rule shipped after 10:00 on 9/11; also covers a
+    // missed 10:00 run). Archives the as-lived values under `restated`, closes the
+    // record with closeReason 'stranded-center', restates history gxbfPL, and writes
+    // the 10:00 center record + research log. Idempotent: a record already closed on
+    // the stranded-center basis is left alone. dry=1 computes without writing.
+    if (url.pathname === '/gxbf-strand-restate' && request.method === 'GET') {
+      try {
+        const date = url.searchParams.get('date'), mid = parseFloat(url.searchParams.get('mid')), c10 = parseInt(url.searchParams.get('c10'), 10);
+        const at = url.searchParams.get('at') || '10:00', dry = url.searchParams.get('dry') === '1';
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '') || !(mid > 0) || !Number.isFinite(c10)) return jsonResp({ ok: false, error: 'need date=YYYY-MM-DD, mid>0, c10' }, 400, corsHeaders);
+        const tRaw = await env.SIGNAL_KV.get('gxbf_open_trade');
+        const t = tRaw ? JSON.parse(tRaw) : null;
+        if (!t || t.openDate !== date) return jsonResp({ ok: false, error: 'gxbf_open_trade is not that day', found: t && t.openDate }, 400, corsHeaders);
+        if (t.closeReason === 'stranded-center') return jsonResp({ ok: true, status: 'already-restated', pnl: t.pnl, closeValue: t.closeValue }, 200, corsHeaders);
+        if (t.status !== 'closed' && t.status !== 'filled') return jsonResp({ ok: false, error: `record status ${t.status}` }, 400, corsHeaders);
+        const c935 = parseInt(url.searchParams.get('c935') || t.center || t.centerStrike, 10);
+        const closeValue = Math.round(mid * 100) / 100, n = t.contracts || 1;
+        const pnl = Math.round((closeValue - t.netDebit) * 100 * n);
+        const out = { date, closeValue, netDebit: t.netDebit, contracts: n, pnl, asLived: { pnl: t.pnl, closeIntrinsic: t.closeIntrinsic, spxClose: t.spxClose }, c935, c10, drift: c10 - c935 };
+        if (dry) return jsonResp({ ok: true, dry: true, ...out }, 200, corsHeaders);
+        const stamp = new Date().toISOString();
+        const restated = { at: stamp, from: { pnl: t.pnl, basis: 'hold-to-close', closeIntrinsic: t.closeIntrinsic, spxClose: t.spxClose }, why: 'owner order: record the day on the 10:00 stranded-center exit basis; exit mid = fly_marks 10:00 mark' };
+        const patch = { status: 'closed', closeDate: date, closeReason: 'stranded-center', closeTimeET: at, closeValue, pnl, center10: c10, centerDrift: c10 - c935, closeSource: `owner restate (${stamp.slice(0, 10)})`, restated };
+        // history FIRST (a re-run sees closeReason and stops). upsert only fills
+        // null fields, so force the restated value the way /history-patch does.
+        await upsertHistoryGitHub(env, date, { gxbfPL: pnl });
+        { const rows = await getHistory(env); const row = rows.find(r => r.date === date);
+          if (row && row.gxbfPL !== pnl) { row.gxbfPL = pnl; await setHistory(env, rows, { dateStr: 'gxbf-strand-restate' }); await mirrorHistoryToGitHub(env, rows, `manual: gxbfPL ${date} → ${pnl} (stranded-center restate)`); } }
+        Object.assign(t, patch);
+        await env.SIGNAL_KV.put('gxbf_open_trade', JSON.stringify(t));
+        const logRaw = await env.SIGNAL_KV.get('gxbf_closed_log');
+        const log = logRaw ? JSON.parse(logRaw) : [];
+        const i = log.findIndex(x => x && x.openDate === date);
+        if (i >= 0) log[i] = { ...log[i], ...patch }; else log.unshift(t);
+        await env.SIGNAL_KV.put('gxbf_closed_log', JSON.stringify(log.slice(0, 30)));
+        const rec = { date, at, c935, c10, drift: c10 - c935, decision: 'exit', closeValue, pnl, source: 'owner restate' };
+        if (!(await env.SIGNAL_KV.get(`gxbf_center10_${date}`))) await env.SIGNAL_KV.put(`gxbf_center10_${date}`, JSON.stringify(rec), { expirationTtl: 60 * 86400 });
+        try {
+          const sRaw = await env.SIGNAL_KV.get('gxbf_center_log');
+          const ser = sRaw ? JSON.parse(sRaw) : [];
+          if (!ser.some(x => x.date === date)) { ser.push(rec); await env.SIGNAL_KV.put('gxbf_center_log', JSON.stringify(ser.slice(-500))); }
+        } catch (_) {}
+        try { await logEvent(env, 'info', 'gxbf', `stranded-center RESTATE ${date}: sold @${closeValue} at ${at} (center ${c935} → ${c10}), P&L ${pnl} (was ${restated.from.pnl})`, {}); } catch (_) {}
+        return jsonResp({ ok: true, ...out }, 200, corsHeaders);
+      } catch (e) { return jsonResp({ ok: false, error: e.message }, 500, corsHeaders); }
+    }
+
     // GET /gxbf-center-now?secret= — owner diagnostic (2026-09-11): the 9:35 formula
     // on a fresh chain right now + what the 10:00 rule would decide. Never writes.
     if (url.pathname === '/gxbf-center-now' && request.method === 'GET') {
