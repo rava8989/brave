@@ -3558,7 +3558,7 @@ async function renderTicketPng(card) {
   await ensureResvg();
   const fonts = await getCardFonts();
   const { svg } = ticketSvg(card);
-  return new Resvg(svg, { fitTo: { mode: 'width', value: 1040 }, font: { fontBuffers: fonts, defaultFontFamily: 'Inter', loadSystemFonts: false } }).render().asPng();
+  return renderPngFreed(new Resvg(svg, { fitTo: { mode: 'width', value: 1040 }, font: { fontBuffers: fonts, defaultFontFamily: 'Inter', loadSystemFonts: false } }));
 }
 const cardContent = (card) => (card && card.order) ? '```\n' + String(card.order).slice(0, 1800) + '\n```' : '';
 const cardDate = (iso) => { const d = new Date(String(iso) + 'T12:00:00Z'); return `${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getUTCDay()]} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getUTCMonth()]} ${d.getUTCDate()}`; };
@@ -9700,6 +9700,9 @@ async function handleScheduledInner(env) {
     // Footer rides as the message content (renders ABOVE the image in Discord)
     // so the live link + disclaimer sit on top of the card, link clickable.
     result = await sendDiscordImage(env, dc.channelId, png, dc.proxyUrl, 'morning.png', DISCORD_FOOTER);
+    // Per-sink marker IMMEDIATELY after the owner post (2026-09-11): a run that dies
+    // later (isolate OOM) must never re-post the owner DM on retry.
+    if (result && result.ok) { try { await env.SIGNAL_KV.put(ownerKey, 'sent', { expirationTtl: 86400 }); } catch (_) {} }
     // Owner order 2026-08-07: the Plan card ALSO posts to the Σ3 SIGNALS
     // channel (same webhook as trade signals). Claim-gated (P22), marked
     // 'sent' only on confirmed delivery; image falls back to the text plan.
@@ -9722,6 +9725,7 @@ async function handleScheduledInner(env) {
   }
   if (!result || !result.ok) {
     result = await sendDiscordDM(env, dc.channelId, message.slice(0, 2000), dc.proxyUrl);
+    if (result && result.ok) { try { await env.SIGNAL_KV.put(ownerKey, 'sent', { expirationTtl: 86400 }); } catch (_) {} }
   }
   let dcData = result.data || {};
   if (!result.ok) {
@@ -12774,6 +12778,15 @@ async function ensureResvg() {
   if (!_resvgReady) _resvgReady = initWasm(resvgWasm);
   await _resvgReady;
 }
+// Render and FREE (2026-09-11). wasm-bindgen objects are not garbage-collected: every
+// Resvg + RenderedImage left behind stayed in the isolate's WASM heap (the SVG tree and
+// a full RGBA pixmap per card). After a day of cards the isolate ran out of its 128 MB
+// mid-morning-run — killed silently after the plan-card upload, no 'sent', duplicates.
+function renderPngFreed(r) {
+  let img = null;
+  try { img = r.render(); return img.asPng(); }
+  finally { try { if (img) img.free(); } catch (_) {} try { r.free(); } catch (_) {} }
+}
 let _cardFonts = null;
 async function getCardFonts() {
   if (_cardFonts) return _cardFonts;
@@ -12910,7 +12923,7 @@ async function renderMorningCardPng(d) {
     fitTo: { mode: 'width', value: 920 },
     font: { fontBuffers: fonts, defaultFontFamily: 'Inter', loadSystemFonts: false },
   });
-  return r.render().asPng();
+  return renderPngFreed(r);
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -13072,7 +13085,7 @@ async function renderEarningsCardPng(b) {
     fitTo: { mode: 'width', value: 920 },
     font: { fontBuffers: fonts, defaultFontFamily: 'Inter', loadSystemFonts: false },
   });
-  return r.render().asPng();
+  return renderPngFreed(r);
 }
 // Post a PNG to a Discord WEBHOOK (multipart) — the earnings channel sink.
 async function postWebhookImage(url, pngBytes, content, filename = 'earnings.png') {

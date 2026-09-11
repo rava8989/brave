@@ -59,3 +59,7 @@ service = "skipper"
 [[services]]
 binding = "SELF"
 service = "schwab-proxy"
+
+# CPU headroom for image renders (2026-09-11): default 30 s CPU per invocation
+[limits]
+cpu_ms = 120000
