@@ -2147,7 +2147,7 @@ function renderTradeLog(trades) {
       <td style="color:var(--green)">${$fmt(t.maxReward)}</td>
       <td>${t.contracts}</td>
       <td class="${t.pnl >= 0 ? 'pos' : 'neg'}">${$fmt(t.pnl)}</td>
-      <td style="font-size:9px;color:var(--text3)">${(t.tags || []).join(' ') || '—'}</td>
+      <td style="font-size:9px;color:var(--text3)">${t.exit === 'strand-10:00' ? `<span style="color:var(--accent);font-weight:700" title="10:00 stranded-center exit: center ${t.center} → ${t.center10}, sold at the 10:00 mids">10:00 EXIT ${t.center10}</span> ` : ''}${(t.tags || []).join(' ') || '—'}</td>
     </tr>
   `).join('');
 }
@@ -2161,7 +2161,7 @@ function exportTradesCSV(trades) {
     'open_date','day_of_week','spx_open','spx_close','vix_open','vix_close',
     'center','wing','lower_strike','upper_strike','net_debit',
     'max_risk','max_reward','contracts','pnl','premium',
-    'price_source','minutes_in_trade','tags'
+    'price_source','minutes_in_trade','tags','exit','center_10'
   ];
   const rows = trades.map(t => [
     t.openDate, DOW_NAMES[t.dow] || '',
@@ -2170,7 +2170,8 @@ function exportTradesCSV(trades) {
     t.maxRisk, t.maxReward, t.contracts,
     t.pnl, t.premium,
     t.priceSource || 'thetadata',
-    t.minutesInTrade, (t.tags || []).join(';')
+    t.minutesInTrade, (t.tags || []).join(';'),
+    t.exit || 'settle', t.center10 ?? ''
   ]);
   const csv = [header, ...rows].map(r => r.map(v => {
     const s = String(v);
