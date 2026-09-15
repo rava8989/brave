@@ -5448,7 +5448,9 @@ async function refreshDiagonalLiveQuotes(env, token, preChain = null) {
   // delete in handleDiagonalTrade silently failed (CF KV occasionally drops
   // a write). Clear it now and bail — no quotes to refresh on a closed trade.
   const todayISO = isoDateET(toET());
-  if (trade.openDate && trade.openDate < todayISO) {
+  const _etR = toET(), _minR = _etR.getHours() * 60 + _etR.getMinutes();
+  const inLifecycleWindow = _minR >= 12 * 60 + 30 && _minR < 12 * 60 + 45;   // 2026-09-15: never touch the slot while the 12:30 lifecycle may be closing it
+  if (trade.openDate && trade.openDate < todayISO && !inLifecycleWindow) {
     const diagDone = await env.SIGNAL_KV.get(`diag_done_${todayISO}`);
     if (diagDone && !diagDone.startsWith('claim:')) {   // claim: = lifecycle IN FLIGHT, not done (P24)
       console.warn(`[diag] phantom open trade detected (openDate=${trade.openDate}, diag_done set) — clearing`);
@@ -5537,10 +5539,23 @@ function daysBetween(a, b) {
   return Math.round((db - da) / 86400000);
 }
 
+// Owner DM, once per day, when the 12:30 diagonal lifecycle ends in failure
+// (2026-09-15: a GO day with no trade and no message — the owner noticed, not the bot).
+async function diagFailNotify(env, todayISO, err) {
+  try {
+    const key = `diag_fail_dm_${todayISO}`;
+    if (await env.SIGNAL_KV.get(key)) return;
+    await env.SIGNAL_KV.put(key, '1', { expirationTtl: 86400 });
+    const dcRaw = await env.SIGNAL_KV.get('discord_config');
+    const dc = dcRaw ? JSON.parse(dcRaw) : null;
+    if (dc && dc.channelId) await sendDiscordDM(env, dc.channelId, `⚠️ **Diagonal did not open today** — ${String(err || 'unknown error').slice(0, 200)}. The signal was live; open it by hand if you want it. (one note per day)`, dc.proxyUrl);
+  } catch (_) {}
+}
+
 // Orchestrate close-then-open at 12:30 ET. Idempotent via diag_done_<date>.
-async function handleDiagonalTrade(env, etNow, preChain = null) {
+async function handleDiagonalTrade(env, etNow, preChain = null, opts = {}) {
   const todayISO = isoDateET(etNow);
-  const out = { date: todayISO, closed: null, opened: null, skipped: null };
+  const out = { date: todayISO, closed: null, opened: null, skipped: null, dry: !!opts.dry };
 
   let token;
   try { token = await getAccessToken(env); }
@@ -5550,7 +5565,8 @@ async function handleDiagonalTrade(env, etNow, preChain = null) {
   const openRaw = await env.SIGNAL_KV.get('diagonal_open_trade');
   let openTrade = openRaw ? JSON.parse(openRaw) : null;
 
-  if (openTrade && openTrade.openDate < todayISO && openTrade.status === 'open') {
+  if (opts.dry && openTrade && openTrade.openDate < todayISO) out.wouldClose = { openDate: openTrade.openDate, status: openTrade.status };
+  if (openTrade && openTrade.openDate < todayISO && openTrade.status === 'open' && !opts.dry) {
     try {
       const closed = await closeDiagonalTrade(env, token, openTrade, etNow, preChain);
       // Commit diagPL for the OPEN date (matches history convention)
@@ -5623,15 +5639,20 @@ async function handleDiagonalTrade(env, etNow, preChain = null) {
 
   // 3b. Compute diagonal signal (now COR1M-gated).
   const sig = computeDiagonalSignal(etNow, vixPct20d, cor1mToday);
+  out.signal = { vixPct20d, cor1m: cor1mToday, text: sig.diagText, go: sig.diagGo };
   if (!sig.diagGo) {
     out.skipped = sig.diagSkipCode || 'no-data';
     out.signalText = sig.diagText;
     return out;
   }
 
-  // 4. Open new trade
+  // 4. Open new trade (dry: price it and report, write nothing)
   try {
     const newTrade = await openDiagonalTrade(env, token, etNow, vixPct20d, preChain);
+    if (opts.dry) {
+      out.wouldOpen = { openDate: newTrade.openDate, shortStrike: newTrade.shortStrike, longStrike: newTrade.longStrike, shortExp: newTrade.shortExp, longExp: newTrade.longExp, entryDebit: newTrade.entryDebit, spotEntry: newTrade.spotEntry };
+      return out;
+    }
     await env.SIGNAL_KV.put('diagonal_open_trade', JSON.stringify(newTrade));
     out.opened = {
       openDate: newTrade.openDate,
@@ -8888,11 +8909,15 @@ async function handleScheduledInner(env) {
         // Transient errors (token, chain, GitHub) release the claim so the
         // next 2-min tick retries within the 12:30–12:40 window.
         const hadError = !!(diagResult.error || diagResult.openError || diagResult.closeError);
+        // 2026-09-15: the lifecycle outcome goes to the daily log (console only before —
+        // a failed open on 9/15 left no trace), and the LAST retry's failure DMs the owner once.
+        try { await logEvent(env, hadError ? 'error' : 'info', 'diag', `12:30 lifecycle ${hadError ? 'FAILED' : 'ok'} ${JSON.stringify({ closed: diagResult.closed, opened: diagResult.opened, skipped: diagResult.skipped, error: diagResult.error || diagResult.openError || diagResult.closeError })}`.slice(0, 400), {}); } catch (_) {}
         if (!hadError) {
           await env.SIGNAL_KV.put(diagDoneKey, 'sent', { expirationTtl: 86400 });
         } else {
           await env.SIGNAL_KV.delete(diagDoneKey);
           console.warn('[diag] not marking done — will retry next tick:', JSON.stringify(diagResult));
+          if (etMin >= 38) await diagFailNotify(env, todayISO, diagResult.error || diagResult.openError || diagResult.closeError);
         }
       } catch (e) {
         diagResult = { diagonal: 'error', error: e.message };
@@ -15074,12 +15099,14 @@ export default {
 
     if (url.pathname === '/diagonal-trigger' && request.method === 'GET') {
       const secret = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
-      if (!secret || secret !== env.SYNC_SECRET) {
+      if (!secret || (secret !== env.SYNC_SECRET && secret !== env.GEXM_TRIGGER_TOKEN)) {
         return jsonResp({ error: 'Unauthorized' }, 401, { 'Access-Control-Allow-Origin': '*' });
       }
       try {
         const etNowDT = toET(new Date());
-        const result = await handleDiagonalTrade(env, etNowDT);
+        // dry=1 (2026-09-15): price the close/open decision and report it — no KV writes,
+        // no cards. Used to see WHY an open failed (the cron only logs to console).
+        const result = await handleDiagonalTrade(env, etNowDT, null, { dry: url.searchParams.get('dry') === '1' });
         return jsonResp(result, 200, { 'Access-Control-Allow-Origin': '*' });
       } catch (e) {
         return jsonResp({ error: e.message, stack: e.stack }, 500, { 'Access-Control-Allow-Origin': '*' });
@@ -15699,21 +15726,27 @@ export default {
         // run handleDiagonalTrade (which is idempotent — sets diag_done
         // after success, so concurrent endpoint hits won't double-trigger).
         if (open && open.openDate && open.openDate < todayDT && !isWeekendDT && !isHolidayDT) {
-          const past1230 = etNowDT.getHours() > 12 || (etNowDT.getHours() === 12 && etNowDT.getMinutes() >= 30);
+          // 2026-09-15: the cron owns 12:30–12:40 (up to 5 retries). This recovery
+          // raced it at 12:30:0x, ran the lifecycle itself, and marked the day
+          // 'self-heal' even though its open FAILED — so the cron's retries were
+          // locked out and no diagonal opened. Now: wait until 12:45, claim the
+          // slot like the cron does, mark done only on a clean run, and log/DM
+          // the outcome once so a missed open is never silent.
+          const past1245 = etNowDT.getHours() > 12 || (etNowDT.getHours() === 12 && etNowDT.getMinutes() >= 45);
           const beforeMarketClose = etNowDT.getHours() < 16;
-          if (past1230 && beforeMarketClose) {
+          if (past1245 && beforeMarketClose) {
             const diagDone = await env.SIGNAL_KV.get(`diag_done_${todayDT}`);
-            if (!diagDone) {
+            if (!diagDone && await claimSendSlot(env, `diag_done_${todayDT}`)) {
               try {
                 console.log('[diag-today] cron-stall recovery: triggering close+open lifecycle');
-                await handleDiagonalTrade(env, etNowDT);
-                // handleDiagonalTrade writes both the close result AND the new
-                // trade. Re-read to pick up the new state.
+                const r = await handleDiagonalTrade(env, etNowDT);
                 openRaw = await env.SIGNAL_KV.get('diagonal_open_trade');
                 open = openRaw ? JSON.parse(openRaw) : null;
-                // Mark done so subsequent endpoint calls don't re-trigger
-                await env.SIGNAL_KV.put(`diag_done_${todayDT}`, 'self-heal', { expirationTtl: 86400 });
-              } catch (e) { console.warn('[diag-today] cron-stall recovery failed:', e.message); }
+                const bad = !!(r.error || r.openError || r.closeError);
+                await logEvent(env, bad ? 'error' : 'info', 'diag', `endpoint recovery: ${bad ? 'FAILED' : 'ok'} ${JSON.stringify({ closed: r.closed, opened: r.opened, skipped: r.skipped, error: r.error || r.openError || r.closeError })}`.slice(0, 400), {});
+                if (!bad) await env.SIGNAL_KV.put(`diag_done_${todayDT}`, 'self-heal', { expirationTtl: 86400 });
+                else { await env.SIGNAL_KV.delete(`diag_done_${todayDT}`); await diagFailNotify(env, todayDT, r.error || r.openError || r.closeError); }
+              } catch (e) { console.warn('[diag-today] cron-stall recovery failed:', e.message); try { await env.SIGNAL_KV.delete(`diag_done_${todayDT}`); } catch (_) {} }
             }
           }
         }
@@ -15774,7 +15807,7 @@ export default {
             vixPct20d = computeVixPct20d(vixToday, vix20).pct;
           }
         } catch (_) { /* fall through to null */ }
-        try { sigPreview = computeDiagonalSignal(etNowDT, vixPct20d); } catch (_) {}
+        try { sigPreview = computeDiagonalSignal(etNowDT, vixPct20d, await getCor1mOpenToday(env, todayDT)); } catch (_) {}   // 2026-09-15: pass COR1M — the page said "pending COR1M data" all day while the gate had it
 
         return jsonResp({
           date: todayDT,
