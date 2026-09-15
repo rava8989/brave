@@ -9211,6 +9211,18 @@ async function handleScheduledInner(env) {
         await env.SIGNAL_KV.put(morningDoneKey, 'sent', { expirationTtl: 86400 });
         globalThis.__morningSentDay = todayISO;
         console.log(`[proxy] Stuck claim (age ${ageS}s) but the owner plan is already sent — day marked sent, no re-run`);
+        // The dead run may have died between the owner DM and the channel post: say so ONCE
+        // (the owner can post it by hand with Send Card) instead of re-running the send path.
+        try {
+          const chKey = `plan_channel_${todayISO}`, noteKey = `plan_channel_missing_dm_${todayISO}`;
+          if ((await env.SIGNAL_KV.get(chKey)) !== 'sent' && !(await env.SIGNAL_KV.get(noteKey))) {
+            await env.SIGNAL_KV.put(noteKey, '1', { expirationTtl: 86400 });
+            await logEvent(env, 'error', 'morning', 'run died after the owner DM — plan card did not reach the signals channel', { claimAgeS: ageS });
+            const dcRaw = await env.SIGNAL_KV.get('discord_config');
+            const dc = dcRaw ? JSON.parse(dcRaw) : null;
+            if (dc && dc.channelId) await sendDiscordDM(env, dc.channelId, `⚠️ Morning run died after your plan DM — the plan card did NOT reach the Σ3 SIGNALS channel today. Post it with Send Card if you want it there. (one note per day)`, dc.proxyUrl);
+          }
+        } catch (_) {}
         return { status: 'stuck_claim_healed_owner_sent', time: `${etHour}:${String(etMin).padStart(2,'0')} ET` };
       }
       console.warn(`[proxy] Stuck claim detected (age ${ageS}s) — clearing and notifying`);
@@ -9824,7 +9836,15 @@ async function handleScheduledInner(env) {
     result = await sendDiscordImage(env, dc.channelId, png, dc.proxyUrl, 'morning.png', DISCORD_FOOTER);
     // Per-sink marker IMMEDIATELY after the owner post (2026-09-11): a run that dies
     // later (isolate OOM) must never re-post the owner DM on retry.
-    if (result && result.ok) { try { await env.SIGNAL_KV.put(ownerKey, 'sent', { expirationTtl: 86400 }); } catch (_) {} }
+    if (result && result.ok) {
+      try {
+        await env.SIGNAL_KV.put(ownerKey, 'sent', { expirationTtl: 86400 });
+        // 2026-09-15 (P57): the DAY is done the moment the owner DM lands. A run that
+        // dies later (channel post) must not leave a stale day claim behind.
+        await env.SIGNAL_KV.put(msDoneKey, 'sent', { expirationTtl: 86400 });
+        globalThis.__morningSentDay = todayISO;
+      } catch (_) {}
+    }
     // Owner order 2026-08-07: the Plan card ALSO posts to the Σ3 SIGNALS
     // channel (same webhook as trade signals). Claim-gated (P22), marked
     // 'sent' only on confirmed delivery; image falls back to the text plan.

@@ -63,3 +63,9 @@ service = "schwab-proxy"
 # CPU headroom for image renders (2026-09-11): default 30 s CPU per invocation
 [limits]
 cpu_ms = 120000
+
+# Workers Logs (2026-09-15): keep invocation logs so a silently killed cron run
+# (morning plan died after the owner DM on 9/15, no trace) is diagnosable.
+[observability]
+enabled = true
+head_sampling_rate = 1
