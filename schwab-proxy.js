@@ -9202,17 +9202,32 @@ async function handleScheduledInner(env) {
     const ageMs = claimTsMs ? Date.now() - claimTsMs : 0;
     if (claimTsMs && ageMs > 150_000) {
       const ageS = Math.round(ageMs / 1000);
+      // 2026-09-15 (P57): if the owner's plan DM already went out today, the day is
+      // DONE — the dead run just never reached its final 'sent' write. Heal the day
+      // marker here instead of re-running the send path: the re-run returned at the
+      // owner-slot gate without marking the day, the fresh claim went stale 150s
+      // later, and the owner got 100+ "stuck claim" DMs in one afternoon.
+      if ((await env.SIGNAL_KV.get(`plan_owner_${todayISO}`)) === 'sent') {
+        await env.SIGNAL_KV.put(morningDoneKey, 'sent', { expirationTtl: 86400 });
+        globalThis.__morningSentDay = todayISO;
+        console.log(`[proxy] Stuck claim (age ${ageS}s) but the owner plan is already sent — day marked sent, no re-run`);
+        return { status: 'stuck_claim_healed_owner_sent', time: `${etHour}:${String(etMin).padStart(2,'0')} ET` };
+      }
       console.warn(`[proxy] Stuck claim detected (age ${ageS}s) — clearing and notifying`);
       await env.SIGNAL_KV.delete(morningDoneKey);
-      // Fire-and-forget Discord notification
+      // Notify at most once per 30 min (2026-09-15: was every clear, 2-3 ticks per cycle)
       try {
-        const dcRaw = await env.SIGNAL_KV.get('discord_config');
-        if (dcRaw) {
-          const dc = JSON.parse(dcRaw);
-          if (dc.channelId) {
-            await sendDiscordDM(env, dc.channelId,
-              `⚠️ **Stuck morning claim** (${ageS}s old) — cleared, retrying this tick.`,
-              dc.proxyUrl);
+        const dmKey = `stuck_claim_dm_${todayISO}`;
+        if (!(await env.SIGNAL_KV.get(dmKey))) {
+          await env.SIGNAL_KV.put(dmKey, '1', { expirationTtl: 1800 });
+          const dcRaw = await env.SIGNAL_KV.get('discord_config');
+          if (dcRaw) {
+            const dc = JSON.parse(dcRaw);
+            if (dc.channelId) {
+              await sendDiscordDM(env, dc.channelId,
+                `⚠️ **Stuck morning claim** (${ageS}s old) — cleared, retrying this tick. (one note per 30 min)`,
+                dc.proxyUrl);
+            }
           }
         }
       } catch (notifyErr) {
@@ -9787,6 +9802,15 @@ async function handleScheduledInner(env) {
   const ownerKey = `plan_owner_${todayISO}`;
   if ((await env.SIGNAL_KV.get(ownerKey)) === 'sent' || !(await claimSendSlot(env, ownerKey)) || (await env.SIGNAL_KV.get(ownerKey)) === 'sent') {
     console.log('[proxy] owner plan DM slot held/sent by another run — not posting twice');
+    // 2026-09-15 (P57): never leave the DAY claim open on an early return. If the owner
+    // DM is already sent, the day is done — mark it. Otherwise another run holds the
+    // owner slot: release our day claim so its final 'sent' lands cleanly.
+    if ((await env.SIGNAL_KV.get(ownerKey)) === 'sent') {
+      await env.SIGNAL_KV.put(msDoneKey, 'sent', { expirationTtl: 86400 });
+      globalThis.__morningSentDay = todayISO;
+    } else {
+      await env.SIGNAL_KV.delete(msDoneKey);
+    }
     return { status: 'duplicate_avoided_owner_slot', time: `${etHour}:${String(etMin).padStart(2, '0')} ET` };
   }
   await beat();
