@@ -9879,10 +9879,13 @@ async function handleScheduledInner(env) {
         const whS = await env.SIGNAL_KV.get('signals_webhook_url');
         const pcKey = `plan_channel_${todayISO}`;
         if (whS && await claimSendSlot(env, pcKey)) {
+          // Marker BEFORE the post (P27). 2026-09-15: the run died right after the
+          // webhook post landed in the channel and the marker never did — which would
+          // now raise a false "channel missed" note. A failed post deletes it again.
+          await env.SIGNAL_KV.put(pcKey, 'sent', { expirationTtl: 86400 });
           let chOk = await postWebhookImage(whS, png, DISCORD_FOOTER, 'plan.png');
           if (!chOk) { const t = await postSignalsChannel(env, message.slice(0, 1800) + FANOUT_DISCLAIMER); chOk = !!(t && t.ok); }
-          if (chOk) await env.SIGNAL_KV.put(pcKey, 'sent', { expirationTtl: 86400 });
-          else { await env.SIGNAL_KV.delete(pcKey); try { await logEvent(env, 'error', 'morning', 'plan card CHANNEL post failed (DM ok)', {}); } catch (_) {} }
+          if (!chOk) { await env.SIGNAL_KV.delete(pcKey); try { await logEvent(env, 'error', 'morning', 'plan card CHANNEL post failed (DM ok)', {}); } catch (_) {} }
         }
       }
     } catch (eCh) { console.warn('[plan-channel]', eCh.message); }
