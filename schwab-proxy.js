@@ -15109,16 +15109,20 @@ export default {
     // the GitHub monthly file), register it as the open trade so the next session's
     // 12:30 lifecycle closes it normally, and tell the owner + the channel. Refuses if
     // another trade is open. dry=1 prices without writing or posting.
-    if (url.pathname === '/diagonal-reconstruct' && request.method === 'GET') {
+    if (url.pathname === '/diagonal-reconstruct' && (request.method === 'GET' || request.method === 'POST')) {
       try {
-        const date = url.searchParams.get('date'), dry = url.searchParams.get('dry') === '1';
+        const date = url.searchParams.get('date'), dry = url.searchParams.get('dry') === '1', force = url.searchParams.get('force') === '1';
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '')) return jsonResp({ ok: false, error: 'need date=YYYY-MM-DD' }, 400, corsHeaders);
         const curRaw = await env.SIGNAL_KV.get('diagonal_open_trade');
         const cur = curRaw ? JSON.parse(curRaw) : null;
-        if (cur && cur.status === 'open') return jsonResp({ ok: cur.openDate === date && !!cur.reconstructed, status: cur.openDate === date ? 'already-registered' : 'another-trade-open', open: { openDate: cur.openDate, shortStrike: cur.shortStrike, longStrike: cur.longStrike } }, cur.openDate === date ? 200 : 409, corsHeaders);
-        // 1. the 12:25 snapshot
+        // force=1 re-registers a RECONSTRUCTED record of the same date with better marks (e.g. true 12:30 quotes); never touches a bot-opened trade
+        const replaceable = !!(cur && cur.status === 'open' && cur.openDate === date && cur.reconstructed && force);
+        if (cur && cur.status === 'open' && !replaceable) return jsonResp({ ok: cur.openDate === date && !!cur.reconstructed, status: cur.openDate === date ? 'already-registered' : 'another-trade-open', open: { openDate: cur.openDate, shortStrike: cur.shortStrike, longStrike: cur.longStrike } }, cur.openDate === date ? 200 : 409, corsHeaders);
+        // 1. the chain snapshot: POST body {at, spot, puts:{'exp:dte':[[strike,bid,ask],…]}} (e.g. true 12:30 quotes
+        //    pulled from ThetaData), else the worker's own 12:25 capture
         let snap = null;
-        try { const r = await env.SIGNAL_KV.get(`diag_chain_snap_${date}`); snap = r ? JSON.parse(r) : null; } catch (_) {}
+        if (request.method === 'POST') { try { const b = await request.json(); if (b && b.spot && b.puts) snap = b; } catch (_) {} }
+        if (!snap) try { const r = await env.SIGNAL_KV.get(`diag_chain_snap_${date}`); snap = r ? JSON.parse(r) : null; } catch (_) {}
         if (!snap) {
           const r = await fetch(`https://raw.githubusercontent.com/rava8989/brave/main/data/diag_chains/${date.slice(0, 7)}.json?cb=${Date.now()}`, { headers: { 'User-Agent': 'schwab-proxy-worker/1.0' } });
           if (r.ok) snap = ((await r.json()) || {})[date] || null;
@@ -15153,7 +15157,7 @@ export default {
         // 4. the same open routine, fed the snapshot
         const trade = await openDiagonalTrade(env, null, etOpen, vixPct20d, preChain);
         trade.openTimeET = trade.openTimeET || '12:30';
-        trade.reconstructed = { at: new Date().toISOString(), source: `diag_chain_snap ${snap.at || '12:25'} ET`, why: 'the 12:30 lifecycle failed to open a valid GO signal (P58); registered on the owner\'s order at the snapshot marks' };
+        trade.reconstructed = { at: new Date().toISOString(), source: snap.source || `diag_chain_snap ${snap.at || '12:25'} ET`, why: 'the 12:30 lifecycle failed to open a valid GO signal (P58); registered on the owner\'s order at the snapshot marks', replaced: replaceable ? { shortStrike: cur.shortStrike, longStrike: cur.longStrike, entryDebit: cur.entryDebit, source: cur.reconstructed && cur.reconstructed.source } : undefined };
         const dLong = trade.longExp, dShort = trade.shortExp;
         const tos = (iso) => `${+iso.slice(8, 10)} ${_MON3[+iso.slice(5, 7) - 1]} ${iso.slice(2, 4)}`;
         const order = `BUY +1 DIAGONAL SPX 100 (Weeklys) ${tos(dLong)}/${tos(dShort)} ${trade.longStrike}/${trade.shortStrike} PUT @${trade.entryDebit.toFixed(2)} LMT`;
@@ -15161,7 +15165,10 @@ export default {
         if (dry) return jsonResp({ ok: true, dry: true, ...summary }, 200, corsHeaders);
         await env.SIGNAL_KV.put('diagonal_open_trade', JSON.stringify(trade));
         try { await logEvent(env, 'warn', 'diag', `RECONSTRUCTED missed open ${date}: ${order} (snapshot ${snap.at || '12:25'})`, {}); } catch (_) {}
-        const msg = `🔷 **Diagonal ${tos(date)} — OPEN (registered late)**\nThe bot failed to open this one at 12:30 today although the signal was live (VIX 20d ${vixPct20d}%). Registered at the 12:25 marks; it closes at 12:30 next session as usual.\n\`\`\`\n${order}\n\`\`\``;
+        const atLbl = snap.at || '12:25';
+        const msg = replaceable
+          ? `🔷 **Diagonal ${tos(date)} — CORRECTION**\nRe-registered at the true ${atLbl} quotes (replaces the ${cur.longStrike}/${cur.shortStrike} @${Number(cur.entryDebit).toFixed(2)} line posted earlier). Closes at 12:30 next session as usual.\n\`\`\`\n${order}\n\`\`\``
+          : `🔷 **Diagonal ${tos(date)} — OPEN (registered late)**\nThe bot failed to open this one at 12:30 today although the signal was live (VIX 20d ${vixPct20d}%). Registered at the ${atLbl} marks; it closes at 12:30 next session as usual.\n\`\`\`\n${order}\n\`\`\``;
         const posts = {};
         try { const dcRaw = await env.SIGNAL_KV.get('discord_config'); const dc = dcRaw ? JSON.parse(dcRaw) : null; if (dc && dc.channelId) posts.owner = (await sendDiscordDM(env, dc.channelId, msg, dc.proxyUrl))?.ok; } catch (e) { posts.ownerError = e.message; }
         try { posts.channel = (await postSignalsChannel(env, msg + FANOUT_DISCLAIMER))?.ok; } catch (e) { posts.channelError = e.message; }
