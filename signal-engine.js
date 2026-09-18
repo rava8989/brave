@@ -93,11 +93,11 @@ export const earningsSchedule = [
   // ── Q1 2026 (Jan/Feb reports) ──
   { date:"January 28, 2026",  company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:true },
   { date:"January 28, 2026",  company:"Meta",      ticker:"META", timing:"AH", confirmed:true },
-  { date:"January 29, 2026",  company:"Tesla",     ticker:"TSLA", timing:"AH", confirmed:true },
+  { date:"January 28, 2026",  company:"Tesla",     ticker:"TSLA", timing:"AH", confirmed:true },
   { date:"January 29, 2026",  company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:true },
   { date:"February 4, 2026",  company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:true },
   { date:"February 5, 2026",  company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:true },
-  { date:"February 26, 2026", company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:true },
+  { date:"February 25, 2026", company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:true },
   // ── Q2 2026 (Apr/May reports) ──
   { date:"April 22, 2026",    company:"Tesla",     ticker:"TSLA", timing:"AH", confirmed:true  },
   { date:"April 29, 2026",    company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:true  },
@@ -110,18 +110,30 @@ export const earningsSchedule = [
   { date:"July 22, 2026",     company:"Tesla",     ticker:"TSLA", timing:"AH", confirmed:true  },
   { date:"July 22, 2026",     company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:true  },
   { date:"July 29, 2026",     company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:true  },
-  { date:"July 29, 2026",     company:"Meta",      ticker:"META", timing:"AH", confirmed:false },
-  { date:"July 30, 2026",     company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:false },
-  { date:"July 30, 2026",     company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:false },
-  { date:"August 26, 2026",   company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:false },
+  { date:"July 29, 2026",     company:"Meta",      ticker:"META", timing:"AH", confirmed:true  },
+  { date:"July 30, 2026",     company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:true  },
+  { date:"July 30, 2026",     company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:true  },
+  { date:"August 26, 2026",   company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:true  },
   // ── Q4 2026 (Oct/Nov reports — estimates) ──
-  { date:"October 21, 2026",  company:"Tesla",     ticker:"TSLA", timing:"AH", confirmed:false },
-  { date:"October 22, 2026",  company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:false },
+  // Q3 2026 — ESTIMATES as of 2026-09-18 (no company has announced yet). Vendor calendars
+  // (TipRanks, Zacks) and each company's own Q3 pattern: GOOGL last-week Tuesday with MSFT,
+  // TSLA 4th Wednesday. Flip to confirmed:true when the press release lands; the nightly
+  // watchdog ("mega-cap earnings schedule") alerts if Nasdaq shows a confirmed date not in here.
+  { date:"October 27, 2026",  company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:false },
   { date:"October 27, 2026",  company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:false },
+  { date:"October 28, 2026",  company:"Tesla",     ticker:"TSLA", timing:"AH", confirmed:false },
   { date:"October 28, 2026",  company:"Meta",      ticker:"META", timing:"AH", confirmed:false },
   { date:"October 29, 2026",  company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:false },
   { date:"October 29, 2026",  company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:false },
   { date:"November 18, 2026", company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:false },
+  // ── 2027 Q4-season ESTIMATES (pattern of Jan/Feb 2025 and 2026) — confirm when announced ──
+  { date:"January 27, 2027",  company:"Microsoft", ticker:"MSFT", timing:"AH", confirmed:false },
+  { date:"January 27, 2027",  company:"Meta",      ticker:"META", timing:"AH", confirmed:false },
+  { date:"January 27, 2027",  company:"Tesla",     ticker:"TSLA", timing:"AH", confirmed:false },
+  { date:"January 28, 2027",  company:"Apple",     ticker:"AAPL", timing:"AH", confirmed:false },
+  { date:"February 3, 2027",  company:"Alphabet",  ticker:"GOOGL",timing:"AH", confirmed:false },
+  { date:"February 4, 2027",  company:"Amazon",    ticker:"AMZN", timing:"AH", confirmed:false },
+  { date:"February 24, 2027", company:"NVIDIA",    ticker:"NVDA", timing:"AH", confirmed:false },
 ];
 
 // ════════════════════════════════════════════════════════════════════

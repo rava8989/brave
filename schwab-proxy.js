@@ -1155,17 +1155,30 @@ async function earnCalendar(env, fromISO, toISO) {
     }
   }
   if (okDays === 0) {
-    console.warn('[earn] nasdaq calendar fully failed, using seed fallback');
-    src = 'seed';
-    const seed = await earnSeed(env);
-    for (const ev of (seed.forward_calendar || [])) {
-      const rd = String(ev.report_date).slice(0, 10);
-      if (rd >= fromISO && rd <= toISO) out.push({ ticker: ev.ticker, report_date: rd, when: ev.when });
+    // 2026-09-18: the seed's baked calendar ended 2026-08-14, so a full Nasdaq failure had
+    // become a silently EMPTY pipeline. Fall back to the last good wide live pull first (kept
+    // 10 days), then the seed, and say so in calSrc when nothing covers the window.
+    console.warn('[earn] nasdaq calendar fully failed, using last-good / seed fallback');
+    let lg = null; try { const r = await env.SIGNAL_KV.get('earn_cal_lastgood'); lg = r ? JSON.parse(r) : null; } catch (_) {}
+    for (const ev of ((lg && lg.events) || [])) if (ev.report_date >= fromISO && ev.report_date <= toISO) out.push(ev);
+    if (out.length) src = `last-good ${String(lg.at || '').slice(0, 10)} (nasdaq down)`;
+    else {
+      src = 'seed';
+      const seed = await earnSeed(env);
+      for (const ev of (seed.forward_calendar || [])) {
+        const rd = String(ev.report_date).slice(0, 10);
+        if (rd >= fromISO && rd <= toISO) out.push({ ticker: ev.ticker, report_date: rd, when: ev.when });
+      }
+      if (!out.length) src = 'NONE — nasdaq down, no fallback covers these dates';
     }
   } else if (failDays > 0) {
     src = `nasdaq (${failDays} day${failDays > 1 ? 's' : ''} missing)`;
   }
   const res = { src, events: out };
+  // keep the latest WIDE live pull (the 14-day pipeline window) as the fallback of record
+  if (okDays > 0 && out.length && (new Date(toISO) - new Date(fromISO)) / 86400000 >= 7) {
+    try { await env.SIGNAL_KV.put('earn_cal_lastgood', JSON.stringify({ at: new Date().toISOString(), from: fromISO, to: toISO, events: out }), { expirationTtl: 10 * 86400 }); } catch (_) {}
+  }
   // full clean pull → 20h; anything degraded → 30 min so recovery is fast
   await env.SIGNAL_KV.put(ck, JSON.stringify(res),
     { expirationTtl: (src === 'nasdaq') ? 20 * 3600 : 1800 });
@@ -3127,6 +3140,30 @@ async function dataCompletenessCheck(env, etNow) {
       const row = JSON.parse(raw).find(r => r.date === todayISO);
       return !!(row && row.vixClose != null);
     }, null],   // settle has its own retry path — report only
+    // 2026-09-18: signal-engine.js earningsSchedule is a hand-kept list that gates BOBF's
+    // earnings-day block and the dashboard. Alarm when it is about to run out, or when Nasdaq
+    // shows a COMPANY-CONFIRMED date for one of the seven that the file does not contain
+    // (vendor algorithm estimates are ignored). An audit on 9/18 found two wrong "confirmed"
+    // dates (TSLA 1/28, NVDA 2/25) and a list that ended 11/18.
+    ['mega-cap earnings schedule', async () => {
+      const toISO_ = (str) => { const d = new Date(str + ' 12:00:00 UTC'); return isNaN(d) ? null : d.toISOString().slice(0, 10); };
+      const have = earningsSchedule.map(e => ({ t: e.ticker, iso: toISO_(e.date) })).filter(x => x.iso);
+      const last = have.map(x => x.iso).sort().pop();
+      if (!last || (new Date(last) - new Date(todayISO)) / 86400000 < 35) throw new Error(`list ends ${last} — extend it`);
+      const nh = { headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 'Accept': 'application/json' } };
+      const bad = [];
+      for (const t of ['TSLA', 'GOOGL', 'MSFT', 'META', 'AMZN', 'AAPL', 'NVDA']) {
+        try {
+          const r = await fetch(`https://api.nasdaq.com/api/analyst/${t}/earnings-date`, nh); if (!r.ok) continue;
+          const d = ((await r.json()) || {}).data || {}; const txt = String(d.reportText || '');
+          if (!txt || /derived from an algorithm|hasn't provided/i.test(txt)) continue;
+          const m = String(d.announcement || '').match(/:\s*([A-Za-z]{3,9} \d{1,2}, \d{4})/); const iso = m && toISO_(m[1]);
+          if (iso && iso >= todayISO && !have.some(x => x.t === t && x.iso === iso)) bad.push(`${t} ${iso.slice(5)}`);
+        } catch (_) {}
+      }
+      if (bad.length) throw new Error('confirmed, not in file: ' + bad.join(' '));
+      return true;
+    }, null],
   ];
   // Fri–Mon: CFTC sometimes publishes hours late on Friday; a Friday-only
   // check meant one lag = a full week stale (happened 2026-08-08).
