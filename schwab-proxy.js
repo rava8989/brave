@@ -245,6 +245,11 @@ async function archiveFlyMarks(env, etNow) {
       if (strat === 'diag' ? (stillOpen || isToday) : isToday) marks[strat] = t.currentValue;
     } catch (_) { /* per-strategy best-effort */ }
   }
+  try {  // PNBF open fly (2026-09-21): its own record shape — lastMid, not currentValue
+    const raw = await env.SIGNAL_KV.get('mf_open_trade');
+    const t = raw ? JSON.parse(raw) : null;
+    if (t && t.openDate === todayISO && t.status === 'open' && t.lastMid != null && isFinite(t.lastMid)) marks.pnbf = t.lastMid;
+  } catch (_) {}
   try {  // M8BF live mark (separate key shape — keyed by 0DTE expiry = today)
     const raw = await env.SIGNAL_KV.get(`m8bf_live_${todayISO}`);
     if (raw) {
@@ -7684,6 +7689,14 @@ const MF_SIGNALS_CHANNEL = '1048242197029458040';   // same feed the M8BF archiv
 const ALT_SIGNALS_CHANNEL = '1057641464378707989';
 const MAIN_FEED_MIN_ROWS = 40;                      // normal full day ≈ 77 signals
 const MF_TP = 3.0, MF_SL = 5.0, MF_WIDTH = 30, MF_DEBIT_CAP = 17.0;
+// Owner rule 2026-09-21: the −$5 stop exists only when the fly cost $5.50 or more.
+// A cheaper fly can never lose more than its debit, so "entry − 5" is a negative
+// price — the tracker fired it on a noisy deep-ITM mid and booked −$500/lot on a
+// $3.09 fly (2026-09-21). Under $5.50: no stop, TP or settle at the close.
+const MF_SL_MIN_ENTRY = 5.50;
+function mfStopLevel(entry) {
+  return (Number(entry) + 1e-9 >= MF_SL_MIN_ENTRY) ? Math.round((entry - MF_SL) * 100) / 100 : null;
+}
 const MF_LOTS = 10;   // default position size (Sigma 3 tracking, 2026-07-15)
 
 function mfOpexWeekMidBlock(etNow) {
@@ -7712,14 +7725,25 @@ function mfExactLeg(expDateMap, expISO, strike) {
 }
 
 // Fly quote at exact legs K±W: {mid, entryEff (slippage-adjusted), spreads}
-function mfFlyQuote(chain, todayISO, K) {
-  const lo = mfExactLeg(chain.callExpDateMap, todayISO, K - MF_WIDTH);
-  const ce = mfExactLeg(chain.callExpDateMap, todayISO, K);
-  const hi = mfExactLeg(chain.callExpDateMap, todayISO, K + MF_WIDTH);
-  if (!lo || !ce || !hi) return null;
-  const mid = lo.mid - 2 * ce.mid + hi.mid;
-  const halfspread = ((lo.ask - lo.bid) + (ce.ask - ce.bid) + (hi.ask - hi.bid)) / 2;
-  return { mid, slip: halfspread * 0.25 };
+// opts.tightest (exit tracking only, 2026-09-21): a call fly and a put fly at the
+// same strikes are worth the same (European, cash-settled), so mark the open trade
+// on whichever wrapper quotes tighter. Once SPX runs past the wings the calls are
+// deep in the money and their markets go $2–$30 wide — on 2026-09-21 the call-fly
+// mid read −1.9 at 15:50 while the put fly sat at 0.05 on a 20¢ market. The ENTRY
+// price stays on the call legs, the basis the 87-trade backtest was priced on.
+function mfFlyQuote(chain, todayISO, K, opts = {}) {
+  const side = (map) => {
+    if (!map) return null;
+    const lo = mfExactLeg(map, todayISO, K - MF_WIDTH), ce = mfExactLeg(map, todayISO, K), hi = mfExactLeg(map, todayISO, K + MF_WIDTH);
+    if (!lo || !ce || !hi) return null;
+    const halfspread = ((lo.ask - lo.bid) + (ce.ask - ce.bid) + (hi.ask - hi.bid)) / 2;
+    return { mid: lo.mid - 2 * ce.mid + hi.mid, slip: halfspread * 0.25, halfspread };
+  };
+  const c = side(chain.callExpDateMap);
+  if (!opts.tightest) return c ? { mid: c.mid, slip: c.slip } : null;
+  const pq = side(chain.putExpDateMap);
+  const best = (c && pq) ? (pq.halfspread < c.halfspread ? { ...pq, src: 'puts' } : { ...c, src: 'calls' }) : (c ? { ...c, src: 'calls' } : (pq ? { ...pq, src: 'puts' } : null));
+  return best ? { mid: best.mid, slip: best.slip, src: best.src } : null;
 }
 
 // Claim-token send gate — same protocol as the morning signal (~line 6683).
@@ -7953,7 +7977,7 @@ async function handleMagnetFlyNoon(env, token, etNow, preChain) {
 
   const trade = {
     openDate: todayISO, magnet, center, entry,
-    tp: Math.round((entry + MF_TP) * 100) / 100, sl: Math.round((entry - MF_SL) * 100) / 100,
+    tp: Math.round((entry + MF_TP) * 100) / 100, sl: mfStopLevel(entry),   // sl null = no stop (entry under $5.50)
     status: 'open', openedAt: `${etNow.getHours()}:${String(etNow.getMinutes()).padStart(2, '0')}`,
     paper: true,
   };
@@ -7961,17 +7985,17 @@ async function handleMagnetFlyNoon(env, token, etNow, preChain) {
   await mark();                                          // marker BEFORE the GO post
   await mfSetToday(env, todayISO, { status: 'GO',
     headline: `GO — 30w fly at ${magnet}, debit $${entry.toFixed(2)}`,
-    detail: `TP $${trade.tp.toFixed(2)} (+$300/lot) · SL $${trade.sl.toFixed(2)} (−$500/lot) · M8BF @${sigTime}`,
+    detail: `TP $${trade.tp.toFixed(2)} (+$300/lot) · ${trade.sl == null ? `no stop (cost under $${MF_SL_MIN_ENTRY.toFixed(2)}, max loss −$${Math.round(entry * 100)}/lot)` : `SL $${trade.sl.toFixed(2)} (−$500/lot)`} · M8BF @${sigTime}`,
     kpis: [['magnet', magnet], ['M8BF center', center], ['debit', '$' + entry.toFixed(2)],
-           ['TP / SL', `+3.0 / −5.0`]] });
+           ['TP / SL', trade.sl == null ? '+3.0 / none' : '+3.0 / −5.0']] });
   // GO = EXACT M8BF-message shape (owner 2026-07-15, screenshot): bold name,
   // plain order line, "BUTTERFLY" uppercase, CALL strikes LOW→HIGH, SPX 100
   // (Weeklys), @debit LMT. 0DTE → expiration is today. Plain text. TP/SL below.
   const _MON = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
   const tosD = `${+todayISO.slice(8,10)} ${_MON[+todayISO.slice(5,7)-1]} ${todayISO.slice(2,4)}`;
   const tos = `BUY +${MF_LOTS} BUTTERFLY SPX 100 (Weeklys) ${tosD} ${magnet - MF_WIDTH}/${magnet}/${magnet + MF_WIDTH} CALL @${entry.toFixed(2)} LMT`;
-  await fanoutCard(env, { c: 'green', strat: 'PNBF · GO', verdict: 'BUY', big: `${magnet - MF_WIDTH} / ${magnet} / ${magnet + MF_WIDTH}`, sub: `call fly at the magnet · ${MF_LOTS} lots`, title: `${cardDate(todayISO)} · noon GO · T1 on the magnet · M8BF @${sigTime}`, lines: [`Take profit ${trade.tp.toFixed(2)}, stop ${trade.sl.toFixed(2)}, watched every 5 seconds.`], k: [['debit', `$${entry.toFixed(2)}`], ['TP / SL', `${trade.tp.toFixed(2)} / ${trade.sl.toFixed(2)}`], ['magnet', `${magnet}`], ['lots', `${MF_LOTS}`]], draw: 'fly', strikes: [magnet - MF_WIDTH, magnet, magnet + MF_WIDTH], order: tos },
-    `**PNBF**\n${tos}\nTP ${trade.tp.toFixed(2)} · SL ${trade.sl.toFixed(2)}`);
+  await fanoutCard(env, { c: 'green', strat: 'PNBF · GO', verdict: 'BUY', big: `${magnet - MF_WIDTH} / ${magnet} / ${magnet + MF_WIDTH}`, sub: `call fly at the magnet · ${MF_LOTS} lots`, title: `${cardDate(todayISO)} · noon GO · T1 on the magnet · M8BF @${sigTime}`, lines: [trade.sl == null ? `Take profit ${trade.tp.toFixed(2)}. No stop: it cost under $${MF_SL_MIN_ENTRY.toFixed(2)}, so the most it can lose is the $${entry.toFixed(2)} paid. Settles at the close if the take profit never fills.` : `Take profit ${trade.tp.toFixed(2)}, stop ${trade.sl.toFixed(2)}, watched every 5 seconds.`], k: [['debit', `$${entry.toFixed(2)}`], ['TP / SL', `${trade.tp.toFixed(2)} / ${trade.sl == null ? 'none' : trade.sl.toFixed(2)}`], ['magnet', `${magnet}`], ['lots', `${MF_LOTS}`]], draw: 'fly', strikes: [magnet - MF_WIDTH, magnet, magnet + MF_WIDTH], order: tos },
+    `**PNBF**\n${tos}\nTP ${trade.tp.toFixed(2)} · ${trade.sl == null ? `no SL (cost under ${MF_SL_MIN_ENTRY.toFixed(2)})` : `SL ${trade.sl.toFixed(2)}`}`);
   return { opened: true, trade };
 }
 
@@ -7989,13 +8013,14 @@ async function refreshMagnetFlyLiveQuotes(env, token, etNow, preChain) {
   // blind write-back below is what resurrected the closed trade).
   if (await env.SIGNAL_KV.get(`mf_exit_${todayISO}`)) return;
   const chain = preChain || await fetchMasterSpxChain(token, env);
-  const q = mfFlyQuote(chain, todayISO, tr.magnet);
+  const q = mfFlyQuote(chain, todayISO, tr.magnet, { tightest: true });
   if (!q) return;
   const m = q.mid - q.slip;
-  tr.lastMid = Math.round(q.mid * 100) / 100;
+  tr.lastMid = Math.round(q.mid * 100) / 100; tr.lastMidSrc = q.src;
   tr.lastQuoteAt = Date.now();
   let exit = null, pnl = 0;
-  if (m <= tr.entry - MF_SL) { exit = 'SL'; pnl = -MF_SL * 100; }
+  const slLvl = mfStopLevel(tr.entry);   // null under $5.50 — a trade opened before the rule still carries a numeric tr.sl
+  if (slLvl != null && m <= slLvl) { exit = 'SL'; pnl = -Math.min(MF_SL, tr.entry) * 100; }   // a long fly can never lose more than it cost (P62)
   else if (m >= tr.entry + MF_TP) { exit = 'TP'; pnl = MF_TP * 100; }
   if (exit) {
     tr.status = 'closed'; tr.exit = exit; tr.pnl = Math.round(pnl);
@@ -8032,15 +8057,15 @@ async function settleMagnetFlyEod(env, etNow, preChain) {
   const intr = Math.max(0, MF_WIDTH - Math.abs(spot - tr.magnet));
   tr.status = 'closed'; tr.exit = 'SETTLE';
   tr.pnl = Math.round((intr - tr.entry) * 100);
-  tr.exitTime = '16:15';
+  tr.exitTime = '16:15'; tr.spxClose = spot;
   await env.SIGNAL_KV.put('mf_open_trade', JSON.stringify(tr));   // terminal BEFORE post (P27)
   await env.SIGNAL_KV.put(`mf_exit_${dISO}`, 'SETTLE', { expirationTtl: 86400 });
   await mfAppendClosed(env, tr);
   const msgKey = `mf_exit_msg_${dISO}`;
   if (await claimSendSlot(env, msgKey)) {
     const dollars = tr.pnl * MF_LOTS;
-    const setText = `🧲 **PNBF** ${tr.openDate} — settled ${dollars >= 0 ? '+' : '−'}$${Math.abs(dollars).toLocaleString()} (${MF_LOTS} lots, rare: bracket never filled)`;
-    const setOut = await fanoutCard(env, { c: dollars >= 0 ? 'green' : 'red', strat: 'PNBF · settled', verdict: `${dollars >= 0 ? '+' : '−'}$${Math.abs(dollars).toLocaleString()}`, big: `${dollars >= 0 ? '+' : '−'}$${Math.abs(dollars).toLocaleString()}`, sub: `${MF_LOTS} lots · settled at the close`, title: `${cardDate(tr.openDate)} · bracket never filled, settled`, lines: [`Fly worth ${(tr.pnl / 100 + tr.entry).toFixed(2)} at the close against ${tr.entry.toFixed(2)} paid.`], k: [['entry', tr.entry.toFixed(2)], ['settle', (tr.pnl / 100 + tr.entry).toFixed(2)], ['per lot', `${tr.pnl >= 0 ? '+' : '−'}$${Math.abs(tr.pnl)}`], ['lots', `${MF_LOTS}`]], draw: 'none' }, setText);
+    const setText = `🧲 **PNBF** ${tr.openDate} — settled ${dollars >= 0 ? '+' : '−'}$${Math.abs(dollars).toLocaleString()} (${MF_LOTS} lots, ${mfStopLevel(tr.entry) == null ? 'no-stop fly held to the close' : 'rare: bracket never filled'})`;
+    const setOut = await fanoutCard(env, { c: dollars >= 0 ? 'green' : 'red', strat: 'PNBF · settled', verdict: `${dollars >= 0 ? '+' : '−'}$${Math.abs(dollars).toLocaleString()}`, big: `${dollars >= 0 ? '+' : '−'}$${Math.abs(dollars).toLocaleString()}`, sub: `${MF_LOTS} lots · settled at the close`, title: `${cardDate(tr.openDate)} · ${mfStopLevel(tr.entry) == null ? 'take profit never filled, settled' : 'bracket never filled, settled'}`, lines: [`Fly worth ${(tr.pnl / 100 + tr.entry).toFixed(2)} at the close against ${tr.entry.toFixed(2)} paid.`], k: [['entry', tr.entry.toFixed(2)], ['settle', (tr.pnl / 100 + tr.entry).toFixed(2)], ['per lot', `${tr.pnl >= 0 ? '+' : '−'}$${Math.abs(tr.pnl)}`], ['lots', `${MF_LOTS}`]], draw: 'none' }, setText);
     const ok = Array.isArray(setOut) ? true : !!(setOut && setOut.ok !== false);
     if (ok) await env.SIGNAL_KV.put(msgKey, 'sent', { expirationTtl: 86400 });
   }
@@ -15362,7 +15387,7 @@ export default {
             out.headline = `OPEN — 30w fly at ${open.magnet}, entry $${open.entry.toFixed(2)}` +
               (open.lastMid != null ? ` · now $${open.lastMid.toFixed(2)}` : '');
           } else if (open.status === 'closed') {
-            out.headline = `${open.exit === 'TP' ? 'TP hit +$300' : open.exit === 'SL' ? 'stopped −$500' : 'settled ' + open.pnl} @ ${open.exitTime} ET`;
+            out.headline = `${open.exit === 'TP' ? 'TP hit +$300' : open.exit === 'SL' ? 'stopped −$500' : `settled ${open.pnl >= 0 ? '+' : '−'}$${Math.abs(open.pnl)}/lot`} @ ${open.exitTime} ET`;
           }
         }
         // Live tracker row (2026-07-28): fresh within 5 min only — a stale
@@ -16204,7 +16229,7 @@ export default {
     if (request.method !== 'OPTIONS' &&
         ['/cyclicality-append-now', '/score-advisories-now', '/research-persist-now',
          '/cot-refresh-now', '/watchdog-now', '/weekly-digest-now', '/vix-decomp-now',
-         '/remirror-history', '/history-patch', '/restate-close', '/gxbf-center-now', '/gxbf-strand-restate', '/diagonal-reconstruct'].includes(url.pathname)) {
+         '/remirror-history', '/history-patch', '/restate-close', '/gxbf-center-now', '/gxbf-strand-restate', '/diagonal-reconstruct', '/magnetfly-restate'].includes(url.pathname)) {
       const s = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
       if (!s || (s !== env.SYNC_SECRET && s !== env.GEXM_TRIGGER_TOKEN)) return jsonResp({ error: 'Unauthorized' }, 401, corsHeaders);
     }
@@ -16655,6 +16680,53 @@ export default {
           if (!ser.some(x => x.date === date)) { ser.push(rec); await env.SIGNAL_KV.put('gxbf_center_log', JSON.stringify(ser.slice(-500))); }
         } catch (_) {}
         try { await logEvent(env, 'info', 'gxbf', `stranded-center RESTATE ${date}: sold @${closeValue} at ${at} (center ${c935} → ${c10}), P&L ${pnl} (was ${restated.from.pnl})`, {}); } catch (_) {}
+        return jsonResp({ ok: true, ...out }, 200, corsHeaders);
+      } catch (e) { return jsonResp({ ok: false, error: e.message }, 500, corsHeaders); }
+    }
+
+    // GET /magnetfly-restate?date=YYYY-MM-DD[&dry=1]&secret= — owner rule 2026-09-21: a PNBF
+    // fly that cost under $5.50 has NO stop. Re-books a day the tracker "stopped" such a fly
+    // (entry − 5 is a negative price; it fired on a noisy mid and booked −$500/lot on a fly
+    // that cost less) as what the rule gives: held to the close, settled at intrinsic on the
+    // OFFICIAL SPX close. Only touches a day whose logged exit is SL with a debit under
+    // $5.50; archives the as-lived values under `restated`; idempotent. The caller confirms
+    // beforehand that the take profit was never reachable (it cannot be seen from here).
+    if (url.pathname === '/magnetfly-restate' && request.method === 'GET') {
+      try {
+        const date = url.searchParams.get('date'), dry = url.searchParams.get('dry') === '1';
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '')) return jsonResp({ ok: false, error: 'need date=YYYY-MM-DD' }, 400, corsHeaders);
+        const logRaw = await env.SIGNAL_KV.get('mf_closed_log');
+        const log = logRaw ? JSON.parse(logRaw) : [];
+        const i = log.findIndex(x => x && x.date === date);
+        if (i < 0) return jsonResp({ ok: false, error: 'no PNBF trade logged that day' }, 400, corsHeaders);
+        const row = log[i], entry = row.debit / 100;
+        if (row.restated) return jsonResp({ ok: true, status: 'already-restated', row }, 200, corsHeaders);
+        if (row.exit !== 'SL' || mfStopLevel(entry) != null) return jsonResp({ ok: false, error: `not a stopped fly under $${MF_SL_MIN_ENTRY.toFixed(2)} (exit ${row.exit}, debit ${entry})` }, 400, corsHeaders);
+        let close = null;
+        try { const offs = await fetchOfficialSpxCloses(env, date, date); if (offs && offs[date] != null) close = Number(offs[date]); } catch (_) {}
+        if (close == null) { const hr = (await getHistory(env)).find(r => r.date === date); if (hr && hr.spxClose != null) close = Number(hr.spxClose); }
+        if (close == null) return jsonResp({ ok: false, error: 'official SPX close not available yet' }, 409, corsHeaders);
+        const intr = Math.max(0, MF_WIDTH - Math.abs(close - row.magnet));
+        const pnl = Math.round((intr - entry) * 100), hist = pnl * MF_LOTS;
+        const out = { date, magnet: row.magnet, entry, spxClose: close, settleValue: Math.round(intr * 100) / 100, pnlPerLot: pnl, scalpPL: hist, asLived: { exit: row.exit, exitTime: row.exitTime, pnl: row.pnl, scalpPL: row.pnl * MF_LOTS } };
+        if (dry) return jsonResp({ ok: true, dry: true, ...out }, 200, corsHeaders);
+        const stamp = new Date().toISOString();
+        const restated = { at: stamp, from: { exit: row.exit, exitTime: row.exitTime, pnl: row.pnl }, why: `no stop under $${MF_SL_MIN_ENTRY.toFixed(2)} (owner rule 2026-09-21) — held to the close` };
+        // history FIRST; upsert only fills nulls, so force the value the way /history-patch does
+        await upsertHistoryGitHub(env, date, { scalpPL: hist });
+        { const rows = await getHistory(env); const hr = rows.find(r => r.date === date);
+          if (hr && hr.scalpPL !== hist) { await backupHistorySnapshot(env, rows, 'pre-magnetfly-restate', {}); hr.scalpPL = hist; await setHistory(env, rows, { dateStr: 'magnetfly-restate' }); await mirrorHistoryToGitHub(env, rows, `manual: scalpPL ${date} → ${hist} (PNBF no-stop restate)`); } }
+        log[i] = { ...row, exit: 'SETTLE', exitTime: '16:15', pnl, spxClose: close, restated };
+        await env.SIGNAL_KV.put('mf_closed_log', JSON.stringify(log));
+        const tRaw = await env.SIGNAL_KV.get('mf_open_trade');
+        const t = tRaw ? JSON.parse(tRaw) : null;
+        if (t && t.openDate === date) { Object.assign(t, { status: 'closed', exit: 'SETTLE', exitTime: '16:15', pnl, spxClose: close, sl: null, restated }); await env.SIGNAL_KV.put('mf_open_trade', JSON.stringify(t)); }
+        try { if (await env.SIGNAL_KV.get(`mf_exit_${date}`)) await env.SIGNAL_KV.put(`mf_exit_${date}`, 'SETTLE', { expirationTtl: 86400 }); } catch (_) {}
+        try {
+          const dRaw = await env.SIGNAL_KV.get(`mf_today_${date}`);
+          if (dRaw) { const d = JSON.parse(dRaw); d.detail = `TP $${(entry + MF_TP).toFixed(2)} (+$300/lot) · no stop (cost under $${MF_SL_MIN_ENTRY.toFixed(2)}, max loss −$${Math.round(entry * 100)}/lot) · restated ${stamp.slice(0, 10)}`; d.kpis = (d.kpis || []).map(k => k[0] === 'TP / SL' ? ['TP / SL', '+3.0 / none'] : k); await env.SIGNAL_KV.put(`mf_today_${date}`, JSON.stringify(d), { expirationTtl: 3 * 86400 }); }
+        } catch (_) {}
+        try { await logEvent(env, 'info', 'mf', `PNBF RESTATE ${date}: no stop under $${MF_SL_MIN_ENTRY.toFixed(2)} → settled ${intr.toFixed(2)} on SPX ${close}, ${pnl}/lot (was ${row.exit} ${row.pnl}/lot)`, {}); } catch (_) {}
         return jsonResp({ ok: true, ...out }, 200, corsHeaders);
       } catch (e) { return jsonResp({ ok: false, error: e.message }, 500, corsHeaders); }
     }
