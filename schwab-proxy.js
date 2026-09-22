@@ -2099,6 +2099,23 @@ async function earnAfterJob(env, etNow, token) {
 // fetch failed" and the VIX gate was "unavailable", while the same build on
 // demand was clean — the tick spends most of its subrequest budget before the
 // earnings jobs run). Falls back to the in-process build.
+// Run one 16:25 aux job in its own invocation (fresh limits) through the
+// self-binding; falls back to running it here. Always resolves to an object —
+// { error } on failure — so the aux tick keeps going.
+async function auxJobIsolated(env, job, inProcess) {
+  const sec = env.SYNC_SECRET || env.GEXM_TRIGGER_TOKEN;
+  if (env.SELF && sec) {
+    try {
+      const r = await env.SELF.fetch(new Request(`https://internal/aux-job?job=${job}`, { headers: { 'X-Sync-Secret': sec } }));
+      const b = await r.json().catch(() => null);
+      if (r.ok && b && typeof b === 'object') return { ...b, _isolated: true };
+      console.warn(`[aux-job] isolated ${job} → HTTP ${r.status}`, b && b.error);
+    } catch (e) { console.warn(`[aux-job] isolated ${job} failed:`, e.message); }
+  }
+  try { const v = await inProcess(); return (v && typeof v === 'object') ? v : { ok: true, result: v }; }
+  catch (e) { return { error: e.message }; }
+}
+
 async function earnBuildIsolated(env, token, iso, opts = {}) {
   const sec = env.SYNC_SECRET || env.GEXM_TRIGGER_TOKEN;
   if (env.SELF && sec) {
@@ -2606,6 +2623,33 @@ async function scorecardLine(env, etNow) {
 // Generic GitHub research-file upsert — same auth pattern as
 // mirrorHistoryToGitHub but path-parameterized and merge-based.
 // mutate(currentObj) → newObj. 404 (no file yet) starts from {}.
+// Read a repo JSON file through the GitHub API — NOT raw.githubusercontent.com.
+// The raw host sits behind a ~5-minute CDN cache that a `?cb=` query string does
+// NOT bust (2026-09-21: six consecutive cache-busted reads of cot_currencies.json
+// returned the pre-commit copy for 5½ minutes after the heal had written it, so
+// the watchdog paged "NEEDS ATTENTION" on a feed it had just fixed). Falls back
+// to the raw host when there is no token. null on any failure.
+async function githubReadResearchJson(env, path) {
+  if (env.GITHUB_TOKEN) {
+    try {
+      const r = await fetch(`https://api.github.com/repos/rava8989/brave/contents/${path}`, { headers: {
+        'Authorization': `Bearer ${env.GITHUB_TOKEN}`, 'Accept': 'application/vnd.github+json',
+        'User-Agent': 'schwab-proxy-worker/1.0', 'X-GitHub-Api-Version': '2022-11-28', 'Cache-Control': 'no-cache' } });
+      if (r.ok) {
+        const meta = await r.json();
+        const bytes = Uint8Array.from(atob((meta.content || '').replace(/\n/g, '')), ch => ch.charCodeAt(0));
+        return JSON.parse(new TextDecoder().decode(bytes));
+      }
+      if (r.status !== 404) console.warn('[gh-read]', path, r.status);
+      return null;
+    } catch (e) { console.warn('[gh-read]', path, e.message); }
+  }
+  try {
+    const r = await fetch(`https://raw.githubusercontent.com/rava8989/brave/main/${path}?cb=${Date.now()}`, { headers: { 'User-Agent': 'schwab-proxy-worker/1.0' } });
+    return r.ok ? r.json() : null;
+  } catch (_) { return null; }
+}
+
 async function githubUpsertResearchFile(env, path, mutate, message) {
   if (!env.GITHUB_TOKEN) return { skipped: 'no GITHUB_TOKEN' };
   const apiUrl = `https://api.github.com/repos/rava8989/brave/contents/${path}`;
@@ -2752,8 +2796,8 @@ const COT_CODES = { EUR: '099741', JPY: '097741', GBP: '096742', CAD: '090741',
                     CHF: '092741', AUD: '232741', NZD: '112741', MXN: '095741', DXY: '098662' };
 
 async function cotWeeklyRefresh(env) {
-  const cur = await (await fetch('https://raw.githubusercontent.com/rava8989/brave/main/data/cot_currencies.json?cb=' + Date.now(),
-    { headers: { 'User-Agent': 'schwab-proxy-worker/1.0' } })).json();   // cache-busted (stale CDN copy shifts `last` back; dedup saves us, but read fresh)
+  const cur = await githubReadResearchJson(env, 'data/cot_currencies.json');   // API read: the raw-host CDN copy lags commits by ~5 min
+  if (!cur || !cur.series) throw new Error('cot_currencies.json unreadable');
   const added = {};
   for (const [key, code] of Object.entries(COT_CODES)) {
     const rows = cur.series[key] || [];
@@ -3075,7 +3119,13 @@ async function dataCompletenessCheck(env, etNow) {
   // Cache-busted: raw.githubusercontent serves a ~5-min CDN cache, so the
   // post-heal re-check read the PRE-heal file and mislabeled a successful heal
   // as "NEEDS ATTENTION" (COT, 2026-08-31). Applies to every check equally.
-  const J = async (u) => { const r = await fetch(u + (u.includes('?') ? '&' : '?') + 'cb=' + Date.now(), gh); return r.ok ? r.json() : null; };
+  // 2026-09-21: the `?cb=` cache-buster does NOT defeat that cache (proven: 5½ min
+  // of stale reads after a heal). Repo files are read through the GitHub API now.
+  const J = async (u) => {
+    const m = u.match(/^https:\/\/raw\.githubusercontent\.com\/rava8989\/brave\/main\/([^?]+)/);
+    if (m) return githubReadResearchJson(env, m[1]);
+    const r = await fetch(u + (u.includes('?') ? '&' : '?') + 'cb=' + Date.now(), gh); return r.ok ? r.json() : null;
+  };
   const healed = [], failed = [], ok = [];
 
   const checks = [
@@ -8328,24 +8378,14 @@ async function handleScheduledInner(env) {
       try { await computeVixDecompDaily(env, etNow); } catch (e) { ok = false; console.warn('[vix-decomp]', e.message); }
       try { await appendCyclicalityDays(env); } catch (e) { ok = false; console.warn('[cyclelab]', e.message); }
       try { await appendCyclicalityDays(env, { symbol: '%24NDX', file: 'cyclicality_ndx.json' }); } catch (e) { console.warn('[cyclelab-ndx]', e.message); }
-      // Raw Discord signal archive → scraped_signals.csv (moved here from EOD,
-      // lesson P17). Durable status in KV so a failure can't go unnoticed again.
-      try {
-        const sa = await appendScrapedSignals(env, etNow);
-        await env.SIGNAL_KV.put('scrape_append_last', JSON.stringify({ ...sa, ts: Date.now() }));
-      } catch (e) {
-        ok = false;
-        await env.SIGNAL_KV.put('scrape_append_last', JSON.stringify({ error: e.message, ts: Date.now() }));
-        console.warn('[scrape-append]', e.message);
-      }
-      // Open/close calibration snapshot + yesterday scoring (2026-08-06)
-      try {
-        const tokC = await getAccessToken(env);
-        const oc = await ocCalibJob(env, etNow, tokC);
-        await env.SIGNAL_KV.put('oc_calib_last', JSON.stringify({ ...oc, d: todayISO, ts: Date.now() }));
-      } catch (e) { console.warn('[oc-calib]', e.message); }
       // Fri = release day; Mon = catch the now-common weekend Socrata post
       // BEFORE the 18:35 watchdog looks (2026-08-31). Idempotent, added=0 no-op.
+      // 2026-09-21: runs BEFORE the two heavy jobs below. From 2026-09-05 this
+      // invocation died every day right after the Discord scrape (the last log
+      // line was always "cyclicality appended"; oc_calib_last froze on 09-04,
+      // eod_aux stayed 'running', tg_day never landed) — so the COT ingest never
+      // ran and the Monday watchdog heal did the job each week. Cheap must-land
+      // steps first; the heavyweights get their own invocations.
       if ([1, 5].includes(etNow.getDay())) {
         try { await cotWeeklyRefresh(env); } catch (e) { console.warn('[cot]', e.message); }
       }
@@ -8362,6 +8402,20 @@ async function handleScheduledInner(env) {
           }));
         }
       } catch (e) { console.warn('[tg-persist]', e.message); }
+      // Raw Discord signal archive → scraped_signals.csv (moved here from EOD,
+      // lesson P17). Durable status in KV so a failure can't go unnoticed again.
+      // The 12 MB CSV round-trip (base64 down, decode, append, base64 up) and the
+      // three 90-strike chains of the calibration snapshot each run in a FRESH
+      // invocation via the self-binding (own memory / CPU / subrequest budget —
+      // the earnings board uses the same pattern); in-process fallback if the
+      // binding is unavailable.
+      const sa = await auxJobIsolated(env, 'scrape', () => appendScrapedSignals(env, etNow));
+      if (sa.error) ok = false;
+      try { await env.SIGNAL_KV.put('scrape_append_last', JSON.stringify({ ...sa, ts: Date.now() })); } catch (_) {}
+      // Open/close calibration snapshot + yesterday scoring (2026-08-06)
+      const oc = await auxJobIsolated(env, 'oc-calib', async () => ocCalibJob(env, etNow, await getAccessToken(env)));
+      if (!oc.error) { try { await env.SIGNAL_KV.put('oc_calib_last', JSON.stringify({ ...oc, d: todayISO, ts: Date.now() })); } catch (_) {} }
+      else console.warn('[oc-calib]', oc.error);
       if (ok) await env.SIGNAL_KV.put(auxKey, 'done', { expirationTtl: 86400 });
       else await env.SIGNAL_KV.delete(auxKey);   // retry next tick within the window
       return { eod_aux: ok ? 'done' : 'partial-retry' };
@@ -14750,6 +14804,19 @@ export default {
     // ── GET /earnings-scan-trigger?step=morning|rescore|final|exit|collect&date=ISO ──
     // Manual/dry-run driver. Auth. date override runs the board builder for
     // any date WITHOUT sending messages unless &send=1.
+    // GET /aux-job?job=scrape|oc-calib — one 16:25 aux job in a fresh invocation
+    // (called through the self-binding by the scheduled tick; owner-callable).
+    if (url.pathname === '/aux-job' && request.method === 'GET') {
+      const secret = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
+      if (!secret || (secret !== env.SYNC_SECRET && secret !== env.GEXM_TRIGGER_TOKEN)) return jsonResp({ error: 'Unauthorized' }, 401, { 'Access-Control-Allow-Origin': '*' });
+      const job = url.searchParams.get('job'), etJ = toET();
+      try {
+        if (job === 'scrape') return jsonResp(await appendScrapedSignals(env, etJ), 200, { 'Access-Control-Allow-Origin': '*' });
+        if (job === 'oc-calib') return jsonResp(await ocCalibJob(env, etJ, await getAccessToken(env)), 200, { 'Access-Control-Allow-Origin': '*' });
+        return jsonResp({ error: 'unknown job' }, 400, { 'Access-Control-Allow-Origin': '*' });
+      } catch (e) { return jsonResp({ error: e.message }, 500, { 'Access-Control-Allow-Origin': '*' }); }
+    }
+
     if (url.pathname === '/earnings-scan-trigger' && request.method === 'GET') {
       const secret = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
       if (!secret || (secret !== env.SYNC_SECRET && secret !== env.GEXM_TRIGGER_TOKEN)) {
