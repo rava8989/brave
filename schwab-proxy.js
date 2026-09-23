@@ -13773,6 +13773,72 @@ const SAMPLE_MORNING_CARD = {
   m8bfStrikes: { skip: '10 · 25 · 35 · 40 · 65 · 80', combos: '0→95 · 20→15 · 55→50 · 65→60 · 85→90' },
 };
 
+// ── Subscriber signal feed (owner 2026-09-23) ──
+// A second person's bot (their own Cloudflare, their own Schwab app) reads our
+// signals here instead of the internal service binding. Key-gated, read-only,
+// allowlisted paths only — never the token grant, never owner routes. Keys live in
+// KV `feed_keys`: { "<key>": { name, active, strategies: "*" | [paths], created } }.
+// Owner management: GET/POST /feed-keys (SYNC or GEXM secret).
+const FEED_PATHS = new Set(['trade', 'straddle-today', 'gxbf-today', 'bobf-today', 'diagonal-today', 'spreads-paper', 'magnetfly-today']);
+const FEED_RATE_PER_MIN = 90;   // a skipper polls 7 paths once a minute (+ alarm passes); 90 leaves room, blocks a runaway loop
+async function feedKeys(env) { try { return JSON.parse(await env.SIGNAL_KV.get('feed_keys') || '{}'); } catch (_) { return {}; } }
+async function feedProxy(request, env, url) {
+  const j = (o, st = 200) => new Response(JSON.stringify(o), { status: st, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+  const key = request.headers.get('X-Feed-Key') || '';
+  const path = url.pathname.slice('/feed/'.length).replace(/\/+$/, '');
+  if (!key) return j({ error: 'missing X-Feed-Key' }, 401);
+  const keys = await feedKeys(env); const rec = keys[key];
+  if (!rec || rec.active === false) return j({ error: 'invalid or revoked key' }, 401);
+  const todayISO = isoDateET(toET(new Date()));
+  if (path === 'ping') return j({ ok: true, name: rec.name, strategies: rec.strategies, serverTimeET: toET(new Date()).toISOString().slice(11, 19), date: todayISO });
+  if (!FEED_PATHS.has(path)) return j({ error: 'path not in the feed' }, 404);
+  if (rec.strategies !== '*' && !(Array.isArray(rec.strategies) && rec.strategies.includes(path))) return j({ error: 'not entitled to this strategy' }, 403);
+  // per-key rate limit (KV counter per minute; approximate, that is fine for a runaway guard)
+  const minute = Math.floor(Date.now() / 60000), rlKey = `feed_rl_${rec.name}_${minute}`;
+  const n = parseInt(await env.SIGNAL_KV.get(rlKey) || '0', 10) + 1;
+  await env.SIGNAL_KV.put(rlKey, String(n), { expirationTtl: 120 });
+  if (n > FEED_RATE_PER_MIN) return j({ error: 'rate limit' }, 429);
+  // daily usage counter per subscriber (30-day TTL) for the owner's list
+  try { const uk = `feed_use_${rec.name}_${todayISO}`; await env.SIGNAL_KV.put(uk, String(parseInt(await env.SIGNAL_KV.get(uk) || '0', 10) + 1), { expirationTtl: 30 * 86400 }); } catch (_) {}
+  try {
+    const r = await env.SELF.fetch(new Request(`https://internal/${path}`, { headers: { Origin: env.ALLOWED_ORIGIN || '', Accept: 'application/json', 'User-Agent': 'sigma3-feed' } }));
+    const body = await r.text();
+    return new Response(body, { status: r.ok ? 200 : 502, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Feed-Name': rec.name, ...(r.ok ? {} : { 'X-Upstream-Status': String(r.status) }) } });
+  } catch (e) { return j({ error: 'upstream unavailable', detail: String(e.message).slice(0, 80) }, 502); }
+}
+async function feedKeysAdmin(request, env, url) {
+  const j = (o, st = 200) => new Response(JSON.stringify(o, null, 1), { status: st, headers: { 'Content-Type': 'application/json' } });
+  const sec = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
+  if (!sec || (sec !== env.SYNC_SECRET && sec !== env.GEXM_TRIGGER_TOKEN)) return j({ error: 'Unauthorized' }, 401);
+  const keys = await feedKeys(env); const todayISO = isoDateET(toET(new Date()));
+  if (request.method === 'GET') {
+    const out = [];
+    for (const [k, r] of Object.entries(keys)) out.push({ name: r.name, active: r.active !== false, strategies: r.strategies, created: r.created, keyHint: `${k.slice(0, 6)}…${k.slice(-4)}`, callsToday: parseInt(await env.SIGNAL_KV.get(`feed_use_${r.name}_${todayISO}`) || '0', 10) });
+    return j({ keys: out });
+  }
+  let body = {}; try { body = await request.json(); } catch (_) {}
+  const name = String(body.name || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+  if (!name) return j({ error: 'name required (letters, digits, - _)' }, 400);
+  if (body.action === 'issue') {
+    if (Object.values(keys).some(r => r.name === name && r.active !== false)) return j({ error: `an active key already exists for ${name} — revoke it first` }, 409);
+    const raw = new Uint8Array(24); crypto.getRandomValues(raw);
+    const key = 'sk_' + Array.from(raw, b => b.toString(16).padStart(2, '0')).join('');
+    keys[key] = { name, active: true, strategies: Array.isArray(body.strategies) && body.strategies.length ? body.strategies : '*', created: new Date().toISOString() };
+    await env.SIGNAL_KV.put('feed_keys', JSON.stringify(keys));
+    try { await logEvent(env, 'info', 'feed', `feed key issued for ${name}`, {}); } catch (_) {}
+    return j({ ok: true, name, key, note: 'shown once — store it now' });
+  }
+  if (body.action === 'revoke' || body.action === 'activate') {
+    let hit = 0;
+    for (const r of Object.values(keys)) if (r.name === name) { r.active = body.action === 'activate'; hit++; }
+    if (!hit) return j({ error: 'no key with that name' }, 404);
+    await env.SIGNAL_KV.put('feed_keys', JSON.stringify(keys));
+    try { await logEvent(env, 'info', 'feed', `feed key ${body.action}d for ${name}`, {}); } catch (_) {}
+    return j({ ok: true, name, active: body.action === 'activate' });
+  }
+  return j({ error: 'action must be issue | revoke | activate' }, 400);
+}
+
 export default {
   async fetch(request, env, ctx) {
     const origin = request.headers.get('Origin') || '';
@@ -13795,6 +13861,10 @@ export default {
     if (checkRateLimit(request)) {
       return jsonResp({ error: 'Rate limit exceeded' }, 429, corsHeaders);
     }
+
+    // ── Subscriber signal feed (2026-09-23): server-to-server, key-gated, read-only ──
+    if (url.pathname.startsWith('/feed/') && request.method === 'GET') return feedProxy(request, env, url);
+    if (url.pathname === '/feed-keys') return feedKeysAdmin(request, env, url);
 
     // ── GET /status ── Secured debug endpoint
     if (url.pathname === '/status' && request.method === 'GET') {
