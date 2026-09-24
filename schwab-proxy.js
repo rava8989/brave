@@ -4336,21 +4336,24 @@ async function getAccessToken(env, forceRefresh = false) {
 // tick does. Recorded per tick into `schwab_usage` and readable at
 // GET /schwab-usage — measured, not guessed.
 let _schwabCalls = 0, _schwab429 = 0;
-async function fetchSchwabJSON(url, token, env) {
+async function fetchSchwabJSON(url, token, env, timeoutMs = 0) {
   _schwabCalls++;
-  let resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  // timeoutMs > 0 → abort the subrequest (2026-09-24: Schwab's SPX multi-expiry chain
+  // hung ~13 s then 502'd on every tick; a hung chain must not eat the whole tick).
+  const sig = () => (timeoutMs > 0 && typeof AbortSignal !== 'undefined' && AbortSignal.timeout) ? { signal: AbortSignal.timeout(timeoutMs) } : {};
+  let resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, ...sig() });
   // Retry once with refreshed token on 401
   if (resp.status === 401 && env) {
     console.warn('[proxy] Schwab 401 — retrying with fresh token');
     const freshToken = await getAccessToken(env, true);
-    resp = await fetch(url, { headers: { Authorization: `Bearer ${freshToken}` } });
+    resp = await fetch(url, { headers: { Authorization: `Bearer ${freshToken}` }, ...sig() });
   }
   // 403 (2026-09-03 15:30 FINAL: every pricehistory/chains call in one burst
   // came back 403 while the same calls succeeded a minute later) — Schwab's
   // edge blocks bursts; one 1.5s pause + retry clears it.
   if (resp.status === 403) {
     await new Promise(r => setTimeout(r, 1500));
-    resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, ...sig() });
   }
   // 429 = throttled. Previously this threw and the caller silently lost the
   // tick's data; now we honour Retry-After (capped) and retry once.
@@ -4361,7 +4364,7 @@ async function fetchSchwabJSON(url, token, env) {
     console.warn(`[proxy] Schwab 429 — backing off ${waitMs}ms then retrying once`);
     await new Promise(r => setTimeout(r, waitMs));
     _schwabCalls++;
-    resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, ...sig() });
   }
   if (!resp.ok) throw new Error(`Schwab API ${resp.status}: ${url.split('?')[0]}`);
   return resp.json();
@@ -5845,19 +5848,37 @@ async function fetchMasterSpxChain(token, env) {
   if (token) {
     try {
       const baseParams = 'symbol=%24SPX&strikeCount=80&includeUnderlyingQuote=true&strategy=SINGLE';
-      const [callData, putData] = await Promise.all([
-        fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/chains?${baseParams}&contractType=CALL`, token, env),
-        fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/chains?${baseParams}&contractType=PUT`, token, env),
-      ]);
-      const spot = callData.underlyingPrice || callData.underlying?.last
-                || putData.underlyingPrice  || putData.underlying?.last;
-      return {
-        spot,
-        callExpDateMap: callData.callExpDateMap || {},
-        putExpDateMap:  putData.putExpDateMap  || {},
-        fetchedAt: Date.now(),
-        _source: 'schwab',
+      const pull = async (extra) => {
+        const [callData, putData] = await Promise.all([
+          fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/chains?${baseParams}${extra}&contractType=CALL`, token, env, 12_000),
+          fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/chains?${baseParams}${extra}&contractType=PUT`, token, env, 12_000),
+        ]);
+        const spot = callData.underlyingPrice || callData.underlying?.last
+                  || putData.underlyingPrice  || putData.underlying?.last;
+        const out = {
+          spot,
+          callExpDateMap: callData.callExpDateMap || {},
+          putExpDateMap:  putData.putExpDateMap  || {},
+          fetchedAt: Date.now(),
+          _source: 'schwab',
+        };
+        if (!Object.keys(out.callExpDateMap).length && !Object.keys(out.putExpDateMap).length) throw new Error('empty chain');
+        return out;
       };
+      try {
+        return await pull('');
+      } catch (e1) {
+        // 2026-09-24: Schwab's multi-expiry SPX chain 502'd for an hour while the
+        // today-only chain worked. Today-only keeps every 0DTE strategy on real
+        // Schwab OI/volume/greeks (GXBF's volume center, straddle/BOBF strikes, the
+        // spreads picker); consumers that need far expiries (diagonal) see them
+        // missing and fetch their own via chainOrFetch → fetchSpxPutChain.
+        console.warn('[fetchMasterSpxChain] Schwab all-expiry failed → today-only:', e1.message || e1);
+        const d0 = isoDateET(toET(new Date()));
+        const r = await pull(`&fromDate=${d0}&toDate=${d0}`);
+        r._scope = '0dte';
+        return r;
+      }
     } catch (e) {
       console.warn('[fetchMasterSpxChain] Schwab failed → Tasty fallback:', e.message);
     }
@@ -11029,25 +11050,66 @@ async function handleGEXUpdate(env, token, preChain = null) {
   // 1. Use pre-fetched master chain if available (saves 2 Schwab calls per tick),
   //    else fetch our own. preChain is the same shape we'd build below.
   let chainData, spot;
+  let chainSource = 'schwab', chainScope = 'all';   // tags carried onto the snapshot
+  const gexTodayISO = isoDateET(toET(new Date()));
   if (preChain) {
     chainData = { callExpDateMap: preChain.callExpDateMap, putExpDateMap: preChain.putExpDateMap };
     spot = preChain.spot;
+    chainSource = preChain._source === 'tastytrade' ? 'tasty' : 'schwab';
+    chainScope = preChain._scope === '0dte' ? '0dte' : 'all';
   } else {
     // GEX wants a wide strike window. strikeCount=150 empirically returns ~±7.9% of spot
     // (far strikes have wider spacing) — verified from a live snapshot 2026-06-30. The real
     // Fix-1 change is that the CRON now takes THIS self-fetch path instead of the ±2.7%
     // 80-strike master chain; 150 is the proven value the page-poll path already used.
+    //
+    // Resilience ladder (owner 2026-09-24 — Schwab's SPX multi-expiry chain 502'd on
+    // every tick from 13:00 while today-only requests and SPY chains worked; the page
+    // froze at 12:59 and read "Market Closed"):
+    //   1. Schwab all-expiry (the normal path, 12 s cap)
+    //   2. Schwab TODAY-only chain — real OI + volume + greeks, so the 0DTE book (what
+    //      every strategy trades) stays live; far-dated walls missing → scope '0dte'
+    //   3. Tasty today-only chain + OI from the last good Schwab pass (Tasty REST carries
+    //      no OI/volume; 0DTE OI is fixed intraday). Volume stays 0, so the volume-dead
+    //      guard in step 5c keeps the flow series honest.
     const baseParams = 'symbol=%24SPX&strikeCount=150&includeUnderlyingQuote=true&strategy=SINGLE';
-    const [callData, putData] = await Promise.all([
-      fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/chains?${baseParams}&contractType=CALL`, token),
-      fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/chains?${baseParams}&contractType=PUT`, token),
-    ]);
-    chainData = {
-      callExpDateMap: callData.callExpDateMap || {},
-      putExpDateMap: putData.putExpDateMap || {},
+    const pull = async (extra, timeoutMs) => {
+      const [callData, putData] = await Promise.all([
+        fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/chains?${baseParams}${extra}&contractType=CALL`, token, env, timeoutMs),
+        fetchSchwabJSON(`https://api.schwabapi.com/marketdata/v1/chains?${baseParams}${extra}&contractType=PUT`, token, env, timeoutMs),
+      ]);
+      const cd = { callExpDateMap: callData.callExpDateMap || {}, putExpDateMap: putData.putExpDateMap || {} };
+      if (!Object.keys(cd.callExpDateMap).length && !Object.keys(cd.putExpDateMap).length) throw new Error('empty chain');
+      const sp = callData.underlyingPrice || callData.underlying?.last || callData.underlying?.mark
+              || putData.underlyingPrice || putData.underlying?.last || putData.underlying?.mark;
+      return { cd, sp };
     };
-    spot = callData.underlyingPrice || callData.underlying?.last || callData.underlying?.mark
-        || putData.underlyingPrice || putData.underlying?.last || putData.underlying?.mark;
+    try {
+      const r = await pull('', 12_000); chainData = r.cd; spot = r.sp;
+    } catch (e1) {
+      console.warn('[gex] Schwab all-expiry chain failed → today-only:', e1.message || e1);
+      try {
+        const r = await pull(`&fromDate=${gexTodayISO}&toDate=${gexTodayISO}`, 12_000);
+        chainData = r.cd; spot = r.sp; chainScope = '0dte';
+      } catch (e2) {
+        console.warn('[gex] Schwab today-only chain failed → Tasty:', e2.message || e2);
+        const t = await tastyFetchSpxChain(env, { root: 'SPXW', strikeCount: 150, expirations: [gexTodayISO] });
+        chainData = { callExpDateMap: t.callExpDateMap || {}, putExpDateMap: t.putExpDateMap || {} };
+        spot = t.spot; chainSource = 'tasty'; chainScope = '0dte';
+        const oiRaw = await env.SIGNAL_KV.get('gex_oi_cache');
+        const oiC = oiRaw ? JSON.parse(oiRaw) : null;
+        if (!oiC || oiC.date !== gexTodayISO || !oiC.oi) throw new Error('Tasty chain but no same-day OI cache — GEX needs open interest');
+        let hit = 0;
+        for (const m of [chainData.callExpDateMap, chainData.putExpDateMap]) {
+          for (const exp in m) for (const k in m[exp]) for (const c of (m[exp][k] || [])) {
+            const oi = oiC.oi[`${String(exp).slice(0, 10)}|${parseFloat(k)}|${String(c.putCall || '').startsWith('P') ? 'P' : 'C'}`];
+            if (oi != null) { c.openInterest = oi; hit++; }
+          }
+        }
+        if (!hit) throw new Error('Tasty chain: OI cache matched nothing');
+        console.warn(`[gex] Tasty fallback in use — OI injected on ${hit} contracts from the ${oiC.at} Schwab pass`);
+      }
+    }
   }
   if (!spot) throw new Error('No SPX spot price in chain response');
 
@@ -11069,10 +11131,34 @@ async function handleGEXUpdate(env, token, preChain = null) {
     }
   }
 
+  // OI cache for the Tasty fallback (today's expiry only, ~10 KB; refreshed every 10 min).
+  if (chainSource === 'schwab') {
+    try {
+      const prevRawOI = await env.SIGNAL_KV.get('gex_oi_cache');
+      const prevOI = prevRawOI ? JSON.parse(prevRawOI) : null;
+      const freshOI = prevOI && prevOI.date === gexTodayISO && prevOI.atMs && (Date.now() - prevOI.atMs) < 600_000;
+      if (!freshOI) {
+        const oi = {}; let n = 0;
+        for (const m of [chainData.callExpDateMap || {}, chainData.putExpDateMap || {}]) {
+          for (const exp in m) {
+            if (!String(exp).startsWith(gexTodayISO)) continue;
+            for (const k in m[exp]) for (const c of (m[exp][k] || [])) {
+              if (c.openInterest > 0) { oi[`${gexTodayISO}|${parseFloat(k)}|${String(c.putCall || '').startsWith('P') ? 'P' : 'C'}`] = c.openInterest; n++; }
+            }
+          }
+        }
+        if (n) await env.SIGNAL_KV.put('gex_oi_cache', JSON.stringify({ date: gexTodayISO, at: new Date().toISOString(), atMs: Date.now(), n, oi }), { expirationTtl: 2 * 86400 });
+      }
+    } catch (e) { console.warn('[gex] OI cache:', e.message); }
+  }
+
   // 4. Calculate GEX — both all-expiry and 0DTE-only
   const gexData = calculateGEX(chainData, spot, false);     // all expirations
   const gex0dte = calculateGEX(chainData, spot, true);      // 0DTE only
   if (!gexData) throw new Error('GEX calculation returned null (no expirations)');
+  gexData.source = chainSource; gexData.scope = chainScope;
+  if (chainScope === '0dte') gexData.note = `multi-expiry chain unavailable — this snapshot is the 0DTE book only (source ${chainSource})`;
+  if (gex0dte) { gex0dte.source = chainSource; if (chainSource === 'tasty') gex0dte.note = 'Tasty fallback: OI from the last Schwab pass, volume unavailable'; }
 
   // Dealer-liquidity snapshot (2026-07-28) — same chain pull, SPX book only.
   try { gexData.liq = computeLiquidity(chainData, spot); } catch (_) { gexData.liq = null; }
@@ -11494,8 +11580,18 @@ async function mcpToolText(env, name, args) {
         flowLine = `signed flow last ${fs.length} ticks: calls net ${cb >= 0 ? '+' : ''}${cb} · puts net ${pb >= 0 ? '+' : ''}${pb} (buys minus sells)`;
       }
     } catch (_) {}
+    // Staleness + source tags (2026-09-24): a frozen snapshot must announce itself.
+    let gexTag = '';
+    try {
+      const etn = toET(new Date()); const mins = etn.getHours() * 60 + etn.getMinutes();
+      const mktOpen = etn.getDay() >= 1 && etn.getDay() <= 5 && mins >= 570 && mins < 960;
+      const ageMin = g.updatedAt ? Math.round((Date.now() - new Date(g.updatedAt).getTime()) / 60000) : null;
+      if (mktOpen && ageMin != null && ageMin > 6) gexTag += ` · STALE ${ageMin} min`;
+      if (g.source && g.source !== 'schwab') gexTag += ` · source ${g.source}`;
+      if (g.scope === '0dte' && label !== '0dte') gexTag += ' · 0DTE-only (multi-expiry chain unavailable)';
+    } catch (_) {}
     return [
-      `book: ${label === '0dte' ? '0DTE only (strategy basis)' : label} · as of ${g.updatedAt} · SPX ${g.spot} · regime ${g.regime} · total GEX ${(g.totalGex / 1e9).toFixed(1)}B`,
+      `book: ${label === '0dte' ? '0DTE only (strategy basis)' : label} · as of ${g.updatedAt}${gexTag} · SPX ${g.spot} · regime ${g.regime} · total GEX ${(g.totalGex / 1e9).toFixed(1)}B`,
       `flip ${g.flipStrike ?? 'none'} · maxPos ${g.maxPosStrike} · maxNeg ${g.maxNegStrike} · charm ${(g.charm / 1e12).toFixed(2)}T · vanna ${(g.vanna / 1e12).toFixed(2)}T · P/C vol ${g.pcRatio}`,
       `top walls: ${walls}`, flowLine,
     ].join('\n');

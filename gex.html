@@ -207,7 +207,8 @@
 <div class="container" id="mainContent" style="display:none;">
 
   <!-- Stale data banner -->
-  <div class="stale-banner" id="staleBanner">Market Closed -- Data may be stale. Last update: <span id="staleTime">--</span></div>
+  <div class="stale-banner" id="staleBanner"><span id="staleMsg">Market Closed -- Data may be stale.</span> Last update: <span id="staleTime">--</span></div>
+  <div class="stale-banner" id="scopeBanner"></div>
 
   <!-- Book selector (2026-07-26): switches EVERY chain-derived panel between
        SPX, SPY and the merged SPX+SPY book. Panels that have no SPY capture
@@ -1257,10 +1258,16 @@ function renderTopBar(data) {
   const staleBanner = document.getElementById('staleBanner');
 
   if (isStale) {
+    // Stale during the session is a FEED problem, not a closed market (2026-09-24:
+    // Schwab's SPX chain broke at 13:00 and the page announced "Market Closed").
+    const openNow = isMarketOpen();
     dotEl.className = 'status-dot stale';
-    mktEl.textContent = 'Market Closed';
+    mktEl.textContent = openNow ? 'Data Stale' : 'Market Closed';
     mktEl.className = 'market-badge closed';
     staleBanner.classList.add('visible');
+    document.getElementById('staleMsg').textContent = openNow
+      ? 'Feed not updating -- the GEX snapshot is stale (Schwab chain problem?).'
+      : 'Market Closed -- Data may be stale.';
     document.getElementById('staleTime').textContent = fmtTime(data.updatedAt);
   } else if (isMarketOpen()) {
     dotEl.className = 'status-dot live';
@@ -1272,7 +1279,16 @@ function renderTopBar(data) {
     mktEl.textContent = 'Market Closed';
     mktEl.className = 'market-badge closed';
     staleBanner.classList.add('visible');
+    document.getElementById('staleMsg').textContent = 'Market Closed -- Data may be stale.';
     document.getElementById('staleTime').textContent = fmtTime(data.updatedAt);
+  }
+  // 0DTE-only fallback snapshot (multi-expiry chain unavailable) — say so.
+  const scopeBanner = document.getElementById('scopeBanner');
+  if (scopeBanner) {
+    if (data.scope === '0dte') {
+      scopeBanner.textContent = `0DTE-only snapshot -- Schwab multi-expiry chain unavailable, far-dated walls missing (source: ${data.source || 'schwab'})`;
+      scopeBanner.classList.add('visible');
+    } else scopeBanner.classList.remove('visible');
   }
 }
 
