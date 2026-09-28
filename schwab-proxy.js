@@ -671,16 +671,38 @@ async function spreadsRouterDM(env, etNow) {
   }
 }
 
-async function spreadsRouterSettle(env, etNow) {
+async function spreadsRouterSettle(env, etNow, opts = {}) {
+  // opts.date = settle THAT day (owner heal route) · opts.dry = compute only · opts.silent = no scorecard DM.
   const h = etNow.getHours(), m = etNow.getMinutes();
-  if (h < 16 || (h === 16 && m < 45)) return;
-  const d = isoDateET(etNow);
+  if (!opts.date && (h < 16 || (h === 16 && m < 45))) return;
+  const today = isoDateET(etNow);
+  // Look back (2026-09-28): Friday 9/25's condor never settled — its per-day key
+  // outlived every evening tick and nothing ever re-checked older days, so the day
+  // carried no spreadsPL until the owner noticed. Settle today AND any stranded day.
+  let dates = opts.date ? [opts.date] : [today];
+  if (!opts.date) {
+    try {
+      const l = await env.SIGNAL_KV.list({ prefix: 'spreads_open_' });
+      for (const k of (l.keys || [])) {
+        const dd = k.name.slice('spreads_open_'.length);
+        if (/^\d{4}-\d{2}-\d{2}$/.test(dd) && dd < today && !dates.includes(dd)) dates.push(dd);
+      }
+    } catch (e) { console.warn('[spreads-settle] list', e.message); }
+  }
+  const out = [];
+  for (const d of dates) {
+    try { out.push(await settleSpreadsDay(env, d, opts)); }
+    catch (e) { console.warn('[spreads-settle]', d, e.message); out.push({ date: d, error: e.message }); }
+  }
+  return out;
+}
+async function settleSpreadsDay(env, d, opts = {}) {
   const openRaw = await env.SIGNAL_KV.get(`spreads_open_${d}`);
-  if (!openRaw) return;
+  if (!openRaw) return { date: d, status: 'no-open-trade' };
   const t = JSON.parse(openRaw);
   const hist = JSON.parse((await env.SIGNAL_KV.get('history_data')) || '[]');
   const row = hist.find(r => r.date === t.date);
-  if (!row || row.spxClose == null) return;            // retry on later ticks (18:35 / 20:17 / 21:17)
+  if (!row || row.spxClose == null) return { date: d, status: 'no-close-yet' };   // retried every tick; look-back covers stranded days
   const c = row.spxClose;
   let pl;
   if (t.side === 'IC') {
@@ -693,6 +715,7 @@ async function spreadsRouterSettle(env, etNow) {
                                    : Math.max(0, Math.min(t.short - c, 10));
     pl = Math.round((t.credit - loss) * 100 * 10) / 10;
   }
+  if (opts.dry) return { date: d, status: 'dry', n: t.n, side: t.side, close: c, plPerLot: pl, spreadsPL: Math.round(pl * 2 * 10) / 10 };
   const log = JSON.parse((await env.SIGNAL_KV.get('spreads_paper_log')) || '[]');
   if (!log.some(x => x.date === t.date)) {
     log.push({ ...t, status: 'settled', settle: c, pl });
@@ -723,7 +746,7 @@ async function spreadsRouterSettle(env, etNow) {
   console.log(`[spreads] settled #${t.n} ${t.side} ${t.short}/${t.long}: close ${c} → $${pl}`);
   // Forward-test scorecard: every 10th settled trade, DM live pace vs the
   // frozen backtest (+$84/trade, 78.1%). Claim-gated per milestone.
-  if (log.length > 0 && log.length % 10 === 0) {
+  if (!opts.silent && log.length > 0 && log.length % 10 === 0) {
     const msKey = `spreads_ms_${log.length}`;
     if ((await env.SIGNAL_KV.get(msKey)) !== 'sent' && (await claimSendSlot(env, msKey))
         && (await env.SIGNAL_KV.get(msKey)) !== 'sent') {   // last-call fresh re-read (P46 sweep)
@@ -742,6 +765,7 @@ async function spreadsRouterSettle(env, etNow) {
       else { try { await env.SIGNAL_KV.delete(msKey); } catch (_) {} }
     }
   }
+  return { date: d, status: 'settled', n: t.n, side: t.side, close: c, plPerLot: pl, spreadsPL: Math.round(pl * 2 * 10) / 10 };
 }
 
 // VIX-surface snapshot (2026-06-11, optionsgelt-inspired VIX decomposition).
@@ -17013,7 +17037,24 @@ export default {
     // Direct git edits to history_data.json get stomped by the next KV mirror
     // (learned 2026-07-30: the gated-day restatement was wiped by /remirror-
     // history) — restatements must go through here.
+    // ── GET /spreads-settle?date=YYYY-MM-DD[&dry=1] ── Owner-gated heal for a
+    // stranded Spreads Router day (2026-09-28: 9/25's condor). Same settle code
+    // as the cron, scorecard DM suppressed; dry=1 previews the P&L only.
+    if (url.pathname === '/spreads-settle' && request.method === 'GET') {
+      const ssSecret = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
+      if (!ssSecret || (ssSecret !== env.SYNC_SECRET && ssSecret !== env.GEXM_TRIGGER_TOKEN)) return jsonResp({ error: 'Unauthorized' }, 401, {});
+      const ssDate = url.searchParams.get('date');
+      if (!ssDate || !/^\d{4}-\d{2}-\d{2}$/.test(ssDate)) return jsonResp({ error: 'date=YYYY-MM-DD required' }, 400, {});
+      let result;
+      try { result = await spreadsRouterSettle(env, toET(new Date()), { date: ssDate, dry: url.searchParams.get('dry') === '1', silent: true }); }
+      catch (e) { result = { error: e.message }; }
+      return new Response(JSON.stringify(result, null, 2), { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
+    }
+
     if (url.pathname === '/history-patch' && request.method === 'POST') {
+      // AUTH (2026-09-28 audit): this route rewrote history_data for ANY caller — gate it like /pages-kick.
+      const hpSecret = request.headers.get('X-Sync-Secret') || url.searchParams.get('secret');
+      if (!hpSecret || (hpSecret !== env.SYNC_SECRET && hpSecret !== env.GEXM_TRIGGER_TOKEN)) return jsonResp({ error: 'Unauthorized' }, 401, {});
       let result;
       try {
         const patches = await request.json();
