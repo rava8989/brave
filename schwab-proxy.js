@@ -13900,7 +13900,14 @@ const SAMPLE_MORNING_CARD = {
 // KV `feed_keys`: { "<key>": { name, active, strategies: "*" | [paths], created } }.
 // Owner management: GET/POST /feed-keys (SYNC or GEXM secret).
 const FEED_PATHS = new Set(['trade', 'straddle-today', 'gxbf-today', 'bobf-today', 'diagonal-today', 'spreads-paper', 'magnetfly-today']);
-const FEED_RATE_PER_MIN = 90;   // a skipper polls 7 paths once a minute (+ alarm passes); 90 leaves room, blocks a runaway loop
+const FEED_RATE_PER_MIN = 90;    // a skipper polls 7 paths once a minute (+ alarm passes); 90 leaves room, blocks a runaway loop
+const FEED_DAILY_CAP = 6000;     // hard ceiling per key per ET day (owner 2026-10-01); a normal skipper uses ~3,000
+const FEED_CACHE_MS = 5000;      // identical answers inside 5 s share one upstream read (the signal itself changes once a minute)
+// Per-isolate counters (owner 2026-10-01): the old KV get+put per pull cost 2 writes
+// and 3 reads per call. Approximate across isolates, which is fine for a runaway guard.
+const _feedRL = new Map();       // `${name}:${minute}` → calls this minute
+const _feedUse = new Map();      // name → { date, total, pending, at } — flushed to KV every 10 calls or 60 s
+const _feedResp = new Map();     // path → { at, body }
 async function feedKeys(env) { try { return JSON.parse(await env.SIGNAL_KV.get('feed_keys') || '{}'); } catch (_) { return {}; } }
 async function feedProxy(request, env, url) {
   const j = (o, st = 200) => new Response(JSON.stringify(o), { status: st, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
@@ -13913,17 +13920,28 @@ async function feedProxy(request, env, url) {
   if (path === 'ping') return j({ ok: true, name: rec.name, strategies: rec.strategies, serverTimeET: toET(new Date()).toISOString().slice(11, 19), date: todayISO });
   if (!FEED_PATHS.has(path)) return j({ error: 'path not in the feed' }, 404);
   if (rec.strategies !== '*' && !(Array.isArray(rec.strategies) && rec.strategies.includes(path))) return j({ error: 'not entitled to this strategy' }, 403);
-  // per-key rate limit (KV counter per minute; approximate, that is fine for a runaway guard)
-  const minute = Math.floor(Date.now() / 60000), rlKey = `feed_rl_${rec.name}_${minute}`;
-  const n = parseInt(await env.SIGNAL_KV.get(rlKey) || '0', 10) + 1;
-  await env.SIGNAL_KV.put(rlKey, String(n), { expirationTtl: 120 });
-  if (n > FEED_RATE_PER_MIN) return j({ error: 'rate limit' }, 429);
-  // daily usage counter per subscriber (30-day TTL) for the owner's list
-  try { const uk = `feed_use_${rec.name}_${todayISO}`; await env.SIGNAL_KV.put(uk, String(parseInt(await env.SIGNAL_KV.get(uk) || '0', 10) + 1), { expirationTtl: 30 * 86400 }); } catch (_) {}
+  // per-key rate limit, in memory
+  const minute = Math.floor(Date.now() / 60000), rlKey = `${rec.name}:${minute}`;
+  const n = (_feedRL.get(rlKey) || 0) + 1; _feedRL.set(rlKey, n);
+  if (_feedRL.size > 64) for (const k of _feedRL.keys()) if (!k.endsWith(`:${minute}`)) _feedRL.delete(k);
+  if (n > FEED_RATE_PER_MIN) return j({ error: 'rate limit', perMinute: FEED_RATE_PER_MIN }, 429);
+  // daily usage + hard cap (KV holds the running total; this isolate adds its pending calls every 10 calls / 60 s)
+  const uk = `feed_use_${rec.name}_${todayISO}`;
+  let u = _feedUse.get(rec.name);
+  if (!u || u.date !== todayISO) { u = { date: todayISO, total: parseInt(await env.SIGNAL_KV.get(uk) || '0', 10), pending: 0, at: Date.now() }; _feedUse.set(rec.name, u); }
+  if (u.total + u.pending >= FEED_DAILY_CAP) return j({ error: 'daily cap reached', cap: FEED_DAILY_CAP, resetsAt: '00:00 ET' }, 429);
+  u.pending++;
+  if (u.pending >= 10 || Date.now() - u.at > 60000) {
+    try { u.total = parseInt(await env.SIGNAL_KV.get(uk) || '0', 10) + u.pending; u.pending = 0; u.at = Date.now(); await env.SIGNAL_KV.put(uk, String(u.total), { expirationTtl: 30 * 86400 }); } catch (_) {}
+  }
+  const hdr = (hit) => ({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Feed-Name': rec.name, 'X-Feed-Cache': hit ? 'hit' : 'miss' });
+  const c = _feedResp.get(path);
+  if (c && Date.now() - c.at < FEED_CACHE_MS) return new Response(c.body, { status: 200, headers: hdr(true) });
   try {
     const r = await env.SELF.fetch(new Request(`https://internal/${path}`, { headers: { Origin: env.ALLOWED_ORIGIN || '', Accept: 'application/json', 'User-Agent': 'sigma3-feed' } }));
     const body = await r.text();
-    return new Response(body, { status: r.ok ? 200 : 502, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Feed-Name': rec.name, ...(r.ok ? {} : { 'X-Upstream-Status': String(r.status) }) } });
+    if (r.ok) _feedResp.set(path, { at: Date.now(), body });
+    return new Response(body, { status: r.ok ? 200 : 502, headers: { ...hdr(false), ...(r.ok ? {} : { 'X-Upstream-Status': String(r.status) }) } });
   } catch (e) { return j({ error: 'upstream unavailable', detail: String(e.message).slice(0, 80) }, 502); }
 }
 async function feedKeysAdmin(request, env, url) {
