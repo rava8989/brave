@@ -11623,13 +11623,16 @@ async function mcpToolText(env, name, args) {
   if (name === 'plan_today') {
     const todayISO = isoDateET(toET(new Date()));
     const parts = [`${todayISO} (ET)`];
+    // Our gate first (owner 2026-10-01: the raw feed line alone read as "M8BF is trading"
+    // on a day the 0% rule + NM had it standing down).
+    try { const why = await m8bfBannedReason(env, toET(new Date())); parts.push(why ? `M8BF today: NO — ${why}` : 'M8BF today: tradeable in its window (its own rules)'); } catch (_) {}
     try {
       const sRaw = await env.SIGNAL_KV.get('signals_today');
       if (sRaw) {
         const s = JSON.parse(sRaw);
         const sig = s.signals || [];
         const last = sig[sig.length - 1];
-        parts.push(`M8BF feed: ${sig.length} signals${last ? ` · latest ${last.time} center ${last.center} T1 ${last.t1}${last.banned ? ' (banned strike)' : ''}` : ''}`);
+        parts.push(`M8BF Discord feed (posts every 5 min regardless of our gate): ${sig.length} signals${last ? ` · latest ${last.time} center ${last.center} T1 ${last.t1}${last.banned ? ' (banned strike)' : ''}` : ''}`);
       }
     } catch (_) {}
     try {
