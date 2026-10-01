@@ -10017,6 +10017,7 @@ async function handleScheduledInner(env) {
   await beat();
   let result = null;
   try {
+    try { signal.m8bfGate = await m8bfBannedReason(env, toET(new Date())); } catch (_) {}
     const cardData = buildMorningCardData(signal, vixValues, tailLineCanon,
       { block: mfCalendarBlock(toET(new Date())), spreadsBlock: spreadsCalendarBlock(toET(new Date())) });
     const png = await renderMorningCardPng(cardData);
@@ -13594,7 +13595,11 @@ function buildMorningCardData(signal, vixValues, tailLine, pnbf) {
       : { n: 'GXBF', det: gxDet, yes: false });
   }
   {
-    const m8Active = !isNo(signal.m8bfText) && /^M8BF/i.test(String(signal.m8bfText || '').trim());
+    // Owner 2026-10-01: the row used to read the engine's M8BF text alone and said YES on a
+    // day the live gate (NM-non-Monday) had M8BF standing down. The gate is the truth the
+    // skipper obeys, so the row follows it: signal.m8bfGate = m8bfBannedReason() or null.
+    const gate = signal.m8bfGate || null;
+    const m8Active = !gate && !isNo(signal.m8bfText) && /^M8BF/i.test(String(signal.m8bfText || '').trim());
     let det;
     if (m8Active) {
       const win = (String(signal.m8bfText).match(/(\d{1,2}:\d{2}\s*[–-]\s*\d{1,2}:\d{2})/) || [])[1];
@@ -13603,7 +13608,7 @@ function buildMorningCardData(signal, vixValues, tailLine, pnbf) {
       // No emoji — the card font has no color glyphs (renders as a broken box).
       const tail = signal.gexFatP != null ? `FAT GAMMA p${signal.gexFatP}` : 'on flow signal';
       det = win ? `watching ${win} · ${tail}` : `watching · ${tail}`;
-    } else { det = strip(signal.m8bfText, 'M8BF') || '—'; }
+    } else { det = gate ? `No M8BF — ${gate}` : (strip(signal.m8bfText, 'M8BF') || '—'); }
     rows.push({ n: 'M8BF', det, yes: m8Active });
   }
   {
@@ -14086,6 +14091,7 @@ export default {
         let tailLine = null; try { tailLine = await getTailHedgeStatusLine(env); } catch (_) {}
         let r = null;
         try {
+          try { signal.m8bfGate = await m8bfBannedReason(env, toET(new Date())); } catch (_) {}
           const png = await renderMorningCardPng(buildMorningCardData(signal, vixValues, tailLine, { block: mfCalendarBlock(toET(new Date())), spreadsBlock: spreadsCalendarBlock(toET(new Date())) }));
           r = await sendDiscordImage(env, dc.channelId, png, dc.proxyUrl, 'morning.png', DISCORD_FOOTER);
         } catch (e) { r = { ok: false, error: 'render: ' + e.message }; }
