@@ -5014,10 +5014,12 @@ async function handleEOD(env, etNow) {
           const gxbfTookPrecedence = (sig.theme === 'gxbf');
           const ninetyOverrideFires = (prevWR_s2 != null && prevWR_s2 >= 90 && !sig.cpiDay && !gxbfTookPrecedence);
           // Anchor Filter is absolute — a regime filter, never overridden by the 90% rule.
-          const m8bfWouldNotFire = sig.gexGateSkip || ((sig.m8bfBanned || sig.cpiDay) && !ninetyOverrideFires);
+          // 0% rule (owner decision A, 2026-10-02): M8BF stands down the day after a 0% WR day — same test as the live gate.
+          const zeroRuleStandsDown = (prevWR_s2 === 0 && !sig.cpiDay && !gxbfTookPrecedence);
+          const m8bfWouldNotFire = sig.gexGateSkip || zeroRuleStandsDown || ((sig.m8bfBanned || sig.cpiDay) && !ninetyOverrideFires);
           if (m8bfWouldNotFire) {
             m8bfBlockedByLive = true;
-            console.log(`[eod] M8BF blocked: m8bfBanned=${sig.m8bfBanned}, cpiDay=${sig.cpiDay}, 90%override=${ninetyOverrideFires}, gxbfTook=${gxbfTookPrecedence}`);
+            console.log(`[eod] M8BF blocked: m8bfBanned=${sig.m8bfBanned}, cpiDay=${sig.cpiDay}, 0%rule=${zeroRuleStandsDown}, 90%override=${ninetyOverrideFires}, gxbfTook=${gxbfTookPrecedence}`);
           } else if (ninetyOverrideFires && calendarWouldBlock) {
             console.log(`[eod] 90% override CONFIRMED — calendar block (${calendarBlockReason}) overridden (prevWR=${prevWR_s2})`);
           }
@@ -12781,6 +12783,7 @@ function getM8BFWindow(dow, dateISO) {
 // (and refreshM8bfLiveQuotes) in lock-step with the Discord auto-message.
 // 2026-05-28: bug bit when EOM-1 + prevWR=99% — /trade said banned, Discord
 // said fire. Both now agree via the same override path.
+let _m8bfWrDay = null;   // { date, prevWR, gxbfFires } — refreshed once per ET day per isolate
 async function m8bfBannedReason(env, etNow) {
   // Anchor Filter first — absolute, never overridden (audit 2026-07-24 [37]):
   // this single chokepoint gates /trade, refreshM8bfLiveQuotes and the bot relay.
@@ -12795,30 +12798,35 @@ async function m8bfBannedReason(env, etNow) {
   const nmMon = isFirstTradeMon(etNow);
   const nmNonMon = nmDay && !nmMon;
   const m8bfBanned = eomDay || eom1 || opex1 || vixExpAfterOpex || nonAmznTslaEarn || nmNonMon;
-  if (!(m8bfBanned || cpiDay)) return null;
   if (cpiDay) return 'CPI day';   // CPI is never overridden
 
-  // 90% override check — prevWR from most recent prior history row.
+  // prevWR rules — one history read per ET day per isolate.
+  // 0% (owner decision A, 2026-10-02): yesterday's M8BF WR = 0% makes today a Straddle day and
+  // M8BF STANDS DOWN. The page card (since 2026-07-22) and the restated record already applied
+  // this; the live gate did not, so a plain post-0% day would have traded M8BF (found 2026-10-01).
+  // 90%: M8BF forced through the calendar bans. Neither rule touches GXBF (strategy independence).
+  let prevWR = null, gxbfFires = false;
   try {
     const todayISO = isoDateET(etNow);
-    const hist = await getHistory(env);
-    if (Array.isArray(hist) && hist.length) {
-      const sorted = hist
+    if (_m8bfWrDay && _m8bfWrDay.date === todayISO) { prevWR = _m8bfWrDay.prevWR; gxbfFires = _m8bfWrDay.gxbfFires; }
+    else {
+      const hist = await getHistory(env);
+      const rows = Array.isArray(hist) ? hist : [];
+      const sorted = rows
         .filter(r => r.date && r.date < todayISO && r.m8bfWR != null)
         .sort((a, b) => b.date.localeCompare(a.date));
-      const prevWR = sorted.length ? parseFloat(sorted[0].m8bfWR) : null;
-      if (prevWR != null && prevWR >= 90) {
-        // Override fires unless GXBF would also fire today (90% rule cannot
-        // cancel GXBF — strategy independence).
-        const todayRow = hist.find(r => r.date === todayISO);
-        const vToday  = todayRow?.vixOpen != null ? parseFloat(todayRow.vixOpen) : null;
-        const vYClose = sorted[0]?.vixClose != null ? parseFloat(sorted[0].vixClose) : null;
-        const oNight  = (vToday != null && vYClose != null) ? (vYClose - vToday) : null;
-        const gxbfFires = oNight != null && oNight > 0.65 && vToday < 25;
-        if (!gxbfFires) return null;   // M8BF fires via 90% override
-      }
+      prevWR = sorted.length ? parseFloat(sorted[0].m8bfWR) : null;
+      const todayRow = rows.find(r => r.date === todayISO);
+      const vToday  = todayRow?.vixOpen != null ? parseFloat(todayRow.vixOpen) : null;
+      const vYClose = sorted[0]?.vixClose != null ? parseFloat(sorted[0].vixClose) : null;
+      const oNight  = (vToday != null && vYClose != null) ? (vYClose - vToday) : null;
+      gxbfFires = oNight != null && oNight > 0.65 && vToday < 25;
+      if (vToday != null) _m8bfWrDay = { date: todayISO, prevWR, gxbfFires };   // cache only once today's VIX open exists
     }
-  } catch { /* if history fetch fails, fall through to ban-reason return */ }
+  } catch { /* history unavailable: fall through to the calendar answer */ }
+  if (prevWR === 0 && !gxbfFires) return '0% WR → Straddle day';
+  if (!m8bfBanned) return null;
+  if (prevWR != null && prevWR >= 90 && !gxbfFires) return null;   // M8BF fires via 90% override
 
   return eomDay ? 'EOM'
        : eom1   ? 'EOM-1'
