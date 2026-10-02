@@ -5166,6 +5166,14 @@ async function handleEOD(env, etNow) {
       const tailResult = await settleTailEOD(env, etNow, spxClose);
       console.log('[tail] EOD settle:', JSON.stringify(tailResult));
     } catch (e) { console.warn('[tail] EOD settle failed:', e.message); }
+    // Spreads Router settle in the SAME pass (owner 2026-10-02: "they should all register
+    // together"). opts.date bypasses the ≥16:45 gate; the row's spxClose was just written
+    // above. The ≥16:45 evening path stays as the retry/look-back, and the 17:0x verify
+    // restates spreadsPL with the other fields if the official print moves.
+    try {
+      const spreadsResult = await spreadsRouterSettle(env, etNow, { date: todayISO });
+      console.log('[spreads] EOD settle:', JSON.stringify(spreadsResult));
+    } catch (e) { console.warn('[spreads] EOD settle failed:', e.message); }
   }
 
   // Append today's signals to TRADES database in backtester.html (reuse cached fullSigs)
